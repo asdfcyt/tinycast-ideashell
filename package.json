@@ -1,0 +1,120 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "ideashell",
+  "title": "闪念贝壳",
+  "description": "快速添加灵感到闪念贝壳，支持快速笔记、表单创建、Daily Note 和笔记搜索。",
+  "icon": "extension-icon.png",
+  "author": "carpe",
+  "categories": ["Productivity"],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "quick-note",
+      "title": "Quick Note",
+      "subtitle": "闪念贝壳",
+      "description": "在搜索栏直接输入文字，回车即可快速创建笔记到闪念贝壳。",
+      "mode": "no-view",
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text",
+          "placeholder": "输入你的灵感...",
+          "required": true
+        }
+      ],
+      "keywords": ["idea", "note", "闪念", "灵感", "快速"]
+    },
+    {
+      "name": "create-note",
+      "title": "Create Note",
+      "subtitle": "闪念贝壳",
+      "description": "通过表单创建笔记，支持标题、正文、标签和文件夹。",
+      "mode": "view",
+      "keywords": ["create", "note", "创建", "笔记"]
+    },
+    {
+      "name": "daily-note",
+      "title": "Daily Note",
+      "subtitle": "闪念贝壳",
+      "description": "快速追加内容到今天的 Daily Note，不存在则自动创建。",
+      "mode": "no-view",
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text",
+          "placeholder": "追加到今天的日记...",
+          "required": true
+        }
+      ],
+      "keywords": ["daily", "日记", "日报", "today"]
+    },
+    {
+      "name": "daily-note-view",
+      "title": "View Daily Note",
+      "subtitle": "闪念贝壳",
+      "description": "查看和浏览 Daily Note 列表。",
+      "mode": "view",
+      "keywords": ["daily", "日记", "查看", "browse"]
+    },
+    {
+      "name": "search-notes",
+      "title": "Search Notes",
+      "subtitle": "闪念贝壳",
+      "description": "搜索闪念贝壳中的笔记。",
+      "mode": "view",
+      "keywords": ["search", "搜索", "查找", "笔记"]
+    }
+  ],
+  "preferences": [
+    {
+      "name": "apiKey",
+      "title": "API Key",
+      "description": "闪念贝壳 MCP API Key（在闪念贝壳 设置 → MCP 中获取）",
+      "type": "password",
+      "required": true
+    },
+    {
+      "name": "dailyNoteFolder",
+      "title": "Daily Note Folder",
+      "description": "Daily Note 存放的文件夹名称（留空则不放入文件夹）",
+      "type": "textfield",
+      "required": false,
+      "default": "Daily Notes"
+    },
+    {
+      "name": "dailyNoteTitleFormat",
+      "title": "Daily Note Title Format",
+      "description": "Daily Note 标题格式，使用 YYYY-MM-DD 等占位符",
+      "type": "textfield",
+      "required": false,
+      "default": "YYYY-MM-DD Daily Note"
+    },
+    {
+      "name": "defaultTags",
+      "title": "Default Tags",
+      "description": "创建笔记时默认添加的标签（逗号分隔）",
+      "type": "textfield",
+      "required": false,
+      "default": ""
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.104.0",
+    "@raycast/utils": "^2.2.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^2.1.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "eslint": "^10.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.7.0"
+  },
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "lint": "ray lint",
+    "fix-lint": "ray lint --fix"
+  },
+  "platforms": ["macOS"]
+}
