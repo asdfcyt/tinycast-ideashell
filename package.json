@@ -2,83 +2,89 @@
   "$schema": "https://www.raycast.com/schemas/extension.json",
   "name": "ideashell",
   "title": "闪念贝壳",
-  "description": "快速添加灵感到闪念贝壳，支持快速笔记、表单创建、Daily Note、笔记搜索和待办管理。",
+  "description": "一个输入框记录一切：待办 / 日记 / 笔记自动分流；时间线、语义搜索与 Daily Note 浏览合一；待办管理与文件收纳。",
   "icon": "extension-icon.png",
   "author": "carpe",
-  "categories": ["Productivity"],
+  "categories": [
+    "Productivity"
+  ],
   "license": "MIT",
   "commands": [
     {
-      "name": "quick-note",
-      "title": "Quick Note",
+      "name": "smart-capture",
+      "title": "Smart Capture",
       "subtitle": "闪念贝壳",
-      "description": "在搜索栏直接输入文字，回车即可快速创建笔记到闪念贝壳。",
+      "description": "万能输入：在搜索栏直接输入，回车即自动保存为待办 / Daily Note / 笔记；正文留空则保存剪贴板。类型、标签、文件夹默认智能识别，也可手动指定。",
       "mode": "no-view",
       "arguments": [
         {
           "name": "text",
           "type": "text",
-          "placeholder": "输入你的灵感...",
-          "required": true
-        }
-      ],
-      "keywords": ["idea", "note", "闪念", "灵感", "快速"]
-    },
-    {
-      "name": "create-note",
-      "title": "Create Note",
-      "subtitle": "闪念贝壳",
-      "description": "通过表单创建笔记，支持标题、正文、标签和文件夹。",
-      "mode": "view",
-      "keywords": ["create", "note", "创建", "笔记"]
-    },
-    {
-      "name": "daily-note",
-      "title": "Daily Note",
-      "subtitle": "闪念贝壳",
-      "description": "快速追加内容到今天的 Daily Note，不存在则自动创建。",
-      "mode": "no-view",
-      "arguments": [
+          "placeholder": "记点什么…（留空=剪贴板）",
+          "required": false
+        },
         {
-          "name": "text",
-          "type": "text",
-          "placeholder": "追加到今天的日记...",
-          "required": true
-        }
-      ],
-      "keywords": ["daily", "日记", "日报", "today"]
-    },
-    {
-      "name": "daily-note-view",
-      "title": "View Daily Note",
-      "subtitle": "闪念贝壳",
-      "description": "查看和浏览 Daily Note 列表。",
-      "mode": "view",
-      "keywords": ["daily", "日记", "查看", "browse"]
-    },
-    {
-      "name": "search-notes",
-      "title": "Search Notes",
-      "subtitle": "闪念贝壳",
-      "description": "搜索闪念贝壳中的笔记。",
-      "mode": "view",
-      "keywords": ["search", "搜索", "查找", "笔记"]
-    },
-    {
-      "name": "add-todo",
-      "title": "Add Todo",
-      "subtitle": "闪念贝壳",
-      "description": "快速创建待办，支持自然语言日期和时间，例如「明天 15:00 开会」。",
-      "mode": "no-view",
-      "arguments": [
+          "name": "type",
+          "type": "dropdown",
+          "placeholder": "类型",
+          "required": false,
+          "data": [
+            { "title": "智能识别", "value": "auto" },
+            { "title": "待办", "value": "todo" },
+            { "title": "Daily Note", "value": "daily" },
+            { "title": "笔记", "value": "note" },
+            { "title": "剪贴板 → 笔记", "value": "clipboard" }
+          ]
+        },
         {
-          "name": "text",
+          "name": "extra",
           "type": "text",
-          "placeholder": "明天 15:00 开会",
-          "required": true
+          "placeholder": "标签/文件夹：#标签 @文件夹（留空=智能）",
+          "required": false
         }
       ],
-      "keywords": ["todo", "待办", "任务", "提醒", "task", "reminder"]
+      "keywords": [
+        "万能输入",
+        "capture",
+        "记录",
+        "记一下",
+        "灵感",
+        "idea",
+        "note",
+        "笔记",
+        "daily",
+        "日记",
+        "todo",
+        "待办",
+        "提醒",
+        "quick",
+        "闪念"
+      ]
+    },
+    {
+      "name": "notes",
+      "title": "Notes",
+      "subtitle": "闪念贝壳",
+      "description": "时间线、语义搜索与 Daily Note 合一：留空看最近 7 天；输入「昨天 / 上周 / 10月3日」看时间线并复制周报；输入「日记」浏览 Daily Note；输入其他文字做语义搜索。",
+      "mode": "view",
+      "keywords": [
+        "notes",
+        "笔记",
+        "搜索",
+        "search",
+        "timeline",
+        "时间线",
+        "时光机",
+        "回顾",
+        "周报",
+        "日报",
+        "daily",
+        "日记",
+        "查看",
+        "browse",
+        "find",
+        "查找"
+      ]
     },
     {
       "name": "manage-todos",
@@ -86,23 +92,14 @@
       "subtitle": "闪念贝壳",
       "description": "查看、完成、编辑和新建待办，按日期分组。",
       "mode": "view",
-      "keywords": ["todo", "待办", "任务", "完成", "task", "list"]
-    },
-    {
-      "name": "smart-capture",
-      "title": "Smart Capture",
-      "subtitle": "闪念贝壳",
-      "description": "万能输入：自动判断是待办、Daily Note 还是笔记，确认前先预览，支持 #标签 和 @文件夹。",
-      "mode": "view",
-      "keywords": ["capture", "万能输入", "收集", "记录", "inbox", "快速", "智能"]
-    },
-    {
-      "name": "timeline",
-      "title": "Timeline",
-      "subtitle": "闪念贝壳",
-      "description": "时光机：输入「昨天 / 上周 / 10月3日」查看这段时间记过的笔记和待办，并一键复制为 Markdown 日报/周报。",
-      "mode": "view",
-      "keywords": ["timeline", "时间线", "时光机", "回顾", "周报", "日报", "review"]
+      "keywords": [
+        "todo",
+        "待办",
+        "任务",
+        "完成",
+        "task",
+        "list"
+      ]
     },
     {
       "name": "save-files",
@@ -110,7 +107,16 @@
       "subtitle": "闪念贝壳",
       "description": "把 Finder 中选中的图片、音频、PDF/Word/Excel 等文件保存为带附件的笔记，文档文字可被语义搜索。",
       "mode": "view",
-      "keywords": ["file", "文件", "附件", "pdf", "图片", "上传", "attach", "收纳"]
+      "keywords": [
+        "file",
+        "文件",
+        "附件",
+        "pdf",
+        "图片",
+        "上传",
+        "attach",
+        "收纳"
+      ]
     }
   ],
   "preferences": [
@@ -164,5 +170,7 @@
     "lint": "ray lint",
     "fix-lint": "ray lint --fix"
   },
-  "platforms": ["macOS"]
+  "platforms": [
+    "macOS"
+  ]
 }

@@ -61,7 +61,7 @@ export default function Command() {
         ...new Set([
           ...getDefaultTags(),
           ...values.tags
-            .split(/[,，]/)
+            .split(/[,，\s]+/)
             .map((t) => t.trim())
             .filter(Boolean),
         ]),

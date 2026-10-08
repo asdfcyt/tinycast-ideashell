@@ -259,6 +259,20 @@ export interface NoteAttachment {
   name: string;
 }
 
+/** 标签名里不能有空白，否则 App 会把它拆成多个 */
+export function cleanTag(tag: string): string {
+  return tag.replace(/^#+/, "").replace(/[\s#]+/g, "");
+}
+
+/** 在正文末尾追加一行 `#标签1 #标签2`（已在正文里出现的标签不重复追加） */
+export function withInlineTags(body: string, tags: string[]): string {
+  const clean = [...new Set(tags.map(cleanTag).filter(Boolean))];
+  const missing = clean.filter((t) => !new RegExp(`(^|\\s)#${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`).test(body));
+  if (missing.length === 0) return body;
+  const line = missing.map((t) => `#${t}`).join(" ");
+  return body.trim() ? `${body.replace(/\s+$/, "")}\n\n${line}` : line;
+}
+
 export async function createNote(opts: {
   title: string;
   body?: string;
@@ -269,9 +283,12 @@ export async function createNote(opts: {
   images?: NoteAttachment[];
   audios?: NoteAttachment[];
   documents?: NoteAttachment[];
+  /** 把标签以 `#标签` 写进正文末尾（闪念贝壳 App 只识别正文里的行内标签），默认开启 */
+  inlineTags?: boolean;
 }): Promise<string> {
   const args: Record<string, unknown> = { title: opts.title };
-  if (opts.body) args.content = opts.body;
+  const content = opts.inlineTags === false ? opts.body : withInlineTags(opts.body ?? "", opts.tags ?? []);
+  if (content) args.content = content;
   if (opts.summary) args.summary = opts.summary;
   if (opts.tags && opts.tags.length > 0) args.tags = opts.tags;
   if (opts.folder) args.folder_id = opts.folder;

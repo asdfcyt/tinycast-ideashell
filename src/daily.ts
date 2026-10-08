@@ -162,6 +162,7 @@ export async function appendToToday(text: string): Promise<void> {
     tags: ["daily-note"],
     folder: folderId || undefined,
     source: "tinycast",
+    inlineTags: false,
   });
 
   const idMatch = result.match(/[a-f0-9]{32}/i);
