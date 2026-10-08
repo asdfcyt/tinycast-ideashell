@@ -189,6 +189,12 @@ async function ensureInitialized(): Promise<void> {
   initialized = true;
 }
 
+/** Low-level tool call that returns the raw text result */
+export async function callToolRaw(name: string, args: Record<string, unknown>): Promise<string> {
+  const resp = await callTool(name, args);
+  return extractText(resp);
+}
+
 async function callTool(name: string, args: Record<string, unknown>): Promise<McpResponse> {
   await ensureInitialized();
   return mcpRequest({
@@ -297,14 +303,7 @@ export async function searchNotes(query: string): Promise<NoteInfo[]> {
   const resp = await callTool("note_search", { query });
   const text = extractText(resp);
   if (!text) return [];
-  try {
-    const parsed = JSON.parse(text);
-    if (Array.isArray(parsed)) return parsed;
-    if (parsed.notes) return parsed.notes;
-    return [{ id: "", title: text }];
-  } catch {
-    return [{ id: "", title: text }];
-  }
+  return parseNotesFromText(text);
 }
 
 export async function getRecentNotes(opts?: { limit?: number }): Promise<NoteInfo[]> {
@@ -313,33 +312,89 @@ export async function getRecentNotes(opts?: { limit?: number }): Promise<NoteInf
   const resp = await callTool("recent_notes", args);
   const text = extractText(resp);
   if (!text) return [];
-  try {
-    const parsed = JSON.parse(text);
-    if (Array.isArray(parsed)) return parsed;
-    if (parsed.notes) return parsed.notes;
-    return [];
-  } catch {
-    return [];
+  return parseNotesFromText(text);
+}
+
+/** Parse notes from the plain-text format returned by note_search / recent_notes */
+function parseNotesFromText(text: string): NoteInfo[] {
+  // Format: "# Title\nnote_id: xxx\ntime: ...\nsummary: ...\n..."
+  // Multiple notes separated by "---"
+  const blocks = text.split(/\n---\n/);
+  const notes: NoteInfo[] = [];
+
+  for (const block of blocks) {
+    const titleMatch = block.match(/^#\s+(.+)/m);
+    const idMatch = block.match(/note_id:\s*([a-f0-9]+)/i);
+    const summaryMatch = block.match(/summary:\s*(.+)/i);
+    const tagsMatch = block.match(/tags:\s*(.+)/i);
+    const timeMatch = block.match(/time:\s*(\S+)/i);
+
+    if (titleMatch || idMatch) {
+      notes.push({
+        id: idMatch ? idMatch[1] : "",
+        note_id: idMatch ? idMatch[1] : "",
+        title: titleMatch ? titleMatch[1] : "无标题",
+        summary: summaryMatch ? summaryMatch[1] : undefined,
+        tags: tagsMatch ? tagsMatch[1].split(",").map((t) => t.trim()) : undefined,
+        created_at: timeMatch ? timeMatch[1] : undefined,
+      });
+    }
   }
+
+  return notes;
 }
 
 export async function getNoteDetail(noteId: string): Promise<NoteDetail> {
-  const resp = await callTool("note_detail", { note_id: noteId });
-  return parseJsonResult<NoteDetail>(resp);
+  const resp = await callTool("note_detail", { note_id: noteId, scope: "full" });
+  const text = extractText(resp);
+
+  // note_detail returns plain text, not JSON. Parse what we can.
+  const titleMatch = text.match(/^#\s+(.+)/m);
+  const noteIdMatch = text.match(/note_id:\s*([a-f0-9]+)/i);
+  const tagsMatch = text.match(/tags:\s*(.+)/i);
+  const summaryMatch = text.match(/summary:\s*(.+)/i);
+
+  // Extract content from ## Memos section
+  const memosIdx = text.indexOf("## Memos");
+  let content = "";
+  if (memosIdx !== -1) {
+    const memosText = text.slice(memosIdx + 8).trim();
+    // Get content after the first memo header line "**Memo N: ...**\n"
+    const memoContentMatch = memosText.match(/\*\*Memo \d+:.*?\*\*\n?([\s\S]*)/);
+    if (memoContentMatch) {
+      content = memoContentMatch[1].trim();
+    }
+  }
+
+  return {
+    id: noteIdMatch ? noteIdMatch[1] : noteId,
+    note_id: noteIdMatch ? noteIdMatch[1] : noteId,
+    title: titleMatch ? titleMatch[1] : "",
+    summary: summaryMatch ? summaryMatch[1] : undefined,
+    tags: tagsMatch ? tagsMatch[1].split(",").map((t) => t.trim()) : undefined,
+    content,
+    body: content,
+  };
 }
 
 export async function listFolders(): Promise<FolderInfo[]> {
   const resp = await callTool("folder_list", {});
   const text = extractText(resp);
   if (!text) return [];
-  try {
-    const parsed = JSON.parse(text);
-    if (Array.isArray(parsed)) return parsed;
-    if (parsed.folders) return parsed.folders;
-    return [];
-  } catch {
-    return [];
+
+  // Parse plain text format: "- 📁 FolderName [folder_id: xxx]"
+  const folders: FolderInfo[] = [];
+  const regex = /-\s*(\S*)\s*(.+?)\s*\[folder_id:\s*([a-f0-9]+)\]/gi;
+  let m;
+  while ((m = regex.exec(text)) !== null) {
+    folders.push({
+      id: m[3],
+      folder_id: m[3],
+      emoji: m[1] || undefined,
+      name: m[2].trim(),
+    });
   }
+  return folders;
 }
 
 export async function createFolder(name: string): Promise<string> {
