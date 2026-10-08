@@ -84,9 +84,17 @@ export function parseRange(input: string, now = new Date()): TimeRange | null {
     const monday = day(today, -((today.getDay() + 6) % 7) - 7);
     r = span("上周", monday, day(monday, 7));
   } else if (/^(本月|这个月|当月)$/.test(t)) {
-    r = span("本月", new Date(today.getFullYear(), today.getMonth(), 1), new Date(today.getFullYear(), today.getMonth() + 1, 1));
+    r = span(
+      "本月",
+      new Date(today.getFullYear(), today.getMonth(), 1),
+      new Date(today.getFullYear(), today.getMonth() + 1, 1),
+    );
   } else if (/^(上月|上个月)$/.test(t)) {
-    r = span("上月", new Date(today.getFullYear(), today.getMonth() - 1, 1), new Date(today.getFullYear(), today.getMonth(), 1));
+    r = span(
+      "上月",
+      new Date(today.getFullYear(), today.getMonth() - 1, 1),
+      new Date(today.getFullYear(), today.getMonth(), 1),
+    );
   } else {
     const recent = t.match(/^(?:最近|近|过去)([\d一二两三四五六七八九十]+)(天|日|周|个月|月)$/);
     const weekday = t.match(/^(上|这|本)?(?:周|星期|礼拜)([一二三四五六日天])$/);

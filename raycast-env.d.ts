@@ -15,7 +15,9 @@ type ExtensionPreferences = {
   /** Daily Note Title Format - Daily Note 标题格式，使用 YYYY-MM-DD 等占位符 */
   "dailyNoteTitleFormat": string,
   /** Default Tags - 创建笔记时默认添加的标签（逗号分隔） */
-  "defaultTags": string
+  "defaultTags": string,
+  /** Templates - 自定义模板，多个用 ; 分隔。语法：名称:字段1,字段2+,字段3 #标签 @文件夹（字段名后加 + 为多行）。例：刻印:作品,印文,感受+,问题+ #篆刻 #练习 @篆刻练习; 体重:体重,备注 #体重。与内置模板（练习 / 阅读 / 决策 / 复盘 / 指标）同名则覆盖内置。 */
+  "templates": string
 }
 
 /** Preferences accessible in all the extension's commands */
@@ -24,6 +26,12 @@ declare type Preferences = ExtensionPreferences
 declare namespace Preferences {
   /** Preferences accessible in the `smart-capture` command */
   export type SmartCapture = ExtensionPreferences & {}
+  /** Preferences accessible in the `capture-form` command */
+  export type CaptureForm = ExtensionPreferences & {}
+  /** Preferences accessible in the `template-capture` command */
+  export type TemplateCapture = ExtensionPreferences & {}
+  /** Preferences accessible in the `clip-selection` command */
+  export type ClipSelection = ExtensionPreferences & {}
   /** Preferences accessible in the `notes` command */
   export type Notes = ExtensionPreferences & {}
   /** Preferences accessible in the `manage-todos` command */
@@ -35,15 +43,26 @@ declare namespace Preferences {
 declare namespace Arguments {
   /** Arguments passed to the `smart-capture` command */
   export type SmartCapture = {
-  /** 记点什么…（留空=剪贴板） */
-  "text": string,
-  /** 类型 */
-  "type": "auto" | "todo" | "daily" | "note" | "clipboard",
-  /** 标签/文件夹：#标签 @文件夹（留空=智能） */
-  "extra": string
+  /** 记点什么…（留空=表单） */
+  "text": string
+}
+  /** Arguments passed to the `capture-form` command */
+  export type CaptureForm = {}
+  /** Arguments passed to the `template-capture` command */
+  export type TemplateCapture = {
+  /** 模板名（留空=选择） */
+  "name": string
+}
+  /** Arguments passed to the `clip-selection` command */
+  export type ClipSelection = {
+  /** 批注 / #标签 / @文件夹（可选） */
+  "note": string
 }
   /** Arguments passed to the `notes` command */
-  export type Notes = {}
+  export type Notes = {
+  /** 搜索笔记…（昨天 / 日记 / 档案 名字） */
+  "query": string
+}
   /** Arguments passed to the `manage-todos` command */
   export type ManageTodos = {}
   /** Arguments passed to the `save-files` command */

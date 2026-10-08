@@ -24,11 +24,28 @@ export function useNoteDetails() {
     }
   }, []);
 
+  /** 后台预取一批笔记正文（不影响右侧预览的加载状态），限制并发 */
+  const prefetch = useCallback(async (ids: string[], concurrency = 4) => {
+    const queue = ids.filter((id) => id && !requested.current.has(id));
+    queue.forEach((id) => requested.current.add(id));
+    const worker = async () => {
+      for (let id = queue.shift(); id; id = queue.shift()) {
+        try {
+          const detail = await getNoteDetail(id);
+          setDetails((prev) => ({ ...prev, [id]: detail }));
+        } catch {
+          requested.current.delete(id);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+  }, []);
+
   const reset = useCallback(() => {
     requested.current.clear();
     setDetails({});
     setLoadingId(null);
   }, []);
 
-  return { details, loadingId, load, reset };
+  return { details, loadingId, load, prefetch, reset };
 }

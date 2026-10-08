@@ -1,13 +1,4 @@
-import {
-  Action,
-  ActionPanel,
-  Form,
-  getSelectedFinderItems,
-  popToRoot,
-  showHUD,
-  showToast,
-  Toast,
-} from "@raycast/api";
+import { Action, ActionPanel, Form, getSelectedFinderItems, popToRoot, showHUD, showToast, Toast } from "@raycast/api";
 import path from "path";
 import { useEffect, useState } from "react";
 import { createNote, FolderInfo, listFolders } from "./api";
@@ -51,11 +42,16 @@ export default function Command() {
       const prepared = await prepareFiles(picked);
       const names = [...prepared.images, ...prepared.audios, ...prepared.documents].map((a) => a.name);
       if (names.length === 0) {
-        throw new Error(prepared.skipped.length ? `没有可上传的文件：${prepared.skipped.join("；")}` : "没有可上传的文件");
+        throw new Error(
+          prepared.skipped.length ? `没有可上传的文件：${prepared.skipped.join("；")}` : "没有可上传的文件",
+        );
       }
 
       const firstName = path.basename(names[0], path.extname(names[0]));
-      const title = truncate(values.title.trim() || (names.length > 1 ? `${firstName} 等 ${names.length} 个文件` : firstName), 30);
+      const title = truncate(
+        values.title.trim() || (names.length > 1 ? `${firstName} 等 ${names.length} 个文件` : firstName),
+        30,
+      );
       const body = values.body.trim();
       const tags = [
         ...new Set([

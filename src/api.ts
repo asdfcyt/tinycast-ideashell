@@ -34,7 +34,11 @@ interface McpResponse {
   id: number;
   result?: {
     content?: Array<{ type: string; text?: string }>;
-    tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+    tools?: Array<{
+      name: string;
+      description: string;
+      inputSchema: Record<string, unknown>;
+    }>;
     isError?: boolean;
   };
   error?: {
@@ -45,7 +49,7 @@ interface McpResponse {
 
 let requestId = 0;
 let sessionId: string | null = null;
-let initialized = false;
+let initPromise: Promise<void> | null = null;
 
 async function mcpRequest(body: McpToolCallRequest | McpToolListRequest): Promise<McpResponse> {
   const { apiKey } = getPrefs();
@@ -108,9 +112,18 @@ async function mcpRequest(body: McpToolCallRequest | McpToolListRequest): Promis
   return data;
 }
 
-async function ensureInitialized(): Promise<void> {
-  if (initialized) return;
+/** 握手只做一次；并发调用共享同一个 Promise（warmUp 与真正的调用不会各握手一次） */
+function ensureInitialized(): Promise<void> {
+  if (!initPromise) {
+    initPromise = doInitialize().catch((e) => {
+      initPromise = null;
+      throw e;
+    });
+  }
+  return initPromise;
+}
 
+async function doInitialize(): Promise<void> {
   const initBody = {
     jsonrpc: "2.0" as const,
     id: ++requestId,
@@ -177,7 +190,8 @@ async function ensureInitialized(): Promise<void> {
     notifyHeaders["Mcp-Session-Id"] = sessionId;
   }
 
-  await fetch(MCP_ENDPOINT, {
+  // 服务端不要求等这条通知返回，发出去即可，省一次往返
+  void fetch(MCP_ENDPOINT, {
     method: "POST",
     headers: notifyHeaders,
     body: JSON.stringify({
@@ -185,8 +199,11 @@ async function ensureInitialized(): Promise<void> {
       method: "notifications/initialized",
     }),
   }).catch(() => {});
+}
 
-  initialized = true;
+/** 提前完成 MCP 握手（initialize + initialized 通知，约 2 次往返），保存时就不用再等；失败会静默，真正调用时再报错 */
+export function warmUp(): void {
+  ensureInitialized().catch(() => {});
 }
 
 /** Low-level tool call that returns the raw text result */
@@ -232,6 +249,8 @@ export interface NoteInfo {
   updatedAt?: string;
   created_at?: string;
   updated_at?: string;
+  /** 接口返回的原始文本块（note_search 含完整正文），仅解析自文本时有值 */
+  text?: string;
 }
 
 export interface NoteDetail extends NoteInfo {
@@ -267,7 +286,9 @@ export function cleanTag(tag: string): string {
 /** 在正文末尾追加一行 `#标签1 #标签2`（已在正文里出现的标签不重复追加） */
 export function withInlineTags(body: string, tags: string[]): string {
   const clean = [...new Set(tags.map(cleanTag).filter(Boolean))];
-  const missing = clean.filter((t) => !new RegExp(`(^|\\s)#${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`).test(body));
+  const missing = clean.filter(
+    (t) => !new RegExp(`(^|\\s)#${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`).test(body),
+  );
   if (missing.length === 0) return body;
   const line = missing.map((t) => `#${t}`).join(" ");
   return body.trim() ? `${body.replace(/\s+$/, "")}\n\n${line}` : line;
@@ -326,8 +347,11 @@ export async function updateNote(opts: {
   return extractText(resp);
 }
 
-export async function searchNotes(query: string): Promise<NoteInfo[]> {
-  const resp = await callTool("note_search", { query });
+export async function searchNotes(query: string, limit = 15): Promise<NoteInfo[]> {
+  const resp = await callTool("note_search", {
+    query,
+    limit: Math.min(Math.max(limit, 1), 20),
+  });
   const text = extractText(resp);
   if (!text) return [];
   return parseNotesFromText(text);
@@ -403,7 +427,12 @@ export async function getNotesByFolder(folderId: string): Promise<NoteInfo[]> {
   const regex = /^-\s+(.+?)\s*\[note_id:\s*([a-f0-9]+)\]\s*$/gm;
   let m;
   while ((m = regex.exec(text)) !== null) {
-    notes.push({ id: m[2], note_id: m[2], title: m[1].trim(), folder_id: folderId });
+    notes.push({
+      id: m[2],
+      note_id: m[2],
+      title: m[1].trim(),
+      folder_id: folderId,
+    });
   }
   return notes;
 }
@@ -451,16 +480,54 @@ function parseNotesFromText(text: string): NoteInfo[] {
       note_id: m[2],
       title: title || "无标题",
       summary,
-      tags: tagsLine ? tagsLine.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
+      tags: tagsLine
+        ? tagsLine
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean)
+        : undefined,
       created_at: time,
+      text: block,
     });
   });
 
   return notes;
 }
 
+// ── 说话人 ──
+
+export interface Speaker {
+  id: string;
+  name: string;
+  self?: boolean;
+}
+
+export async function listSpeakers(): Promise<Speaker[]> {
+  const resp = await callTool("speaker_list", {});
+  if (resp.result?.isError) return [];
+  try {
+    const data = JSON.parse(extractText(resp));
+    return Array.isArray(data) ? (data as Speaker[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 说话人出现过的笔记（录音转写里有此人发言），按时间倒序 */
+export async function searchBySpeaker(speakerIds: string[], limit = 20): Promise<NoteInfo[]> {
+  const resp = await callTool("search_by_speaker", {
+    speaker_ids: speakerIds,
+    limit: Math.min(Math.max(limit, 1), 20),
+  });
+  if (resp.result?.isError) return [];
+  return parseNotesFromText(extractText(resp));
+}
+
 export async function getNoteDetail(noteId: string): Promise<NoteDetail> {
-  const resp = await callTool("note_detail", { note_id: noteId, scope: "full" });
+  const resp = await callTool("note_detail", {
+    note_id: noteId,
+    scope: "full",
+  });
   const text = extractText(resp);
 
   // note_detail returns plain text, not JSON. Parse what we can.
@@ -490,10 +557,16 @@ export async function getNoteDetail(noteId: string): Promise<NoteDetail> {
     note_id: noteIdMatch ? noteIdMatch[1] : noteId,
     title: titleMatch ? titleMatch[1] : "",
     summary: summaryMatch ? summaryMatch[1] : undefined,
-    tags: tagsMatch ? tagsMatch[1].split(",").map((t) => t.trim()).filter(Boolean) : undefined,
+    tags: tagsMatch
+      ? tagsMatch[1]
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : undefined,
     created_at: timeMatch ? timeMatch[1] : undefined,
     content,
     body: content,
+    text,
   };
 }
 
@@ -569,15 +642,27 @@ export async function listTodos(opts?: {
 export async function createTodos(
   items: Array<{ content: string; date?: string; time?: string }>,
 ): Promise<TodoItem[]> {
-  const resp = await callTool("todo_create", { items, timezone: localTimezone() });
+  const resp = await callTool("todo_create", {
+    items,
+    timezone: localTimezone(),
+  });
   if (resp.result?.isError) throw new Error(extractText(resp) || "todo_create failed");
   return parseTodos(extractText(resp));
 }
 
 export async function updateTodos(
-  items: Array<{ todo_id: string; content?: string; date?: string; time?: string; is_completed?: boolean }>,
+  items: Array<{
+    todo_id: string;
+    content?: string;
+    date?: string;
+    time?: string;
+    is_completed?: boolean;
+  }>,
 ): Promise<TodoItem[]> {
-  const resp = await callTool("todo_update", { items, timezone: localTimezone() });
+  const resp = await callTool("todo_update", {
+    items,
+    timezone: localTimezone(),
+  });
   if (resp.result?.isError) throw new Error(extractText(resp) || "todo_update failed");
   return parseTodos(extractText(resp));
 }

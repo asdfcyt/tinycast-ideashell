@@ -16,10 +16,7 @@ export function getDailyNoteTitle(date?: Date): string {
   const mm = (d.getMonth() + 1).toString().padStart(2, "0");
   const dd = d.getDate().toString().padStart(2, "0");
 
-  return format
-    .replace("YYYY", yyyy)
-    .replace("MM", mm)
-    .replace("DD", dd);
+  return format.replace("YYYY", yyyy).replace("MM", mm).replace("DD", dd);
 }
 
 export function getDefaultTags(): string[] {

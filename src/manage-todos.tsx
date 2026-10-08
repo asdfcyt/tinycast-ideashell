@@ -42,9 +42,21 @@ function buildGroups(todos: TodoItem[], done: TodoItem[]): Group[] {
   };
 
   const sorted = [...todos].sort(byDateTime);
-  push("overdue", "已逾期", sorted.filter((t) => t.date && t.date < today));
-  push("today", `今天 · ${dateLabel(today)}`, sorted.filter((t) => t.date === today));
-  push("tomorrow", `明天 · ${dateLabel(tomorrow)}`, sorted.filter((t) => t.date === tomorrow));
+  push(
+    "overdue",
+    "已逾期",
+    sorted.filter((t) => t.date && t.date < today),
+  );
+  push(
+    "today",
+    `今天 · ${dateLabel(today)}`,
+    sorted.filter((t) => t.date === today),
+  );
+  push(
+    "tomorrow",
+    `明天 · ${dateLabel(tomorrow)}`,
+    sorted.filter((t) => t.date === tomorrow),
+  );
 
   const later = sorted.filter((t) => t.date && t.date > tomorrow);
   const laterDates = [...new Set(later.map((t) => t.date as string))];
@@ -56,7 +68,11 @@ function buildGroups(todos: TodoItem[], done: TodoItem[]): Group[] {
     ),
   );
 
-  push("undated", "无日期", sorted.filter((t) => !t.date));
+  push(
+    "undated",
+    "无日期",
+    sorted.filter((t) => !t.date),
+  );
   push("done", "最近已完成", done);
   return groups;
 }
@@ -165,9 +181,7 @@ export default function Command() {
                 }
                 accessories={[
                   ...(todo.time ? [{ tag: { value: todo.time, color: isOverdue ? Color.Red : Color.Blue } }] : []),
-                  ...(todo.date && (group.key === "overdue" || group.key === "done")
-                    ? [{ text: todo.date }]
-                    : []),
+                  ...(todo.date && (group.key === "overdue" || group.key === "done") ? [{ text: todo.date }] : []),
                 ]}
                 actions={
                   <ActionPanel>

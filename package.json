@@ -14,32 +14,13 @@
       "name": "smart-capture",
       "title": "Smart Capture",
       "subtitle": "闪念贝壳",
-      "description": "万能输入：在搜索栏直接输入，回车即自动保存为待办 / Daily Note / 笔记；正文留空则保存剪贴板。类型、标签、文件夹默认智能识别，也可手动指定。",
+      "description": "万能输入：在搜索栏输入后回车，直接保存为待办 / Daily Note / 笔记（支持 #标签、@文件夹，以及「待办」「日记」「笔记」前缀），不出现任何界面；什么都不输入直接回车则打开表单，边输入边自动识别类型、标签、文件夹。",
       "mode": "no-view",
       "arguments": [
         {
           "name": "text",
           "type": "text",
-          "placeholder": "记点什么…（留空=剪贴板）",
-          "required": false
-        },
-        {
-          "name": "type",
-          "type": "dropdown",
-          "placeholder": "类型",
-          "required": false,
-          "data": [
-            { "title": "智能识别", "value": "auto" },
-            { "title": "待办", "value": "todo" },
-            { "title": "Daily Note", "value": "daily" },
-            { "title": "笔记", "value": "note" },
-            { "title": "剪贴板 → 笔记", "value": "clipboard" }
-          ]
-        },
-        {
-          "name": "extra",
-          "type": "text",
-          "placeholder": "标签/文件夹：#标签 @文件夹（留空=智能）",
+          "placeholder": "记点什么…（留空=表单）",
           "required": false
         }
       ],
@@ -62,10 +43,79 @@
       ]
     },
     {
+      "name": "capture-form",
+      "title": "Smart Capture Form",
+      "subtitle": "闪念贝壳",
+      "description": "万能输入的表单：输入正文时自动识别并填好类型 / 标签 / 文件夹。通常由 Smart Capture 在什么都没输入时自动打开，无需单独启用。",
+      "mode": "view",
+      "disabledByDefault": true,
+      "keywords": [
+        "capture",
+        "表单",
+        "form",
+        "记录"
+      ]
+    },
+    {
+      "name": "template-capture",
+      "title": "Template Capture",
+      "subtitle": "闪念贝壳",
+      "description": "模板录入：按模板填写结构化表单（练习 / 阅读 / 决策 / 复盘 / 指标，或自己在偏好设置里定义），保存为格式固定的笔记，标题统一为「模板名 日期」。",
+      "mode": "view",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "text",
+          "placeholder": "模板名（留空=选择）",
+          "required": false
+        }
+      ],
+      "keywords": [
+        "模板",
+        "template",
+        "表单",
+        "form",
+        "练习",
+        "阅读",
+        "决策",
+        "复盘",
+        "指标",
+        "结构化"
+      ]
+    },
+    {
+      "name": "clip-selection",
+      "title": "Clip Selection",
+      "subtitle": "闪念贝壳",
+      "description": "摘录选中内容：把选中的文字连同当前浏览器页面（标题 / 链接）和来源应用，一次存成带出处的笔记；没有选中文字时收藏当前页面。可绑定全局快捷键。批注里可写想法、#标签、@文件夹。",
+      "mode": "no-view",
+      "arguments": [
+        {
+          "name": "note",
+          "type": "text",
+          "placeholder": "批注 / #标签 / @文件夹（可选）",
+          "required": false
+        }
+      ],
+      "keywords": [
+        "摘录",
+        "excerpt",
+        "clip",
+        "网页",
+        "文章",
+        "收藏",
+        "剪藏",
+        "选中",
+        "selection",
+        "bookmark",
+        "web"
+      ]
+    },
+    {
       "name": "notes",
       "title": "Notes",
       "subtitle": "闪念贝壳",
-      "description": "时间线、语义搜索与 Daily Note 合一：留空看最近 7 天；输入「昨天 / 上周 / 10月3日」看时间线并复制周报；输入「日记」浏览 Daily Note；输入其他文字做语义搜索。",
+      "description": "时间线、语义搜索、Daily Note 与人物 / 主题档案合一：留空看今天 / 昨天 / 最近 7 天；输入「昨天 / 上周 / 10月3日」看时间线；输入「日记」浏览 Daily Note；输入「档案 名字」生成人物 / 主题档案；其他文字做语义搜索。",
       "mode": "view",
       "keywords": [
         "notes",
@@ -83,7 +133,21 @@
         "查看",
         "browse",
         "find",
-        "查找"
+        "查找",
+        "档案",
+        "简报",
+        "人物",
+        "主题",
+        "dossier",
+        "profile"
+      ],
+      "arguments": [
+        {
+          "name": "query",
+          "type": "text",
+          "placeholder": "搜索笔记…（昨天 / 日记 / 档案 名字）",
+          "required": false
+        }
       ]
     },
     {
@@ -147,6 +211,14 @@
       "name": "defaultTags",
       "title": "Default Tags",
       "description": "创建笔记时默认添加的标签（逗号分隔）",
+      "type": "textfield",
+      "required": false,
+      "default": ""
+    },
+    {
+      "name": "templates",
+      "title": "Templates",
+      "description": "自定义模板，多个用 ; 分隔。语法：名称:字段1,字段2+,字段3 #标签 @文件夹（字段名后加 + 为多行）。例：刻印:作品,印文,感受+,问题+ #篆刻 #练习 @篆刻练习; 体重:体重,备注 #体重。与内置模板（练习 / 阅读 / 决策 / 复盘 / 指标）同名则覆盖内置。",
       "type": "textfield",
       "required": false,
       "default": ""

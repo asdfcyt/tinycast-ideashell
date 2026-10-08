@@ -9,6 +9,13 @@ export interface DayBucket {
   todos: TodoItem[];
 }
 
+/** 上一个等长周期的统计，用于对比 */
+export interface PrevStats {
+  noteCount: number;
+  todoDone: number;
+  todoTotal: number;
+}
+
 export interface TimelineData {
   range: TimeRange;
   days: DayBucket[];
@@ -16,6 +23,7 @@ export interface TimelineData {
   todoDone: number;
   todoTotal: number;
   truncated: boolean;
+  previous?: PrevStats;
 }
 
 export function localDay(iso?: string): string {
@@ -36,10 +44,11 @@ export async function loadTimeline(range: TimeRange): Promise<TimelineData> {
   const from = formatDate(range.start);
   const to = formatDate(lastDayOf(range));
 
-  const [{ notes, truncated }, open, done] = await Promise.all([
+  const [{ notes, truncated }, open, done, previous] = await Promise.all([
     getNotesInRange(range.start, range.end),
     listTodos({ isCompleted: false, dateFrom: from, dateTo: to, limit: 200 }),
     listTodos({ isCompleted: true, dateFrom: from, dateTo: to, limit: 200 }),
+    loadPrevious(range),
   ]);
 
   // 无日期待办不属于任何一天；区间外的也丢弃（接口对日期过滤的边界行为未明确，这里再兜底过滤一次）
@@ -49,7 +58,12 @@ export async function loadTimeline(range: TimeRange): Promise<TimelineData> {
   const bucket = (date: string): DayBucket => {
     let b = map.get(date);
     if (!b) {
-      b = { date, title: `${date} ${weekdayName(new Date(`${date}T00:00:00`))}`, notes: [], todos: [] };
+      b = {
+        date,
+        title: `${date} ${weekdayName(new Date(`${date}T00:00:00`))}`,
+        notes: [],
+        todos: [],
+      };
       map.set(date, b);
     }
     return b;
@@ -71,7 +85,32 @@ export async function loadTimeline(range: TimeRange): Promise<TimelineData> {
     todoDone: todos.filter((t) => t.is_completed).length,
     todoTotal: todos.length,
     truncated,
+    previous,
   };
+}
+
+/** 上一个等长周期的数量统计；失败时返回 undefined（不影响主流程） */
+async function loadPrevious(range: TimeRange): Promise<PrevStats | undefined> {
+  try {
+    const span = range.end.getTime() - range.start.getTime();
+    const start = new Date(range.start.getTime() - span);
+    const end = range.start;
+    const from = formatDate(start);
+    const to = formatDate(new Date(end.getTime() - 1));
+    const [{ notes }, open, done] = await Promise.all([
+      getNotesInRange(start, end),
+      listTodos({ isCompleted: false, dateFrom: from, dateTo: to, limit: 200 }),
+      listTodos({ isCompleted: true, dateFrom: from, dateTo: to, limit: 200 }),
+    ]);
+    const todos = [...open, ...done].filter((t) => t.date && t.date >= from && t.date <= to);
+    return {
+      noteCount: notes.length,
+      todoDone: todos.filter((t) => t.is_completed).length,
+      todoTotal: todos.length,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 /** 生成可直接贴进日报/周报的 Markdown */
@@ -101,4 +140,18 @@ export function buildReport(data: TimelineData): string {
     }
   }
   return lines.join("\n");
+}
+
+/** 从时间线里截取某一天，作为单独的「概览」条目（今天 / 昨天） */
+export function sliceDay(data: TimelineData, date: string, label: string): TimelineData {
+  const days = data.days.filter((d) => d.date === date);
+  const todos = days.flatMap((d) => d.todos);
+  return {
+    range: { ...data.range, label },
+    days,
+    noteCount: days.reduce((s, d) => s + d.notes.length, 0),
+    todoDone: todos.filter((t) => t.is_completed).length,
+    todoTotal: todos.length,
+    truncated: false,
+  };
 }

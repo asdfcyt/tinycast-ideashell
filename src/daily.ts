@@ -123,16 +123,24 @@ function todayKey(): string {
 async function findTodayNote(): Promise<{ noteId: string; content: string } | null> {
   const key = todayKey();
 
+  // 快路径：本机今天已经写过，直接用缓存的 note_id（只需 1 次读取），省掉两次文件夹查询
+  const cached = (await LocalStorage.getItem<string>(key)) || "";
+  if (cached) {
+    try {
+      const detail = await getNoteDetail(cached);
+      return { noteId: cached, content: detail.content || detail.body || "" };
+    } catch {
+      await LocalStorage.removeItem(key);
+    }
+  }
+
+  // 慢路径：按文件夹里的标题日期查找（换设备 / 清缓存也不会重复创建）
   let noteId = "";
   try {
     const found = await findDailyNoteByDate(formatDate(new Date()));
     if (found) noteId = found.note_id || found.id;
   } catch {
-    // 文件夹查询失败时回退到缓存
-  }
-
-  if (!noteId) {
-    noteId = (await LocalStorage.getItem<string>(key)) || "";
+    // 文件夹查询失败
   }
   if (!noteId) return null;
 
@@ -141,7 +149,6 @@ async function findTodayNote(): Promise<{ noteId: string; content: string } | nu
     await LocalStorage.setItem(key, noteId);
     return { noteId, content: detail.content || detail.body || "" };
   } catch {
-    await LocalStorage.removeItem(key);
     return null;
   }
 }
