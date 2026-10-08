@@ -1,6 +1,6 @@
 import { Action, ActionPanel, Detail, List, showToast, Toast, Icon } from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
-import { searchNotes, getRecentNotes, getNoteDetail, NoteInfo, NoteDetail } from "./api";
+import { searchNotes, getRecentNotes, getNoteDetail, NoteInfo, NoteDetail, getNoteId } from "./api";
 import { truncate } from "./utils";
 
 export default function Command() {
@@ -44,36 +44,39 @@ export default function Command() {
       throttle
     >
       <List.Section title={searchText ? `搜索: ${searchText}` : "最近的笔记"} subtitle={`${notes.length} 条`}>
-        {notes.map((note, index) => (
-          <List.Item
-            key={note.id || `note-${index}`}
-            title={note.title || "无标题"}
-            subtitle={note.summary ? truncate(note.summary, 60) : ""}
-            icon={Icon.Document}
-            accessories={[
-              ...(note.folder ? [{ tag: `📁 ${note.folder}` }] : []),
-              ...(note.tags
-                ? note.tags.slice(0, 3).map((t) => ({ tag: t }))
-                : []),
-            ]}
-            actions={
-              <ActionPanel>
-                {note.id && (
-                  <Action.Push
-                    title="查看详情"
-                    icon={Icon.Eye}
-                    target={<NoteDetailView noteId={note.id} title={note.title} />}
+        {notes.map((note, index) => {
+          const noteId = getNoteId(note);
+          return (
+            <List.Item
+              key={noteId || `note-${index}`}
+              title={note.title || "无标题"}
+              subtitle={note.summary ? truncate(note.summary, 60) : ""}
+              icon={Icon.Document}
+              accessories={[
+                ...(note.folder ? [{ tag: `📁 ${note.folder}` }] : []),
+                ...(note.tags
+                  ? note.tags.slice(0, 3).map((t) => ({ tag: t }))
+                  : []),
+              ]}
+              actions={
+                <ActionPanel>
+                  {noteId && (
+                    <Action.Push
+                      title="查看详情"
+                      icon={Icon.Eye}
+                      target={<NoteDetailView noteId={noteId} title={note.title} />}
+                    />
+                  )}
+                  <Action.CopyToClipboard
+                    title="复制标题"
+                    content={note.title}
+                    shortcut={{ modifiers: ["cmd"], key: "c" }}
                   />
-                )}
-                <Action.CopyToClipboard
-                  title="复制标题"
-                  content={note.title}
-                  shortcut={{ modifiers: ["cmd"], key: "c" }}
-                />
-              </ActionPanel>
-            }
-          />
-        ))}
+                </ActionPanel>
+              }
+            />
+          );
+        })}
       </List.Section>
       {notes.length === 0 && !isLoading && (
         <List.EmptyView
@@ -103,8 +106,9 @@ function NoteDetailView({ noteId, title }: { noteId: string; title: string }) {
       .finally(() => setIsLoading(false));
   }, [noteId]);
 
+  const noteBody = detail ? (detail.content || detail.body || "") : "";
   const markdown = detail
-    ? `# ${detail.title}\n\n${detail.body || "*（空白笔记）*"}`
+    ? `# ${detail.title}\n\n${noteBody || "*（空白笔记）*"}`
     : `# ${title}\n\n加载中...`;
 
   return (
@@ -123,17 +127,17 @@ function NoteDetailView({ noteId, title }: { noteId: string; title: string }) {
               </Detail.Metadata.TagList>
             )}
             {detail.folder && <Detail.Metadata.Label title="文件夹" text={detail.folder} />}
-            {detail.createdAt && <Detail.Metadata.Label title="创建时间" text={detail.createdAt} />}
-            {detail.updatedAt && <Detail.Metadata.Label title="更新时间" text={detail.updatedAt} />}
+            {(detail.createdAt || detail.created_at) && <Detail.Metadata.Label title="创建时间" text={detail.createdAt || detail.created_at || ""} />}
+            {(detail.updatedAt || detail.updated_at) && <Detail.Metadata.Label title="更新时间" text={detail.updatedAt || detail.updated_at || ""} />}
           </Detail.Metadata>
         ) : undefined
       }
       actions={
         <ActionPanel>
-          {detail?.body && (
+          {noteBody && (
             <Action.CopyToClipboard
               title="复制正文"
-              content={detail.body}
+              content={noteBody}
               shortcut={{ modifiers: ["cmd"], key: "c" }}
             />
           )}

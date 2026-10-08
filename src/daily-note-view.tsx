@@ -1,6 +1,6 @@
 import { Action, ActionPanel, Detail, List, showToast, Toast, Icon } from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
-import { searchNotes, getNoteDetail, NoteInfo, NoteDetail } from "./api";
+import { searchNotes, getNoteDetail, NoteInfo, NoteDetail, getNoteId } from "./api";
 import { getDailyNoteTitle, formatDate } from "./utils";
 
 export default function Command() {
@@ -40,14 +40,15 @@ export default function Command() {
   return (
     <List isLoading={isLoading} searchBarPlaceholder="搜索 Daily Note...">
       <List.Section title="Daily Notes">
-        {notes.map((note) => {
+        {notes.map((note, index) => {
+          const noteId = getNoteId(note);
           const dateMatch = note.title.match(/\d{4}-\d{2}-\d{2}/);
           const dateStr = dateMatch ? dateMatch[0] : "";
           const isToday = dateStr === todayDate;
 
           return (
             <List.Item
-              key={note.id}
+              key={noteId || `note-${index}`}
               title={note.title}
               subtitle={note.summary || ""}
               icon={isToday ? Icon.Calendar : Icon.Document}
@@ -59,11 +60,13 @@ export default function Command() {
               ]}
               actions={
                 <ActionPanel>
-                  <Action.Push
-                    title="查看详情"
-                    icon={Icon.Eye}
-                    target={<DailyNoteDetail noteId={note.id} title={note.title} />}
-                  />
+                  {noteId && (
+                    <Action.Push
+                      title="查看详情"
+                      icon={Icon.Eye}
+                      target={<DailyNoteDetail noteId={noteId} title={note.title} />}
+                    />
+                  )}
                 </ActionPanel>
               }
             />
@@ -98,8 +101,9 @@ function DailyNoteDetail({ noteId, title }: { noteId: string; title: string }) {
       .finally(() => setIsLoading(false));
   }, [noteId]);
 
+  const noteBody = detail ? (detail.content || detail.body || "") : "";
   const markdown = detail
-    ? `# ${detail.title}\n\n${detail.body || "*（空白笔记）*"}`
+    ? `# ${detail.title}\n\n${noteBody || "*（空白笔记）*"}`
     : `# ${title}\n\n加载中...`;
 
   return (

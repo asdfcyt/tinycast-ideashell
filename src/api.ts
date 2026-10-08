@@ -216,22 +216,33 @@ function parseJsonResult<T>(resp: McpResponse): T {
 
 export interface NoteInfo {
   id: string;
+  note_id?: string;
   title: string;
   summary?: string;
   tags?: string[];
   folder?: string;
+  folder_id?: string;
   createdAt?: string;
   updatedAt?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface NoteDetail extends NoteInfo {
   body?: string;
+  content?: string;
 }
 
 export interface FolderInfo {
   id: string;
+  folder_id?: string;
   name: string;
   emoji?: string;
+}
+
+/** Get the effective ID from a note (handles both id and note_id fields) */
+export function getNoteId(note: NoteInfo): string {
+  return note.note_id || note.id || "";
 }
 
 // ── Public API ──
@@ -242,68 +253,90 @@ export async function createNote(opts: {
   summary?: string;
   tags?: string[];
   folder?: string;
+  source?: string;
 }): Promise<string> {
   const args: Record<string, unknown> = {
     title: opts.title,
-    body: opts.body,
+    content: opts.body,
   };
   if (opts.summary) args.summary = opts.summary;
   if (opts.tags && opts.tags.length > 0) args.tags = opts.tags;
-  if (opts.folder) args.folder = opts.folder;
+  if (opts.folder) args.folder_id = opts.folder;
+  if (opts.source) args.source = opts.source;
 
   const resp = await callTool("note_create", args);
-  const text = extractText(resp);
-  return text;
+  if (resp.result?.isError) {
+    const errMsg = extractText(resp);
+    throw new Error(errMsg || "note_create failed");
+  }
+  return extractText(resp);
 }
 
 export async function updateNote(opts: {
-  id: string;
+  noteId: string;
   title?: string;
   body?: string;
   summary?: string;
   tags?: string[];
 }): Promise<string> {
-  const args: Record<string, unknown> = { id: opts.id };
+  const args: Record<string, unknown> = { note_id: opts.noteId };
   if (opts.title !== undefined) args.title = opts.title;
-  if (opts.body !== undefined) args.body = opts.body;
+  if (opts.body !== undefined) args.content = opts.body;
   if (opts.summary !== undefined) args.summary = opts.summary;
   if (opts.tags !== undefined) args.tags = opts.tags;
 
   const resp = await callTool("note_update", args);
+  if (resp.result?.isError) {
+    const errMsg = extractText(resp);
+    throw new Error(errMsg || "note_update failed");
+  }
   return extractText(resp);
 }
 
 export async function searchNotes(query: string): Promise<NoteInfo[]> {
   const resp = await callTool("note_search", { query });
+  const text = extractText(resp);
+  if (!text) return [];
   try {
-    return parseJsonResult<NoteInfo[]>(resp);
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed.notes) return parsed.notes;
+    return [{ id: "", title: text }];
   } catch {
-    const text = extractText(resp);
-    if (!text) return [];
     return [{ id: "", title: text }];
   }
 }
 
-export async function getRecentNotes(opts?: { days?: number }): Promise<NoteInfo[]> {
+export async function getRecentNotes(opts?: { limit?: number }): Promise<NoteInfo[]> {
   const args: Record<string, unknown> = {};
-  if (opts?.days) args.days = opts.days;
+  if (opts?.limit) args.limit = opts.limit;
   const resp = await callTool("recent_notes", args);
+  const text = extractText(resp);
+  if (!text) return [];
   try {
-    return parseJsonResult<NoteInfo[]>(resp);
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed.notes) return parsed.notes;
+    return [];
   } catch {
     return [];
   }
 }
 
-export async function getNoteDetail(id: string): Promise<NoteDetail> {
-  const resp = await callTool("note_detail", { id });
+export async function getNoteDetail(noteId: string): Promise<NoteDetail> {
+  const resp = await callTool("note_detail", { note_id: noteId });
   return parseJsonResult<NoteDetail>(resp);
 }
 
 export async function listFolders(): Promise<FolderInfo[]> {
   const resp = await callTool("folder_list", {});
+  const text = extractText(resp);
+  if (!text) return [];
   try {
-    return parseJsonResult<FolderInfo[]>(resp);
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed.folders) return parsed.folders;
+    return [];
   } catch {
     return [];
   }
@@ -312,15 +345,4 @@ export async function listFolders(): Promise<FolderInfo[]> {
 export async function createFolder(name: string): Promise<string> {
   const resp = await callTool("folder_create", { name });
   return extractText(resp);
-}
-
-export async function listTodos(opts?: { completed?: boolean }): Promise<unknown[]> {
-  const args: Record<string, unknown> = {};
-  if (opts?.completed !== undefined) args.completed = opts.completed;
-  const resp = await callTool("todo_list", args);
-  try {
-    return parseJsonResult<unknown[]>(resp);
-  } catch {
-    return [];
-  }
 }

@@ -1,5 +1,5 @@
 import { showHUD, showToast, Toast, LaunchProps, LocalStorage } from "@raycast/api";
-import { createNote, updateNote, searchNotes, getNoteDetail, getPrefs } from "./api";
+import { createNote, updateNote, searchNotes, getNoteDetail, getPrefs, getNoteId } from "./api";
 import { getDailyNoteTitle, nowTimestamp, truncate, formatDate } from "./utils";
 
 interface DailyNoteArgs {
@@ -23,7 +23,7 @@ async function findOrCreateDailyNote(date?: Date): Promise<{ id: string; isNew: 
   if (cachedId) {
     try {
       const detail = await getNoteDetail(cachedId);
-      return { id: cachedId, isNew: false, body: detail.body || "" };
+      return { id: cachedId, isNew: false, body: detail.content || detail.body || "" };
     } catch {
       await LocalStorage.removeItem(key);
     }
@@ -31,14 +31,15 @@ async function findOrCreateDailyNote(date?: Date): Promise<{ id: string; isNew: 
 
   const results = await searchNotes(title);
   const match = results.find((n) => n.title === title);
+  const matchId = match ? getNoteId(match) : "";
 
-  if (match && match.id) {
-    await LocalStorage.setItem(key, match.id);
+  if (matchId) {
+    await LocalStorage.setItem(key, matchId);
     try {
-      const detail = await getNoteDetail(match.id);
-      return { id: match.id, isNew: false, body: detail.body || "" };
+      const detail = await getNoteDetail(matchId);
+      return { id: matchId, isNew: false, body: detail.content || detail.body || "" };
     } catch {
-      return { id: match.id, isNew: false, body: "" };
+      return { id: matchId, isNew: false, body: "" };
     }
   }
 
@@ -51,17 +52,25 @@ async function findOrCreateDailyNote(date?: Date): Promise<{ id: string; isNew: 
     folder: dailyNoteFolder || undefined,
   });
 
-  const idMatch = result.match(/[a-f0-9]{24,}/i);
-  const noteId = idMatch ? idMatch[0] : "";
+  // Extract note_id from the JSON response
+  let noteId = "";
+  try {
+    const parsed = JSON.parse(result);
+    noteId = parsed.note_id || "";
+  } catch {
+    const idMatch = result.match(/[a-f0-9]{24,}/i);
+    noteId = idMatch ? idMatch[0] : "";
+  }
 
   if (noteId) {
     await LocalStorage.setItem(key, noteId);
   } else {
     const newResults = await searchNotes(title);
     const newMatch = newResults.find((n) => n.title === title);
-    if (newMatch?.id) {
-      await LocalStorage.setItem(key, newMatch.id);
-      return { id: newMatch.id, isNew: true, body: initialBody };
+    const newMatchId = newMatch ? getNoteId(newMatch) : "";
+    if (newMatchId) {
+      await LocalStorage.setItem(key, newMatchId);
+      return { id: newMatchId, isNew: true, body: initialBody };
     }
   }
 
@@ -85,7 +94,7 @@ export default async function Command(props: LaunchProps<{ arguments: DailyNoteA
     const updatedBody = body + newEntry;
 
     if (id) {
-      await updateNote({ id, body: updatedBody });
+      await updateNote({ noteId: id, body: updatedBody });
     } else {
       const title = getDailyNoteTitle();
       const { dailyNoteFolder } = getPrefs();
