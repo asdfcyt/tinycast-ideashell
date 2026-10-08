@@ -39,6 +39,50 @@ function readBrowserTab(app: string): Tab | null | "denied" {
   }
 }
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+let selectionError = "";
+
+/**
+ * 取选中文字，三步：
+ * 1. Tinycast 原生 getSelectedText（读辅助功能的 AXSelectedText）。Chrome 等浏览器第一次被查询时才开始构建网页的
+ *    辅助功能树，首次常常取不到，所以隔一会儿重试几次；
+ * 2. 仍然取不到 → 模拟 ⌘C，读剪贴板里变化后的内容，再把原来的剪贴板文字还原。
+ */
+async function readSelection(): Promise<string> {
+  selectionError = "";
+  for (let i = 0; i < 4; i++) {
+    try {
+      const text = (await getSelectedText()).trim();
+      if (text) return text;
+      selectionError = "no selection";
+    } catch (error) {
+      selectionError = error instanceof Error ? error.message : String(error);
+      // 没有辅助功能权限时重试没有意义
+      if (/permission/i.test(selectionError)) break;
+    }
+    await sleep(250);
+  }
+
+  const before = ((await Clipboard.readText().catch(() => "")) ?? "").toString();
+  try {
+    execFileSync("/usr/bin/osascript", ["-e", 'tell application "System Events" to keystroke "c" using command down'], {
+      timeout: 3000,
+    });
+  } catch {
+    return ""; // 没有「辅助功能」权限等
+  }
+  for (let i = 0; i < 10; i++) {
+    await sleep(80);
+    const now = ((await Clipboard.readText().catch(() => "")) ?? "").toString();
+    if (now && now !== before) {
+      if (before) await Clipboard.copy(before);
+      return now.trim();
+    }
+  }
+  return "";
+}
+
 const quote = (s: string) =>
   s
     .trim()
@@ -57,7 +101,7 @@ export default async function Command(props: { arguments: Arguments }) {
 
   const app = await getFrontmostApplication().catch(() => null);
   const appName = app?.name ?? "";
-  const selection = (await getSelectedText().catch(() => "")).trim();
+  const selection = await readSelection();
   const tab = appName ? readBrowserTab(appName) : null;
 
   const page = tab && tab !== "denied" ? tab : null;
@@ -89,6 +133,7 @@ async function save(
       ? `来源：${appName}`
       : "";
   const kindTag = text ? "摘录" : "收藏";
+  const noSelection = !text && !!page;
   const title = truncate(page?.title || firstLine(text) || `${kindTag} ${appName}`.trim(), 30);
 
   const body = [text ? quote(text) : "", extra.body, source].filter(Boolean).join("\n\n");
@@ -111,7 +156,7 @@ async function save(
   try {
     await createNote({ title, body, tags, folder: folderId, source: "tinycast" });
     await showHUD(
-      `✅ ${kindTag}：${truncate(title, 22)}${page ? "" : denied ? "（读不到页面链接，请允许 Tinycast 控制浏览器）" : ""}${folderNote}`,
+      `✅ ${kindTag}：${truncate(title, 22)}${noSelection ? `（未取到选中文字：${selectionError || "无"}；请确认 Tinycast 已获得辅助功能权限）` : page ? "" : denied ? "（读不到页面链接，请允许 Tinycast 控制浏览器）" : ""}${folderNote}`,
     );
   } catch (error) {
     await Clipboard.copy(body);

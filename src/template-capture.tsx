@@ -1,7 +1,9 @@
 import {
+  Alert,
   Action,
   ActionPanel,
   closeMainWindow,
+  confirmAlert,
   Form,
   Icon,
   LaunchProps,
@@ -9,12 +11,22 @@ import {
   showHUD,
   showToast,
   Toast,
+  useNavigation,
 } from "@raycast/api";
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createNote, warmUp } from "./api";
 import { matchFolder } from "./capture-parse";
 import { getFoldersFast, getFoldersFresh } from "./folders-cache";
-import { buildTemplateNote, findTemplate, getTemplates, Template } from "./templates";
+import {
+  buildTemplate,
+  buildTemplateNote,
+  deleteLocalTemplate,
+  fieldsToText,
+  findTemplate,
+  loadTemplates,
+  saveLocalTemplate,
+  Template,
+} from "./templates";
 import { getDefaultTags, truncate } from "./utils";
 
 const splitTags = (s: string) => [
@@ -100,10 +112,94 @@ function TemplateForm({ template }: { template: Template }) {
   );
 }
 
-function TemplateList() {
-  const templates = getTemplates();
+/** 新建 / 编辑模板：每行一个字段，字段名后加 + 表示多行输入框 */
+function TemplateEditor({ initial, onSaved }: { initial?: Template; onSaved: () => void }) {
+  const { pop } = useNavigation();
+  const editing = initial?.source === "local" ? initial.name : undefined;
+
+  async function handleSubmit(values: Form.Values) {
+    const t = buildTemplate({
+      name: String(values.name ?? ""),
+      fieldsText: String(values.fields ?? ""),
+      tags: String(values.tags ?? ""),
+      folderName: String(values.folder ?? ""),
+    });
+    if (!t) {
+      await showToast({ style: Toast.Style.Failure, title: "请填写模板名称，并至少写一个字段" });
+      return;
+    }
+    await saveLocalTemplate(t, editing);
+    await showToast({ style: Toast.Style.Success, title: `已保存模板「${t.name}」` });
+    onSaved();
+    pop();
+  }
+
   return (
-    <List searchBarPlaceholder="选择模板…">
+    <Form
+      navigationTitle={editing ? `编辑模板 · ${editing}` : "新建模板"}
+      actions={
+        <ActionPanel>
+          <Action.SubmitForm title="保存模板" icon={Icon.Check} onSubmit={handleSubmit} />
+        </ActionPanel>
+      }
+    >
+      <Form.TextField
+        id="name"
+        title="模板名称"
+        placeholder="如：刻印、体重、会议"
+        defaultValue={initial?.name ?? ""}
+      />
+      <Form.TextArea
+        id="fields"
+        title="字段"
+        placeholder={"每行一个字段；字段名后加 + 为多行输入框\n例如：\n作品\n印文\n感受+\n问题+"}
+        defaultValue={initial ? fieldsToText(initial) : ""}
+      />
+      <Form.TextField
+        id="tags"
+        title="标签"
+        placeholder="#篆刻 #练习（可选）"
+        defaultValue={(initial?.tags ?? []).map((t) => `#${t}`).join(" ")}
+      />
+      <Form.TextField
+        id="folder"
+        title="文件夹"
+        placeholder="保存到哪个文件夹（可选，写文件夹名）"
+        defaultValue={initial?.folderName ?? ""}
+      />
+      <Form.Description
+        title="说明"
+        text="保存后的笔记标题为「模板名 日期」，正文每项一段「字段：值」，模板标签写在正文末尾。"
+      />
+    </Form>
+  );
+}
+
+function TemplateList({ templates, loading, reload }: { templates: Template[]; loading: boolean; reload: () => void }) {
+  async function remove(t: Template) {
+    if (
+      await confirmAlert({
+        title: `删除模板「${t.name}」？`,
+        message: "已保存的笔记不受影响。",
+        primaryAction: { title: "删除", style: Alert.ActionStyle.Destructive },
+      })
+    ) {
+      await deleteLocalTemplate(t.name);
+      reload();
+    }
+  }
+
+  const newAction = (
+    <Action.Push
+      title="新建模板"
+      icon={Icon.Plus}
+      shortcut={{ modifiers: ["cmd"], key: "n" }}
+      target={<TemplateEditor onSaved={reload} />}
+    />
+  );
+
+  return (
+    <List isLoading={loading} searchBarPlaceholder="选择模板…">
       {templates.map((t) => (
         <List.Item
           key={t.name}
@@ -113,22 +209,67 @@ function TemplateList() {
           accessories={[
             ...(t.tags.length ? [{ text: t.tags.map((x) => `#${x}`).join(" ") }] : []),
             ...(t.folderName ? [{ text: `@${t.folderName}` }] : []),
-            ...(t.builtin ? [] : [{ tag: "自定义" }]),
+            ...(t.source === "builtin" ? [] : [{ tag: t.source === "local" ? "自定义" : "偏好设置" }]),
           ]}
           actions={
             <ActionPanel>
               <Action.Push title="填写" icon={Icon.Pencil} target={<TemplateForm template={t} />} />
+              {newAction}
+              {t.source === "local" ? (
+                <>
+                  <Action.Push
+                    title="编辑模板"
+                    icon={Icon.Gear}
+                    shortcut={{ modifiers: ["cmd"], key: "e" }}
+                    target={<TemplateEditor initial={t} onSaved={reload} />}
+                  />
+                  <Action
+                    title="删除模板"
+                    icon={Icon.Trash}
+                    shortcut={{ modifiers: ["ctrl"], key: "x" }}
+                    onAction={() => remove(t)}
+                  />
+                </>
+              ) : (
+                <Action.Push
+                  title={t.source === "builtin" ? "基于此模板新建（可覆盖内置）" : "基于此模板新建"}
+                  icon={Icon.Gear}
+                  shortcut={{ modifiers: ["cmd"], key: "e" }}
+                  target={<TemplateEditor initial={t} onSaved={reload} />}
+                />
+              )}
             </ActionPanel>
           }
         />
       ))}
-      {templates.length === 0 && <List.EmptyView title="没有模板" description="在偏好设置的 Templates 里添加" />}
+      {!loading && templates.length === 0 && (
+        <List.EmptyView
+          title="还没有模板"
+          description="按 ⌘N 新建模板"
+          actions={<ActionPanel>{newAction}</ActionPanel>}
+        />
+      )}
     </List>
   );
 }
 
 export default function Command(props: LaunchProps<{ arguments: { name?: string } }>) {
   const name = props.arguments?.name?.trim() ?? "";
-  const found = name ? findTemplate(name) : undefined;
-  return found ? <TemplateForm template={found} /> : <TemplateList />;
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const reload = useCallback(() => {
+    loadTemplates()
+      .then(setTemplates)
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(reload, [reload]);
+
+  const found = name && !loading ? findTemplate(name, templates) : undefined;
+  if (name && loading) return <List isLoading />;
+  return found ? (
+    <TemplateForm template={found} />
+  ) : (
+    <TemplateList templates={templates} loading={loading} reload={reload} />
+  );
 }

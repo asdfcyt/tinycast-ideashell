@@ -14,8 +14,8 @@
       "name": "smart-capture",
       "title": "Smart Capture",
       "subtitle": "闪念贝壳",
-      "description": "万能输入：在搜索栏输入后回车，直接保存为待办 / Daily Note / 笔记（支持 #标签、@文件夹，以及「待办」「日记」「笔记」前缀），不出现任何界面；什么都不输入直接回车则打开表单，边输入边自动识别类型、标签、文件夹。",
-      "mode": "no-view",
+      "description": "万能输入：在搜索栏输入后回车，自动保存为待办 / Daily Note / 笔记（支持 #标签、@文件夹，以及「待办」「日记」「笔记」前缀）；什么都不输入直接回车则进入表单，边输入边自动识别类型、标签、文件夹。",
+      "mode": "view",
       "arguments": [
         {
           "name": "text",
@@ -40,20 +40,6 @@
         "提醒",
         "quick",
         "闪念"
-      ]
-    },
-    {
-      "name": "capture-form",
-      "title": "Smart Capture Form",
-      "subtitle": "闪念贝壳",
-      "description": "万能输入的表单：输入正文时自动识别并填好类型 / 标签 / 文件夹。通常由 Smart Capture 在什么都没输入时自动打开，无需单独启用。",
-      "mode": "view",
-      "disabledByDefault": true,
-      "keywords": [
-        "capture",
-        "表单",
-        "form",
-        "记录"
       ]
     },
     {

@@ -26,8 +26,6 @@ declare type Preferences = ExtensionPreferences
 declare namespace Preferences {
   /** Preferences accessible in the `smart-capture` command */
   export type SmartCapture = ExtensionPreferences & {}
-  /** Preferences accessible in the `capture-form` command */
-  export type CaptureForm = ExtensionPreferences & {}
   /** Preferences accessible in the `template-capture` command */
   export type TemplateCapture = ExtensionPreferences & {}
   /** Preferences accessible in the `clip-selection` command */
@@ -46,8 +44,6 @@ declare namespace Arguments {
   /** 记点什么…（留空=表单） */
   "text": string
 }
-  /** Arguments passed to the `capture-form` command */
-  export type CaptureForm = {}
   /** Arguments passed to the `template-capture` command */
   export type TemplateCapture = {
   /** 模板名（留空=选择） */
