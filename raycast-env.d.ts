@@ -10,7 +10,7 @@
 type ExtensionPreferences = {
   /** API Key - 闪念贝壳 MCP API Key（在闪念贝壳 设置 → MCP 中获取） */
   "apiKey": string,
-  /** Daily Note Folder - Daily Note 存放的文件夹名称（留空则不放入文件夹） */
+  /** Daily Note Folder - Daily Note 存放的文件夹名称（大小写、空格、末尾 s 不敏感，如 Daily Notes / Dailynotes 视为同一个；找不到时会自动创建） */
   "dailyNoteFolder": string,
   /** Daily Note Title Format - Daily Note 标题格式，使用 YYYY-MM-DD 等占位符 */
   "dailyNoteTitleFormat": string,
@@ -32,6 +32,10 @@ declare namespace Preferences {
   export type DailyNoteView = ExtensionPreferences & {}
   /** Preferences accessible in the `search-notes` command */
   export type SearchNotes = ExtensionPreferences & {}
+  /** Preferences accessible in the `add-todo` command */
+  export type AddTodo = ExtensionPreferences & {}
+  /** Preferences accessible in the `manage-todos` command */
+  export type ManageTodos = ExtensionPreferences & {}
 }
 
 declare namespace Arguments {
@@ -51,5 +55,12 @@ declare namespace Arguments {
   export type DailyNoteView = {}
   /** Arguments passed to the `search-notes` command */
   export type SearchNotes = {}
+  /** Arguments passed to the `add-todo` command */
+  export type AddTodo = {
+  /** 明天 15:00 开会 */
+  "text": string
+}
+  /** Arguments passed to the `manage-todos` command */
+  export type ManageTodos = {}
 }
 

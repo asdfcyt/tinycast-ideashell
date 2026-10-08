@@ -306,40 +306,84 @@ export async function searchNotes(query: string): Promise<NoteInfo[]> {
   return parseNotesFromText(text);
 }
 
-export async function getRecentNotes(opts?: { limit?: number }): Promise<NoteInfo[]> {
+/** 最近的笔记（按创建时间倒序）。接口 limit 范围 1-20。 */
+export async function getRecentNotes(opts?: {
+  limit?: number;
+  startTime?: string;
+  endTime?: string;
+}): Promise<NoteInfo[]> {
   const args: Record<string, unknown> = {};
-  if (opts?.limit) args.limit = opts.limit;
+  if (opts?.limit) args.limit = Math.min(Math.max(opts.limit, 1), 20);
+  if (opts?.startTime) args.start_time = opts.startTime;
+  if (opts?.endTime) args.end_time = opts.endTime;
   const resp = await callTool("recent_notes", args);
   const text = extractText(resp);
   if (!text) return [];
   return parseNotesFromText(text);
 }
 
-/** Parse notes from the plain-text format returned by note_search / recent_notes */
+/** 列出某个文件夹中的笔记（folder_notes），返回格式: "- 标题 [note_id: xxx]" */
+export async function getNotesByFolder(folderId: string): Promise<NoteInfo[]> {
+  const resp = await callTool("folder_notes", { folder_id: folderId });
+  if (resp.result?.isError) {
+    throw new Error(extractText(resp) || "folder_notes failed");
+  }
+  const text = extractText(resp);
+  if (!text) return [];
+
+  const notes: NoteInfo[] = [];
+  const regex = /^-\s+(.+?)\s*\[note_id:\s*([a-f0-9]+)\]\s*$/gm;
+  let m;
+  while ((m = regex.exec(text)) !== null) {
+    notes.push({ id: m[2], note_id: m[2], title: m[1].trim(), folder_id: folderId });
+  }
+  return notes;
+}
+
+/**
+ * Parse notes from the plain-text format returned by note_search / recent_notes.
+ * - note_search : "# Title\nnote_id: xxx\ntime: ...\nsummary: ..."
+ * - recent_notes: "# Title @ 2026-10-08T03:37:43.156Z\nnote_id: xxx\n<summary or preview>"
+ */
 function parseNotesFromText(text: string): NoteInfo[] {
-  // Format: "# Title\nnote_id: xxx\ntime: ...\nsummary: ...\n..."
-  // Multiple notes separated by "---"
-  const blocks = text.split(/\n---\n/);
+  const headerRe = /^# (.+)\nnote_id:\s*([a-f0-9]+)/gm;
+  const heads = [...text.matchAll(headerRe)];
   const notes: NoteInfo[] = [];
 
-  for (const block of blocks) {
-    const titleMatch = block.match(/^#\s+(.+)/m);
-    const idMatch = block.match(/note_id:\s*([a-f0-9]+)/i);
-    const summaryMatch = block.match(/summary:\s*(.+)/i);
-    const tagsMatch = block.match(/tags:\s*(.+)/i);
-    const timeMatch = block.match(/time:\s*(\S+)/i);
+  heads.forEach((m, i) => {
+    const start = m.index ?? 0;
+    const end = i + 1 < heads.length ? (heads[i + 1].index ?? text.length) : text.length;
+    const block = text.slice(start, end);
 
-    if (titleMatch || idMatch) {
-      notes.push({
-        id: idMatch ? idMatch[1] : "",
-        note_id: idMatch ? idMatch[1] : "",
-        title: titleMatch ? titleMatch[1] : "无标题",
-        summary: summaryMatch ? summaryMatch[1] : undefined,
-        tags: tagsMatch ? tagsMatch[1].split(",").map((t) => t.trim()) : undefined,
-        created_at: timeMatch ? timeMatch[1] : undefined,
-      });
+    let title = m[1].trim();
+    let time: string | undefined;
+    const titleTime = title.match(/^(.*?)\s@\s(\d{4}-\d{2}-\d{2}T\S+)$/);
+    if (titleTime) {
+      title = titleTime[1].trim();
+      time = titleTime[2];
     }
-  }
+    if (!time) time = block.match(/^time:\s*(\S+)/m)?.[1];
+
+    const tagsLine = block.match(/^tags:\s*(.+)$/m)?.[1];
+    let summary = block.match(/^summary:\s*(.+)$/m)?.[1];
+    if (!summary) {
+      // recent_notes：note_id 之后的第一行非元数据文本
+      const after = block.slice(block.indexOf("\n", block.indexOf("note_id:")) + 1);
+      summary = after
+        .split("\n")
+        .map((l) => l.trim())
+        .find((l) => l && !/^(time|tags|summary):/i.test(l) && !l.startsWith("#"));
+    }
+
+    notes.push({
+      id: m[2],
+      note_id: m[2],
+      title: title || "无标题",
+      summary,
+      tags: tagsLine ? tagsLine.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
+      created_at: time,
+    });
+  });
 
   return notes;
 }
@@ -350,9 +394,10 @@ export async function getNoteDetail(noteId: string): Promise<NoteDetail> {
 
   // note_detail returns plain text, not JSON. Parse what we can.
   const titleMatch = text.match(/^#\s+(.+)/m);
-  const noteIdMatch = text.match(/note_id:\s*([a-f0-9]+)/i);
-  const tagsMatch = text.match(/tags:\s*(.+)/i);
-  const summaryMatch = text.match(/summary:\s*(.+)/i);
+  const noteIdMatch = text.match(/^note_id:\s*([a-f0-9]+)/im);
+  const timeMatch = text.match(/^time:\s*(\S+)/im);
+  const tagsMatch = text.match(/^tags:\s*(.+)$/im);
+  const summaryMatch = text.match(/^summary:\s*(.+)$/im);
 
   // Extract content from ## Memos section
   const memosIdx = text.indexOf("## Memos");
@@ -362,7 +407,10 @@ export async function getNoteDetail(noteId: string): Promise<NoteDetail> {
     // Get content after the first memo header line "**Memo N: ...**\n"
     const memoContentMatch = memosText.match(/\*\*Memo \d+:.*?\*\*\n?([\s\S]*)/);
     if (memoContentMatch) {
-      content = memoContentMatch[1].trim();
+      content = memoContentMatch[1]
+        // note_search/note_detail 会在 memo 开头重复一行 summary，去掉
+        .replace(/^summary:.*\n?/i, "")
+        .trim();
     }
   }
 
@@ -371,7 +419,8 @@ export async function getNoteDetail(noteId: string): Promise<NoteDetail> {
     note_id: noteIdMatch ? noteIdMatch[1] : noteId,
     title: titleMatch ? titleMatch[1] : "",
     summary: summaryMatch ? summaryMatch[1] : undefined,
-    tags: tagsMatch ? tagsMatch[1].split(",").map((t) => t.trim()) : undefined,
+    tags: tagsMatch ? tagsMatch[1].split(",").map((t) => t.trim()).filter(Boolean) : undefined,
+    created_at: timeMatch ? timeMatch[1] : undefined,
     content,
     body: content,
   };
@@ -400,4 +449,72 @@ export async function listFolders(): Promise<FolderInfo[]> {
 export async function createFolder(name: string): Promise<string> {
   const resp = await callTool("folder_create", { name });
   return extractText(resp);
+}
+
+// ── Todo API ──
+
+export interface TodoItem {
+  id: string;
+  content: string;
+  date: string | null;
+  time: string | null;
+  is_completed: boolean;
+}
+
+function parseTodos(text: string): TodoItem[] {
+  if (!text.trim()) return [];
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    // 例如 "No todos found."
+    return [];
+  }
+  const list = Array.isArray(data)
+    ? data
+    : ((data as { todos?: unknown; updated?: unknown })?.todos ?? (data as { updated?: unknown })?.updated);
+  return Array.isArray(list) ? (list as TodoItem[]) : [];
+}
+
+export async function listTodos(opts?: {
+  isCompleted?: boolean;
+  dateFrom?: string;
+  dateTo?: string;
+  keyword?: string;
+  limit?: number;
+}): Promise<TodoItem[]> {
+  const args: Record<string, unknown> = { timezone: localTimezone() };
+  if (opts?.isCompleted !== undefined) args.is_completed = opts.isCompleted;
+  if (opts?.dateFrom) args.date_from = opts.dateFrom;
+  if (opts?.dateTo) args.date_to = opts.dateTo;
+  if (opts?.keyword) args.keyword = opts.keyword;
+  args.limit = Math.min(Math.max(opts?.limit ?? 100, 1), 200);
+
+  const resp = await callTool("todo_list", args);
+  if (resp.result?.isError) throw new Error(extractText(resp) || "todo_list failed");
+  return parseTodos(extractText(resp));
+}
+
+export async function createTodos(
+  items: Array<{ content: string; date?: string; time?: string }>,
+): Promise<TodoItem[]> {
+  const resp = await callTool("todo_create", { items, timezone: localTimezone() });
+  if (resp.result?.isError) throw new Error(extractText(resp) || "todo_create failed");
+  return parseTodos(extractText(resp));
+}
+
+export async function updateTodos(
+  items: Array<{ todo_id: string; content?: string; date?: string; time?: string; is_completed?: boolean }>,
+): Promise<TodoItem[]> {
+  const resp = await callTool("todo_update", { items, timezone: localTimezone() });
+  if (resp.result?.isError) throw new Error(extractText(resp) || "todo_update failed");
+  return parseTodos(extractText(resp));
+}
+
+function localTimezone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
 }

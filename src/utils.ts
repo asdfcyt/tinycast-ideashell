@@ -36,6 +36,14 @@ export function truncate(text: string, maxLen: number): string {
   return text.slice(0, maxLen - 1) + "…";
 }
 
+/** ISO 时间 → 本地 "YYYY-MM-DD HH:mm"（无法解析则原样返回） */
+export function formatDateTime(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${formatDate(d)} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+}
+
 export function nowTimestamp(): string {
   const d = new Date();
   const hh = d.getHours().toString().padStart(2, "0");

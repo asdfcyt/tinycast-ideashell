@@ -1,24 +1,36 @@
 import { Action, ActionPanel, Detail, List, showToast, Toast, Icon } from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
-import { searchNotes, getNoteDetail, NoteInfo, NoteDetail, getNoteId } from "./api";
-import { getDailyNoteTitle, formatDate } from "./utils";
+import { getNoteDetail, NoteInfo, NoteDetail, getNoteId } from "./api";
+import { listDailyNotes, extractDate, getDailyFolderName } from "./daily";
+import { formatDate, formatDateTime } from "./utils";
+import { useNoteDetails } from "./use-note-details";
+
+const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+function weekdayOf(date: string): string {
+  const d = new Date(`${date}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? "" : WEEKDAYS[d.getDay()];
+}
+
+function buildMarkdown(title: string, body: string | undefined, loading: boolean): string {
+  if (body === undefined) return `# ${title}\n\n${loading ? "加载中…" : "*（选中后加载内容）*"}`;
+  return `# ${title}\n\n${body.trim() || "*（空白笔记）*"}`;
+}
 
 export default function Command() {
   const [notes, setNotes] = useState<NoteInfo[]>([]);
+  const [folderFound, setFolderFound] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
+  const { details, loadingId, load, reset } = useNoteDetails();
 
   const loadDailyNotes = useCallback(async () => {
     setIsLoading(true);
+    reset();
     try {
-      const results = await searchNotes("Daily Note");
-      const dailyNotes = results
-        .filter((n) => n.title && /\d{4}-\d{2}-\d{2}/.test(n.title))
-        .sort((a, b) => {
-          const dateA = a.title.match(/\d{4}-\d{2}-\d{2}/)?.[0] || "";
-          const dateB = b.title.match(/\d{4}-\d{2}-\d{2}/)?.[0] || "";
-          return dateB.localeCompare(dateA);
-        });
-      setNotes(dailyNotes);
+      const { notes: list, folder } = await listDailyNotes();
+      setFolderFound(!!folder);
+      setNotes(list);
+      if (list.length > 0) load(getNoteId(list[0]));
     } catch (error) {
       await showToast({
         style: Toast.Style.Failure,
@@ -28,55 +40,98 @@ export default function Command() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [load, reset]);
 
   useEffect(() => {
     loadDailyNotes();
   }, [loadDailyNotes]);
 
-  const todayTitle = getDailyNoteTitle();
   const todayDate = formatDate(new Date());
 
   return (
-    <List isLoading={isLoading} searchBarPlaceholder="搜索 Daily Note...">
-      <List.Section title="Daily Notes">
-        {notes.map((note, index) => {
-          const noteId = getNoteId(note);
-          const dateMatch = note.title.match(/\d{4}-\d{2}-\d{2}/);
-          const dateStr = dateMatch ? dateMatch[0] : "";
-          const isToday = dateStr === todayDate;
+    <List
+      isLoading={isLoading}
+      isShowingDetail={notes.length > 0}
+      searchBarPlaceholder="搜索 Daily Note（日期或内容）..."
+      onSelectionChange={(id) => load(id)}
+    >
+      {notes.map((note) => {
+        const noteId = getNoteId(note);
+        const dateStr = extractDate(note.title);
+        const isToday = dateStr === todayDate;
+        const detail = details[noteId];
+        const body = detail ? detail.content || detail.body || "" : undefined;
 
-          return (
-            <List.Item
-              key={noteId || `note-${index}`}
-              title={note.title}
-              subtitle={note.summary || ""}
-              icon={isToday ? Icon.Calendar : Icon.Document}
-              accessories={[
-                ...(isToday ? [{ tag: { value: "今天", color: "#007AFF" } }] : []),
-                ...(note.tags
-                  ? note.tags.map((t) => ({ tag: t }))
-                  : []),
-              ]}
-              actions={
-                <ActionPanel>
-                  {noteId && (
-                    <Action.Push
-                      title="查看详情"
-                      icon={Icon.Eye}
-                      target={<DailyNoteDetail noteId={noteId} title={note.title} />}
-                    />
-                  )}
-                </ActionPanel>
-              }
-            />
-          );
-        })}
-      </List.Section>
+        return (
+          <List.Item
+            key={noteId}
+            id={noteId}
+            title={note.title}
+            // 把正文放进 keywords，让搜索栏可以按内容过滤已加载的笔记
+            keywords={body ? [body] : undefined}
+            icon={isToday ? { source: Icon.Calendar, tintColor: "#007AFF" } : Icon.Document}
+            accessories={[
+              ...(isToday ? [{ tag: { value: "今天", color: "#007AFF" } }] : []),
+              ...(dateStr ? [{ text: weekdayOf(dateStr) }] : []),
+            ]}
+            detail={
+              <List.Item.Detail
+                isLoading={loadingId === noteId}
+                markdown={buildMarkdown(note.title, body, loadingId === noteId)}
+                metadata={
+                  detail ? (
+                    <List.Item.Detail.Metadata>
+                      {dateStr && (
+                        <List.Item.Detail.Metadata.Label title="日期" text={`${dateStr} ${weekdayOf(dateStr)}`} />
+                      )}
+                      {detail.created_at && (
+                        <List.Item.Detail.Metadata.Label title="创建时间" text={formatDateTime(detail.created_at)} />
+                      )}
+                      {detail.tags && detail.tags.length > 0 && (
+                        <List.Item.Detail.Metadata.TagList title="标签">
+                          {detail.tags.map((t) => (
+                            <List.Item.Detail.Metadata.TagList.Item key={t} text={t} />
+                          ))}
+                        </List.Item.Detail.Metadata.TagList>
+                      )}
+                    </List.Item.Detail.Metadata>
+                  ) : undefined
+                }
+              />
+            }
+            actions={
+              <ActionPanel>
+                <Action.Push
+                  title="查看全文"
+                  icon={Icon.Eye}
+                  target={<DailyNoteDetail noteId={noteId} title={note.title} />}
+                />
+                {body && (
+                  <Action.CopyToClipboard
+                    title="复制正文"
+                    content={body}
+                    shortcut={{ modifiers: ["cmd"], key: "c" }}
+                  />
+                )}
+                <Action
+                  title="刷新列表"
+                  icon={Icon.ArrowClockwise}
+                  shortcut={{ modifiers: ["cmd"], key: "r" }}
+                  onAction={loadDailyNotes}
+                />
+              </ActionPanel>
+            }
+          />
+        );
+      })}
       {notes.length === 0 && !isLoading && (
         <List.EmptyView
-          title="没有找到 Daily Note"
-          description="使用 Daily Note 命令开始记录你的第一篇日记"
+          title={folderFound ? "文件夹里还没有 Daily Note" : `没有找到「${getDailyFolderName()}」文件夹`}
+          description={
+            folderFound
+              ? "使用 Daily Note 命令开始记录今天的第一条"
+              : "请在插件偏好设置里检查 Daily Note Folder 名称，或先用 Daily Note 命令创建"
+          }
           icon={Icon.Calendar}
         />
       )}
@@ -101,15 +156,12 @@ function DailyNoteDetail({ noteId, title }: { noteId: string; title: string }) {
       .finally(() => setIsLoading(false));
   }, [noteId]);
 
-  const noteBody = detail ? (detail.content || detail.body || "") : "";
-  const markdown = detail
-    ? `# ${detail.title}\n\n${noteBody || "*（空白笔记）*"}`
-    : `# ${title}\n\n加载中...`;
+  const noteBody = detail ? detail.content || detail.body || "" : "";
 
   return (
     <Detail
       isLoading={isLoading}
-      markdown={markdown}
+      markdown={buildMarkdown(detail?.title || title, detail ? noteBody : undefined, isLoading)}
       metadata={
         detail ? (
           <Detail.Metadata>
@@ -120,11 +172,22 @@ function DailyNoteDetail({ noteId, title }: { noteId: string; title: string }) {
                 ))}
               </Detail.Metadata.TagList>
             )}
-            {detail.folder && <Detail.Metadata.Label title="文件夹" text={detail.folder} />}
-            {detail.createdAt && <Detail.Metadata.Label title="创建时间" text={detail.createdAt} />}
-            {detail.updatedAt && <Detail.Metadata.Label title="更新时间" text={detail.updatedAt} />}
+            {detail.created_at && (
+              <Detail.Metadata.Label title="创建时间" text={formatDateTime(detail.created_at)} />
+            )}
           </Detail.Metadata>
         ) : undefined
+      }
+      actions={
+        <ActionPanel>
+          {noteBody && (
+            <Action.CopyToClipboard
+              title="复制正文"
+              content={noteBody}
+              shortcut={{ modifiers: ["cmd"], key: "c" }}
+            />
+          )}
+        </ActionPanel>
       }
     />
   );

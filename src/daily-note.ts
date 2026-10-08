@@ -1,79 +1,47 @@
 import { showHUD, showToast, Toast, LaunchProps, LocalStorage } from "@raycast/api";
-import { createNote, updateNote, getNoteDetail, getPrefs } from "./api";
+import { createNote, updateNote, getNoteDetail } from "./api";
+import { appendEntry, findDailyNoteByDate, formatEntry, getOrCreateDailyFolderId } from "./daily";
 import { formatDate } from "./utils";
 
 interface DailyNoteArgs {
   text: string;
 }
 
-const DAILY_FOLDER_ID = "dailynote-folder-id";
 const DAILY_NOTE_PREFIX = "daily-note-";
 
 function todayKey(): string {
   return DAILY_NOTE_PREFIX + formatDate(new Date());
 }
 
-function todayTitle(): string {
-  return formatDate(new Date());
-}
-
-function nowFullTimestamp(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = (d.getMonth() + 1).toString().padStart(2, "0");
-  const dd = d.getDate().toString().padStart(2, "0");
-  const hh = d.getHours().toString().padStart(2, "0");
-  const mi = d.getMinutes().toString().padStart(2, "0");
-  const ss = d.getSeconds().toString().padStart(2, "0");
-  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
-}
-
-async function getDailynoteFolder(): Promise<string> {
-  const cached = await LocalStorage.getItem<string>(DAILY_FOLDER_ID);
-  if (cached) return cached;
-
-  // 调用 folder_list 从文本中解析 Dailynote 文件夹 ID
-  const { callToolRaw } = await import("./api");
-  const resp = await callToolRaw("folder_list", {});
-  const text = resp;
-
-  // 解析格式: "- 📁 Dailynote [folder_id: xxx]"
-  const match = text.match(/Dailynote\s*\[folder_id:\s*([a-f0-9]+)\]/i);
-  if (match) {
-    await LocalStorage.setItem(DAILY_FOLDER_ID, match[1]);
-    return match[1];
-  }
-
-  // 如果找不到 Dailynote 文件夹则创建一个
-  const { createFolder } = await import("./api");
-  const createResult = await createFolder("Dailynote");
-  const folderIdMatch = createResult.match(/folder_id[:\s"]*([a-f0-9]+)/i);
-  if (folderIdMatch) {
-    await LocalStorage.setItem(DAILY_FOLDER_ID, folderIdMatch[1]);
-    return folderIdMatch[1];
-  }
-
-  return "";
-}
-
+/**
+ * 找到今天的 Daily Note：
+ * 1. 优先在 Daily Note 文件夹里按标题日期查找（权威来源，换设备/清缓存也不会重复创建）
+ * 2. 回退到本地缓存的 note_id
+ */
 async function findTodayNote(): Promise<{ noteId: string; content: string } | null> {
   const key = todayKey();
-  const cachedId = await LocalStorage.getItem<string>(key);
 
-  if (cachedId) {
-    try {
-      const detail = await getNoteDetail(cachedId);
-      // note_detail 返回纯文本，content 在 Memos 下方
-      // 但我们更新时用的是完整 content 字段
-      // 先尝试读取已有内容
-      const text = typeof detail === "string" ? detail : (detail.content || detail.body || "");
-      return { noteId: cachedId, content: text };
-    } catch {
-      await LocalStorage.removeItem(key);
-    }
+  let noteId = "";
+  try {
+    const found = await findDailyNoteByDate(formatDate(new Date()));
+    if (found) noteId = found.note_id || found.id;
+  } catch {
+    // 文件夹查询失败时回退到缓存
   }
 
-  return null;
+  if (!noteId) {
+    noteId = (await LocalStorage.getItem<string>(key)) || "";
+  }
+  if (!noteId) return null;
+
+  try {
+    const detail = await getNoteDetail(noteId);
+    await LocalStorage.setItem(key, noteId);
+    return { noteId, content: detail.content || detail.body || "" };
+  } catch {
+    await LocalStorage.removeItem(key);
+    return null;
+  }
 }
 
 export default async function Command(props: LaunchProps<{ arguments: DailyNoteArgs }>) {
@@ -87,30 +55,22 @@ export default async function Command(props: LaunchProps<{ arguments: DailyNoteA
   const toast = await showToast({ style: Toast.Style.Animated, title: "正在追加到 Daily Note..." });
 
   try {
-    const timestamp = nowFullTimestamp();
-    const newLine = `${timestamp} ${text.trim()}`;
-    const title = todayTitle();
     const key = todayKey();
-
-    // 尝试找到今天已有的笔记
     const existing = await findTodayNote();
 
-    if (existing && existing.noteId) {
-      // 追加到已有笔记
-      const oldContent = existing.content || "";
-      const updatedContent = oldContent ? `${oldContent}\n${newLine}` : newLine;
-
+    if (existing) {
+      // 追加到已有笔记（同时把旧格式条目整理为列表）
       await updateNote({
         noteId: existing.noteId,
-        body: updatedContent,
+        body: appendEntry(existing.content, text),
       });
     } else {
       // 创建新的 daily note
-      const folderId = await getDailynoteFolder();
+      const folderId = await getOrCreateDailyFolderId();
 
       const result = await createNote({
-        title,
-        body: newLine,
+        title: formatDate(new Date()),
+        body: formatEntry(text),
         tags: ["daily-note"],
         folder: folderId || undefined,
         source: "tinycast",
@@ -123,7 +83,7 @@ export default async function Command(props: LaunchProps<{ arguments: DailyNoteA
           await LocalStorage.setItem(key, parsed.note_id);
         }
       } catch {
-        const idMatch = result.match(/[a-f0-9]{24,}/i);
+        const idMatch = result.match(/[a-f0-9]{32}/i);
         if (idMatch) {
           await LocalStorage.setItem(key, idMatch[0]);
         }
