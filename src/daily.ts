@@ -1,6 +1,19 @@
-import { createFolder, getNotesByFolder, getPrefs, listFolders, FolderInfo, NoteInfo } from "./api";
+import { LocalStorage } from "@raycast/api";
+import {
+  createFolder,
+  createNote,
+  getNoteDetail,
+  getNotesByFolder,
+  getPrefs,
+  listFolders,
+  updateNote,
+  FolderInfo,
+  NoteInfo,
+} from "./api";
+import { formatDate } from "./utils";
 
 const DATE_RE = /\d{4}-\d{2}-\d{2}/;
+const DAILY_NOTE_PREFIX = "daily-note-";
 
 /** 文件夹名归一化："Daily Notes" / "Dailynotes" / "daily-note" 都视为同一个 */
 function normalizeFolderName(name: string): string {
@@ -94,4 +107,63 @@ export function appendEntry(oldContent: string, text: string): string {
   const entry = formatEntry(text);
   const normalized = normalizeDailyContent(oldContent || "");
   return normalized ? `${normalized}\n${entry}` : entry;
+}
+
+// ── 追加到今天的 Daily Note ──
+
+function todayKey(): string {
+  return DAILY_NOTE_PREFIX + formatDate(new Date());
+}
+
+/**
+ * 找到今天的 Daily Note：
+ * 1. 优先在 Daily Note 文件夹里按标题日期查找（权威来源，换设备/清缓存也不会重复创建）
+ * 2. 回退到本地缓存的 note_id
+ */
+async function findTodayNote(): Promise<{ noteId: string; content: string } | null> {
+  const key = todayKey();
+
+  let noteId = "";
+  try {
+    const found = await findDailyNoteByDate(formatDate(new Date()));
+    if (found) noteId = found.note_id || found.id;
+  } catch {
+    // 文件夹查询失败时回退到缓存
+  }
+
+  if (!noteId) {
+    noteId = (await LocalStorage.getItem<string>(key)) || "";
+  }
+  if (!noteId) return null;
+
+  try {
+    const detail = await getNoteDetail(noteId);
+    await LocalStorage.setItem(key, noteId);
+    return { noteId, content: detail.content || detail.body || "" };
+  } catch {
+    await LocalStorage.removeItem(key);
+    return null;
+  }
+}
+
+/** 追加一条到今天的 Daily Note，不存在则创建；同时把当天旧格式条目整理为列表 */
+export async function appendToToday(text: string): Promise<void> {
+  const existing = await findTodayNote();
+
+  if (existing) {
+    await updateNote({ noteId: existing.noteId, body: appendEntry(existing.content, text) });
+    return;
+  }
+
+  const folderId = await getOrCreateDailyFolderId();
+  const result = await createNote({
+    title: formatDate(new Date()),
+    body: formatEntry(text),
+    tags: ["daily-note"],
+    folder: folderId || undefined,
+    source: "tinycast",
+  });
+
+  const idMatch = result.match(/[a-f0-9]{32}/i);
+  if (idMatch) await LocalStorage.setItem(todayKey(), idMatch[0]);
 }

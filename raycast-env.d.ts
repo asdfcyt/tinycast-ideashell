@@ -36,6 +36,12 @@ declare namespace Preferences {
   export type AddTodo = ExtensionPreferences & {}
   /** Preferences accessible in the `manage-todos` command */
   export type ManageTodos = ExtensionPreferences & {}
+  /** Preferences accessible in the `smart-capture` command */
+  export type SmartCapture = ExtensionPreferences & {}
+  /** Preferences accessible in the `timeline` command */
+  export type Timeline = ExtensionPreferences & {}
+  /** Preferences accessible in the `save-files` command */
+  export type SaveFiles = ExtensionPreferences & {}
 }
 
 declare namespace Arguments {
@@ -62,5 +68,11 @@ declare namespace Arguments {
 }
   /** Arguments passed to the `manage-todos` command */
   export type ManageTodos = {}
+  /** Arguments passed to the `smart-capture` command */
+  export type SmartCapture = {}
+  /** Arguments passed to the `timeline` command */
+  export type Timeline = {}
+  /** Arguments passed to the `save-files` command */
+  export type SaveFiles = {}
 }
 

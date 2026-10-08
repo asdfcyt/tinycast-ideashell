@@ -87,6 +87,30 @@
       "description": "查看、完成、编辑和新建待办，按日期分组。",
       "mode": "view",
       "keywords": ["todo", "待办", "任务", "完成", "task", "list"]
+    },
+    {
+      "name": "smart-capture",
+      "title": "Smart Capture",
+      "subtitle": "闪念贝壳",
+      "description": "万能输入：自动判断是待办、Daily Note 还是笔记，确认前先预览，支持 #标签 和 @文件夹。",
+      "mode": "view",
+      "keywords": ["capture", "万能输入", "收集", "记录", "inbox", "快速", "智能"]
+    },
+    {
+      "name": "timeline",
+      "title": "Timeline",
+      "subtitle": "闪念贝壳",
+      "description": "时光机：输入「昨天 / 上周 / 10月3日」查看这段时间记过的笔记和待办，并一键复制为 Markdown 日报/周报。",
+      "mode": "view",
+      "keywords": ["timeline", "时间线", "时光机", "回顾", "周报", "日报", "review"]
+    },
+    {
+      "name": "save-files",
+      "title": "Save Files",
+      "subtitle": "闪念贝壳",
+      "description": "把 Finder 中选中的图片、音频、PDF/Word/Excel 等文件保存为带附件的笔记，文档文字可被语义搜索。",
+      "mode": "view",
+      "keywords": ["file", "文件", "附件", "pdf", "图片", "上传", "attach", "收纳"]
     }
   ],
   "preferences": [

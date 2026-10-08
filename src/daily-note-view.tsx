@@ -2,7 +2,7 @@ import { Action, ActionPanel, Detail, List, showToast, Toast, Icon } from "@rayc
 import { useState, useEffect, useCallback } from "react";
 import { getNoteDetail, NoteInfo, NoteDetail, getNoteId } from "./api";
 import { listDailyNotes, extractDate, getDailyFolderName } from "./daily";
-import { formatDate, formatDateTime } from "./utils";
+import { buildNoteMarkdown, formatDate, formatDateTime } from "./utils";
 import { useNoteDetails } from "./use-note-details";
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
@@ -13,8 +13,7 @@ function weekdayOf(date: string): string {
 }
 
 function buildMarkdown(title: string, body: string | undefined, loading: boolean): string {
-  if (body === undefined) return `# ${title}\n\n${loading ? "加载中…" : "*（选中后加载内容）*"}`;
-  return `# ${title}\n\n${body.trim() || "*（空白笔记）*"}`;
+  return buildNoteMarkdown({ title, body, loading });
 }
 
 export default function Command() {

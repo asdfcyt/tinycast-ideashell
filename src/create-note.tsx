@@ -72,7 +72,7 @@ export default function Command() {
       <Form.Dropdown id="folder" title="文件夹" defaultValue="">
         <Form.Dropdown.Item value="" title="不指定文件夹" />
         {folders.map((f) => (
-          <Form.Dropdown.Item key={f.id} value={f.name} title={`${f.emoji || "📁"} ${f.name}`} />
+          <Form.Dropdown.Item key={f.id} value={f.id} title={`${f.emoji || "📁"} ${f.name}`} />
         ))}
       </Form.Dropdown>
     </Form>

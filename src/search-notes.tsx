@@ -1,22 +1,19 @@
-import { Action, ActionPanel, Detail, List, showToast, Toast, Icon } from "@raycast/api";
-import { useState, useEffect, useCallback } from "react";
-import { searchNotes, getRecentNotes, getNoteDetail, NoteInfo, NoteDetail, getNoteId } from "./api";
-import { formatDateTime } from "./utils";
+import { Action, ActionPanel, Icon, List, showToast, Toast } from "@raycast/api";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { getNoteId, getRecentNotes, NoteInfo, searchNotes } from "./api";
+import { buildNoteMarkdown, dayGroup, formatDateTime, shortTime } from "./utils";
 import { useNoteDetails } from "./use-note-details";
+import { NoteDetailView } from "./note-detail-view";
 
-function buildMarkdown(title: string, body: string | undefined, summary: string | undefined, loading: boolean): string {
-  if (body === undefined) {
-    const hint = summary ? `${summary}\n\n*${loading ? "加载全文中…" : "选中后加载全文"}*` : loading ? "加载中…" : "";
-    return `# ${title}\n\n${hint}`;
-  }
-  return `# ${title}\n\n${body.trim() || summary || "*（空白笔记）*"}`;
-}
+const GROUP_ORDER = ["今天", "昨天", "最近 7 天", "更早"];
 
 export default function Command() {
   const [notes, setNotes] = useState<NoteInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
   const { details, loadingId, load } = useNoteDetails();
+
+  const isSearching = searchText.trim().length > 0;
 
   const loadNotes = useCallback(
     async (query: string) => {
@@ -39,150 +36,110 @@ export default function Command() {
   );
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      loadNotes(searchText);
-    }, 300);
+    const timer = setTimeout(() => loadNotes(searchText), 300);
     return () => clearTimeout(timer);
   }, [searchText, loadNotes]);
+
+  // 最近笔记按「今天 / 昨天 / 最近 7 天 / 更早」分组；搜索结果保持相关度顺序
+  const sections = useMemo(() => {
+    if (isSearching) return [{ title: "搜索结果", notes }];
+    const map = new Map<string, NoteInfo[]>();
+    for (const n of notes) {
+      const g = dayGroup(n.created_at || n.createdAt);
+      map.set(g, [...(map.get(g) ?? []), n]);
+    }
+    return GROUP_ORDER.filter((g) => map.has(g)).map((g) => ({ title: g, notes: map.get(g)! }));
+  }, [notes, isSearching]);
 
   return (
     <List
       isLoading={isLoading}
       isShowingDetail={notes.length > 0}
-      searchBarPlaceholder="搜索笔记内容、标题或标签..."
-      // 搜索由服务端语义检索完成，不要再让客户端按标题二次过滤
+      searchBarPlaceholder="搜索笔记内容、标题或标签…（留空显示最近笔记）"
+      // 由服务端做语义检索，客户端不再按标题二次过滤
       filtering={false}
       onSearchTextChange={setSearchText}
       onSelectionChange={(id) => load(id)}
       throttle
     >
-      <List.Section title={searchText.trim() ? "搜索结果" : "最近的笔记"} subtitle={`${notes.length} 条`}>
-        {notes.map((note, index) => {
-          const noteId = getNoteId(note);
-          const detail = details[noteId];
-          const body = detail ? detail.content || detail.body || "" : undefined;
-          const created = note.created_at || note.createdAt;
+      {sections.map((section) => (
+        <List.Section key={section.title} title={section.title} subtitle={`${section.notes.length}`}>
+          {section.notes.map((note, index) => {
+            const noteId = getNoteId(note) || `note-${index}`;
+            const detail = details[noteId];
+            const body = detail ? detail.content || detail.body || "" : undefined;
+            const summary = detail?.summary || note.summary;
+            const created = note.created_at || note.createdAt || detail?.created_at;
+            const tags = detail?.tags ?? note.tags ?? [];
+            const title = note.title || "无标题";
 
-          return (
-            <List.Item
-              key={noteId || `note-${index}`}
-              id={noteId || `note-${index}`}
-              title={note.title || "无标题"}
-              icon={Icon.Document}
-              accessories={created ? [{ text: formatDateTime(created).slice(5) }] : []}
-              detail={
-                <List.Item.Detail
-                  isLoading={loadingId === noteId}
-                  markdown={buildMarkdown(note.title || "无标题", body, note.summary, loadingId === noteId)}
-                  metadata={
-                    <List.Item.Detail.Metadata>
-                      {created && <List.Item.Detail.Metadata.Label title="创建时间" text={formatDateTime(created)} />}
-                      {note.folder && <List.Item.Detail.Metadata.Label title="文件夹" text={note.folder} />}
-                      {(detail?.tags ?? note.tags) && (detail?.tags ?? note.tags)!.length > 0 && (
-                        <List.Item.Detail.Metadata.TagList title="标签">
-                          {(detail?.tags ?? note.tags)!.slice(0, 8).map((t) => (
-                            <List.Item.Detail.Metadata.TagList.Item key={t} text={t} />
-                          ))}
-                        </List.Item.Detail.Metadata.TagList>
-                      )}
-                    </List.Item.Detail.Metadata>
-                  }
-                />
-              }
-              actions={
-                <ActionPanel>
-                  {noteId && (
-                    <Action.Push
-                      title="查看全文"
-                      icon={Icon.Eye}
-                      target={<NoteDetailView noteId={noteId} title={note.title} />}
-                    />
-                  )}
-                  {body && (
-                    <Action.CopyToClipboard
-                      title="复制正文"
-                      content={body}
-                      shortcut={{ modifiers: ["cmd"], key: "c" }}
-                    />
-                  )}
-                  <Action.CopyToClipboard
-                    title="复制标题"
-                    content={note.title}
-                    shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
+            return (
+              <List.Item
+                key={noteId}
+                id={noteId}
+                title={title}
+                icon={Icon.Document}
+                accessories={created ? [{ text: shortTime(created) }] : []}
+                detail={
+                  <List.Item.Detail
+                    isLoading={loadingId === noteId}
+                    markdown={buildNoteMarkdown({ title, summary, body, loading: loadingId === noteId })}
+                    metadata={
+                      <List.Item.Detail.Metadata>
+                        {created && <List.Item.Detail.Metadata.Label title="创建时间" text={formatDateTime(created)} />}
+                        {tags.length > 0 && (
+                          <List.Item.Detail.Metadata.TagList title="标签">
+                            {tags.slice(0, 8).map((t) => (
+                              <List.Item.Detail.Metadata.TagList.Item key={t} text={t} />
+                            ))}
+                          </List.Item.Detail.Metadata.TagList>
+                        )}
+                      </List.Item.Detail.Metadata>
+                    }
                   />
-                </ActionPanel>
-              }
-            />
-          );
-        })}
-      </List.Section>
+                }
+                actions={
+                  <ActionPanel>
+                    {getNoteId(note) && (
+                      <Action.Push
+                        title="查看全文"
+                        icon={Icon.Eye}
+                        target={<NoteDetailView noteId={getNoteId(note)} title={title} summary={summary} />}
+                      />
+                    )}
+                    {body && (
+                      <Action.CopyToClipboard
+                        title="复制正文"
+                        content={body}
+                        shortcut={{ modifiers: ["cmd"], key: "c" }}
+                      />
+                    )}
+                    {summary && (
+                      <Action.CopyToClipboard
+                        title="复制摘要"
+                        content={summary}
+                        shortcut={{ modifiers: ["cmd", "opt"], key: "c" }}
+                      />
+                    )}
+                    <Action.CopyToClipboard
+                      title="复制标题"
+                      content={title}
+                      shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
+                    />
+                  </ActionPanel>
+                }
+              />
+            );
+          })}
+        </List.Section>
+      ))}
       {notes.length === 0 && !isLoading && (
         <List.EmptyView
-          title={searchText ? "没有找到匹配的笔记" : "暂无笔记"}
-          description={searchText ? "试试其他关键词" : "开始使用闪念贝壳记录灵感吧"}
+          title={isSearching ? "没有找到匹配的笔记" : "暂无笔记"}
+          description={isSearching ? "试试其他关键词" : "开始使用闪念贝壳记录灵感吧"}
           icon={Icon.MagnifyingGlass}
         />
       )}
     </List>
-  );
-}
-
-function NoteDetailView({ noteId, title }: { noteId: string; title: string }) {
-  const [detail, setDetail] = useState<NoteDetail | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    getNoteDetail(noteId)
-      .then(setDetail)
-      .catch(async (err) => {
-        await showToast({
-          style: Toast.Style.Failure,
-          title: "加载详情失败",
-          message: err instanceof Error ? err.message : String(err),
-        });
-      })
-      .finally(() => setIsLoading(false));
-  }, [noteId]);
-
-  const noteBody = detail ? detail.content || detail.body || "" : "";
-
-  return (
-    <Detail
-      isLoading={isLoading}
-      markdown={buildMarkdown(detail?.title || title, detail ? noteBody : undefined, undefined, isLoading)}
-      metadata={
-        detail ? (
-          <Detail.Metadata>
-            {detail.summary && <Detail.Metadata.Label title="摘要" text={detail.summary} />}
-            {detail.tags && detail.tags.length > 0 && (
-              <Detail.Metadata.TagList title="标签">
-                {detail.tags.map((tag) => (
-                  <Detail.Metadata.TagList.Item key={tag} text={tag} />
-                ))}
-              </Detail.Metadata.TagList>
-            )}
-            {detail.created_at && (
-              <Detail.Metadata.Label title="创建时间" text={formatDateTime(detail.created_at)} />
-            )}
-          </Detail.Metadata>
-        ) : undefined
-      }
-      actions={
-        <ActionPanel>
-          {noteBody && (
-            <Action.CopyToClipboard
-              title="复制正文"
-              content={noteBody}
-              shortcut={{ modifiers: ["cmd"], key: "c" }}
-            />
-          )}
-          <Action.CopyToClipboard
-            title="复制标题"
-            content={detail?.title || title}
-            shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
-          />
-        </ActionPanel>
-      }
-    />
   );
 }

@@ -253,22 +253,32 @@ export function getNoteId(note: NoteInfo): string {
 
 // ── Public API ──
 
+/** 附件：data 为 base64，name 含扩展名 */
+export interface NoteAttachment {
+  data: string;
+  name: string;
+}
+
 export async function createNote(opts: {
   title: string;
-  body: string;
+  body?: string;
   summary?: string;
   tags?: string[];
   folder?: string;
   source?: string;
+  images?: NoteAttachment[];
+  audios?: NoteAttachment[];
+  documents?: NoteAttachment[];
 }): Promise<string> {
-  const args: Record<string, unknown> = {
-    title: opts.title,
-    content: opts.body,
-  };
+  const args: Record<string, unknown> = { title: opts.title };
+  if (opts.body) args.content = opts.body;
   if (opts.summary) args.summary = opts.summary;
   if (opts.tags && opts.tags.length > 0) args.tags = opts.tags;
   if (opts.folder) args.folder_id = opts.folder;
   if (opts.source) args.source = opts.source;
+  if (opts.images?.length) args.images = opts.images;
+  if (opts.audios?.length) args.audios = opts.audios;
+  if (opts.documents?.length) args.documents = opts.documents;
 
   const resp = await callTool("note_create", args);
   if (resp.result?.isError) {
@@ -322,6 +332,47 @@ export async function getRecentNotes(opts?: {
   return parseNotesFromText(text);
 }
 
+/**
+ * 取出 [start, end) 时间段内创建的全部笔记。
+ * recent_notes 单次最多 20 条，但会返回区间总数（"Total notes in this time range: N"），
+ * 超过 20 条时把区间对半拆分递归拉取，直到每段都取全（最小粒度 1 小时）。
+ */
+export async function getNotesInRange(start: Date, end: Date): Promise<{ notes: NoteInfo[]; truncated: boolean }> {
+  const HOUR = 3600 * 1000;
+  let truncated = false;
+
+  async function walk(s: number, e: number): Promise<NoteInfo[]> {
+    const resp = await callTool("recent_notes", {
+      start_time: new Date(s).toISOString(),
+      end_time: new Date(e).toISOString(),
+      limit: 20,
+    });
+    const text = extractText(resp);
+    const notes = text ? parseNotesFromText(text) : [];
+    const total = Number(text.match(/Total notes[^:]*:\s*(\d+)/i)?.[1] ?? notes.length);
+
+    if (total <= notes.length) return notes;
+    if (e - s <= HOUR) {
+      truncated = true;
+      return notes;
+    }
+    const mid = Math.floor((s + e) / 2);
+    const [a, b] = await Promise.all([walk(s, mid), walk(mid, e)]);
+    return [...a, ...b];
+  }
+
+  const all = await walk(start.getTime(), end.getTime());
+  const seen = new Set<string>();
+  const unique = all.filter((n) => {
+    const id = n.note_id || n.id;
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  unique.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+  return { notes: unique, truncated };
+}
+
 /** 列出某个文件夹中的笔记（folder_notes），返回格式: "- 标题 [note_id: xxx]" */
 export async function getNotesByFolder(folderId: string): Promise<NoteInfo[]> {
   const resp = await callTool("folder_notes", { folder_id: folderId });
@@ -365,15 +416,18 @@ function parseNotesFromText(text: string): NoteInfo[] {
     if (!time) time = block.match(/^time:\s*(\S+)/m)?.[1];
 
     const tagsLine = block.match(/^tags:\s*(.+)$/m)?.[1];
-    let summary = block.match(/^summary:\s*(.+)$/m)?.[1];
+    let summary: string | undefined = block.match(/^summary:\s*(.+)$/m)?.[1];
     if (!summary) {
-      // recent_notes：note_id 之后的第一行非元数据文本
+      // recent_notes：note_id 之后直接跟摘要文本（没有 "summary:" 前缀）
       const after = block.slice(block.indexOf("\n", block.indexOf("note_id:")) + 1);
       summary = after
         .split("\n")
         .map((l) => l.trim())
-        .find((l) => l && !/^(time|tags|summary):/i.test(l) && !l.startsWith("#"));
+        .filter((l) => l && !/^(time|tags|summary):/i.test(l) && !l.startsWith("#"))
+        .join(" ");
     }
+    // 纯语音笔记没有文字摘要，接口返回的是占位文案，不当作摘要
+    if (!summary || /^\[No text content\]/i.test(summary)) summary = undefined;
 
     notes.push({
       id: m[2],
