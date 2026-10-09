@@ -1,21 +1,8 @@
-import {
-  Action,
-  ActionPanel,
-  Clipboard,
-  closeMainWindow,
-  Detail,
-  Form,
-  Icon,
-  LaunchProps,
-  showHUD,
-  showToast,
-  Toast,
-} from "@raycast/api";
+import { Action, ActionPanel, Clipboard, closeMainWindow, Form, Icon, showHUD, showToast, Toast } from "@raycast/api";
 import { useEffect, useRef, useState } from "react";
 import { FolderInfo, warmUp } from "./api";
 import { analyzeCapture, CaptureKind, inferFolder, matchFolder } from "./capture-parse";
 import { KIND_LABEL, saveCapture } from "./capture-core";
-import { runCapture, SmartCaptureArgs } from "./capture-run";
 import { getFoldersFast } from "./folders-cache";
 
 const UNFILED = "";
@@ -30,10 +17,10 @@ const parseTags = (s: string) => [
 ];
 
 /**
- * 万能输入（表单）：根搜索栏里什么都没输入就回车时进入；输入正文时，类型 / 标签 / 文件夹实时自动识别并填好；
+ * 万能输入（表单）：Smart Capture 什么都没输入就回车时进入（经由 Template Capture 的「自由输入」）；输入正文时，类型 / 标签 / 文件夹实时自动识别并填好；
  * 一旦你手动改过某一项，该项就不再被自动覆盖（标题上的「自动」标记会消失）。
  */
-function CaptureForm() {
+export function CaptureForm() {
   const [text, setText] = useState("");
   const [kind, setKind] = useState<CaptureKind>("daily");
   const [tags, setTags] = useState("");
@@ -202,41 +189,4 @@ function CaptureForm() {
       </Form.Dropdown>
     </Form>
   );
-}
-
-/**
- * 根搜索栏里已带参数：保存完成 → 弹 HUD → 关窗。
- * 不能先关窗：Tinycast 关窗会终止视图命令的扩展进程，保存与 HUD 都不会执行。
- */
-function QuickRun({ args }: { args: SmartCaptureArgs }) {
-  const [error, setError] = useState<string>();
-
-  useEffect(() => {
-    warmUp();
-    (async () => {
-      try {
-        await showHUD(await runCapture(args));
-        await closeMainWindow({ clearRootSearch: true });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setError(msg);
-        const text = (args.text ?? "").trim();
-        if (text) await Clipboard.copy(text);
-        await showToast({
-          style: Toast.Style.Failure,
-          title: "保存失败",
-          message: text ? `${msg}（内容已复制到剪贴板）` : msg,
-        });
-      }
-    })();
-    // 只在打开时执行一次
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return <Detail isLoading={!error} markdown={error ? `## 保存失败\n\n${error}` : "正在保存…"} />;
-}
-
-export default function Command(props: LaunchProps<{ arguments: SmartCaptureArgs }>) {
-  const args = props.arguments ?? {};
-  return args.text?.trim() ? <QuickRun args={args} /> : <CaptureForm />;
 }

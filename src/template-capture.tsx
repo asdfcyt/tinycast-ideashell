@@ -1,3 +1,4 @@
+import { CaptureForm } from "./capture-form";
 import {
   Alert,
   Action,
@@ -200,6 +201,17 @@ function TemplateList({ templates, loading, reload }: { templates: Template[]; l
 
   return (
     <List isLoading={loading} searchBarPlaceholder="选择模板…">
+      <List.Item
+        key="free-input"
+        title="自由输入"
+        subtitle="Smart Capture 表单：自动识别类型 / 标签 / 文件夹"
+        icon={Icon.Pencil}
+        actions={
+          <ActionPanel>
+            <Action.Push title="打开表单" icon={Icon.Pencil} target={<CaptureForm />} />
+          </ActionPanel>
+        }
+      />
       {templates.map((t) => (
         <List.Item
           key={t.name}
@@ -253,6 +265,9 @@ function TemplateList({ templates, loading, reload }: { templates: Template[]; l
   );
 }
 
+/** 参数 name 为这些值时，直接打开 Smart Capture 的自由输入表单 */
+const FREE_INPUT_NAMES = ["自由输入", "自由", "smart"];
+
 export default function Command(props: LaunchProps<{ arguments: { name?: string } }>) {
   const name = props.arguments?.name?.trim() ?? "";
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -265,6 +280,7 @@ export default function Command(props: LaunchProps<{ arguments: { name?: string 
   }, []);
   useEffect(reload, [reload]);
 
+  if (FREE_INPUT_NAMES.includes(name)) return <CaptureForm />;
   const found = name && !loading ? findTemplate(name, templates) : undefined;
   if (name && loading) return <List isLoading />;
   return found ? (

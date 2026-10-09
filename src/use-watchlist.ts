@@ -35,7 +35,7 @@ export function useWatchlist(enabled: boolean, refreshTick: number) {
       try {
         for (const item of due) {
           try {
-            const s = await computeStats(item.keyword);
+            const s = await computeStats(item);
             setStats((prev) => ({ ...prev, [item.keyword]: s }));
           } catch {
             // 单项失败不影响其他项

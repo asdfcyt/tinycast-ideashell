@@ -9,9 +9,10 @@ import {
   Toast,
   useNavigation,
 } from "@raycast/api";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { runCapture } from "./capture-run";
-import { addWatch } from "./watchlist";
+import { loadKnownTagsCached, refreshKnownTags } from "./known-tags";
+import { addWatch, setProjectTags, WatchItem } from "./watchlist";
 
 /** 给关注项「记一条」：预填关键词，保存规则与 Smart Capture 相同（自动分流为待办 / Daily Note / 笔记） */
 export function WatchLogForm({ keyword }: { keyword: string }) {
@@ -58,39 +59,94 @@ export function WatchLogForm({ keyword }: { keyword: string }) {
   );
 }
 
-/** 新增关注项：输入关键词 / 标签 / 人名 / 项目名 */
-export function WatchAddForm() {
+const splitTags = (text: string) =>
+  text
+    .split(/[\s,，、]+/)
+    .map((t) => t.replace(/^#+/, "").trim())
+    .filter(Boolean);
+
+/**
+ * 新增项目（或编辑已有项目的标签）：
+ * 关键词 + 若干闪念贝壳标签一起定义「什么算这件事」——笔记里出现关键词、或带这些标签，都算一次提及。
+ */
+export function WatchAddForm({ edit }: { edit?: WatchItem } = {}) {
   const { pop } = useNavigation();
+  const [known, setKnown] = useState<string[]>([]);
+  const [loadingTags, setLoadingTags] = useState(true);
+  const [picked, setPicked] = useState<string[]>(edit?.tags ?? []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const cached = await loadKnownTagsCached();
+      if (cancelled) return;
+      setKnown(cached.tags);
+      if (!cached.stale) return setLoadingTags(false);
+      try {
+        const fresh = await refreshKnownTags();
+        if (!cancelled) setKnown(fresh);
+      } catch {
+        // 取不到就用缓存 / 手动输入
+      } finally {
+        if (!cancelled) setLoadingTags(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSubmit(values: Form.Values) {
-    const keyword = String(values.keyword ?? "")
-      .trim()
-      .replace(/^[#@]+/, "");
+    const keyword =
+      edit?.keyword ??
+      String(values.keyword ?? "")
+        .trim()
+        .replace(/^[#@]+/, "");
     if (!keyword) {
       await showToast({ style: Toast.Style.Failure, title: "请输入关键词" });
       return;
     }
-    const added = await addWatch(keyword);
+    const tags = [...new Set([...picked, ...splitTags(String(values.extra ?? ""))])];
+    if (edit) {
+      await setProjectTags(keyword, tags);
+      await showToast({ style: Toast.Style.Success, title: `已更新「${keyword}」的标签` });
+      pop();
+      return;
+    }
+    const added = await addWatch(keyword, tags);
     await showToast({
       style: added ? Toast.Style.Success : Toast.Style.Failure,
-      title: added ? `已关注「${keyword}」` : `「${keyword}」已经在关注项里`,
+      title: added ? `已添加项目「${keyword}」` : `「${keyword}」已经是项目了`,
     });
     if (added) pop();
   }
 
+  const options = [...new Set([...known, ...picked])];
+
   return (
     <Form
-      navigationTitle="新增关注项"
+      isLoading={loadingTags}
+      navigationTitle={edit ? `编辑标签 · ${edit.keyword}` : "新增项目"}
       actions={
         <ActionPanel>
-          <Action.SubmitForm title="关注" icon={Icon.Pin} onSubmit={handleSubmit} />
+          <Action.SubmitForm title={edit ? "保存" : "添加项目"} icon={Icon.Pin} onSubmit={handleSubmit} />
         </ActionPanel>
       }
     >
-      <Form.TextField id="keyword" title="关键词" placeholder="如：篆刻、洛神赋、体重、某个项目、某个人" autoFocus />
+      {edit ? (
+        <Form.Description title="项目" text={edit.keyword} />
+      ) : (
+        <Form.TextField id="keyword" title="项目关键词" placeholder="如：篆刻、洛神赋、体重、某个人" autoFocus />
+      )}
+      <Form.TagPicker id="tags" title="标签" value={picked} onChange={setPicked}>
+        {options.map((t) => (
+          <Form.TagPicker.Item key={t} value={t} title={`#${t}`} />
+        ))}
+      </Form.TagPicker>
+      <Form.TextField id="extra" title="其他标签" placeholder="没有列出的标签，用空格或逗号分隔（可不填）" />
       <Form.Description
         title="说明"
-        text="「什么算这件事」由这个关键词决定：笔记里出现它（或语义相近的检索结果里含它）就算一次提及。想换叫法可以取消后重新关注。"
+        text="关键词 + 标签一起定义这个项目：笔记里出现关键词、或带这些标签，都算一次提及；待办文字里含它们也归入该项目。标签可多选，列表取自你最近半年笔记里用过的标签。"
       />
     </Form>
   );

@@ -170,7 +170,7 @@ export async function loadDossier(query: string, now = new Date()): Promise<Doss
   };
 }
 
-function buildBrief(p: {
+export function buildBrief(p: {
   q: string;
   notes: DossierNote[];
   direct: DossierNote[];

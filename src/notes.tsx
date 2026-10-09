@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getNoteId, NoteInfo, searchNotes, TodoItem, updateTodos } from "./api";
 import { extractDate, listDailyNotes } from "./daily";
 import { DetailDoc } from "./detail-doc";
-import { ago, daysBetween, DossierData, DossierNote, loadDossier } from "./dossier";
+import { DossierData, DossierNote, loadDossier } from "./dossier";
 import { NoteDetailView } from "./note-detail-view";
 import { loadMemory, MemoryData, pickRandom, sameDayIds } from "./memory-lane";
 import { buildDayOverview, buildRangeOverview, findDay } from "./overview";
@@ -11,8 +11,7 @@ import { loadTimeline, localHHmm, sliceDay, TimelineData } from "./timeline-data
 import { lastDayOf, parseRange, TimeRange, weekdayName } from "./time-range";
 import { useNoteDetails } from "./use-note-details";
 import { useWatchlist } from "./use-watchlist";
-import { WatchAddForm, WatchLogForm } from "./watch-log";
-import { addWatch, removeWatch, setStaleDays, sparkline, STALE_CHOICES, WatchItem } from "./watchlist";
+import { addWatch, removeWatch, WatchItem } from "./watchlist";
 import { buildNoteMarkdown, formatDate, formatDateTime, shortTime, truncate } from "./utils";
 
 /**
@@ -109,7 +108,7 @@ export default function Command(props: LaunchProps<{ arguments: { query?: string
   return <NotesBrowser initialQuery={props.arguments?.query?.trim() ?? ""} />;
 }
 
-function NotesBrowser({
+export function NotesBrowser({
   dailyOnly = false,
   dossierOf,
   dossierOnly = false,
@@ -126,13 +125,11 @@ function NotesBrowser({
   const [view, setView] = useState<View | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [tick, setTick] = useState(0);
-  const [watchTick, setWatchTick] = useState(0);
   const [forceSearchFor, setForceSearchFor] = useState<string | null>(null);
   const dailyCache = useRef<{ notes: NoteInfo[]; folderFound: boolean } | null>(null);
   const memoryCache = useRef<MemoryData | null>(null);
   const { details, loadingId, load, prefetch, reset } = useNoteDetails();
-  const watchEnabled = !dailyOnly && !dossierOf && !dossierOnly && !memoryOnly && !query.trim();
-  const { items: watchItems, stats: watchStats, computing: watchComputing } = useWatchlist(watchEnabled, watchTick);
+  const { items: watchItems } = useWatchlist(false, 0);
 
   const intent = useMemo(
     () => resolveIntent(query, dailyOnly, forceSearchFor, dossierOf, dossierOnly, memoryOnly),
@@ -205,7 +202,6 @@ function NotesBrowser({
   const refresh = () => {
     dailyCache.current = null;
     memoryCache.current = null;
-    setWatchTick((t) => t + 1);
     reset();
     setTick((t) => t + 1);
   };
@@ -335,11 +331,11 @@ function NotesBrowser({
               .map((t) => (
                 <Action
                   key={`watch-${t}`}
-                  title={`关注「${t}」`}
+                  title={`钉为项目「${t}」`}
                   icon={Icon.Pin}
                   onAction={async () => {
                     await addWatch(t);
-                    await showToast({ style: Toast.Style.Success, title: `已关注「${t}」` });
+                    await showToast({ style: Toast.Style.Success, title: `已钉为项目「${t}」` });
                   }}
                 />
               ))}
@@ -436,95 +432,6 @@ function NotesBrowser({
     );
   };
 
-  // ── 关注项 ──
-  const renderWatch = () => {
-    const rows = watchItems.map((item) => {
-      const s = watchStats[item.keyword];
-      const gap = s?.lastDay ? daysBetween(s.lastDay, today) : null;
-      return { item, s, gap, stale: gap !== null && gap >= item.staleDays };
-    });
-    // 该记一条的排在前面（越久没碰越靠前），其余保持钉住的顺序
-    rows.sort((a, b) => Number(b.stale) - Number(a.stale) || (b.stale && a.stale ? (b.gap ?? 0) - (a.gap ?? 0) : 0));
-
-    if (rows.length === 0) return null;
-
-    const addAction = (
-      <Action.Push
-        title="新增关注项"
-        icon={Icon.Plus}
-        shortcut={{ modifiers: ["cmd", "shift"], key: "n" }}
-        target={<WatchAddForm />}
-      />
-    );
-
-    return (
-      <List.Section
-        title="关注"
-        subtitle={watchItems.length ? `${watchItems.length}${watchComputing ? " · 统计中…" : ""}` : undefined}
-      >
-        {rows.map(({ item, s, gap, stale }) => (
-          <List.Item
-            key={`watch-${item.keyword}`}
-            id={`watch-${item.keyword}`}
-            title={item.keyword}
-            subtitle={!s ? "统计中…" : s.lastDay ? `${ago(gap ?? 0)} · 近 30 天 ${s.count30} 次` : "还没有记录"}
-            icon={{ source: Icon.Pin, tintColor: stale ? Color.Orange : Color.Blue }}
-            accessories={[
-              ...(s && s.total > 0 ? [{ text: sparkline(s.series) }] : []),
-              ...(stale ? [{ tag: { value: `${gap} 天没碰了`, color: Color.Orange } }] : []),
-            ]}
-            detail={s ? docDetail(s.doc) : <List.Item.Detail isLoading markdown={`# 「${item.keyword}」\n\n统计中…`} />}
-            actions={
-              <ActionPanel>
-                <Action.Push title="查看档案" icon={Icon.Person} target={<NotesBrowser dossierOf={item.keyword} />} />
-                <Action.Push
-                  title={`记一条「${item.keyword}」`}
-                  icon={Icon.Pencil}
-                  shortcut={{ modifiers: ["cmd"], key: "n" }}
-                  target={<WatchLogForm keyword={item.keyword} />}
-                />
-                {s && (
-                  <Action.CopyToClipboard
-                    title="复制简报（Markdown）"
-                    icon={Icon.Clipboard}
-                    content={s.doc.copy}
-                    shortcut={{ modifiers: ["cmd"], key: "return" }}
-                  />
-                )}
-                <ActionPanel.Submenu title={`提醒：超过几天没碰（当前 ${item.staleDays} 天）`} icon={Icon.Bell}>
-                  {STALE_CHOICES.map((d) => (
-                    <Action
-                      key={d}
-                      title={`${d} 天${d === item.staleDays ? "（当前）" : ""}`}
-                      onAction={async () => {
-                        await setStaleDays(item.keyword, d);
-                        await showToast({
-                          style: Toast.Style.Success,
-                          title: `「${item.keyword}」超过 ${d} 天没提及会提醒`,
-                        });
-                      }}
-                    />
-                  ))}
-                </ActionPanel.Submenu>
-                <Action
-                  title="取消关注"
-                  icon={Icon.XMarkCircle}
-                  shortcut={{ modifiers: ["ctrl"], key: "x" }}
-                  onAction={async () => {
-                    await removeWatch(item.keyword);
-                    await showToast({ style: Toast.Style.Success, title: `已取消关注「${item.keyword}」` });
-                  }}
-                />
-                {addAction}
-                {refreshAction}
-              </ActionPanel>
-            }
-          />
-        ))}
-      </List.Section>
-    );
-  };
-
   // ── 时间线 ──
   const renderTimeline = (data: TimelineData) => {
     const overviewDoc = buildRangeOverview(data, details, today);
@@ -540,7 +447,6 @@ function NotesBrowser({
 
     return (
       <>
-        {watchEnabled && renderWatch()}
         {!dailyOnly && !query.trim() && (
           <List.Section title="快捷入口">
             <List.Item
@@ -562,27 +468,6 @@ function NotesBrowser({
                 </ActionPanel>
               }
             />
-            {watchItems.length === 0 && (
-              <List.Item
-                id="qe-watch"
-                title="关注项"
-                subtitle="钉住想盯的事，太久没碰会提醒"
-                icon={{ source: Icon.Pin, tintColor: Color.SecondaryText }}
-                detail={
-                  <List.Item.Detail markdown="# 关注项\n\n钉住你想持续跟进的几件事（关键词 / 标签 / 人名 / 项目名），这里会显示：\n\n- 距上次提及多少天，太久没碰会提醒\n- 近 30 天提及次数、近 12 个月迷你图\n- 选中即看到它的简报（最近的提及片段）\n\n**添加方式**：按 `⌘⇧N` 新增；或在任意档案页按 `⌘P`，或笔记的 Actions 里「关注「标签」」。" />
-                }
-                actions={
-                  <ActionPanel>
-                    <Action.Push
-                      title="新增关注项"
-                      icon={Icon.Plus}
-                      shortcut={{ modifiers: ["cmd", "shift"], key: "n" }}
-                      target={<WatchAddForm />}
-                    />
-                  </ActionPanel>
-                }
-              />
-            )}
             <List.Item
               id="qe-memory"
               title="往日回顾"
@@ -727,25 +612,25 @@ function NotesBrowser({
     const watched = watchItems.some((w: WatchItem) => w.keyword.toLowerCase() === keyword.toLowerCase());
     return watched ? (
       <Action
-        title="取消关注"
+        title="取消项目关注"
         icon={Icon.XMarkCircle}
         shortcut={{ modifiers: ["cmd"], key: "p" }}
         onAction={async () => {
           await removeWatch(keyword);
-          await showToast({ style: Toast.Style.Success, title: `已取消关注「${keyword}」` });
+          await showToast({ style: Toast.Style.Success, title: `已取消项目「${keyword}」` });
         }}
       />
     ) : (
       <Action
-        title="钉为关注项"
+        title="钉为项目（在 Todos 里管理）"
         icon={Icon.Pin}
         shortcut={{ modifiers: ["cmd"], key: "p" }}
         onAction={async () => {
           await addWatch(keyword);
           await showToast({
             style: Toast.Style.Success,
-            title: `已关注「${keyword}」`,
-            message: "回到 Notes 首页，顶部「关注」里就能看到",
+            title: `已钉为项目「${keyword}」`,
+            message: "打开 Todos，「项目」分区里就能看到",
           });
         }}
       />

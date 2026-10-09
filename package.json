@@ -14,8 +14,8 @@
       "name": "smart-capture",
       "title": "Smart Capture",
       "subtitle": "闪念贝壳",
-      "description": "万能输入：在搜索栏输入后回车，自动保存为待办 / Daily Note / 笔记（支持 #标签、@文件夹，以及「待办」「日记」「笔记」前缀）；什么都不输入直接回车则进入表单，边输入边自动识别类型、标签、文件夹。",
-      "mode": "view",
+      "description": "万能输入：在搜索栏输入后回车，窗口立即消失，自动保存为待办 / Daily Note / 笔记（支持 #标签、@文件夹，以及「待办」「日记」「笔记」前缀），保存完成弹 HUD；什么都不输入直接回车，则打开 Template Capture 的「自由输入」表单。",
+      "mode": "no-view",
       "arguments": [
         {
           "name": "text",
@@ -138,9 +138,9 @@
     },
     {
       "name": "manage-todos",
-      "title": "Manage Todos",
+      "title": "Todos",
       "subtitle": "闪念贝壳",
-      "description": "查看、完成、编辑和新建待办，按日期分组。",
+      "description": "管理短期待办与长期项目：时间 / 四象限视图、项目下一步与没碰提醒、完成复盘，并可同步滴答清单提醒。",
       "mode": "view",
       "keywords": [
         "todo",
