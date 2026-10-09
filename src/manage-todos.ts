@@ -45,11 +45,12 @@ export default async function Command(
   if (!raw) {
     try {
       await launchCommand({
-        name: "todos-list",
+        name: "notes",
         type: LaunchType.UserInitiated,
+        arguments: { query: TODOS_LIST_QUERY },
       });
     } catch {
-      await showHUD("请在根搜索里打开「Todos List」");
+      await showHUD("打开待办列表失败");
     }
     return;
   }
