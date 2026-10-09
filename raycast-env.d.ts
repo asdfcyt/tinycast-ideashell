@@ -34,6 +34,8 @@ declare namespace Preferences {
   export type Notes = ExtensionPreferences & {}
   /** Preferences accessible in the `manage-todos` command */
   export type ManageTodos = ExtensionPreferences & {}
+  /** Preferences accessible in the `todos-list` command */
+  export type TodosList = ExtensionPreferences & {}
   /** Preferences accessible in the `save-files` command */
   export type SaveFiles = ExtensionPreferences & {}
 }
@@ -60,7 +62,12 @@ declare namespace Arguments {
   "query": string
 }
   /** Arguments passed to the `manage-todos` command */
-  export type ManageTodos = {}
+  export type ManageTodos = {
+  /** 快速添加待办…（留空=打开列表） */
+  "text": string
+}
+  /** Arguments passed to the `todos-list` command */
+  export type TodosList = {}
   /** Arguments passed to the `save-files` command */
   export type SaveFiles = {}
 }

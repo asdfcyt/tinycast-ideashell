@@ -140,14 +140,38 @@
       "name": "manage-todos",
       "title": "Todos",
       "subtitle": "闪念贝壳",
-      "description": "管理短期待办与长期项目：时间 / 四象限视图、项目下一步与没碰提醒、完成复盘，并可同步滴答清单提醒。",
-      "mode": "view",
+      "description": "待办入口：在搜索栏输入内容回车，窗口立即消失，直接创建待办（可含日期时间、!重要；不带日期就是无日期待办；已连接滴答清单则建在滴答）；什么都不输入直接回车，打开待办列表（滴答清单 + 任务笔记 + 项目主页）。",
+      "mode": "no-view",
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text",
+          "placeholder": "快速添加待办…（留空=打开列表）",
+          "required": false
+        }
+      ],
       "keywords": [
         "todo",
         "待办",
         "任务",
         "完成",
         "task",
+        "list",
+        "添加待办",
+        "quick"
+      ]
+    },
+    {
+      "name": "todos-list",
+      "title": "Todos List",
+      "subtitle": "闪念贝壳",
+      "description": "待办列表：今天 / 近 7 天 / 逾期（以滴答清单为核心）、四象限、任务笔记、项目主页。一般从 Todos 回车进入。",
+      "mode": "view",
+      "keywords": [
+        "todo",
+        "待办",
+        "列表",
+        "项目",
         "list"
       ]
     },

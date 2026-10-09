@@ -24,6 +24,8 @@ export interface DidaTask {
 export interface DidaOverview {
   overdue: DidaTask[];
   upcoming: DidaTask[];
+  /** 收集箱里没有截止日期的未完成任务 */
+  undated: DidaTask[];
   done: DidaTask[];
   projects: Record<string, string>;
   /** 部分请求失败时的说明 */
@@ -35,11 +37,11 @@ const PROJECTS_KEY = "dida-projects-v1";
 const PROJECTS_TTL = 6 * 3600 * 1000;
 
 /** 本地时间 → `2026-10-09T15:00:00.000+0800` */
-function isoLocal(d: Date): string {
+export function isoLocal(d: Date): string {
   return `${formatDate(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.000${offsetString()}`;
 }
 
-function startOfDay(d: Date, plusDays = 0): Date {
+export function startOfDay(d: Date, plusDays = 0): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() + plusDays, 0, 0, 0);
 }
 
@@ -62,7 +64,11 @@ export function parseDidaDate(value: unknown, isAllDay: boolean): { date: string
   return { date: formatDate(local), time: isAllDay ? null : `${pad(local.getHours())}:${pad(local.getMinutes())}` };
 }
 
-function collectObjects(value: unknown, pred: (o: Record<string, unknown>) => boolean, out: Record<string, unknown>[]) {
+export function collectObjects(
+  value: unknown,
+  pred: (o: Record<string, unknown>) => boolean,
+  out: Record<string, unknown>[],
+) {
   if (Array.isArray(value)) {
     for (const v of value) collectObjects(v, pred, out);
   } else if (value && typeof value === "object") {
@@ -73,7 +79,7 @@ function collectObjects(value: unknown, pred: (o: Record<string, unknown>) => bo
 }
 
 /** 滴答返回的可能是单个 JSON、数组，或多个 JSON 对象首尾相接（每个任务一个对象）→ 全部解析出来 */
-function parseAny(text: string): unknown {
+export function parseAny(text: string): unknown {
   const values: unknown[] = [];
   let i = 0;
   while (i < text.length) {
@@ -140,7 +146,7 @@ export function extractTasks(text: string): DidaTask[] {
 }
 
 /** 保存一份原始返回的开头，便于排查格式问题 */
-async function saveSample(tool: string, text: string) {
+export async function saveSample(tool: string, text: string) {
   try {
     await LocalStorage.setItem(`dida-sample-${tool}`, text.slice(0, 1500));
   } catch {
@@ -188,6 +194,7 @@ export async function fetchDidaOverview(now = new Date()): Promise<DidaOverview>
     ["undone_today", "list_undone_tasks_by_time_query", query("today")],
     ["undone_next7", "list_undone_tasks_by_time_query", query("next7day")],
     ["completed", "list_completed_tasks_by_date", range(-3, 0)],
+    ["undone_inbox", "get_project_with_undone_tasks", { project_id: "inbox" }],
   ];
   const [results, names] = await Promise.all([
     Promise.allSettled(calls.map(([, tool, args]) => callDida(tool, args))),
@@ -225,6 +232,9 @@ export async function fetchDidaOverview(now = new Date()): Promise<DidaOverview>
   return {
     overdue: all.filter((t) => (t.date as string) < today),
     upcoming: all.filter((t) => (t.date as string) >= today),
+    undated: extractTasks(texts.get("undone_inbox") ?? "")
+      .filter((t) => !t.done && !t.date)
+      .slice(0, 30),
     done: extractTasks(texts.get("completed") ?? "").map((t) => ({ ...t, done: true })),
     projects: names,
     warning: failures.length ? `部分滴答请求失败：${failures.join("；")}` : undefined,

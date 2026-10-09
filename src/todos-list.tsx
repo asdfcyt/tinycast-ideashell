@@ -13,6 +13,8 @@ import {
   useNavigation,
 } from "@raycast/api";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getNoteDetail } from "./api";
+import { emptyFocus, formatMinutes } from "./dida-focus";
 import { clearDida, describeSync, loadLastError, loadLastSync, syncAll, syncDida } from "./dida";
 import { didaTaskUrl } from "./dida-tasks";
 import { DidaSetupForm } from "./dida-setup";
@@ -20,8 +22,9 @@ import { ago, daysBetween } from "./dossier";
 import { NotesBrowser } from "./notes";
 import { NextForm, ProgressForm, ReviewForm, TaskNoteForm } from "./project-forms";
 import { ProjectPage } from "./project-page";
-import { loadTaskNotes, noteUrl, TaskNoteRef } from "./task-notes";
+import { appendProgress, loadTaskNotes, noteUrl, TaskNoteRef } from "./task-notes";
 import { byDateTime, isImportant, loadTodoData, quadrantOfRow, TodoData, TodoRow } from "./todo-data";
+import { bumpPostpone, clearPostpone, loadPostpones, POSTPONE_WARN } from "./postpone";
 import { QUADRANT_TITLE, Quadrant, projectOf } from "./todo-meta";
 import { completeRow, createRow, patchRow, restoreRow } from "./todo-ops";
 import { parseDateTimeFields, parseTodoInput } from "./todo-parse";
@@ -42,6 +45,8 @@ import {
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 const VIEW_KEY = "todos-view-v1";
+/** 在 macOS「快捷指令」里建一个同名快捷指令（动作：滴答清单 → 开始专注），即可一键开始 */
+const FOCUS_SHORTCUT = "滴答开始专注";
 
 const EMPTY_PROJECTS_MD = `# 项目
 
@@ -71,6 +76,10 @@ function addDays(date: Date, days: number): string {
 function dateLabel(date: string): string {
   const d = new Date(`${date}T00:00:00`);
   return Number.isNaN(d.getTime()) ? date : `${date} ${WEEKDAYS[d.getDay()]}`;
+}
+
+function clipText(text: string, max = 1800): string {
+  return text.length > max ? `${text.slice(0, max).trimEnd()}\n\n…（后面的内容请打开笔记查看）` : text;
 }
 
 function errorMessage(e: unknown): string {
@@ -203,7 +212,14 @@ function projectDetail(item: WatchItem, s: WatchStats | undefined, gap: number |
 }
 
 export default function Command() {
-  const [data, setData] = useState<TodoData>({ open: [], done: [], connected: false, ideaOpen: [], ideaDone: [] });
+  const [data, setData] = useState<TodoData>({
+    open: [],
+    done: [],
+    connected: false,
+    ideaOpen: [],
+    ideaDone: [],
+    focus: emptyFocus(),
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
   const [view, setView] = useState<ViewMode>("time");
@@ -212,6 +228,8 @@ export default function Command() {
   const [lastSync, setLastSync] = useState(0);
   const [lastError, setLastError] = useState("");
   const [taskNotes, setTaskNotes] = useState<Record<string, TaskNoteRef>>({});
+  const [noteTexts, setNoteTexts] = useState<Record<string, string>>({});
+  const [postpones, setPostpones] = useState<Record<string, number>>({});
   const syncingRef = useRef(false);
 
   const { items: projects, stats, computing } = useWatchlist(true, tick);
@@ -255,7 +273,19 @@ export default function Command() {
         setData(d);
         setLastSync(await loadLastSync());
         setLastError(await loadLastError());
-        setTaskNotes(await loadTaskNotes());
+        const notes = await loadTaskNotes();
+        setTaskNotes(notes);
+        setPostpones(await loadPostpones());
+        // 任务笔记的正文在后台读取（最多 8 条未完成任务），读到后显示在右侧
+        d.open
+          .filter((r) => notes[r.key])
+          .slice(0, 8)
+          .forEach((r) => {
+            const id = notes[r.key].noteId;
+            getNoteDetail(id)
+              .then((n) => setNoteTexts((prev) => ({ ...prev, [id]: (n.content ?? n.body ?? "").trim() })))
+              .catch(() => undefined);
+          });
         setIsLoading(false);
         if (sync && d.connected) {
           // 后台把闪念贝壳里带日期的待办推到滴答；有变化再静默刷新一次
@@ -293,7 +323,10 @@ export default function Command() {
   const toggle = (row: TodoRow) =>
     row.done
       ? act("恢复为未完成...", "已恢复为未完成", () => restoreRow(row))
-      : act("标记完成...", "已完成", () => completeRow(row));
+      : act("标记完成...", "已完成", async () => {
+          await completeRow(row);
+          await clearPostpone(row.key);
+        });
 
   async function createFromSearch() {
     const text = searchText.trim();
@@ -395,15 +428,20 @@ export default function Command() {
     const important = isImportant(row);
     const project = projectOf(row.title, projects, row.tags);
     const note = taskNotes[row.key];
+    const noteText = note ? noteTexts[note.noteId] : undefined;
+    const postponed = postpones[row.key] ?? 0;
+    const focus = row.source === "dida" ? data.focus.byTask[row.id] : undefined;
     const quadrant = quadrantOfRow(row, now);
     // 只在已逾期 / 已完成分组里带上日期（其余分组标题已含日期）；不放项目名 / 清单名，避免挤占标题
-    const showDate = row.date && (groupKey === "overdue" || groupKey === "done");
-    const timeTag = [showDate ? row.date?.slice(5) : "", row.time ?? ""].filter(Boolean).join(" ");
+    // 标签要短，列表左栏很窄：普通分组只显示时间；已逾期 / 已完成显示 MM-DD（已完成且是今天则显示时间）
+    const showDate = !!row.date && (groupKey === "overdue" || (groupKey === "done" && row.date !== today));
+    const timeTag = showDate ? (row.date as string).slice(5) : (row.time ?? "");
     return (
       <List.Item
         key={row.key}
         id={`todo-${row.key}`}
         title={row.title}
+        subtitle={note && !row.done ? `→ ${note.deliverable}` : undefined}
         keywords={[...(project ? [project.keyword] : []), ...(row.listName ? [row.listName] : [])]}
         icon={
           row.done
@@ -418,19 +456,34 @@ export default function Command() {
           ...(row.urgentMark
             ? [{ icon: { source: Icon.ExclamationMark, tintColor: Color.Red }, tooltip: "紧急" }]
             : []),
-          ...(note ? [{ icon: Icon.Document, tooltip: `任务笔记：${note.deliverable}` }] : []),
-          ...(row.source === "dida" ? [{ icon: Icon.Bell, tooltip: "滴答清单任务（有提醒）" }] : []),
+          ...(!row.done && postponed >= POSTPONE_WARN
+            ? [{ icon: { source: Icon.Repeat, tintColor: Color.Orange }, tooltip: `已推迟 ${postponed} 次` }]
+            : []),
+          ...(note
+            ? [{ icon: Icon.Document, tooltip: `任务笔记：${note.deliverable}` }]
+            : row.done
+              ? []
+              : [
+                  {
+                    icon: { source: Icon.QuestionMark, tintColor: Color.SecondaryText },
+                    tooltip: "还没想清楚要交付什么：按 ⌘J 创建任务笔记",
+                  },
+                ]),
           ...(timeTag ? [{ tag: { value: timeTag, color: isOverdue ? Color.Red : Color.Blue } }] : []),
         ]}
         detail={
           <List.Item.Detail
             markdown={[
               `# ${row.title}`,
+              !row.done && postponed >= POSTPONE_WARN
+                ? `**已推迟 ${postponed} 次**：这个任务可能太大，或目的还不清楚。试着拆成更小的、能交付的成果，并按 \`⌘J\` 补写任务笔记。`
+                : "",
               note
-                ? `**交付成果**：${note.deliverable}\n\n[打开任务笔记](${noteUrl(note.noteId)})`
+                ? `**交付成果**：${note.deliverable}`
                 : row.done
                   ? ""
                   : "_还没有任务笔记。先想清楚这个任务要**交付什么成果**，按 `⌘J` 创建任务笔记。_",
+              note ? (noteText === undefined ? "_正在读取任务笔记…_" : clipText(noteText)) : "",
               project?.next ? `**「${project.keyword}」的下一步**：${project.next}` : "",
             ]
               .filter(Boolean)
@@ -441,6 +494,12 @@ export default function Command() {
                 <List.Item.Detail.Metadata.Label title="时间" text={row.time ?? "无"} />
                 <List.Item.Detail.Metadata.Label title="象限" text={QUADRANT_TITLE[quadrant]} />
                 <List.Item.Detail.Metadata.Label title="项目" text={project ? project.keyword : "无"} />
+                {focus && (
+                  <List.Item.Detail.Metadata.Label
+                    title="专注"
+                    text={`今日 ${formatMinutes(focus.todayMin)} · 近 7 天 ${formatMinutes(focus.weekMin)}`}
+                  />
+                )}
                 <List.Item.Detail.Metadata.Label
                   title="来源"
                   text={
@@ -462,6 +521,14 @@ export default function Command() {
               icon={row.done ? Icon.Circle : Icon.CheckCircle}
               onAction={() => toggle(row)}
             />
+            {!row.done && (
+              <Action.OpenInBrowser
+                title={`开始专注（快捷指令「${FOCUS_SHORTCUT}」）`}
+                icon={Icon.Clock}
+                url={`shortcuts://run-shortcut?name=${encodeURIComponent(FOCUS_SHORTCUT)}&input=text&text=${encodeURIComponent(row.title)}`}
+                shortcut={{ modifiers: ["cmd"], key: "p" }}
+              />
+            )}
             {!row.done && (
               <Action.Push
                 title="完成并写复盘"
@@ -511,8 +578,32 @@ export default function Command() {
                   title="推迟到明天"
                   icon={Icon.ArrowRight}
                   shortcut={{ modifiers: ["cmd", "shift"], key: "t" }}
-                  onAction={() => act("正在保存...", "已推迟到明天", () => patchRow(row, { date: addDays(now, 1) }))}
+                  onAction={() =>
+                    act("正在保存...", "已推迟到明天", async () => {
+                      await patchRow(row, { date: addDays(now, 1) });
+                      if (!row.date || row.date < addDays(now, 1)) await bumpPostpone(row.key);
+                    })
+                  }
                 />
+              </>
+            )}
+            {row.source === "dida" && !row.done && (
+              <>
+                {note && focus && focus.todayMin > 0 && (
+                  <Action
+                    title="把今日专注记入任务笔记"
+                    icon={Icon.Pencil}
+                    shortcut={{ modifiers: ["cmd", "opt"], key: "l" }}
+                    onAction={() =>
+                      act("正在写入任务笔记...", "已记入进展记录", () =>
+                        appendProgress(
+                          note.noteId,
+                          `专注 ${formatMinutes(focus.todayMin)}${focus.todayCount > 1 ? `（${focus.todayCount} 段）` : ""}`,
+                        ),
+                      )
+                    }
+                  />
+                )}
               </>
             )}
             {row.source === "dida" && (
@@ -587,7 +678,15 @@ export default function Command() {
                   <Action.Push
                     title="打开项目主页"
                     icon={Icon.House}
-                    target={<ProjectPage item={item} stats={s} rows={related} onChanged={() => setTick((t) => t)} />}
+                    target={
+                      <ProjectPage
+                        item={item}
+                        stats={s}
+                        rows={related}
+                        focus={data.focus}
+                        onChanged={() => setTick((t) => t)}
+                      />
+                    }
                   />
                   <Action.Push
                     title={`新建待办「${item.keyword}」`}
@@ -686,8 +785,32 @@ export default function Command() {
 
   // ── 滴答清单状态行 ──
   const problem = [data.warning, lastError].filter(Boolean).join("\n\n");
+  const focusTitles = (id: string) =>
+    data.focus.titles[id] ?? [...data.open, ...data.done].find((r) => r.id === id)?.title ?? "（其他任务）";
+  const focusLines = Object.entries(data.focus.byTask)
+    .sort((a, b) => b[1].weekMin - a[1].weekMin)
+    .slice(0, 10)
+    .map(([id, f]) => `- ${focusTitles(id)}：今日 ${formatMinutes(f.todayMin)}，近 7 天 ${formatMinutes(f.weekMin)}`);
+  const focusMd = `# 专注\n\n**今日**：${formatMinutes(data.focus.todayMin)}（${data.focus.todayPomos} 个番茄）\n\n**近 7 天**：${formatMinutes(data.focus.weekMin)}（${data.focus.weekPomos} 个番茄）\n\n${
+    focusLines.length ? `## 按任务\n\n${focusLines.join("\n")}` : "还没有关联到任务的专注记录。"
+  }\n\n计时在滴答里进行：任务上按 \`⌘P\` 通过快捷指令开始专注。`;
   const renderDida = () => (
     <List.Section title="滴答清单">
+      {connected && (
+        <List.Item
+          id="dida-focus"
+          title="专注"
+          subtitle={`今日 ${formatMinutes(data.focus.todayMin)} · 近 7 天 ${formatMinutes(data.focus.weekMin)}`}
+          icon={{ source: Icon.Clock, tintColor: Color.Red }}
+          detail={<List.Item.Detail markdown={focusMd} />}
+          actions={
+            <ActionPanel>
+              <Action title="刷新" icon={Icon.ArrowClockwise} onAction={refresh} />
+              {commonActions}
+            </ActionPanel>
+          }
+        />
+      )}
       <List.Item
         id="dida-status"
         title={connected ? "已连接滴答清单" : "连接滴答清单"}
@@ -710,7 +833,7 @@ export default function Command() {
           <List.Item.Detail
             markdown={
               connected
-                ? `# 滴答清单\n\n已连接。这里的待办**以滴答清单为核心**：逾期、今天、近 7 天的任务都从滴答拉取，完成 / 改期 / 改优先级会直接改滴答；闪念贝壳里带日期的待办会自动同步过去并提醒。\n\n- 有时间：准点提醒；只有日期：当天 9:00 提醒\n- 没有截止日期的滴答任务不在这里显示\n- 闪念贝壳没有删除接口，所以**删除不会同步**\n\n\`⌘⇧S\` 立即同步。${problem ? `\n\n**最近的问题**：\n\n${problem}` : ""}`
+                ? `# 滴答清单\n\n已连接。这里的待办**以滴答清单为核心**：逾期、今天、近 7 天的任务都从滴答拉取，完成 / 改期 / 改优先级会直接改滴答；闪念贝壳里带日期的待办会自动同步过去并提醒。\n\n- 有时间：准点提醒；只有日期：当天 9:00 提醒\n- 收集箱里没有截止日期的任务显示在「无日期」分组（其他清单的无日期任务不显示）\n- 闪念贝壳没有删除接口，所以**删除不会同步**\n\n\`⌘⇧S\` 立即同步。${problem ? `\n\n**最近的问题**：\n\n${problem}` : ""}`
                 : "# 连接滴答清单\n\n连接后，Todos 会以滴答清单为核心：今天、近 7 天的任务从滴答拉取并由滴答提醒你；闪念贝壳的笔记作为任务的支撑（任务笔记 / 项目主页）。\n\n需要网页版滴答清单里的 **API 口令**：头像 → 设置 → 账户与安全 → API 口令 → 创建并复制。按回车开始连接。"
             }
           />
@@ -743,12 +866,6 @@ export default function Command() {
       isShowingDetail
       searchBarPlaceholder="搜索待办 / 项目；输入「明天 15:00 开会 !重要」后 ⌘↵ 直接创建"
       onSearchTextChange={setSearchText}
-      searchBarAccessory={
-        <List.Dropdown tooltip="视图" value={view} onChange={(v) => switchView(v === "quad" ? "quad" : "time")}>
-          <List.Dropdown.Item title="时间视图" value="time" icon={Icon.Calendar} />
-          <List.Dropdown.Item title="四象限视图" value="quad" icon={Icon.AppWindowGrid2x2} />
-        </List.Dropdown>
-      }
     >
       {blocks.map((b) => {
         if (b.kind === "projects") return <Fragment key="projects">{renderProjects()}</Fragment>;
@@ -812,6 +929,7 @@ function TodoForm({
     const toast = await showToast({ style: Toast.Style.Animated, title: editing ? "正在保存..." : "正在创建..." });
     try {
       if (row) {
+        if (when.date && row.date && when.date > row.date) await bumpPostpone(row.key);
         await patchRow(row, {
           ...(title !== row.title ? { title } : {}),
           ...(when.date && when.date !== row.date ? { date: when.date } : {}),

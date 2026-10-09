@@ -1,5 +1,6 @@
 import { listTodos, TodoItem } from "./api";
 import { loadMap } from "./dida";
+import { emptyFocus, fetchFocusSummary, FocusSummary } from "./dida-focus";
 import { DidaTask, fetchDidaOverview, projectLabel } from "./dida-tasks";
 import { isDidaConnected } from "./dida";
 import { cleanTitle, isMarkedImportant, isMarkedUrgent, Quadrant, quadrantOf as quadrantOfTodo } from "./todo-meta";
@@ -38,6 +39,8 @@ export interface TodoData {
   /** 闪念贝壳原始待办，供「同步到滴答」使用 */
   ideaOpen: TodoItem[];
   ideaDone: TodoItem[];
+  /** 近 7 天的专注记录（滴答番茄钟 / 正计时） */
+  focus: FocusSummary;
 }
 
 export function ideaRow(t: TodoItem): TodoRow {
@@ -100,11 +103,19 @@ export async function loadTodoData(): Promise<TodoData> {
   ]);
 
   if (!connected) {
-    return { open: ideaOpen.map(ideaRow), done: ideaDone.map(ideaRow), connected, ideaOpen, ideaDone };
+    return {
+      open: ideaOpen.map(ideaRow),
+      done: ideaDone.map(ideaRow),
+      connected,
+      ideaOpen,
+      ideaDone,
+      focus: emptyFocus(),
+    };
   }
 
   let warning: string | undefined;
   let overview: Awaited<ReturnType<typeof fetchDidaOverview>> | null = null;
+  const focusP = fetchFocusSummary().catch(() => emptyFocus());
   try {
     overview = await fetchDidaOverview();
     warning = overview.warning;
@@ -115,7 +126,7 @@ export async function loadTodoData(): Promise<TodoData> {
   const map = await loadMap();
   const ideaByTask = new Map(Object.entries(map).map(([ideaId, m]) => [m.taskId, ideaId]));
   const names = overview?.projects ?? {};
-  const didaOpen = overview ? [...overview.overdue, ...overview.upcoming] : [];
+  const didaOpen = overview ? [...overview.overdue, ...overview.upcoming, ...overview.undated] : [];
   const seen = new Set([...didaOpen, ...(overview?.done ?? [])].map((t) => t.id));
   // 已同步到滴答、且这次拉到了对应滴答任务的，就只显示滴答那条
   const visible = (t: TodoItem) => !(map[t.id] && seen.has(map[t.id].taskId));
@@ -129,7 +140,7 @@ export async function loadTodoData(): Promise<TodoData> {
     ...ideaDone.filter(visible).map(ideaRow),
   ];
   done.sort((a, b) => `${b.date ?? ""}${b.time ?? ""}`.localeCompare(`${a.date ?? ""}${a.time ?? ""}`));
-  return { open, done: done.slice(0, 20), connected, warning, ideaOpen, ideaDone };
+  return { open, done: done.slice(0, 5), connected, warning, ideaOpen, ideaDone, focus: await focusP };
 }
 
 export const todayString = () => formatDate(new Date());
