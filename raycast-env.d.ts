@@ -36,6 +36,8 @@ declare namespace Preferences {
   export type ManageTodos = ExtensionPreferences & {}
   /** Preferences accessible in the `todos-list` command */
   export type TodosList = ExtensionPreferences & {}
+  /** Preferences accessible in the `todos-menu` command */
+  export type TodosMenu = ExtensionPreferences & {}
   /** Preferences accessible in the `save-files` command */
   export type SaveFiles = ExtensionPreferences & {}
 }
@@ -68,6 +70,8 @@ declare namespace Arguments {
 }
   /** Arguments passed to the `todos-list` command */
   export type TodosList = {}
+  /** Arguments passed to the `todos-menu` command */
+  export type TodosMenu = {}
   /** Arguments passed to the `save-files` command */
   export type SaveFiles = {}
 }

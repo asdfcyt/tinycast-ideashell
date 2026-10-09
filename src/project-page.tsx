@@ -4,8 +4,17 @@ import { getNoteDetail } from "./api";
 import { FocusSummary, formatMinutes } from "./dida-focus";
 import { didaTaskUrl } from "./dida-tasks";
 import { NotesBrowser } from "./notes";
-import { NextForm, ProgressForm, syncProjectHome } from "./project-forms";
-import { createProjectHome, loadProjectHomes, loadTaskNotes, noteUrl, taskNoteLinks, TaskNoteRef } from "./task-notes";
+import { NextForm, ProgressForm } from "./project-forms";
+import { refreshProjectSummary } from "./project-summary";
+import {
+  createProjectHome,
+  displayNote,
+  loadProjectHomes,
+  loadTaskNotes,
+  noteUrl,
+  taskNoteLinks,
+  TaskNoteRef,
+} from "./task-notes";
 import { TodoRow } from "./todo-data";
 import { projectTerms, WatchItem, WatchStats } from "./watchlist";
 import { WatchLogForm } from "./watch-log";
@@ -41,7 +50,8 @@ const NO_TASKS_MD = `# 相关任务
 `;
 
 /** 笔记正文太长时截断，避免详情页过长 */
-function clip(text: string, max = 2500): string {
+function clip(raw: string, max = 2500): string {
+  const text = displayNote(raw);
   return text.length > max ? `${text.slice(0, max).trimEnd()}\n\n…（后面的内容请打开笔记查看）` : text;
 }
 
@@ -115,9 +125,9 @@ export function ProjectPage({
   async function refreshHome() {
     setBusy(true);
     try {
-      await syncProjectHome(item.keyword);
+      await refreshProjectSummary(item, focus);
       if (homeId) setHomeText(await loadText(homeId));
-      await showToast({ style: Toast.Style.Success, title: "已更新项目主页里的任务笔记汇总" });
+      await showToast({ style: Toast.Style.Success, title: "已更新项目主页的自动汇总" });
     } catch (e) {
       await showToast({
         style: Toast.Style.Failure,
@@ -160,7 +170,7 @@ export function ProjectPage({
       title={`记一条「${item.keyword}」`}
       icon={Icon.Pencil}
       shortcut={{ modifiers: ["cmd"], key: "l" }}
-      target={<WatchLogForm keyword={item.keyword} />}
+      target={<WatchLogForm keyword={item.keyword} tags={item.tags} />}
     />
   );
 
@@ -183,7 +193,7 @@ export function ProjectPage({
                 <>
                   <Action.OpenInBrowser title="打开项目主页笔记" url={noteUrl(homeId)} />
                   <Action
-                    title="更新任务笔记汇总"
+                    title="更新项目主页汇总（成果状态 / 进度 / 专注）"
                     icon={Icon.ArrowClockwise}
                     shortcut={{ modifiers: ["cmd"], key: "r" }}
                     onAction={refreshHome}
@@ -236,7 +246,7 @@ export function ProjectPage({
                     title="记一条进展"
                     icon={Icon.Pencil}
                     shortcut={{ modifiers: ["cmd"], key: "l" }}
-                    target={<ProgressForm noteId={r.noteId} title={r.deliverable} />}
+                    target={<ProgressForm noteId={r.noteId} title={r.deliverable} taskKey={r.taskKey} />}
                   />
                 </ActionPanel>
               }

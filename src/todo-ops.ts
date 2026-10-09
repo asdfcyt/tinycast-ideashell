@@ -37,6 +37,7 @@ export interface RowPatch {
   time?: string;
   priority?: number;
   content?: string;
+  tags?: string[];
 }
 
 /** 修改一行待办：滴答行改滴答任务，闪念贝壳行改闪念贝壳待办（之后会同步到滴答） */
@@ -46,6 +47,7 @@ export async function patchRow(row: TodoRow, patch: RowPatch): Promise<void> {
       title: patch.title,
       content: patch.content,
       priority: patch.priority,
+      tags: patch.tags,
       date: patch.date,
       // 只改日期时保留原有时间
       time: patch.date ? (patch.time ?? row.time) : undefined,

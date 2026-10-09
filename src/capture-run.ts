@@ -6,6 +6,10 @@ import { getFoldersFast, getFoldersFresh } from "./folders-cache";
 
 export interface SmartCaptureArgs {
   text?: string;
+  /** 没有写前缀时的默认类型（不传则智能识别）；写了「待办 / 日记」等前缀仍以前缀为准 */
+  defaultKind?: CaptureKind;
+  /** 额外追加的标签（如项目的关键词 / 标签） */
+  extraTags?: string[];
 }
 
 const CLIPBOARD_WORDS = /^(?:剪贴板|剪切板|clip|clipboard|paste)$/i;
@@ -43,8 +47,8 @@ export async function runCapture(args: SmartCaptureArgs): Promise<string> {
   if (!a.body) throw new Error("没有可保存的内容");
 
   // 2. 决定类型
-  const kind: CaptureKind = a.forced ?? (fromClipboard ? "note" : a.recommended);
-  const how = a.forced ? "" : fromClipboard ? "剪贴板" : "智能识别";
+  const kind: CaptureKind = a.forced ?? args.defaultKind ?? (fromClipboard ? "note" : a.recommended);
+  const how = a.forced || args.defaultKind ? "" : fromClipboard ? "剪贴板" : "智能识别";
 
   // 3. 文件夹（仅笔记）
   let folderId: string | undefined;
@@ -77,7 +81,7 @@ export async function runCapture(args: SmartCaptureArgs): Promise<string> {
     kind,
     body: a.body,
     todo: a.todo,
-    tags: a.tags,
+    tags: [...new Set([...a.tags, ...(args.extraTags ?? [])])],
     folderId,
     folderNote,
     how,

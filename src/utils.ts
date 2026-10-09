@@ -7,6 +7,11 @@ export function formatDate(date: Date): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+/** 本地 "YYYY-MM-DD HH:mm"（进展 / 里程碑 / 复盘的记录时间，精确到分钟） */
+export function formatMinute(date: Date): string {
+  return `${formatDate(date)} ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
+}
+
 export function getDailyNoteTitle(date?: Date): string {
   const d = date || new Date();
   const { dailyNoteTitleFormat } = getPrefs();
@@ -59,7 +64,8 @@ export function dayGroup(iso?: string): string {
   if (!iso) return "更早";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "更早";
-  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const startOfDay = (x: Date) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const diff = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
   if (diff <= 0) return "今天";
   if (diff === 1) return "昨天";
@@ -82,7 +88,8 @@ export function buildNoteMarkdown(opts: {
 
   const body_ = body?.trim();
   const sum = summary?.trim();
-  const duplicated = !!sum && !!body_ && (body_ === sum || body_.startsWith(sum));
+  const duplicated =
+    !!sum && !!body_ && (body_ === sum || body_.startsWith(sum));
   if (sum && !duplicated) {
     parts.push(`> **摘要**　${sum.replace(/\n+/g, " ")}`);
   }

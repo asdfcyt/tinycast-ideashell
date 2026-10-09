@@ -11,14 +11,16 @@ import {
 } from "@raycast/api";
 import { useState } from "react";
 import { runCapture } from "./capture-run";
-import { didaTaskUrl, patchDidaTask } from "./dida-tasks";
+import { commentOnTask, didaTaskUrl, patchDidaTask } from "./dida-tasks";
 import {
   appendProgress,
   appendReview,
   createTaskNote,
   loadProjectHomes,
   loadTaskNotes,
+  milestoneText,
   noteUrl,
+  recordMilestone,
   refreshProjectHomeLinks,
   taskNoteLinks,
   TaskNoteRef,
@@ -165,7 +167,18 @@ export function TaskNoteForm({
 }
 
 /** 在任务笔记的「进展记录」里追加一条 */
-export function ProgressForm({ noteId, title }: { noteId: string; title: string }) {
+export function ProgressForm({
+  noteId,
+  title,
+  taskKey,
+  projectId,
+}: {
+  noteId: string;
+  title: string;
+  /** 任务的 key（dida:<id>）：有的话，进展会同步成滴答任务上的一条评论 */
+  taskKey?: string;
+  projectId?: string;
+}) {
   const { pop } = useNavigation();
   const [saving, setSaving] = useState(false);
 
@@ -178,7 +191,11 @@ export function ProgressForm({ noteId, title }: { noteId: string; title: string 
     setSaving(true);
     try {
       await appendProgress(noteId, text);
-      await showToast({ style: Toast.Style.Success, title: "已记入任务笔记" });
+      const synced = taskKey ? await commentOnTask(taskKey, `进展：${text}`, projectId) : false;
+      await showToast({
+        style: Toast.Style.Success,
+        title: synced ? "已记入任务笔记，并同步到滴答评论" : "已记入任务笔记",
+      });
       pop();
     } catch (e) {
       setSaving(false);
@@ -210,15 +227,24 @@ export function ReviewForm({ row, project, noteId }: { row: TodoRow; project?: s
     setSaving(true);
     try {
       await completeRow(row);
+      if (project) {
+        const ref = (await loadTaskNotes())[row.key];
+        await recordMilestone(project, milestoneText(row.title, ref)).catch(() => undefined);
+      }
       if (!review) {
         await showHUD("已完成");
-      } else if (noteId) {
-        await appendReview(noteId, review);
-        await showHUD("已完成 · 复盘已写入任务笔记");
       } else {
-        const tags = ["复盘", ...(project ? [project] : [])].map((t) => `#${t}`).join(" ");
-        const text = `笔记 完成复盘：${row.title}\n\n${review}\n\n${tags}`;
-        await showHUD(`已完成 · ${await runCapture({ text })}`);
+        // 复盘同步成滴答任务上的一条评论（失败不影响）
+        const synced = await commentOnTask(row.key, `复盘：${review}`, row.projectId);
+        const suffix = synced ? "（已同步到滴答评论）" : "";
+        if (noteId) {
+          await appendReview(noteId, review);
+          await showHUD(`已完成 · 复盘已写入任务笔记${suffix}`);
+        } else {
+          const tags = ["复盘", ...(project ? [project] : [])].map((t) => `#${t}`).join(" ");
+          const text = `笔记 完成复盘：${row.title}\n\n${review}\n\n${tags}`;
+          await showHUD(`已完成 · ${await runCapture({ text })}${suffix}`);
+        }
       }
       await closeMainWindow({ clearRootSearch: true });
     } catch (error) {

@@ -1,5 +1,11 @@
 import { callDida } from "./dida";
-import { collectObjects, isoLocal, parseAny, saveSample, startOfDay } from "./dida-tasks";
+import {
+  collectObjects,
+  isoLocal,
+  parseAny,
+  saveSample,
+  startOfDay,
+} from "./dida-tasks";
 
 /**
  * 滴答清单的专注（番茄钟 / 正计时）记录。滴答 MCP 只能读 / 写记录，不能启动计时：
@@ -29,7 +35,12 @@ function parseTime(v: unknown): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
-const empty = (): TaskFocus => ({ todayMin: 0, todayCount: 0, weekMin: 0, weekCount: 0 });
+const empty = (): TaskFocus => ({
+  todayMin: 0,
+  todayCount: 0,
+  weekMin: 0,
+  weekCount: 0,
+});
 
 export const emptyFocus = (): FocusSummary => ({
   todayMin: 0,
@@ -41,7 +52,9 @@ export const emptyFocus = (): FocusSummary => ({
 });
 
 /** 读取近 7 天（含今天）的专注记录并汇总 */
-export async function fetchFocusSummary(now = new Date()): Promise<FocusSummary> {
+export async function fetchFocusSummary(
+  now = new Date(),
+): Promise<FocusSummary> {
   const from = startOfDay(now, -6);
   const todayStart = startOfDay(now).getTime();
   const args = (type: number) => ({
@@ -53,7 +66,8 @@ export async function fetchFocusSummary(now = new Date()): Promise<FocusSummary>
     callDida("get_focuses_by_time", args(0)),
     callDida("get_focuses_by_time", args(1)),
   ]);
-  if (pomo.status === "rejected" && timing.status === "rejected") throw pomo.reason;
+  if (pomo.status === "rejected" && timing.status === "rejected")
+    throw pomo.reason;
 
   const sum = emptyFocus();
   const seen = new Set<string>();
@@ -63,9 +77,13 @@ export async function fetchFocusSummary(now = new Date()): Promise<FocusSummary>
   ] as const;
   for (const [kind, r] of texts) {
     const text = r.status === "fulfilled" ? r.value : "";
-    await saveSample(`focus_${kind}`, text);
+    void saveSample(`focus_${kind}`, text);
     const found: Record<string, unknown>[] = [];
-    collectObjects(parseAny(text), (o) => typeof o.startTime === "string" && typeof o.endTime === "string", found);
+    collectObjects(
+      parseAny(text),
+      (o) => typeof o.startTime === "string" && typeof o.endTime === "string",
+      found,
+    );
     for (const o of found) {
       const start = parseTime(o.startTime);
       const end = parseTime(o.endTime);
@@ -89,7 +107,12 @@ export async function fetchFocusSummary(now = new Date()): Promise<FocusSummary>
         for (const t of o.tasks) {
           if (!t || typeof t !== "object") continue;
           const b = t as Record<string, unknown>;
-          const tid = typeof b.taskId === "string" ? b.taskId : typeof b.id === "string" ? b.id : "";
+          const tid =
+            typeof b.taskId === "string"
+              ? b.taskId
+              : typeof b.id === "string"
+                ? b.id
+                : "";
           if (!tid) continue;
           ids.add(tid);
           if (typeof b.title === "string" && b.title) sum.titles[tid] = b.title;

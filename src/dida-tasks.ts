@@ -19,12 +19,16 @@ export interface DidaTask {
   priority: number;
   tags: string[];
   done: boolean;
+  /** 完成时间（毫秒），仅已完成任务有 */
+  completedAt?: number;
+  /** 创建时间（毫秒） */
+  createdAt?: number;
 }
 
 export interface DidaOverview {
   overdue: DidaTask[];
   upcoming: DidaTask[];
-  /** 收集箱里没有截止日期的未完成任务 */
+  /** 收集箱里没有日期的未完成任务（最新在前，最多 100 条） */
   undated: DidaTask[];
   done: DidaTask[];
   projects: Record<string, string>;
@@ -42,11 +46,21 @@ export function isoLocal(d: Date): string {
 }
 
 export function startOfDay(d: Date, plusDays = 0): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + plusDays, 0, 0, 0);
+  return new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate() + plusDays,
+    0,
+    0,
+    0,
+  );
 }
 
 /** 解析滴答返回的日期（可能是 UTC，也可能带 +0800 / +08:00），换算成本地日期 / 时间 */
-export function parseDidaDate(value: unknown, isAllDay: boolean): { date: string | null; time: string | null } {
+export function parseDidaDate(
+  value: unknown,
+  isAllDay: boolean,
+): { date: string | null; time: string | null } {
   if (typeof value !== "string") return { date: null, time: null };
   const m = value.match(
     /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?)?\s*(Z|[+-]\d{2}:?\d{2})?$/,
@@ -59,9 +73,16 @@ export function parseDidaDate(value: unknown, isAllDay: boolean): { date: string
     const digits = m[7].slice(1).replace(":", "");
     offsetMin = sign * (+digits.slice(0, 2) * 60 + +digits.slice(2, 4));
   }
-  const utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] ?? 0)) - offsetMin * 60000;
+  const utc =
+    Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] ?? 0)) -
+    offsetMin * 60000;
   const local = new Date(utc);
-  return { date: formatDate(local), time: isAllDay ? null : `${pad(local.getHours())}:${pad(local.getMinutes())}` };
+  return {
+    date: formatDate(local),
+    time: isAllDay
+      ? null
+      : `${pad(local.getHours())}:${pad(local.getMinutes())}`,
+  };
 }
 
 export function collectObjects(
@@ -119,9 +140,20 @@ export function parseAny(text: string): unknown {
   return values;
 }
 
+/** `2026-10-09T10:00:00+0800` → 毫秒 */
+function parseMs(v: unknown): number | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = Date.parse(v.replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
+  return Number.isNaN(t) ? undefined : t;
+}
+
 export function extractTasks(text: string): DidaTask[] {
   const found: Record<string, unknown>[] = [];
-  collectObjects(parseAny(text), (o) => typeof o.id === "string" && typeof o.title === "string", found);
+  collectObjects(
+    parseAny(text),
+    (o) => typeof o.id === "string" && typeof o.title === "string",
+    found,
+  );
   const seen = new Set<string>();
   const tasks: DidaTask[] = [];
   for (const o of found) {
@@ -134,12 +166,22 @@ export function extractTasks(text: string): DidaTask[] {
       id,
       projectId: typeof o.projectId === "string" ? o.projectId : "",
       title: o.title as string,
-      content: typeof o.content === "string" ? o.content : typeof o.desc === "string" ? o.desc : "",
+      content:
+        typeof o.content === "string"
+          ? o.content
+          : typeof o.desc === "string"
+            ? o.desc
+            : "",
       date: due.date,
       time: due.time,
       priority: typeof o.priority === "number" ? o.priority : 0,
-      tags: Array.isArray(o.tags) ? o.tags.filter((t): t is string => typeof t === "string") : [],
-      done: o.status === 2 || !!o.completedTime,
+      tags: Array.isArray(o.tags)
+        ? o.tags.filter((t): t is string => typeof t === "string")
+        : [],
+      // 重复任务完成一次后仍是未完成，但 completedTime 会保留上次完成时间，所以以 status 为准
+      done: o.status === 2 || (o.status === undefined && !!o.completedTime),
+      completedAt: parseMs(o.completedTime),
+      createdAt: parseMs(o.createdTime),
     });
   }
   return tasks;
@@ -154,36 +196,61 @@ export async function saveSample(tool: string, text: string) {
   }
 }
 
-export async function loadProjectNames(force = false): Promise<Record<string, string>> {
+export async function loadProjectNames(
+  force = false,
+): Promise<Record<string, string>> {
   try {
     const raw = await LocalStorage.getItem<string>(PROJECTS_KEY);
-    const cache = raw ? (JSON.parse(raw) as { at: number; names: Record<string, string> }) : null;
-    if (cache && !force && Date.now() - cache.at < PROJECTS_TTL && Object.keys(cache.names).length > 0)
+    const cache = raw
+      ? (JSON.parse(raw) as { at: number; names: Record<string, string> })
+      : null;
+    if (
+      cache &&
+      !force &&
+      Date.now() - cache.at < PROJECTS_TTL &&
+      Object.keys(cache.names).length > 0
+    )
       return cache.names;
   } catch {
     // 重新拉取
   }
   const text = await callDida("list_projects", {});
-  await saveSample("list_projects", text);
+  void saveSample("list_projects", text);
   const found: Record<string, unknown>[] = [];
-  collectObjects(parseAny(text), (o) => typeof o.id === "string" && typeof o.name === "string", found);
+  collectObjects(
+    parseAny(text),
+    (o) => typeof o.id === "string" && typeof o.name === "string",
+    found,
+  );
   const names: Record<string, string> = {};
   for (const o of found) names[o.id as string] = o.name as string;
-  for (const [id, name] of Object.entries(names)) if (/^inbox/i.test(id) && /inbox/i.test(name)) names[id] = "收集箱";
-  await LocalStorage.setItem(PROJECTS_KEY, JSON.stringify({ at: Date.now(), names }));
+  for (const [id, name] of Object.entries(names))
+    if (/^inbox/i.test(id) && /inbox/i.test(name)) names[id] = "收集箱";
+  await LocalStorage.setItem(
+    PROJECTS_KEY,
+    JSON.stringify({ at: Date.now(), names }),
+  );
   return names;
 }
 
 /** 项目名显示：收集箱 id 形如 inbox1011888736 */
-export function projectLabel(names: Record<string, string>, projectId: string): string {
+export function projectLabel(
+  names: Record<string, string>,
+  projectId: string,
+): string {
   return names[projectId] ?? (/^inbox/i.test(projectId) ? "收集箱" : "");
 }
 
 /** 拉取逾期（近 13 天）/ 今天起 7 天 / 最近完成（近 3 天），接口单次最多 14 天 */
-export async function fetchDidaOverview(now = new Date()): Promise<DidaOverview> {
+export async function fetchDidaOverview(
+  now = new Date(),
+): Promise<DidaOverview> {
   const tz = timezoneName();
   const range = (from: number, to: number) => ({
-    search: { startDate: isoLocal(startOfDay(now, from)), endDate: isoLocal(startOfDay(now, to + 1)) },
+    search: {
+      startDate: isoLocal(startOfDay(now, from)),
+      endDate: isoLocal(startOfDay(now, to + 1)),
+    },
     client_timezone: tz,
   });
   const query = (q: string) => ({ query_command: q, client_timezone: tz });
@@ -208,12 +275,13 @@ export async function fetchDidaOverview(now = new Date()): Promise<DidaOverview>
     const key = calls[i][0];
     if (r.status === "fulfilled") {
       texts.set(key, r.value);
-      await saveSample(key, r.value);
+      void saveSample(key, r.value);
     } else {
-      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      const msg =
+        r.reason instanceof Error ? r.reason.message : String(r.reason);
       texts.set(key, "");
       failures.push(`${key}：${msg}`);
-      await saveSample(key, `ERROR: ${msg}`);
+      void saveSample(key, `ERROR: ${msg}`);
     }
   }
   if (failures.length === calls.length) throw new Error(failures[0]);
@@ -222,7 +290,12 @@ export async function fetchDidaOverview(now = new Date()): Promise<DidaOverview>
   const limit = addDaysString(now, 7);
   // 未完成任务：合并去重；只保留逾期（近 13 天）到未来 7 天内、有日期的
   const open = new Map<string, DidaTask>();
-  for (const key of ["undone_overdue", "undone_upcoming", "undone_today", "undone_next7"]) {
+  for (const key of [
+    "undone_overdue",
+    "undone_upcoming",
+    "undone_today",
+    "undone_next7",
+  ]) {
     for (const t of extractTasks(texts.get(key) ?? "")) {
       if (t.done || !t.date || t.date > limit || open.has(t.id)) continue;
       open.set(t.id, t);
@@ -234,15 +307,23 @@ export async function fetchDidaOverview(now = new Date()): Promise<DidaOverview>
     upcoming: all.filter((t) => (t.date as string) >= today),
     undated: extractTasks(texts.get("undone_inbox") ?? "")
       .filter((t) => !t.done && !t.date)
-      .slice(0, 30),
-    done: extractTasks(texts.get("completed") ?? "").map((t) => ({ ...t, done: true })),
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+      .slice(0, 100),
+    done: extractTasks(texts.get("completed") ?? "").map((t) => ({
+      ...t,
+      done: true,
+    })),
     projects: names,
-    warning: failures.length ? `部分滴答请求失败：${failures.join("；")}` : undefined,
+    warning: failures.length
+      ? `部分滴答请求失败：${failures.join("；")}`
+      : undefined,
   };
 }
 
 function addDaysString(d: Date, days: number): string {
-  return formatDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + days));
+  return formatDate(
+    new Date(d.getFullYear(), d.getMonth(), d.getDate() + days),
+  );
 }
 
 export interface TaskFieldsInput {
@@ -280,14 +361,23 @@ function taskPayload(f: TaskFieldsInput): Record<string, unknown> {
   return t;
 }
 
-export async function createDidaTask(f: TaskFieldsInput): Promise<{ taskId: string; projectId: string }> {
-  const text = await callDida("create_task", { task: taskPayload(f), client_timezone: timezoneName() });
+export async function createDidaTask(
+  f: TaskFieldsInput,
+): Promise<{ taskId: string; projectId: string }> {
+  const text = await callDida("create_task", {
+    task: taskPayload(f),
+    client_timezone: timezoneName(),
+  });
   const ref = extractTaskRef(text);
-  if (!ref.taskId) throw new Error(`create_task 的返回里没找到任务 id：${text.slice(0, 120)}`);
+  if (!ref.taskId)
+    throw new Error(`create_task 的返回里没找到任务 id：${text.slice(0, 120)}`);
   return { taskId: ref.taskId, projectId: ref.projectId ?? "" };
 }
 
-export async function patchDidaTask(task: { id: string; projectId: string }, f: TaskFieldsInput): Promise<void> {
+export async function patchDidaTask(
+  task: { id: string; projectId: string },
+  f: TaskFieldsInput,
+): Promise<void> {
   await callDida("update_task", {
     task_id: task.id,
     task: { id: task.id, projectId: task.projectId, ...taskPayload(f) },
@@ -295,8 +385,69 @@ export async function patchDidaTask(task: { id: string; projectId: string }, f: 
   });
 }
 
-export async function completeDidaTask(task: { id: string; projectId: string }): Promise<void> {
-  await callDida("complete_task", { project_id: task.projectId, task_id: task.id });
+/** 删除滴答任务 */
+export async function deleteDidaTask(task: {
+  id: string;
+  projectId: string;
+}): Promise<void> {
+  await callDida("delete_task", {
+    project_id: task.projectId,
+    task_id: task.id,
+  });
+}
+
+/** 查询单个任务是否已完成；查不到返回 unknown */
+export async function fetchTaskState(
+  taskId: string,
+): Promise<"done" | "open" | "unknown"> {
+  try {
+    const t = extractTasks(
+      await callDida("get_task_by_id", { task_id: taskId }),
+    )[0];
+    return t ? (t.done ? "done" : "open") : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+export async function completeDidaTask(task: {
+  id: string;
+  projectId: string;
+}): Promise<void> {
+  await callDida("complete_task", {
+    project_id: task.projectId,
+    task_id: task.id,
+  });
+}
+
+/**
+ * 把一段文字作为评论写到滴答任务上（在滴答 / 手机上也能看到最新进展）。
+ * taskKey 形如 `dida:<任务id>`；不是滴答任务、没连接、出错都静默返回 false，绝不影响主流程。
+ */
+export async function commentOnTask(
+  taskKey: string,
+  text: string,
+  projectId?: string,
+): Promise<boolean> {
+  if (!taskKey.startsWith("dida:") || !text.trim()) return false;
+  const taskId = taskKey.slice(5);
+  try {
+    let pid = projectId;
+    if (!pid)
+      pid = extractTasks(
+        await callDida("get_task_by_id", { task_id: taskId }),
+      )[0]?.projectId;
+    if (!pid) return false;
+    // 滴答评论最长 1024 个字符
+    const title =
+      text.trim().length > 1000
+        ? `${text.trim().slice(0, 1000)}…`
+        : text.trim();
+    await callDida("add_comment", { project_id: pid, task_id: taskId, title });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export const didaTaskUrl = (task: { id: string; projectId: string }) =>

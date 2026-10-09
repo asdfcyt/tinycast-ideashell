@@ -11,22 +11,30 @@ import {
 } from "@raycast/api";
 import { useEffect, useState } from "react";
 import { runCapture } from "./capture-run";
+import { autoCheckinByName } from "./dida-habits";
 import { loadKnownTagsCached, refreshKnownTags } from "./known-tags";
 import { addWatch, setProjectTags, WatchItem } from "./watchlist";
 
-/** 给关注项「记一条」：预填关键词，保存规则与 Smart Capture 相同（自动分流为待办 / Daily Note / 笔记） */
-export function WatchLogForm({ keyword }: { keyword: string }) {
+/**
+ * 给项目「记一条」：保存为一条独立的笔记，自动打上项目的关键词 / 标签，
+ * 这样它会被归入该项目（不再写入 Daily Note）。需要待办时，在内容前写「待办 …」即可。
+ */
+export function WatchLogForm({ keyword, tags = [] }: { keyword: string; tags?: string[] }) {
   const [saving, setSaving] = useState(false);
+  const projectTags = [...new Set([keyword, ...tags])];
 
   async function handleSubmit(values: Form.Values) {
     const text = String(values.text ?? "").trim();
-    if (!text || text === `${keyword}：`) {
+    if (!text) {
       await showToast({ style: Toast.Style.Failure, title: "请输入内容" });
       return;
     }
     setSaving(true);
     try {
-      await showHUD(await runCapture({ text }));
+      const result = await runCapture({ text, defaultKind: "note", extraTags: projectTags });
+      // 滴答里有和项目同名的习惯：记一条的同时自动打卡
+      const habit = await autoCheckinByName(keyword);
+      await showHUD(habit ? `${result} · 已为习惯「${habit}」打卡` : result);
       await closeMainWindow({ clearRootSearch: true });
     } catch (error) {
       setSaving(false);
@@ -51,9 +59,12 @@ export function WatchLogForm({ keyword }: { keyword: string }) {
       <Form.TextArea
         id="text"
         title="内容"
-        defaultValue={`${keyword}：`}
-        placeholder="记点什么…（同样支持 待办 / 日记 / 笔记 前缀、#标签、@文件夹）"
+        placeholder="记点什么…（保存为独立笔记；也支持 待办 前缀、额外的 #标签、@文件夹）"
         autoFocus
+      />
+      <Form.Description
+        title="自动标签"
+        text={`${projectTags.map((t) => `#${t}`).join(" ")}（保存为一条独立的笔记，不写入 Daily Note）`}
       />
     </Form>
   );
