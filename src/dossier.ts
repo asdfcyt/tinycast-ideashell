@@ -50,13 +50,13 @@ function makeSnippet(body: string, q: string, fallback: string): string {
   return `${from > 0 ? "…" : ""}${s}${to < body.length ? "…" : ""}`;
 }
 
-function daysBetween(fromDay: string, toDay: string): number {
+export function daysBetween(fromDay: string, toDay: string): number {
   const a = new Date(`${fromDay}T00:00:00`).getTime();
   const b = new Date(`${toDay}T00:00:00`).getTime();
   return Math.round((b - a) / 86400000);
 }
 
-function ago(days: number): string {
+export function ago(days: number): string {
   if (days <= 0) return "今天";
   if (days === 1) return "昨天";
   if (days < 30) return `${days} 天前`;
@@ -67,7 +67,7 @@ function ago(days: number): string {
 const BARS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
 
 /** 近 12 个月（含本月）每月直接提及的笔记数 */
-function monthlySeries(days: string[], now: Date): { labels: string[]; counts: number[] } {
+export function monthlySeries(days: string[], now: Date): { labels: string[]; counts: number[] } {
   const labels: string[] = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -77,7 +77,7 @@ function monthlySeries(days: string[], now: Date): { labels: string[]; counts: n
   return { labels, counts };
 }
 
-function sparkline(counts: number[]): string {
+export function sparkline(counts: number[]): string {
   const max = Math.max(...counts, 0);
   return counts
     .map((c) => (c === 0 ? "·" : BARS[Math.min(BARS.length - 1, Math.ceil((c / max) * BARS.length) - 1)]))
