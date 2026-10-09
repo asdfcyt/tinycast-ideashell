@@ -1297,6 +1297,14 @@ export default function Command() {
   );
 }
 
+/** 编辑时选择器的初始值：原日期 + 原时间（全天任务取 9:00） */
+function rowWhen(row?: TodoRow): Date | null {
+  if (!row?.date) return null;
+  const [y, m, d] = row.date.split("-").map(Number);
+  const [hh, mm] = (row.time ?? "09:00").split(":").map(Number);
+  return new Date(y, m - 1, d, hh, mm);
+}
+
 function TodoForm({
   row,
   project,
@@ -1316,6 +1324,8 @@ function TodoForm({
 
   async function handleSubmit(values: {
     content: string;
+    when: Date | null;
+    allDay: boolean;
     date: string;
     time: string;
     important: boolean;
@@ -1325,8 +1335,9 @@ function TodoForm({
       await showToast({ style: Toast.Style.Failure, title: "请输入待办内容" });
       return;
     }
-    const when = parseDateTimeFields(values.date, values.time);
-    if (!when.ok) {
+    // 手输了日期 / 时间就以手输为准（支持「明天」「下午3点」）；否则用选择器：没选 = 不设日期（编辑时表示保持不变），勾了「全天」则不带具体时间
+    const typed = parseDateTimeFields(values.date, values.time);
+    if (!typed.ok) {
       await showToast({
         style: Toast.Style.Failure,
         title: "无法识别日期或时间",
@@ -1334,6 +1345,19 @@ function TodoForm({
       });
       return;
     }
+    const pad2 = (n: number) => n.toString().padStart(2, "0");
+    const picked = {
+      date: values.when ? formatDate(values.when) : undefined,
+      time:
+        values.when && !values.allDay
+          ? `${pad2(values.when.getHours())}:${pad2(values.when.getMinutes())}`
+          : undefined,
+    };
+    // 编辑时只手输了时间：保留原日期（解析器会默认补成今天）
+    if (editing && !values.date.trim()) typed.date = undefined;
+    const hasTyped = !!(typed.date || typed.time);
+    const when = hasTyped ? typed : picked;
+    const clearTime = !hasTyped && !!values.when && values.allDay;
 
     const toast = await showToast({
       style: Toast.Style.Animated,
@@ -1347,6 +1371,7 @@ function TodoForm({
           ...(title !== row.title ? { title } : {}),
           ...(when.date && when.date !== row.date ? { date: when.date } : {}),
           ...(when.time && when.time !== row.time ? { time: when.time } : {}),
+          ...(clearTime && row.time ? { allDay: true } : {}),
           ...(values.important !== row.priority >= 3
             ? { priority: values.important ? 5 : 0 }
             : {}),
@@ -1409,27 +1434,34 @@ function TodoForm({
           info="填项目关键词：滴答任务会打上同名标签，之后在项目里就能看到它"
         />
       )}
-      <Form.TextField
-        id="date"
-        title="日期"
-        placeholder="如 2026-10-09 / 明天 / 周五 / 10月9日"
-        defaultValue={row?.date ?? ""}
+      <Form.DatePicker
+        id="when"
+        title="日期时间"
+        type={Form.DatePicker.Type.DateTime}
+        defaultValue={rowWhen(row)}
         info={
           editing
-            ? "留空表示保持不变"
-            : "留空表示无日期（无日期的任务不会显示在这里）"
+            ? "点选日期和时间；不改就保持原样"
+            : "点选日期和时间；不选表示无日期（无日期的任务不会显示在这里）"
         }
+      />
+      <Form.Checkbox
+        id="allDay"
+        label="全天（不设具体时间）"
+        defaultValue={editing ? !row?.time : false}
+        info="勾选后只保留日期，当天 9:00 提醒"
+      />
+      <Form.TextField
+        id="date"
+        title="或手输日期"
+        placeholder="如 明天 / 周五 / 10月9日（填了以这里为准）"
+        defaultValue=""
       />
       <Form.TextField
         id="time"
-        title="时间"
-        placeholder="如 15:30 / 下午3点半"
-        defaultValue={row?.time ?? ""}
-        info={
-          editing
-            ? "留空表示保持不变"
-            : "留空表示全天；有时间则准点提醒，仅日期则当天 9:00 提醒"
-        }
+        title="或手输时间"
+        placeholder="如 15:30 / 下午3点半（填了以这里为准）"
+        defaultValue=""
       />
       <Form.Checkbox
         id="important"

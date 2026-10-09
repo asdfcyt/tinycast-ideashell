@@ -7,6 +7,7 @@ import {
   showHUD,
 } from "@raycast/api";
 import { useEffect, useState } from "react";
+import { writeDaySummary } from "./day-summary";
 import { habitLabel, PendingHabit } from "./dida-habits";
 import { TODOS_LIST_QUERY } from "./entry-flags";
 import { setPendingOpen } from "./pending-open";
@@ -120,6 +121,20 @@ export default function Command() {
       await showHUD(`已打卡：${habit.name}`);
     } catch (e) {
       await showHUD(`打卡失败：${errMsg(e)}`);
+    }
+  }
+
+  async function writeSummary() {
+    try {
+      await showHUD("正在汇总今天…");
+      const s = await writeDaySummary();
+      await showHUD(
+        s
+          ? `已追加到今天的 Daily Note：完成 ${s.tasks.length} 项 · 专注 ${s.focusMin} 分钟 · 笔记 ${s.notes.length} 条`
+          : "今天还没有可汇总的内容",
+      );
+    } catch (e) {
+      await showHUD(`生成失败：${errMsg(e)}`);
     }
   }
 
@@ -275,6 +290,11 @@ export default function Command() {
               type: LaunchType.UserInitiated,
             })
           }
+        />
+        <MenuBarExtra.Item
+          title="生成今日小结"
+          icon={Icon.Document}
+          onAction={writeSummary}
         />
         <MenuBarExtra.Item
           title="立即刷新"

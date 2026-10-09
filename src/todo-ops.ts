@@ -25,7 +25,8 @@ export async function completeRow(row: TodoRow): Promise<void> {
 export async function restoreRow(row: TodoRow): Promise<void> {
   if (row.source === "dida") {
     await patchDidaTask(row, { status: 0 });
-    if (row.ideaId) await updateTodos([{ todo_id: row.ideaId, is_completed: false }]);
+    if (row.ideaId)
+      await updateTodos([{ todo_id: row.ideaId, is_completed: false }]);
     return;
   }
   await updateTodos([{ todo_id: row.id, is_completed: false }]);
@@ -36,6 +37,8 @@ export interface RowPatch {
   date?: string;
   time?: string;
   priority?: number;
+  /** 改成全天任务（去掉具体时间） */
+  allDay?: boolean;
   content?: string;
   tags?: string[];
 }
@@ -43,20 +46,28 @@ export interface RowPatch {
 /** 修改一行待办：滴答行改滴答任务，闪念贝壳行改闪念贝壳待办（之后会同步到滴答） */
 export async function patchRow(row: TodoRow, patch: RowPatch): Promise<void> {
   if (row.source === "dida") {
+    // 滴答的日期和时间合在一个字段里：只改时间也要带上原日期，只改日期则保留原时间
+    const date =
+      patch.date ?? (patch.time || patch.allDay ? row.date : undefined);
     await patchDidaTask(row, {
       title: patch.title,
       content: patch.content,
       priority: patch.priority,
       tags: patch.tags,
-      date: patch.date,
-      // 只改日期时保留原有时间
-      time: patch.date ? (patch.time ?? row.time) : undefined,
+      date,
+      time: date
+        ? patch.allDay
+          ? undefined
+          : (patch.time ?? row.time)
+        : undefined,
     });
     return;
   }
   const marks = (row.rawTitle.match(/\s*[!！](?:重要|紧急)/g) ?? []).join("");
-  let content = patch.title !== undefined ? `${patch.title}${marks}` : row.rawTitle;
-  if (patch.priority !== undefined && patch.priority >= 3 !== row.priority >= 3) content = toggleMark(content, "重要");
+  let content =
+    patch.title !== undefined ? `${patch.title}${marks}` : row.rawTitle;
+  if (patch.priority !== undefined && patch.priority >= 3 !== row.priority >= 3)
+    content = toggleMark(content, "重要");
   await updateTodos([
     {
       todo_id: row.id,
@@ -76,12 +87,19 @@ export async function createRow(f: {
   tags?: string[];
 }): Promise<"dida" | "idea"> {
   if (await isDidaConnected()) {
-    await createDidaTask({ title: f.title, date: f.date, time: f.time, priority: f.priority, tags: f.tags });
+    await createDidaTask({
+      title: f.title,
+      date: f.date,
+      time: f.time,
+      priority: f.priority,
+      tags: f.tags,
+    });
     return "dida";
   }
   await createTodos([
     {
-      content: f.priority && f.priority >= 3 ? toggleMark(f.title, "重要") : f.title,
+      content:
+        f.priority && f.priority >= 3 ? toggleMark(f.title, "重要") : f.title,
       ...(f.date ? { date: f.date } : {}),
       ...(f.time ? { time: f.time } : {}),
     },
