@@ -8,6 +8,13 @@ import {
 } from "@raycast/api";
 import { useEffect, useState } from "react";
 import { habitLabel, PendingHabit } from "./dida-habits";
+import { TODOS_LIST_QUERY } from "./entry-flags";
+import { setPendingOpen } from "./pending-open";
+import {
+  ProjectMenuRow,
+  readProjectRows,
+  recheckStaleProjects,
+} from "./project-menu";
 import { TodoRow } from "./todo-data";
 import {
   checkinFromMenu,
@@ -19,6 +26,13 @@ import {
   subtitleOf,
   TodoSummary,
 } from "./todo-summary";
+import {
+  setProjectStatus,
+  setStaleDays,
+  STALE_CHOICES,
+  STATUS_LABEL,
+  STATUS_ORDER,
+} from "./watchlist";
 
 const MAX_OVERDUE = 6;
 const MAX_TODAY = 10;
@@ -33,6 +47,7 @@ export default function Command() {
   const [summary, setSummary] = useState<TodoSummary | undefined>();
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState<string | undefined>();
+  const [projects, setProjects] = useState<ProjectMenuRow[]>([]);
 
   async function load(force: boolean) {
     setLoading(true);
@@ -52,6 +67,9 @@ export default function Command() {
       // 先用缓存把菜单画出来，再在后台拉最新的
       const cached = await readSummary();
       if (alive && cached) setSummary(cached);
+      readProjectRows()
+        .then((rows) => alive && setProjects(rows))
+        .catch(() => undefined);
       try {
         const fresh = await refreshSummary(
           environment.launchType === LaunchType.Background,
@@ -62,6 +80,10 @@ export default function Command() {
       } finally {
         if (alive) setLoading(false);
       }
+      // 缓存里判为「该推进」的项目，统计旧了就重算一次，避免白提醒
+      recheckStaleProjects()
+        .then((rows) => alive && rows && setProjects(rows))
+        .catch(() => undefined);
     })();
     return () => {
       alive = false;
@@ -87,8 +109,6 @@ export default function Command() {
           ? `${(row.date ?? "").slice(5)} ${row.time ?? ""}`.trim()
           : (row.time ?? "")
       }
-      icon={Icon.Circle}
-      tooltip="点击标记完成"
       onAction={() => done(row)}
     />
   );
@@ -103,6 +123,80 @@ export default function Command() {
     }
   }
 
+  async function openProject(action: "log" | "page" | "add", keyword?: string) {
+    await setPendingOpen({ action, keyword });
+    await launchCommand({
+      name: "notes",
+      arguments: { query: TODOS_LIST_QUERY },
+      type: LaunchType.UserInitiated,
+    });
+  }
+
+  async function changeStatus(
+    keyword: string,
+    status: (typeof STATUS_ORDER)[number],
+  ) {
+    await setProjectStatus(keyword, status);
+    setProjects(await readProjectRows());
+    await showHUD(
+      `「${keyword}」已设为${STATUS_LABEL[status]}${status === "paused" ? "，不再提醒" : ""}`,
+    );
+  }
+
+  async function changeStale(keyword: string, days: number) {
+    await setStaleDays(keyword, days);
+    setProjects(await readProjectRows());
+    await showHUD(`「${keyword}」超过 ${days} 天没提及会提醒`);
+  }
+
+  const projectMenu = (r: ProjectMenuRow, withGap: boolean) => (
+    <MenuBarExtra.Submenu
+      key={r.item.keyword}
+      title={
+        withGap && r.gap !== null
+          ? `${r.item.keyword} · ${r.gap} 天没碰`
+          : r.item.keyword
+      }
+      icon={Icon.Pin}
+    >
+      <MenuBarExtra.Item
+        title="记一条"
+        icon={Icon.Pencil}
+        onAction={() => openProject("log", r.item.keyword)}
+      />
+      <MenuBarExtra.Item
+        title="打开项目主页"
+        icon={Icon.House}
+        onAction={() => openProject("page", r.item.keyword)}
+      />
+      <MenuBarExtra.Submenu
+        title={`状态：${STATUS_LABEL[r.item.status]}`}
+        icon={Icon.Tag}
+      >
+        {STATUS_ORDER.map((st) => (
+          <MenuBarExtra.Item
+            key={st}
+            title={`${STATUS_LABEL[st]}${st === r.item.status ? "（当前）" : ""}`}
+            onAction={() => changeStatus(r.item.keyword, st)}
+          />
+        ))}
+      </MenuBarExtra.Submenu>
+      <MenuBarExtra.Submenu
+        title={`提醒：${r.item.staleDays} 天没碰`}
+        icon={Icon.Bell}
+      >
+        {STALE_CHOICES.map((d) => (
+          <MenuBarExtra.Item
+            key={d}
+            title={`${d} 天${d === r.item.staleDays ? "（当前）" : ""}`}
+            onAction={() => changeStale(r.item.keyword, d)}
+          />
+        ))}
+      </MenuBarExtra.Submenu>
+    </MenuBarExtra.Submenu>
+  );
+
+  const staleProjects = projects.filter((r) => r.stale);
   const empty = summary && isEmptySummary(summary);
 
   return (
@@ -144,11 +238,14 @@ export default function Command() {
               key={h.id}
               title={h.name}
               subtitle={habitLabel(h)}
-              icon={Icon.Repeat}
-              tooltip="点击打卡"
               onAction={() => checkin(h)}
             />
           ))}
+        </MenuBarExtra.Section>
+      )}
+      {staleProjects.length > 0 && (
+        <MenuBarExtra.Section title={`项目 · 该推进 ${staleProjects.length}`}>
+          {staleProjects.slice(0, 6).map((r) => projectMenu(r, true))}
         </MenuBarExtra.Section>
       )}
       {empty && (
@@ -157,12 +254,24 @@ export default function Command() {
         </MenuBarExtra.Section>
       )}
       <MenuBarExtra.Section>
+        <MenuBarExtra.Submenu
+          title={`项目管理${projects.length ? ` (${projects.length})` : ""}`}
+          icon={Icon.Pin}
+        >
+          {projects.map((r) => projectMenu(r, false))}
+          <MenuBarExtra.Item
+            title="新增项目…"
+            icon={Icon.Plus}
+            onAction={() => openProject("add")}
+          />
+        </MenuBarExtra.Submenu>
         <MenuBarExtra.Item
-          title="打开 Todos List"
+          title="打开待办列表"
           icon={Icon.List}
           onAction={() =>
             launchCommand({
-              name: "todos-list",
+              name: "notes",
+              arguments: { query: TODOS_LIST_QUERY },
               type: LaunchType.UserInitiated,
             })
           }

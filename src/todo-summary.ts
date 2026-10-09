@@ -9,7 +9,7 @@ import { loadWatchlist } from "./watchlist";
 
 /**
  * 今日待办摘要：菜单栏和根搜索副标题共用。
- * 只是 Todos List 数据的一个快照，存在本地缓存里，随时可丢弃重建。
+ * 只是 Todos 数据的一个快照，存在本地缓存里，随时可丢弃重建。
  */
 export interface TodoSummary {
   updatedAt: number;
@@ -101,7 +101,7 @@ export async function refreshSummary(force = false): Promise<TodoSummary> {
   return summary;
 }
 
-/** 在菜单栏里点掉一条：和 Todos List 里的「标记完成」一样（清推迟计数、记项目里程碑），并立即更新缓存 */
+/** 在菜单栏里点掉一条：和 Todos 里的「标记完成」一样（清推迟计数、记项目里程碑），并立即更新缓存 */
 export async function completeFromMenu(row: TodoRow): Promise<TodoSummary | undefined> {
   await completeRow(row);
   await clearPostpone(row.key).catch(() => undefined);

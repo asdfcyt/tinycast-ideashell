@@ -42,6 +42,7 @@ import {
 } from "./project-forms";
 import { InboxPage } from "./inbox-page";
 import { ProjectPage } from "./project-page";
+import { PendingOpen, takePendingOpen } from "./pending-open";
 import {
   appendProgress,
   displayNote,
@@ -314,6 +315,12 @@ export default function Command() {
   const syncingRef = useRef(false);
   /** 最新数据是否已经到了（到了以后就不再用缓存覆盖） */
   const freshRef = useRef(false);
+  /** 菜单栏点进来时要直接打开的页面（记一条 / 项目主页 / 新增项目） */
+  const [pendingOpen, setPendingOpenState] = useState<
+    PendingOpen | undefined
+  >();
+  const [dataReady, setDataReady] = useState(false);
+  const { push } = useNavigation();
 
   const { items: projects, stats, computing } = useWatchlist(true, tick);
   const connected = data.connected;
@@ -366,6 +373,7 @@ export default function Command() {
         const d = await loadTodoData();
         freshRef.current = true;
         setData(d);
+        setDataReady(true);
         const [sync, err, notes, posts] = await Promise.all([
           loadLastSync(),
           loadLastError(),
@@ -412,6 +420,44 @@ export default function Command() {
   );
 
   useEffect(() => {
+    takePendingOpen()
+      .then(setPendingOpenState)
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingOpen) return;
+    if (pendingOpen.action === "add") {
+      setPendingOpenState(undefined);
+      push(<WatchAddForm />);
+      return;
+    }
+    // 项目主页要用到任务和统计，等数据（缓存或最新）到了再打开
+    if (projects.length === 0 || (pendingOpen.action === "page" && !dataReady))
+      return;
+    setPendingOpenState(undefined);
+    const key = (pendingOpen.keyword ?? "").trim().toLowerCase();
+    const item = projects.find((x) => x.keyword.trim().toLowerCase() === key);
+    if (!item) return;
+    if (pendingOpen.action === "log") {
+      push(<WatchLogForm keyword={item.keyword} tags={item.tags} />);
+    } else {
+      const related = data.open
+        .filter((r) => projectOf(r.title, [item], r.tags))
+        .sort(byDateTime);
+      push(
+        <ProjectPage
+          item={item}
+          stats={stats[item.keyword]}
+          rows={related}
+          focus={data.focus}
+          onChanged={() => setTick((t) => t)}
+        />,
+      );
+    }
+  }, [pendingOpen, projects, dataReady, data, stats, push]);
+
+  useEffect(() => {
     reload();
     // 同时读上次的缓存：先把列表秒出来，最新数据到了再替换（不用干等滴答接口）
     (async () => {
@@ -422,6 +468,7 @@ export default function Command() {
       ]);
       if (!cached || freshRef.current) return;
       setData(cached);
+      setDataReady(true);
       setTaskNotes((prev) => (Object.keys(prev).length ? prev : notes));
       setPostpones((prev) => (Object.keys(prev).length ? prev : posts));
     })().catch(() => undefined);

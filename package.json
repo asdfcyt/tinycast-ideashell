@@ -142,7 +142,6 @@
       "subtitle": "闪念贝壳",
       "description": "待办入口：在搜索栏输入内容回车，窗口立即消失，直接创建待办（可含日期时间、!重要；不带日期就是无日期待办；已连接滴答清单则建在滴答）；什么都不输入直接回车，打开待办列表（滴答清单 + 任务笔记 + 项目主页）。",
       "mode": "no-view",
-      "interval": "10m",
       "arguments": [
         {
           "name": "text",
@@ -160,27 +159,14 @@
         "list",
         "添加待办",
         "quick"
-      ]
-    },
-    {
-      "name": "todos-list",
-      "title": "Todos List",
-      "subtitle": "闪念贝壳",
-      "description": "待办列表：今天 / 近 7 天 / 逾期（以滴答清单为核心）、四象限、任务笔记、项目主页。一般从 Todos 回车进入。",
-      "mode": "view",
-      "keywords": [
-        "todo",
-        "待办",
-        "列表",
-        "项目",
-        "list"
-      ]
+      ],
+      "interval": "10m"
     },
     {
       "name": "todos-menu",
       "title": "Todos Menu Bar",
       "subtitle": "闪念贝壳",
-      "description": "菜单栏待办：常驻显示「今天 N · 逾期 M」，点开列出逾期 / 今天的任务，点一下标记完成（按住 ⌥ 在滴答清单中打开）；后台每 10 分钟自动刷新。",
+      "description": "菜单栏待办：常驻显示「今天 N · 逾期 M」，点开列出逾期 / 今天的任务，点一下标记完成；后台每 10 分钟自动刷新。",
       "mode": "menu-bar",
       "interval": "10m",
       "keywords": [

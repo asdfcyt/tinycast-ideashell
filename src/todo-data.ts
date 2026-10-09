@@ -119,7 +119,7 @@ export const byDateTime = (a: TodoRow, b: TodoRow) =>
 
 const CACHE_KEY = "todo-data-cache-v1";
 
-/** 上一次加载的结果：打开 Todos List 时先用它秒出，再在后台刷新（stale-while-revalidate） */
+/** 上一次加载的结果：打开 Todos 时先用它秒出，再在后台刷新（stale-while-revalidate） */
 export async function loadCachedTodoData(): Promise<TodoData | undefined> {
   try {
     const raw = await LocalStorage.getItem<string>(CACHE_KEY);

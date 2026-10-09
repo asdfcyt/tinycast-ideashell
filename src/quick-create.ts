@@ -12,6 +12,6 @@ export async function quickCreateTodo(raw: string): Promise<string> {
   const title = content.replace(/\s*[!！](?:重要|紧急)/g, "").trim() || content;
   const where = (await isDidaConnected()) ? "滴答清单" : "闪念贝壳";
   await createRow({ title, date, time, priority: important ? 5 : 0 });
-  const when = date ? `${date}${time ? ` ${time}` : ""}` : "无日期，可在 Todos List 的「整理收集箱」处理";
+  const when = date ? `${date}${time ? ` ${time}` : ""}` : "无日期，可在 Todos 的「整理收集箱」处理";
   return `✅ 待办（${where}）：${title}（${when}）`;
 }

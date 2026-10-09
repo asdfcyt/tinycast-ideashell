@@ -44,7 +44,7 @@ export async function refreshProjectSummary(item: WatchItem, focus?: FocusSummar
 
   const status = [
     `更新于 ${formatDate(new Date())}`,
-    `- 下一步：${item.next || "（还没写，在 Todos List 的项目上按 ⌘E 设置）"}`,
+    `- 下一步：${item.next || "（还没写，在 Todos 的项目上按 ⌘E 设置）"}`,
     `- 成果：进行中 ${open} · 已交付 ${delivered}`,
     `- 近 7 天专注（成果相关任务）：${weekMin > 0 ? formatMinutes(weekMin) : "无"}`,
   ].join("\n");

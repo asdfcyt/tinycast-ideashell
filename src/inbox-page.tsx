@@ -20,7 +20,7 @@ import { parseDateTimeFields } from "./todo-parse";
 import { WatchItem } from "./watchlist";
 
 /**
- * 收集箱整理：Todos List 不显示没有日期的任务，在这里逐条处理——
+ * 收集箱整理：Todos 不显示没有日期的任务，在这里逐条处理——
  * 定日期（之后会出现在列表里）/ 归入项目 / 写交付成果 / 完成 / 删除。
  */
 
@@ -137,7 +137,7 @@ export function InboxPage({
               accessories={row.priority >= 3 ? [{ icon: { source: Icon.Star, tintColor: Color.Orange } }] : []}
               detail={
                 <List.Item.Detail
-                  markdown={`# ${row.title}\n\n${row.content ? `${row.content}\n\n` : ""}还没有日期。按回车**定日期**后，它会出现在 Todos List 的对应分组。`}
+                  markdown={`# ${row.title}\n\n${row.content ? `${row.content}\n\n` : ""}还没有日期。按回车**定日期**后，它会出现在 Todos 的对应分组。`}
                   metadata={
                     <List.Item.Detail.Metadata>
                       <List.Item.Detail.Metadata.Label

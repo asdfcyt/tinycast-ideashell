@@ -1,18 +1,40 @@
-import { Action, ActionPanel, Color, Icon, LaunchProps, List, showToast, Toast } from "@raycast/api";
+import {
+  Action,
+  ActionPanel,
+  Color,
+  Icon,
+  LaunchProps,
+  List,
+  showToast,
+  Toast,
+} from "@raycast/api";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getNoteId, NoteInfo, searchNotes, TodoItem, updateTodos } from "./api";
 import { extractDate, listDailyNotes } from "./daily";
 import { DetailDoc } from "./detail-doc";
 import { DossierData, DossierNote, loadDossier } from "./dossier";
 import { NoteDetailView } from "./note-detail-view";
+import { TODOS_LIST_QUERY } from "./entry-flags";
+import TodosList from "./todos-list";
 import { loadMemory, MemoryData, pickRandom, sameDayIds } from "./memory-lane";
 import { buildDayOverview, buildRangeOverview, findDay } from "./overview";
-import { loadTimeline, localHHmm, sliceDay, TimelineData } from "./timeline-data";
+import {
+  loadTimeline,
+  localHHmm,
+  sliceDay,
+  TimelineData,
+} from "./timeline-data";
 import { lastDayOf, parseRange, TimeRange, weekdayName } from "./time-range";
 import { useNoteDetails } from "./use-note-details";
 import { useWatchlist } from "./use-watchlist";
 import { addWatch, removeWatch, WatchItem } from "./watchlist";
-import { buildNoteMarkdown, formatDate, formatDateTime, shortTime, truncate } from "./utils";
+import {
+  buildNoteMarkdown,
+  formatDate,
+  formatDateTime,
+  shortTime,
+  truncate,
+} from "./utils";
 
 /**
  * 输入决定显示什么：
@@ -51,10 +73,16 @@ function resolveIntent(
   if (dossierOnly) return { kind: "dossier", query: q };
   if (dailyOnly) return { kind: "daily", rest: q };
 
-  const dossier = q.match(/^(?:档案|简报|人物|主题|profile|dossier)(?:\s+(.*))?$/i) ?? q.match(/^@\s*(.+)$/);
+  const dossier =
+    q.match(/^(?:档案|简报|人物|主题|profile|dossier)(?:\s+(.*))?$/i) ??
+    q.match(/^@\s*(.+)$/);
   if (dossier) return { kind: "dossier", query: (dossier[1] ?? "").trim() };
 
-  if (/^(?:回顾|往日|往日回顾|那年今日|往年今日|今日回顾|随机|随机一条|random|memory)$/i.test(q))
+  if (
+    /^(?:回顾|往日|往日回顾|那年今日|往年今日|今日回顾|随机|随机一条|random|memory)$/i.test(
+      q,
+    )
+  )
     return { kind: "memory" };
 
   const daily = q.match(/^(?:日记|daily)(?:\s+(.*))?$/i);
@@ -67,7 +95,11 @@ function resolveIntent(
   return range ? { kind: "timeline", range } : { kind: "search", query: q };
 }
 
-function filterDaily(all: NoteInfo[], rest: string, bodyOf: (id: string) => string | undefined): NoteInfo[] {
+function filterDaily(
+  all: NoteInfo[],
+  rest: string,
+  bodyOf: (id: string) => string | undefined,
+): NoteInfo[] {
   if (!rest) return all;
 
   const range = parseRange(rest);
@@ -82,7 +114,9 @@ function filterDaily(all: NoteInfo[], rest: string, bodyOf: (id: string) => stri
 
   const kw = rest.toLowerCase();
   return all.filter(
-    (n) => n.title.toLowerCase().includes(kw) || (bodyOf(getNoteId(n)) ?? "").toLowerCase().includes(kw),
+    (n) =>
+      n.title.toLowerCase().includes(kw) ||
+      (bodyOf(getNoteId(n)) ?? "").toLowerCase().includes(kw),
   );
 }
 
@@ -104,8 +138,13 @@ function firstNoteId(view: View): string | undefined {
 
 const NON_NOTE_ID = /^(t-|qe-|overview|watch-)/;
 
-export default function Command(props: LaunchProps<{ arguments: { query?: string } }>) {
-  return <NotesBrowser initialQuery={props.arguments?.query?.trim() ?? ""} />;
+export default function Command(
+  props: LaunchProps<{ arguments: { query?: string } }>,
+) {
+  const query = props.arguments?.query?.trim() ?? "";
+  // Todos / 菜单栏通过暗号参数打开待办列表（待办列表不再有单独的命令）
+  if (query === TODOS_LIST_QUERY) return <TodosList />;
+  return <NotesBrowser initialQuery={query} />;
 }
 
 export function NotesBrowser({
@@ -126,13 +165,23 @@ export function NotesBrowser({
   const [isLoading, setIsLoading] = useState(true);
   const [tick, setTick] = useState(0);
   const [forceSearchFor, setForceSearchFor] = useState<string | null>(null);
-  const dailyCache = useRef<{ notes: NoteInfo[]; folderFound: boolean } | null>(null);
+  const dailyCache = useRef<{ notes: NoteInfo[]; folderFound: boolean } | null>(
+    null,
+  );
   const memoryCache = useRef<MemoryData | null>(null);
   const { details, loadingId, load, prefetch, reset } = useNoteDetails();
   const { items: watchItems } = useWatchlist(false, 0);
 
   const intent = useMemo(
-    () => resolveIntent(query, dailyOnly, forceSearchFor, dossierOf, dossierOnly, memoryOnly),
+    () =>
+      resolveIntent(
+        query,
+        dailyOnly,
+        forceSearchFor,
+        dossierOf,
+        dossierOnly,
+        memoryOnly,
+      ),
     [query, dailyOnly, forceSearchFor, dossierOf, dossierOnly, memoryOnly],
   );
 
@@ -141,7 +190,8 @@ export function NotesBrowser({
     const cachedLocal =
       (intent.kind === "daily" && dailyCache.current !== null) ||
       (intent.kind === "memory" && memoryCache.current !== null);
-    const delay = cachedLocal || intent.kind === "memory" || !query.trim() ? 0 : 350;
+    const delay =
+      cachedLocal || intent.kind === "memory" || !query.trim() ? 0 : 350;
 
     const timer = setTimeout(async () => {
       setIsLoading(true);
@@ -158,7 +208,10 @@ export function NotesBrowser({
           next = {
             kind: "memory",
             data: memoryCache.current,
-            pick: pickRandom(memoryCache.current.pool, sameDayIds(memoryCache.current)),
+            pick: pickRandom(
+              memoryCache.current.pool,
+              sameDayIds(memoryCache.current),
+            ),
           };
         } else {
           if (!dailyCache.current) {
@@ -212,14 +265,17 @@ export function NotesBrowser({
   };
 
   const dailyShown = useMemo(
-    () => (view?.kind === "daily" ? filterDaily(view.notes, view.rest, bodyOf) : []),
+    () =>
+      view?.kind === "daily" ? filterDaily(view.notes, view.rest, bodyOf) : [],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [view, details],
   );
 
   async function toggleTodo(todo: TodoItem) {
     try {
-      await updateTodos([{ todo_id: todo.id, is_completed: !todo.is_completed }]);
+      await updateTodos([
+        { todo_id: todo.id, is_completed: !todo.is_completed },
+      ]);
       setTick((t) => t + 1);
     } catch (error) {
       await showToast({
@@ -234,7 +290,12 @@ export function NotesBrowser({
 
   // ── 通用动作 ──
   const refreshAction = (
-    <Action title="刷新" icon={Icon.ArrowClockwise} shortcut={{ modifiers: ["cmd"], key: "r" }} onAction={refresh} />
+    <Action
+      title="刷新"
+      icon={Icon.ArrowClockwise}
+      shortcut={{ modifiers: ["cmd"], key: "r" }}
+      onAction={refresh}
+    />
   );
   const keywordSearchAction =
     intent.kind === "timeline" && query.trim() ? (
@@ -247,7 +308,12 @@ export function NotesBrowser({
     ) : null;
 
   // ── 笔记条目（三种视图共用） ──
-  const renderNote = (note: NoteInfo, accessories: List.Item.Accessory[], report?: string, withReroll = false) => {
+  const renderNote = (
+    note: NoteInfo,
+    accessories: List.Item.Accessory[],
+    report?: string,
+    withReroll = false,
+  ) => {
     const id = getNoteId(note);
     const detail = details[id];
     const body = bodyOf(id);
@@ -275,11 +341,19 @@ export function NotesBrowser({
             })}
             metadata={
               <List.Item.Detail.Metadata>
-                {created && <List.Item.Detail.Metadata.Label title="创建时间" text={formatDateTime(created)} />}
+                {created && (
+                  <List.Item.Detail.Metadata.Label
+                    title="创建时间"
+                    text={formatDateTime(created)}
+                  />
+                )}
                 {tags.length > 0 && (
                   <List.Item.Detail.Metadata.TagList title="标签">
                     {tags.slice(0, 8).map((t) => (
-                      <List.Item.Detail.Metadata.TagList.Item key={t} text={t} />
+                      <List.Item.Detail.Metadata.TagList.Item
+                        key={t}
+                        text={t}
+                      />
                     ))}
                   </List.Item.Detail.Metadata.TagList>
                 )}
@@ -292,7 +366,9 @@ export function NotesBrowser({
             <Action.Push
               title="查看全文"
               icon={Icon.Eye}
-              target={<NoteDetailView noteId={id} title={title} summary={summary} />}
+              target={
+                <NoteDetailView noteId={id} title={title} summary={summary} />
+              }
             />
             {withReroll && (
               <Action
@@ -311,7 +387,11 @@ export function NotesBrowser({
               />
             )}
             {body && (
-              <Action.CopyToClipboard title="复制正文" content={body} shortcut={{ modifiers: ["cmd"], key: "c" }} />
+              <Action.CopyToClipboard
+                title="复制正文"
+                content={body}
+                shortcut={{ modifiers: ["cmd"], key: "c" }}
+              />
             )}
             {summary && (
               <Action.CopyToClipboard
@@ -327,7 +407,12 @@ export function NotesBrowser({
             />
             {tags
               .slice(0, 3)
-              .filter((t) => !watchItems.some((w) => w.keyword.toLowerCase() === t.toLowerCase()))
+              .filter(
+                (t) =>
+                  !watchItems.some(
+                    (w) => w.keyword.toLowerCase() === t.toLowerCase(),
+                  ),
+              )
               .map((t) => (
                 <Action
                   key={`watch-${t}`}
@@ -335,7 +420,10 @@ export function NotesBrowser({
                   icon={Icon.Pin}
                   onAction={async () => {
                     await addWatch(t);
-                    await showToast({ style: Toast.Style.Success, title: `已钉为项目「${t}」` });
+                    await showToast({
+                      style: Toast.Style.Success,
+                      title: `已钉为项目「${t}」`,
+                    });
                   }}
                 />
               ))}
@@ -364,7 +452,11 @@ export function NotesBrowser({
           <List.Item.Detail.Metadata>
             {doc.rows.map((r, i) =>
               r ? (
-                <List.Item.Detail.Metadata.Label key={`${r.title}-${i}`} title={r.title} text={r.text} />
+                <List.Item.Detail.Metadata.Label
+                  key={`${r.title}-${i}`}
+                  title={r.title}
+                  text={r.text}
+                />
               ) : (
                 <List.Item.Detail.Metadata.Separator key={`sep-${i}`} />
               ),
@@ -383,7 +475,11 @@ export function NotesBrowser({
   );
 
   // ── 概览里的「今天 / 昨天」 ──
-  const renderDayOverview = (data: TimelineData, daysAgo: number, label: string) => {
+  const renderDayOverview = (
+    data: TimelineData,
+    daysAgo: number,
+    label: string,
+  ) => {
     const d = new Date();
     d.setDate(d.getDate() - daysAgo);
     const date = formatDate(d);
@@ -464,7 +560,11 @@ export function NotesBrowser({
               }
               actions={
                 <ActionPanel>
-                  <Action.Push title="打开 Daily Note" icon={Icon.Calendar} target={<NotesBrowser dailyOnly />} />
+                  <Action.Push
+                    title="打开 Daily Note"
+                    icon={Icon.Calendar}
+                    target={<NotesBrowser dailyOnly />}
+                  />
                 </ActionPanel>
               }
             />
@@ -483,7 +583,11 @@ export function NotesBrowser({
               }
               actions={
                 <ActionPanel>
-                  <Action.Push title="打开往日回顾" icon={Icon.Shuffle} target={<NotesBrowser memoryOnly />} />
+                  <Action.Push
+                    title="打开往日回顾"
+                    icon={Icon.Shuffle}
+                    target={<NotesBrowser memoryOnly />}
+                  />
                 </ActionPanel>
               }
             />
@@ -502,7 +606,11 @@ export function NotesBrowser({
               }
               actions={
                 <ActionPanel>
-                  <Action.Push title="生成档案" icon={Icon.Person} target={<NotesBrowser dossierOnly />} />
+                  <Action.Push
+                    title="生成档案"
+                    icon={Icon.Person}
+                    target={<NotesBrowser dossierOnly />}
+                  />
                 </ActionPanel>
               }
             />
@@ -572,7 +680,9 @@ export function NotesBrowser({
                     : { source: Icon.Circle, tintColor: Color.SecondaryText }
                 }
                 accessories={[
-                  ...(todo.time ? [{ tag: { value: todo.time, color: Color.Blue } }] : []),
+                  ...(todo.time
+                    ? [{ tag: { value: todo.time, color: Color.Blue } }]
+                    : []),
                   { text: "待办" },
                 ]}
                 detail={
@@ -580,9 +690,22 @@ export function NotesBrowser({
                     markdown={`# ${todo.is_completed ? "✅" : "⬜️"} ${todo.content}`}
                     metadata={
                       <List.Item.Detail.Metadata>
-                        <List.Item.Detail.Metadata.Label title="状态" text={todo.is_completed ? "已完成" : "未完成"} />
-                        {todo.date && <List.Item.Detail.Metadata.Label title="日期" text={todo.date} />}
-                        {todo.time && <List.Item.Detail.Metadata.Label title="时间" text={todo.time} />}
+                        <List.Item.Detail.Metadata.Label
+                          title="状态"
+                          text={todo.is_completed ? "已完成" : "未完成"}
+                        />
+                        {todo.date && (
+                          <List.Item.Detail.Metadata.Label
+                            title="日期"
+                            text={todo.date}
+                          />
+                        )}
+                        {todo.time && (
+                          <List.Item.Detail.Metadata.Label
+                            title="时间"
+                            text={todo.time}
+                          />
+                        )}
                       </List.Item.Detail.Metadata>
                     }
                   />
@@ -600,7 +723,9 @@ export function NotesBrowser({
                 }
               />
             ))}
-            {day.notes.map((n) => renderNote(n, [{ text: localHHmm(n.created_at) }], report))}
+            {day.notes.map((n) =>
+              renderNote(n, [{ text: localHHmm(n.created_at) }], report),
+            )}
           </List.Section>
         ))}
       </>
@@ -609,7 +734,9 @@ export function NotesBrowser({
 
   // ── 人物 / 主题档案 ──
   const pinAction = (keyword: string) => {
-    const watched = watchItems.some((w: WatchItem) => w.keyword.toLowerCase() === keyword.toLowerCase());
+    const watched = watchItems.some(
+      (w: WatchItem) => w.keyword.toLowerCase() === keyword.toLowerCase(),
+    );
     return watched ? (
       <Action
         title="取消项目关注"
@@ -617,7 +744,10 @@ export function NotesBrowser({
         shortcut={{ modifiers: ["cmd"], key: "p" }}
         onAction={async () => {
           await removeWatch(keyword);
-          await showToast({ style: Toast.Style.Success, title: `已取消项目「${keyword}」` });
+          await showToast({
+            style: Toast.Style.Success,
+            title: `已取消项目「${keyword}」`,
+          });
         }}
       />
     ) : (
@@ -650,8 +780,12 @@ export function NotesBrowser({
     const direct = data.notes.filter((n) => n.direct);
     const related = data.notes.filter((n) => !n.direct);
     const noteAccessories = (n: DossierNote): List.Item.Accessory[] => [
-      ...(n.viaSpeaker ? [{ tag: { value: "录音", color: Color.Purple } }] : []),
-      ...(n.mentions > 0 ? [{ tag: { value: `提及 ×${n.mentions}`, color: Color.Green } }] : []),
+      ...(n.viaSpeaker
+        ? [{ tag: { value: "录音", color: Color.Purple } }]
+        : []),
+      ...(n.mentions > 0
+        ? [{ tag: { value: `提及 ×${n.mentions}`, color: Color.Green } }]
+        : []),
       { text: n.day ? n.day.slice(2) : "" },
     ];
 
@@ -687,10 +821,16 @@ export function NotesBrowser({
                     : { source: Icon.Circle, tintColor: Color.SecondaryText }
                 }
                 accessories={[
-                  ...(todo.time ? [{ tag: { value: todo.time, color: Color.Blue } }] : []),
+                  ...(todo.time
+                    ? [{ tag: { value: todo.time, color: Color.Blue } }]
+                    : []),
                   { text: todo.date ?? "无日期" },
                 ]}
-                detail={<List.Item.Detail markdown={`# ${todo.is_completed ? "✅" : "⬜️"} ${todo.content}`} />}
+                detail={
+                  <List.Item.Detail
+                    markdown={`# ${todo.is_completed ? "✅" : "⬜️"} ${todo.content}`}
+                  />
+                }
                 actions={
                   <ActionPanel>
                     <Action
@@ -709,12 +849,16 @@ export function NotesBrowser({
 
         {direct.length > 0 && (
           <List.Section title="直接提及" subtitle={`${direct.length}`}>
-            {direct.map((n) => renderNote(n.note, noteAccessories(n), data.brief))}
+            {direct.map((n) =>
+              renderNote(n.note, noteAccessories(n), data.brief),
+            )}
           </List.Section>
         )}
         {related.length > 0 && (
           <List.Section title="可能相关" subtitle={`${related.length}`}>
-            {related.map((n) => renderNote(n.note, noteAccessories(n), data.brief))}
+            {related.map((n) =>
+              renderNote(n.note, noteAccessories(n), data.brief),
+            )}
           </List.Section>
         )}
       </>
@@ -724,7 +868,10 @@ export function NotesBrowser({
   // ── 往日回顾：随机一条 + N 周 / 月 / 年前的今天 ──
   const rerollRandom = () => {
     if (view?.kind !== "memory") return;
-    const pick = pickRandom(view.data.pool, [...sameDayIds(view.data), ...(view.pick ? [getNoteId(view.pick)] : [])]);
+    const pick = pickRandom(view.data.pool, [
+      ...sameDayIds(view.data),
+      ...(view.pick ? [getNoteId(view.pick)] : []),
+    ]);
     setView({ ...view, pick });
     if (pick) load(getNoteId(pick));
   };
@@ -735,14 +882,23 @@ export function NotesBrowser({
 
     return (
       <>
-        <List.Section title="随机一条" subtitle={data.pool.length ? `共 ${data.pool.length} 条可抽取` : undefined}>
+        <List.Section
+          title="随机一条"
+          subtitle={
+            data.pool.length ? `共 ${data.pool.length} 条可抽取` : undefined
+          }
+        >
           {pick ? (
             withReroll(pick, [
               { tag: { value: "随机", color: Color.Green } },
               { text: pick.created_at ? shortTime(pick.created_at) : "" },
             ])
           ) : (
-            <List.Item id="qe-memory-empty" title="还没有可以抽取的笔记" icon={Icon.Shuffle} />
+            <List.Item
+              id="qe-memory-empty"
+              title="还没有可以抽取的笔记"
+              icon={Icon.Shuffle}
+            />
           )}
         </List.Section>
 
@@ -757,8 +913,14 @@ export function NotesBrowser({
           </List.Section>
         ) : (
           data.sameDay.map((g) => (
-            <List.Section key={g.date} title={g.label} subtitle={`${g.date} · ${g.notes.length} 条`}>
-              {g.notes.map((n) => withReroll(n, [{ text: localHHmm(n.created_at) }]))}
+            <List.Section
+              key={g.date}
+              title={g.label}
+              subtitle={`${g.date} · ${g.notes.length} 条`}
+            >
+              {g.notes.map((n) =>
+                withReroll(n, [{ text: localHHmm(n.created_at) }]),
+              )}
             </List.Section>
           ))
         )}
@@ -771,7 +933,9 @@ export function NotesBrowser({
     const groups = new Map<string, NoteInfo[]>();
     for (const n of notes) {
       const date = extractDate(n.title);
-      const key = date ? `${date.slice(0, 4)} 年 ${Number(date.slice(5, 7))} 月` : "其他";
+      const key = date
+        ? `${date.slice(0, 4)} 年 ${Number(date.slice(5, 7))} 月`
+        : "其他";
       groups.set(key, [...(groups.get(key) ?? []), n]);
     }
 
@@ -800,7 +964,8 @@ export function NotesBrowser({
         : view.kind === "memory"
           ? true
           : view.kind === "dossier"
-            ? !!view.data.query && (view.data.notes.length > 0 || view.data.todos.length > 0)
+            ? !!view.data.query &&
+              (view.data.notes.length > 0 || view.data.todos.length > 0)
             : dailyShown.length > 0);
 
   const emptyTitle =
@@ -865,7 +1030,11 @@ export function NotesBrowser({
       {view?.kind === "daily" && renderDaily(dailyShown)}
 
       {!isLoading && !hasItems && view && (
-        <List.EmptyView icon={Icon.MagnifyingGlass} title={emptyTitle} description={emptyDescription} />
+        <List.EmptyView
+          icon={Icon.MagnifyingGlass}
+          title={emptyTitle}
+          description={emptyDescription}
+        />
       )}
     </List>
   );
