@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">闪念</string>
+    <string name="tile_label">闪念</string>
+    <string name="share_label">闪念 · 摘录</string>
+    <string name="process_text_label">记到闪念</string>
+    <string name="shortcut_note_short">记一条</string>
+    <string name="shortcut_note_long">快速记一条</string>
+    <string name="shortcut_todo_short">记待办</string>
+    <string name="shortcut_todo_long">快速记待办</string>
+    <string name="widget_title">待办</string>
+    <string name="widget_add">新建待办</string>
+    <string name="widget_complete">完成</string>
+    <string name="widget_description">逾期与今天的待办，点圆圈直接完成</string>
+    <string name="todo_channel_name">待办常驻通知</string>
+</resources>

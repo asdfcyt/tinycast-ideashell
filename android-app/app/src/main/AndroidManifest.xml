@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 设置页里的「后台同步」引导：请求加入电池优化白名单（荣耀 / MagicOS 上建议开启） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- 常驻通知（Android 13+ 需要用户授权，设置里开启时才会申请） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- 分享 / 选中文字时，用来把来源应用的包名换成应用名 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".IdeashellApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Ideashell"
+        android:usesCleartextTraffic="false">
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Ideashell">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+
+        <!-- 轻量输入面板：磁贴、桌面快捷方式、分享、选中文字共用，不进最近任务、不抢主界面的任务栈 -->
+        <activity
+            android:name=".ui.capture.QuickCaptureActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Ideashell.Translucent"
+            android:windowSoftInputMode="adjustResize|stateVisible">
+            <intent-filter>
+                <action android:name="com.carpe.ideashell.action.QUICK_CAPTURE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- 系统分享菜单里的「闪念 · 摘录」 -->
+        <activity-alias
+            android:name=".ShareToIdeashell"
+            android:exported="true"
+            android:label="@string/share_label"
+            android:targetActivity=".ui.capture.QuickCaptureActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- 选中文字弹出菜单里的「记到闪念」 -->
+        <activity-alias
+            android:name=".ProcessTextToIdeashell"
+            android:exported="true"
+            android:label="@string/process_text_label"
+            android:targetActivity=".ui.capture.QuickCaptureActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity-alias>
+
+        <!-- 桌面待办小部件。com.hihonor.widget.type 让荣耀识别它是应用卡片，系统会自动套用液态玻璃材质 -->
+        <receiver
+            android:name=".system.TodoWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_title">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/todo_widget_info" />
+            <meta-data
+                android:name="com.hihonor.widget.type"
+                android:value="honorcard" />
+        </receiver>
+
+        <!-- 小部件 / 通知上的按钮（完成、内联回复快记、刷新），只给本应用自己的 PendingIntent 用 -->
+        <receiver
+            android:name=".system.TodoActionReceiver"
+            android:exported="false" />
+
+        <!-- 快速设置磁贴 -->
+        <service
+            android:name=".system.QuickCaptureTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>

@@ -1,7 +1,7 @@
 import { getNoteDetail } from "./api";
 import { FocusSummary, formatMinutes } from "./dida-focus";
 import { fetchTaskState } from "./dida-tasks";
-import { editSections, loadProjectHomes, loadTaskNotes, noteUrl, stepProgress } from "./task-notes";
+import { editSections, loadTaskNotes, noteUrl, resolveProjectHome, stepProgress } from "./task-notes";
 import { formatDate } from "./utils";
 import { projectTerms, WatchItem } from "./watchlist";
 
@@ -11,7 +11,7 @@ import { projectTerms, WatchItem } from "./watchlist";
  * 全部是精确读取（任务状态 / `- [x]` 计数 / 专注记录），没有任何猜测。
  */
 export async function refreshProjectSummary(item: WatchItem, focus?: FocusSummary): Promise<void> {
-  const homeId = (await loadProjectHomes())[item.keyword];
+  const homeId = await resolveProjectHome(item.keyword);
   if (!homeId) throw new Error("还没有项目主页笔记");
 
   const terms = projectTerms(item).map((t) => t.toLowerCase());

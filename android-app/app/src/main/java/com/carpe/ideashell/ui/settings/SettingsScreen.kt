@@ -1,0 +1,425 @@
+package com.carpe.ideashell.ui.settings
+
+import android.Manifest
+import android.app.StatusBarManager
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.carpe.ideashell.BuildConfig
+import com.carpe.ideashell.IdeashellApp
+import com.carpe.ideashell.R
+import com.carpe.ideashell.data.settings.ThemeMode
+import com.carpe.ideashell.system.QuickCaptureTileService
+import com.carpe.ideashell.system.TodoWidgetProvider
+import com.carpe.ideashell.ui.glass.GlassBadge
+import com.carpe.ideashell.ui.glass.GlassSurface
+import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
+
+private sealed interface Dialog {
+    data object Tags : Dialog
+    data object DailyFolder : Dialog
+    data object Theme : Dialog
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(onOpenConnection: () -> Unit) {
+    val context = LocalContext.current
+    val container = (context.applicationContext as IdeashellApp).container
+    val settings by container.settings.state.collectAsStateWithLifecycle()
+    val ideashellConnected by container.credentials.ideashellConnected.collectAsStateWithLifecycle()
+    val didaConnected by container.credentials.didaConnected.collectAsStateWithLifecycle()
+
+    var dialog by remember { mutableStateOf<Dialog?>(null) }
+    var batteryIgnored by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+    LifecycleResumeEffect(Unit) {
+        batteryIgnored = isIgnoringBatteryOptimizations(context)
+        onPauseOrDispose { }
+    }
+
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            container.settings.setPersistentNotification(true)
+        } else {
+            Toast.makeText(context, "没有通知权限，无法显示常驻通知", Toast.LENGTH_SHORT).show()
+        }
+    }
+    fun setPersistentNotification(enable: Boolean) {
+        when {
+            !enable -> container.settings.setPersistentNotification(false)
+            !didaConnected -> Toast.makeText(context, "请先连接滴答清单", Toast.LENGTH_SHORT).show()
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED ->
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+
+            else -> container.settings.setPersistentNotification(true)
+        }
+    }
+
+    Scaffold(
+        containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets.statusBars,
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = LocalBottomBarPadding.current + 8.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            Text(
+                "设置",
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+            )
+
+            Group("连接") {
+                SettingsItem(
+                    icon = Icons.Filled.Lock,
+                    title = "闪念贝壳",
+                    summary = if (ideashellConnected) "已连接 · 点击可更换或检查连接" else "未连接 · 填入 API Key",
+                    onClick = onOpenConnection,
+                )
+                SettingsItem(
+                    icon = Icons.Filled.Refresh,
+                    title = "滴答清单",
+                    summary = if (didaConnected) "已连接 · 待办直接建到滴答" else "未连接 · 待办会先建到闪念贝壳",
+                    onClick = onOpenConnection,
+                )
+            }
+
+            Group("记录") {
+                SettingsItem(
+                    icon = Icons.Filled.Star,
+                    title = "默认标签",
+                    summary = settings.defaultTagsText.ifEmpty { "无（创建笔记时自动附加，逗号分隔）" },
+                    onClick = { dialog = Dialog.Tags },
+                )
+                SettingsItem(
+                    icon = Icons.Filled.DateRange,
+                    title = "Daily Note 文件夹",
+                    summary = settings.dailyFolder,
+                    onClick = { dialog = Dialog.DailyFolder },
+                )
+            }
+
+            Group("外观") {
+                SettingsItem(
+                    icon = Icons.Filled.Settings,
+                    title = "主题",
+                    summary = settings.themeMode.label,
+                    onClick = { dialog = Dialog.Theme },
+                )
+            }
+
+            Group("快速入口") {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    SettingsItem(
+                        icon = Icons.Filled.Add,
+                        title = "添加快速设置磁贴",
+                        summary = "下拉通知栏，一点就能弹出输入框",
+                        onClick = { requestAddTile(context) },
+                    )
+                }
+                SettingsItem(
+                    icon = Icons.Filled.Create,
+                    title = "其他入口",
+                    summary = "任何 App 里点「分享 → 闪念」；选中文字后点菜单里的「记到闪念」；长按桌面图标可直达「记一条」「记待办」",
+                    onClick = null,
+                )
+            }
+
+            Group("待办") {
+                SettingsItem(
+                    icon = Icons.Filled.Notifications,
+                    title = "常驻通知",
+                    summary = "通知栏显示「今天 N · 逾期 M」，可直接回复快记、点完成。系统可能允许你划掉它，下次刷新会重新出现",
+                    onClick = { setPersistentNotification(!settings.persistentNotification) },
+                    trailing = {
+                        Switch(
+                            checked = settings.persistentNotification,
+                            onCheckedChange = { setPersistentNotification(it) },
+                        )
+                    },
+                )
+                SettingsItem(
+                    icon = Icons.Filled.Add,
+                    title = "添加待办小部件",
+                    summary = "放到桌面，逾期和今天的待办一眼可见，点圆圈直接完成。也可以长按桌面空白处 → 小组件 → 闪念",
+                    onClick = { requestPinTodoWidget(context) },
+                )
+            }
+
+            Group("后台同步（荣耀 MagicOS）") {
+                SettingsItem(
+                    icon = Icons.Filled.Notifications,
+                    title = "忽略电池优化",
+                    summary = if (batteryIgnored) "已允许" else "未允许 · 建议开启，离线记下的内容才能及时同步",
+                    onClick = { if (!batteryIgnored) requestIgnoreBattery(context) },
+                )
+                SettingsItem(
+                    icon = Icons.Filled.Info,
+                    title = "应用启动管理",
+                    summary = "打开系统的应用信息页。在「应用启动管理」里把「闪念」改为手动管理，打开「自启动」「关联启动」「后台活动」；再到多任务界面锁定「闪念」卡片。不同系统版本入口略有差异。",
+                    onClick = { openAppDetails(context) },
+                )
+            }
+
+            Group("关于") {
+                SettingsItem(
+                    icon = Icons.Filled.Info,
+                    title = "闪念",
+                    summary = "版本 ${BuildConfig.VERSION_NAME} · 记录自动同步到闪念贝壳与滴答清单",
+                    onClick = null,
+                )
+            }
+        }
+    }
+
+    when (dialog) {
+        Dialog.Tags -> TextInputDialog(
+            title = "默认标签",
+            label = "标签（逗号分隔）",
+            initial = settings.defaultTagsText,
+            onConfirm = { container.settings.setDefaultTags(it) },
+            onDismiss = { dialog = null },
+        )
+
+        Dialog.DailyFolder -> TextInputDialog(
+            title = "Daily Note 文件夹",
+            label = "文件夹名",
+            initial = settings.dailyFolder,
+            onConfirm = { container.settings.setDailyFolder(it) },
+            onDismiss = { dialog = null },
+        )
+
+        Dialog.Theme -> ThemeDialog(
+            current = settings.themeMode,
+            onSelect = { container.settings.setThemeMode(it) },
+            onDismiss = { dialog = null },
+        )
+
+        null -> Unit
+    }
+}
+
+@Composable
+private fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
+        )
+        GlassSurface(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth(), content = content)
+        }
+    }
+}
+
+@Composable
+private fun SettingsItem(
+    icon: ImageVector,
+    title: String,
+    summary: String,
+    onClick: (() -> Unit)?,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    ListItem(
+        modifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        leadingContent = { GlassBadge(icon) },
+        headlineContent = { Text(title, style = MaterialTheme.typography.titleMedium) },
+        supportingContent = { Text(summary, style = MaterialTheme.typography.bodyMedium) },
+        trailingContent = trailing,
+    )
+}
+
+@Composable
+private fun TextInputDialog(
+    title: String,
+    label: String,
+    initial: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var value by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { value = it },
+                label = { Text(label) },
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Done),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onConfirm(value)
+                onDismiss()
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun ThemeDialog(current: ThemeMode, onSelect: (ThemeMode) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("主题") },
+        text = {
+            Column {
+                ThemeMode.entries.forEach { mode ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = mode == current,
+                                role = Role.RadioButton,
+                                onClick = {
+                                    onSelect(mode)
+                                    onDismiss()
+                                },
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = mode == current, onClick = null)
+                        Text(mode.label, modifier = Modifier.padding(start = 12.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+private fun requestAddTile(context: Context) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    val manager = context.getSystemService(StatusBarManager::class.java)
+    if (manager == null) {
+        toast(context, "当前系统不支持一键添加，请在通知栏编辑里手动添加「闪念」磁贴")
+        return
+    }
+    manager.requestAddTileService(
+        ComponentName(context, QuickCaptureTileService::class.java),
+        context.getString(R.string.tile_label),
+        android.graphics.drawable.Icon.createWithResource(context, R.drawable.ic_tile),
+        context.mainExecutor,
+    ) { result ->
+        val message = when (result) {
+            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED -> "已添加到快速设置"
+            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED -> "磁贴已经在快速设置里了"
+            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED -> null
+            else -> "系统没有响应，请在通知栏编辑里手动添加「闪念」磁贴"
+        }
+        if (message != null) toast(context, message)
+    }
+}
+
+private fun isIgnoringBatteryOptimizations(context: Context): Boolean =
+    context.getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(context.packageName) == true
+
+private fun requestIgnoreBattery(context: Context) {
+    try {
+        context.startActivity(
+            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    } catch (_: Exception) {
+        openAppDetails(context)
+    }
+}
+
+private fun openAppDetails(context: Context) {
+    try {
+        context.startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    } catch (_: Exception) {
+        toast(context, "无法打开系统设置，请手动进入「设置 → 应用」")
+    }
+}
+
+private fun toast(context: Context, text: String) {
+    Toast.makeText(context, text, Toast.LENGTH_LONG).show()
+}
+
+/** 请求把待办小部件固定到桌面；启动器不支持时给出手动添加的提示 */
+private fun requestPinTodoWidget(context: Context) {
+    val manager = AppWidgetManager.getInstance(context)
+    if (manager.isRequestPinAppWidgetSupported) {
+        manager.requestPinAppWidget(ComponentName(context, TodoWidgetProvider::class.java), null, null)
+    } else {
+        Toast.makeText(context, "请长按桌面空白处 → 小组件 → 闪念", Toast.LENGTH_LONG).show()
+    }
+}

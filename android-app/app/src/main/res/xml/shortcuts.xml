@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 长按桌面图标出现的快捷方式；也可以从这里拖出来放到桌面 -->
+    <shortcut
+        android:shortcutId="quick_note"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_note"
+        android:shortcutShortLabel="@string/shortcut_note_short"
+        android:shortcutLongLabel="@string/shortcut_note_long">
+        <intent
+            android:action="com.carpe.ideashell.action.QUICK_CAPTURE"
+            android:targetPackage="com.carpe.ideashell"
+            android:targetClass="com.carpe.ideashell.ui.capture.QuickCaptureActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="quick_todo"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_todo"
+        android:shortcutShortLabel="@string/shortcut_todo_short"
+        android:shortcutLongLabel="@string/shortcut_todo_long">
+        <intent
+            android:action="com.carpe.ideashell.action.QUICK_CAPTURE"
+            android:targetPackage="com.carpe.ideashell"
+            android:targetClass="com.carpe.ideashell.ui.capture.QuickCaptureActivity">
+            <extra
+                android:name="kind"
+                android:value="TODO" />
+        </intent>
+    </shortcut>
+</shortcuts>

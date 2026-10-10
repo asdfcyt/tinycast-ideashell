@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 临时占位图标：一道闪电，M5 阶段替换为正式图标 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M60,26 L42,58 L53,58 L47,82 L67,48 L55,48 Z" />
+</vector>

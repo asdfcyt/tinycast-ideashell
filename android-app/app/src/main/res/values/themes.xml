@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 界面完全由 Compose 绘制，这里只提供窗口层面的基础主题（自动跟随系统深浅色） -->
+    <style name="Theme.Ideashell" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+    <!-- 轻量输入面板：透明窗口，遮罩与卡片都由 Compose 绘制；窗口转场关掉，由面板自己做动画 -->
+    <style name="Theme.Ideashell.Translucent" parent="Theme.Ideashell">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>

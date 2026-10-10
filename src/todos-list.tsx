@@ -49,6 +49,7 @@ import {
   milestoneText,
   recordMilestone,
   loadTaskNotes,
+  restoreTaskNotes,
   noteUrl,
   TaskNoteRef,
 } from "./task-notes";
@@ -374,12 +375,17 @@ export default function Command() {
         freshRef.current = true;
         setData(d);
         setDataReady(true);
-        const [sync, err, notes, posts] = await Promise.all([
+        const [sync, err, localNotes, posts] = await Promise.all([
           loadLastSync(),
           loadLastError(),
           loadTaskNotes(),
           loadPostpones(),
         ]);
+        // 任务内容里有「任务笔记：<链接>」而本机没记录的（比如在安卓端建的），自动认回来
+        const notes = await restoreTaskNotes(
+          d.open.filter((r) => r.source === "dida"),
+          localNotes,
+        ).catch(() => localNotes);
         setLastSync(sync);
         setLastError(err);
         setTaskNotes(notes);

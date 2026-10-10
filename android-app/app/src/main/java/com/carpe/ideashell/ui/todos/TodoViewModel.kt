@@ -1,0 +1,394 @@
+package com.carpe.ideashell.ui.todos
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.carpe.ideashell.AppContainer
+import com.carpe.ideashell.IdeashellApp
+import com.carpe.ideashell.core.parse.TodoMeta
+import com.carpe.ideashell.data.dida.DidaTask
+import com.carpe.ideashell.data.dida.Habit
+import com.carpe.ideashell.data.dida.TodoData
+import com.carpe.ideashell.data.project.Project
+import com.carpe.ideashell.data.project.ProjectStats
+import com.carpe.ideashell.data.project.ProjectStatus
+import com.carpe.ideashell.data.project.Workspace
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
+
+sealed interface TodoEvent {
+    data class Message(val text: String) : TodoEvent
+
+    /** 刚完成了一个任务，界面显示「撤销」 */
+    data class Completed(val task: DidaTask) : TodoEvent
+}
+
+/** 待办页的视图：列表 / 四象限 / 整理收集箱 / 项目 / 习惯 */
+enum class TodoView(val label: String) {
+    LIST("列表"),
+    QUADRANT("四象限"),
+    INBOX("收集箱"),
+    PROJECTS("项目"),
+    HABITS("习惯"),
+}
+
+data class HabitUi(
+    val loading: Boolean = false,
+    val habits: List<Habit> = emptyList(),
+    val error: String? = null,
+    val loaded: Boolean = false,
+)
+
+class TodoViewModel(private val container: AppContainer) : ViewModel() {
+    val data: StateFlow<TodoData> = container.todos.state
+    val connected: StateFlow<Boolean> = container.credentials.didaConnected
+    val workspace: StateFlow<Workspace> = container.projects.workspace
+    val stats: StateFlow<Map<String, ProjectStats>> = container.projects.stats
+
+    var showDone by mutableStateOf(false)
+    var showAllUndated by mutableStateOf(false)
+
+    /** 当前视图（留在 ViewModel 里：打开笔记再回来仍在原处） */
+    var view by mutableStateOf(TodoView.LIST)
+
+    /** 正在查看的项目主页（项目关键词） */
+    var openProject by mutableStateOf<String?>(null)
+
+    /** 从搜索页点进来要打开详情的任务 id；待办页消费后清空 */
+    var pendingTask by mutableStateOf<String?>(null)
+
+    private val _events = Channel<TodoEvent>(Channel.BUFFERED)
+    val events: Flow<TodoEvent> = _events.receiveAsFlow()
+
+    private var discovered = false
+
+    init {
+        // 以滴答任务内容里的「任务笔记：链接」为准，认回在其他设备上建的任务笔记
+        viewModelScope.launch {
+            data.collect { d ->
+                val ov = d.overview ?: return@collect
+                try {
+                    container.projects.restoreTaskNotes(ov.overdue + ov.upcoming + ov.undated)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
+    fun refresh(force: Boolean = false) = container.todos.refresh(force)
+
+    private fun message(text: String) {
+        _events.trySend(TodoEvent.Message(text))
+    }
+
+    private fun fail(what: String, e: Throwable) = message("$what：${e.message ?: "网络异常"}")
+
+    // ───────────── 任务操作 ─────────────
+
+    fun complete(task: DidaTask) {
+        viewModelScope.launch {
+            container.todos.complete(task)
+                .onSuccess {
+                    _events.trySend(TodoEvent.Completed(task))
+                    // 属于项目的任务完成后，自动在项目主页「里程碑与进展」记一行（进程级作用域，界面离开也要跑完）
+                    container.appScope.launch { runCatching { container.projects.afterComplete(task, "") } }
+                }
+                .onFailure { fail("完成失败", it) }
+        }
+    }
+
+    /** 完成并写复盘：有任务笔记就写进它的「复盘」，没有则单独存一条带 #复盘 标签的笔记 */
+    fun completeWithReview(task: DidaTask, review: String) {
+        viewModelScope.launch {
+            container.todos.complete(task)
+                .onSuccess {
+                    val text = try {
+                        container.projects.afterComplete(task, review)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        "已完成，但复盘没有保存：${e.message ?: "网络异常"}"
+                    }
+                    message(text)
+                }
+                .onFailure { fail("完成失败", it) }
+        }
+    }
+
+    fun undoComplete(task: DidaTask) {
+        viewModelScope.launch {
+            container.todos.undoComplete(task).onFailure { fail("撤销失败", it) }
+        }
+    }
+
+    fun reschedule(task: DidaTask, date: String, time: String?) {
+        viewModelScope.launch {
+            container.todos.reschedule(task, date, time).onFailure { fail("改期失败", it) }
+        }
+    }
+
+    fun setPriority(task: DidaTask, priority: Int) {
+        viewModelScope.launch {
+            container.todos.setPriority(task, priority).onFailure { fail("修改优先级失败", it) }
+        }
+    }
+
+    /** 切换 `!重要` / `!紧急` 标记（直接写在待办标题里） */
+    fun toggleMark(task: DidaTask, mark: TodoMeta.Mark) = rename(task, TodoMeta.toggleMark(task.title, mark))
+
+    fun rename(task: DidaTask, title: String) {
+        val clean = title.trim()
+        if (clean.isEmpty() || clean == task.title) return
+        viewModelScope.launch {
+            container.todos.setTitle(task, clean).onFailure { fail("修改标题失败", it) }
+        }
+    }
+
+    /** 归入项目：给任务加上项目关键词标签 */
+    fun assignProject(task: DidaTask, keyword: String) {
+        if (task.tags.any { it.equals(keyword, ignoreCase = true) }) return
+        viewModelScope.launch {
+            container.todos.setTags(task, task.tags + keyword)
+                .onSuccess { message("已归入「$keyword」") }
+                .onFailure { fail("归入项目失败", it) }
+        }
+    }
+
+    fun delete(task: DidaTask) {
+        viewModelScope.launch {
+            container.todos.delete(task)
+                .onSuccess { message("已删除") }
+                .onFailure { fail("删除失败", it) }
+        }
+    }
+
+    // ───────────── 任务笔记 ─────────────
+
+    fun createTaskNote(task: DidaTask, deliverable: String, purpose: String, steps: String) {
+        viewModelScope.launch {
+            try {
+                container.projects.createTaskNote(task, deliverable, purpose, steps)
+                message("已创建任务笔记")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail("创建任务笔记失败", e)
+            }
+        }
+    }
+
+    fun addProgress(task: DidaTask?, noteId: String, text: String) {
+        viewModelScope.launch {
+            try {
+                val synced = container.projects.addProgress(noteId, text, task)
+                message(if (synced) "已记入任务笔记，并同步到滴答评论" else "已记入任务笔记")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail("保存失败", e)
+            }
+        }
+    }
+
+    // ───────────── 项目 ─────────────
+
+    fun addProject(keyword: String, tags: List<String>): Boolean {
+        val ok = container.projects.add(keyword, tags)
+        message(if (ok) "已添加项目「${keyword.trim()}」" else "项目已存在或名称为空")
+        if (ok) loadStats()
+        return ok
+    }
+
+    fun removeProject(keyword: String) {
+        container.projects.remove(keyword)
+        if (openProject == keyword) openProject = null
+        message("已移除项目「$keyword」（不会删除任何笔记）")
+    }
+
+    fun setStale(keyword: String, days: Int) = container.projects.setStaleDays(keyword, days)
+    fun setStatus(keyword: String, status: ProjectStatus) = container.projects.setStatus(keyword, status)
+    fun setNext(keyword: String, next: String) {
+        container.projects.setNext(keyword, next)
+        message("已更新「$keyword」的下一步")
+    }
+
+    fun setTags(keyword: String, tags: List<String>) {
+        container.projects.setTags(keyword, tags)
+        loadStats(force = true)
+    }
+
+    /** 逐个统计项目的提及情况（每个要检索多次，串行进行；6 小时内算过的不重复算） */
+    fun loadStats(force: Boolean = false) {
+        viewModelScope.launch {
+            // 以笔记为准：先把闪念贝壳里已有的项目主页（比如桌面端建的）认回来，一次就够
+            if (!discovered) {
+                discovered = true
+                try {
+                    val n = container.projects.discoverProjects()
+                    if (n > 0) message("从笔记里找到 $n 个项目")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    discovered = false
+                }
+            }
+            for (p in container.projects.projects) {
+                val old = container.projects.stats.value[p.keyword]
+                if (!force && old != null && System.currentTimeMillis() - old.at < STATS_TTL_MS) continue
+                try {
+                    container.projects.refreshStats(p)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // 单个项目统计失败不影响其它
+                }
+            }
+        }
+    }
+
+    fun refreshStats(p: Project) {
+        viewModelScope.launch {
+            try {
+                container.projects.refreshStats(p)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail("统计失败", e)
+            }
+        }
+    }
+
+    /** 项目「记一条」：保存为带项目标签的笔记；同名习惯自动打卡 */
+    fun logToProject(p: Project, text: String) {
+        viewModelScope.launch {
+            try {
+                val r = container.projects.log(p, text)
+                message(if (r.habit != null) "已保存到「${p.keyword}」，并给习惯「${r.habit}」打卡" else "已保存到「${p.keyword}」")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail("保存失败", e)
+            }
+        }
+    }
+
+    // ───────────── 项目主页页面 ─────────────
+
+    var homeText by mutableStateOf<String?>(null)
+    val noteTexts = mutableStateMapOf<String, String>()
+    var pageBusy by mutableStateOf(false)
+
+    /** 读取项目主页笔记与最近的任务笔记正文（读到一条显示一条） */
+    fun loadProjectPage(p: Project) {
+        homeText = null
+        noteTexts.clear()
+        viewModelScope.launch {
+            container.projects.resolveHome(p.keyword)?.let { id ->
+                homeText = readNote(id)
+            }
+            container.projects.taskNotesOf(p).take(10).forEach { e ->
+                launch { noteTexts[e.ref.noteId] = readNote(e.ref.noteId) }
+            }
+        }
+    }
+
+    private suspend fun readNote(id: String): String = try {
+        container.notes.note(id, force = true).content.trim()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        ""
+    }
+
+    fun createHome(p: Project) {
+        viewModelScope.launch {
+            pageBusy = true
+            try {
+                container.projects.createHome(p)
+                message("已创建项目主页笔记")
+                loadProjectPage(p)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail("创建失败", e)
+            } finally {
+                pageBusy = false
+            }
+        }
+    }
+
+    fun refreshHome(p: Project) {
+        viewModelScope.launch {
+            pageBusy = true
+            try {
+                container.projects.refreshSummary(p)
+                message("已更新项目主页的自动汇总")
+                loadProjectPage(p)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail("更新失败", e)
+            } finally {
+                pageBusy = false
+            }
+        }
+    }
+
+    // ───────────── 习惯 ─────────────
+
+    var habitUi by mutableStateOf(HabitUi())
+
+    fun loadHabits(force: Boolean = false) {
+        if (habitUi.loading) return
+        habitUi = habitUi.copy(loading = true, error = null)
+        viewModelScope.launch {
+            habitUi = try {
+                HabitUi(habits = container.habits.today(force), loaded = true)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                habitUi.copy(loading = false, error = e.message ?: "加载失败", loaded = true)
+            }
+        }
+    }
+
+    fun checkin(h: Habit) {
+        // 乐观更新
+        habitUi = habitUi.copy(habits = habitUi.habits.map { if (it.id == h.id) it.copy(doneToday = true) else it })
+        viewModelScope.launch {
+            try {
+                container.habits.checkin(h)
+                message("已打卡：${h.name}")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                habitUi = habitUi.copy(habits = habitUi.habits.map { if (it.id == h.id) it.copy(doneToday = false) else it })
+                fail("打卡失败", e)
+            }
+        }
+    }
+
+    companion object {
+        private const val STATS_TTL_MS = 6 * 3_600_000L
+
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer {
+                val app = this[APPLICATION_KEY] as IdeashellApp
+                TodoViewModel(app.container)
+            }
+        }
+    }
+}

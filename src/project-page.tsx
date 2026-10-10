@@ -9,9 +9,9 @@ import { refreshProjectSummary } from "./project-summary";
 import {
   createProjectHome,
   displayNote,
-  loadProjectHomes,
-  loadTaskNotes,
   noteUrl,
+  resolveProjectHome,
+  restoreTaskNotes,
   taskNoteLinks,
   TaskNoteRef,
 } from "./task-notes";
@@ -85,17 +85,20 @@ export function ProjectPage({
   }
 
   async function reload() {
-    const homes = await loadProjectHomes();
-    setHomeId(homes[item.keyword]);
+    // 以笔记为准：本机没记录就去闪念贝壳找项目主页，去滴答任务内容里找任务笔记链接
+    const [homeKnown, all] = await Promise.all([
+      resolveProjectHome(item.keyword),
+      restoreTaskNotes(rows),
+    ]);
+    setHomeId(homeKnown);
     const terms = projectTerms(item).map((t) => t.toLowerCase());
-    const all = await loadTaskNotes();
     const mine = Object.entries(all)
       .filter(([, r]) => r.project && terms.includes(r.project.toLowerCase()))
       .map(([taskKey, r]) => ({ ...r, taskKey }))
       .sort((a, b) => b.createdAt - a.createdAt);
     setRefs(mine);
     // 笔记正文在后台读取，读到一条显示一条
-    if (homes[item.keyword]) loadText(homes[item.keyword]).then(setHomeText);
+    if (homeKnown) loadText(homeKnown).then(setHomeText);
     mine
       .slice(0, 10)
       .forEach((r) => loadText(r.noteId).then((t) => setNoteTexts((prev) => ({ ...prev, [r.noteId]: t }))));

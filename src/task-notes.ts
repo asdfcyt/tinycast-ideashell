@@ -1,5 +1,11 @@
 import { LocalStorage } from "@raycast/api";
-import { createNote, getNoteDetail, updateNote } from "./api";
+import {
+  createNote,
+  getNoteDetail,
+  getNoteId,
+  searchNotes,
+  updateNote,
+} from "./api";
 import { formatMinute, truncate } from "./utils";
 
 /**
@@ -50,6 +56,87 @@ export async function saveProjectHome(
   const map = await loadProjectHomes();
   map[keyword] = noteId;
   await LocalStorage.setItem(PROJECT_HOME_KEY, JSON.stringify(map));
+}
+
+// ── 自动发现：以笔记 / 滴答任务内容为准，不依赖本机记录（与安卓端互通） ──
+
+const tagKey = (t: string) => t.replace(/^#+/, "").trim().toLowerCase();
+
+/** 项目主页笔记的标题（创建时会截到 30 字） */
+export const projectHomeTitle = (keyword: string) =>
+  truncate(`${keyword} 项目主页`, 30);
+
+/**
+ * 在闪念贝壳里找某个项目的主页笔记：标题是「<关键词> 项目主页」，或带「项目主页」+ 关键词两个标签。
+ * 找到就记到本机，以后直接用。找不到返回 undefined。
+ */
+export async function findProjectHome(
+  keyword: string,
+): Promise<string | undefined> {
+  const title = projectHomeTitle(keyword);
+  let found: string | undefined;
+  try {
+    const list = await searchNotes(`${keyword} 项目主页`, 20);
+    const kw = tagKey(keyword);
+    const match =
+      list.find((n) => n.title.trim() === title) ??
+      list.find((n) => {
+        const tags = (n.tags ?? []).map(tagKey);
+        return tags.includes("项目主页") && tags.includes(kw);
+      });
+    found = match ? getNoteId(match) : undefined;
+  } catch {
+    return undefined;
+  }
+  if (found) await saveProjectHome(keyword, found);
+  return found;
+}
+
+/** 项目主页笔记 id：先看本机记录，没有再去笔记里找 */
+export async function resolveProjectHome(
+  keyword: string,
+): Promise<string | undefined> {
+  return (await loadProjectHomes())[keyword] ?? (await findProjectHome(keyword));
+}
+
+const TASK_NOTE_LINK = /任务笔记[：:]\s*https?:\/\/[^\s/]+\/boards\/([a-f0-9]+)/i;
+
+/**
+ * 从滴答任务内容里的「任务笔记：<链接>」恢复本机没有的「任务 ↔ 笔记」对应关系。
+ * 只看任务内容里有链接且本机还没记录的；返回合并后的完整映射。
+ */
+export async function restoreTaskNotes(
+  rows: Array<{ key: string; content: string }>,
+  known?: Record<string, TaskNoteRef>,
+): Promise<Record<string, TaskNoteRef>> {
+  const map = known ?? (await loadTaskNotes());
+  const missing = rows
+    .filter((r) => !map[r.key])
+    .map((r) => ({ key: r.key, id: TASK_NOTE_LINK.exec(r.content ?? "")?.[1] }))
+    .filter((r): r is { key: string; id: string } => !!r.id);
+  if (missing.length === 0) return map;
+
+  const merged = { ...map };
+  await Promise.all(
+    missing.slice(0, 20).map(async (m) => {
+      try {
+        const d = await getNoteDetail(m.id);
+        const project = (d.tags ?? []).map((t) => t.replace(/^#+/, "").trim()).find(
+          (t) => t && t !== "任务笔记",
+        );
+        merged[m.key] = {
+          noteId: m.id,
+          deliverable: d.title || "任务笔记",
+          project,
+          createdAt: Date.now(),
+        };
+      } catch {
+        // 读不到就先跳过，下次再试
+      }
+    }),
+  );
+  await LocalStorage.setItem(TASK_NOTES_KEY, JSON.stringify(merged));
+  return merged;
 }
 
 function noteIdOf(created: string): string {
@@ -236,8 +323,11 @@ export async function createProjectHome(
   tags: string[],
   links: string,
 ): Promise<string> {
+  // 已经有了（比如在安卓端建过）就直接用，不重复创建
+  const existing = await findProjectHome(keyword);
+  if (existing) return existing;
   const created = await createNote({
-    title: truncate(`${keyword} 项目主页`, 30),
+    title: projectHomeTitle(keyword),
     body: buildProjectHomeBody(keyword, tags, links),
     tags: ["项目主页", keyword],
     source: "tinycast-ideashell",
@@ -304,7 +394,7 @@ export async function recordMilestone(
   keyword: string,
   text: string,
 ): Promise<void> {
-  const homeId = (await loadProjectHomes())[keyword];
+  const homeId = await resolveProjectHome(keyword);
   if (!homeId) return;
   await editNote(
     homeId,

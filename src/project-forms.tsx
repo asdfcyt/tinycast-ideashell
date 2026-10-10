@@ -16,12 +16,12 @@ import {
   appendProgress,
   appendReview,
   createTaskNote,
-  loadProjectHomes,
   loadTaskNotes,
   milestoneText,
   noteUrl,
   recordMilestone,
   refreshProjectHomeLinks,
+  resolveProjectHome,
   taskNoteLinks,
   TaskNoteRef,
 } from "./task-notes";
@@ -75,8 +75,7 @@ export function NextForm({
 /** 项目下所有任务笔记的链接汇总，写回项目主页笔记（有的话） */
 export async function syncProjectHome(project: string | undefined): Promise<void> {
   if (!project) return;
-  const homes = await loadProjectHomes();
-  const homeId = homes[project];
+  const homeId = await resolveProjectHome(project);
   if (!homeId) return;
   const refs = Object.values(await loadTaskNotes()).filter((r) => r.project === project);
   await refreshProjectHomeLinks(homeId, taskNoteLinks(refs));
