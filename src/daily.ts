@@ -48,7 +48,11 @@ export async function getOrCreateDailyFolderId(): Promise<string> {
   if (found) return found.id;
 
   const result = await createFolder(getDailyFolderName());
-  return result.match(/folder_id[:\s"]*([a-f0-9]+)/i)?.[1] || result.match(/[a-f0-9]{32}/i)?.[0] || "";
+  return (
+    result.match(/folder_id[:\s"]*([a-f0-9]+)/i)?.[1] ||
+    result.match(/[a-f0-9]{32}/i)?.[0] ||
+    ""
+  );
 }
 
 export function extractDate(title: string): string {
@@ -56,17 +60,24 @@ export function extractDate(title: string): string {
 }
 
 /** Daily Note 文件夹中的全部笔记，按标题里的日期倒序 */
-export async function listDailyNotes(): Promise<{ notes: NoteInfo[]; folder?: FolderInfo }> {
+export async function listDailyNotes(): Promise<{
+  notes: NoteInfo[];
+  folder?: FolderInfo;
+}> {
   const folder = await findDailyFolder();
   if (!folder) return { notes: [] };
 
   const notes = await getNotesByFolder(folder.id);
-  notes.sort((a, b) => extractDate(b.title).localeCompare(extractDate(a.title)));
+  notes.sort((a, b) =>
+    extractDate(b.title).localeCompare(extractDate(a.title)),
+  );
   return { notes, folder };
 }
 
 /** 在文件夹中找到标题日期等于 date 的 Daily Note */
-export async function findDailyNoteByDate(date: string): Promise<NoteInfo | undefined> {
+export async function findDailyNoteByDate(
+  date: string,
+): Promise<NoteInfo | undefined> {
   const { notes } = await listDailyNotes();
   return notes.find((n) => extractDate(n.title) === date);
 }
@@ -74,7 +85,8 @@ export async function findDailyNoteByDate(date: string): Promise<NoteInfo | unde
 // ── 追加排版 ──
 
 /** 时间戳行："**2026-10-08 11:37:40** xxx" / "2026-10-08 11:37 xxx" / "- **2026-10-08 11:37** xxx" */
-const ENTRY_RE = /^\s*(?:[-*+]\s+)?(?:\*\*)?(\d{4}-\d{2}-\d{2} \d{2}:\d{2})(?::\d{2})?(?:\*\*)?[ \t]*(.*)$/;
+const ENTRY_RE =
+  /^\s*(?:[-*+]\s+)?(?:\*\*)?(\d{4}-\d{2}-\d{2} \d{2}:\d{2})(?::\d{2})?(?:\*\*)?[ \t]*(.*)$/;
 
 export function nowMinuteStamp(d = new Date()): string {
   const yyyy = d.getFullYear();
@@ -88,7 +100,10 @@ export function nowMinuteStamp(d = new Date()): string {
 /** 生成一条列表条目：`- **时间** 内容`，多行内容用缩进保持在同一条目内 */
 export function formatEntry(text: string, stamp = nowMinuteStamp()): string {
   const [first, ...rest] = text.trim().split(/\r?\n/);
-  return [`- **${stamp}** ${first}`, ...rest.map((l) => (l.trim() ? `  ${l}` : ""))].join("\n");
+  return [
+    `- **${stamp}** ${first}`,
+    ...rest.map((l) => (l.trim() ? `  ${l}` : "")),
+  ].join("\n");
 }
 
 /** 把旧格式（挤在一起、带秒、无列表符号）的条目统一整理为列表格式；其余内容原样保留 */
@@ -120,7 +135,10 @@ function todayKey(): string {
  * 1. 优先在 Daily Note 文件夹里按标题日期查找（权威来源，换设备/清缓存也不会重复创建）
  * 2. 回退到本地缓存的 note_id
  */
-async function findTodayNote(): Promise<{ noteId: string; content: string } | null> {
+async function findTodayNote(): Promise<{
+  noteId: string;
+  content: string;
+} | null> {
   const key = todayKey();
 
   // 快路径：本机今天已经写过，直接用缓存的 note_id（只需 1 次读取），省掉两次文件夹查询
@@ -158,7 +176,10 @@ export async function appendToToday(text: string): Promise<void> {
   const existing = await findTodayNote();
 
   if (existing) {
-    await updateNote({ noteId: existing.noteId, body: appendEntry(existing.content, text) });
+    await updateNote({
+      noteId: existing.noteId,
+      body: appendEntry(existing.content, text),
+    });
     return;
   }
 
@@ -166,6 +187,53 @@ export async function appendToToday(text: string): Promise<void> {
   const result = await createNote({
     title: formatDate(new Date()),
     body: formatEntry(text),
+    tags: ["daily-note"],
+    folder: folderId || undefined,
+    source: "tinycast",
+    inlineTags: false,
+  });
+
+  const idMatch = result.match(/[a-f0-9]{32}/i);
+  if (idMatch) await LocalStorage.setItem(todayKey(), idMatch[0]);
+}
+
+/** 去掉开头已有的、带指定标记的引用块（连续以 ">" 开头的行），以及它后面的空行 */
+function stripLeadingQuote(content: string, marker: string): string {
+  const lines = content.split(/\r?\n/);
+  if (!(lines[0]?.trim().startsWith(">") && lines[0].includes(marker)))
+    return content;
+  let i = 0;
+  while (i < lines.length && lines[i].trim().startsWith(">")) i++;
+  while (i < lines.length && !lines[i].trim()) i++;
+  return lines.slice(i).join("\n");
+}
+
+/**
+ * 把一段内容块插到今天 Daily Note 的最前面（不存在则创建）。
+ * 开头已有带同一标记的引用块就替换掉，所以重复生成不会堆叠。
+ */
+export async function prependBlockToToday(
+  block: string,
+  marker: string,
+): Promise<void> {
+  const existing = await findTodayNote();
+  const text = block.trim();
+
+  if (existing) {
+    const rest = normalizeDailyContent(
+      stripLeadingQuote(existing.content || "", marker),
+    ).trim();
+    await updateNote({
+      noteId: existing.noteId,
+      body: rest ? `${text}\n\n${rest}` : text,
+    });
+    return;
+  }
+
+  const folderId = await getOrCreateDailyFolderId();
+  const result = await createNote({
+    title: formatDate(new Date()),
+    body: text,
     tags: ["daily-note"],
     folder: folderId || undefined,
     source: "tinycast",

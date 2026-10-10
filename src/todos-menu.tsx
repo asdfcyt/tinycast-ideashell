@@ -7,7 +7,7 @@ import {
   showHUD,
 } from "@raycast/api";
 import { useEffect, useState } from "react";
-import { writeDaySummary } from "./day-summary";
+import { summaryHud, writeDaySummary } from "./day-summary";
 import { habitLabel, PendingHabit } from "./dida-habits";
 import { TODOS_LIST_QUERY } from "./entry-flags";
 import { setPendingOpen } from "./pending-open";
@@ -24,6 +24,7 @@ import {
   menuTitleOf,
   readSummary,
   refreshSummary,
+  refreshSummaryInBackground,
   subtitleOf,
   TodoSummary,
 } from "./todo-summary";
@@ -72,9 +73,10 @@ export default function Command() {
         .then((rows) => alive && setProjects(rows))
         .catch(() => undefined);
       try {
-        const fresh = await refreshSummary(
-          environment.launchType === LaunchType.Background,
-        );
+        const fresh =
+          environment.launchType === LaunchType.Background
+            ? await refreshSummaryInBackground()
+            : await refreshSummary(false);
         if (alive) setSummary(fresh);
       } catch (e) {
         if (alive) setFailed(errMsg(e));
@@ -128,11 +130,7 @@ export default function Command() {
     try {
       await showHUD("正在汇总今天…");
       const s = await writeDaySummary();
-      await showHUD(
-        s
-          ? `已追加到今天的 Daily Note：完成 ${s.tasks.length} 项 · 专注 ${s.focusMin} 分钟 · 笔记 ${s.notes.length} 条`
-          : "今天还没有可汇总的内容",
-      );
+      await showHUD(summaryHud(s));
     } catch (e) {
       await showHUD(`生成失败：${errMsg(e)}`);
     }

@@ -160,15 +160,15 @@
         "添加待办",
         "quick"
       ],
-      "interval": "10m"
+      "interval": "1m"
     },
     {
       "name": "todos-menu",
       "title": "Todos Menu Bar",
       "subtitle": "闪念贝壳",
-      "description": "菜单栏待办：常驻显示「今天 N · 逾期 M」，点开列出逾期 / 今天的任务，点一下标记完成；后台每 10 分钟自动刷新。",
+      "description": "菜单栏待办：常驻显示「今天 N · 逾期 M」，点开列出逾期 / 今天的任务，点一下标记完成；后台每分钟更新一次，待办数据每 10 分钟才请求一次滴答。",
       "mode": "menu-bar",
-      "interval": "10m",
+      "interval": "1m",
       "keywords": [
         "menu",
         "menubar",

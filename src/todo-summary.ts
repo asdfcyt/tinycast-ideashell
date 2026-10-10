@@ -3,6 +3,7 @@ import { checkinHabit, fetchPendingHabits, PendingHabit } from "./dida-habits";
 import { clearPostpone } from "./postpone";
 import { loadTodoData, TodoRow, todayString } from "./todo-data";
 import { projectOf } from "./todo-meta";
+import { formatDate } from "./utils";
 import { completeRow } from "./todo-ops";
 import { loadTaskNotes, milestoneText, recordMilestone } from "./task-notes";
 import { loadWatchlist } from "./watchlist";
@@ -29,7 +30,9 @@ const KEY = "todo-summary-v1";
 const FRESH_MS = 90 * 1000;
 
 const byDateTime = (a: TodoRow, b: TodoRow) =>
-  `${a.date ?? ""} ${a.time ?? ""}`.localeCompare(`${b.date ?? ""} ${b.time ?? ""}`);
+  `${a.date ?? ""} ${a.time ?? ""}`.localeCompare(
+    `${b.date ?? ""} ${b.time ?? ""}`,
+  );
 
 export async function readSummary(): Promise<TodoSummary | undefined> {
   try {
@@ -54,11 +57,23 @@ export function buildSummary(
 ): TodoSummary {
   const today = todayString();
   const pending = open.filter((r) => !r.done && r.date);
-  const overdue = pending.filter((r) => (r.date as string) < today).sort(byDateTime);
+  const overdue = pending
+    .filter((r) => (r.date as string) < today)
+    .sort(byDateTime);
   const todays = pending.filter((r) => r.date === today).sort(byDateTime);
   const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-  const next = todays.find((r) => r.time && r.time >= hhmm) ?? todays.find((r) => !r.time) ?? todays[0];
-  return { updatedAt: Date.now(), connected, overdue, today: todays, next, habits };
+  const next =
+    todays.find((r) => r.time && r.time >= hhmm) ??
+    todays.find((r) => !r.time) ??
+    todays[0];
+  return {
+    updatedAt: Date.now(),
+    connected,
+    overdue,
+    today: todays,
+    next,
+    habits,
+  };
 }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
@@ -72,7 +87,10 @@ export function subtitleOf(s: TodoSummary): string {
   const parts = [`今天 ${s.today.length}`];
   if (s.overdue.length > 0) parts.push(`逾期 ${s.overdue.length}`);
   if (s.habits.length > 0) parts.push(`习惯 ${s.habits.length} 未打卡`);
-  if (s.next) parts.push(`下一个 ${[s.next.time, clip(s.next.title, 12)].filter(Boolean).join(" ")}`);
+  if (s.next)
+    parts.push(
+      `下一个 ${[s.next.time, clip(s.next.title, 12)].filter(Boolean).join(" ")}`,
+    );
   return parts.join(" · ");
 }
 
@@ -94,15 +112,59 @@ export async function refreshSummary(force = false): Promise<TodoSummary> {
     const cached = await readSummary();
     if (cached && Date.now() - cached.updatedAt < FRESH_MS) return cached;
   }
-  const [data, habits] = await Promise.all([loadTodoData(), fetchPendingHabits().catch(() => [] as PendingHabit[])]);
-  const summary = buildSummary(data.open, data.connected, data.connected ? habits : []);
+  const [data, habits] = await Promise.all([
+    loadTodoData(),
+    fetchPendingHabits().catch(() => [] as PendingHabit[]),
+  ]);
+  const summary = buildSummary(
+    data.open,
+    data.connected,
+    data.connected ? habits : [],
+  );
   await writeSummary(summary);
-  await updateCommandMetadata({ subtitle: subtitleOf(summary) }).catch(() => undefined);
+  await updateCommandMetadata({ subtitle: subtitleOf(summary) }).catch(
+    () => undefined,
+  );
   return summary;
 }
 
+/** 后台刷新的最长间隔：缓存没这么旧就只按当前时间重排，不重新请求滴答 */
+const BACKGROUND_FETCH_MS = 9 * 60 * 1000;
+
+/**
+ * 后台定时刷新（可以放心跑得很勤）：
+ * - 缓存是今天的、且不到 9 分钟：不请求滴答，只按当前时间重新排「下一个」并更新副标题；
+ * - 否则重新拉取。
+ */
+export async function refreshSummaryInBackground(): Promise<TodoSummary> {
+  const cached = await readSummary();
+  const sameDay =
+    cached && formatDate(new Date(cached.updatedAt)) === todayString();
+  if (
+    cached &&
+    sameDay &&
+    Date.now() - cached.updatedAt < BACKGROUND_FETCH_MS
+  ) {
+    const rebuilt = {
+      ...buildSummary(
+        [...cached.overdue, ...cached.today],
+        cached.connected,
+        cached.habits,
+      ),
+      updatedAt: cached.updatedAt,
+    };
+    await updateCommandMetadata({ subtitle: subtitleOf(rebuilt) }).catch(
+      () => undefined,
+    );
+    return rebuilt;
+  }
+  return refreshSummary(true);
+}
+
 /** 在菜单栏里点掉一条：和 Todos 里的「标记完成」一样（清推迟计数、记项目里程碑），并立即更新缓存 */
-export async function completeFromMenu(row: TodoRow): Promise<TodoSummary | undefined> {
+export async function completeFromMenu(
+  row: TodoRow,
+): Promise<TodoSummary | undefined> {
   await completeRow(row);
   await clearPostpone(row.key).catch(() => undefined);
   try {
@@ -122,17 +184,26 @@ export async function completeFromMenu(row: TodoRow): Promise<TodoSummary | unde
     cached.habits,
   );
   await writeSummary(next);
-  await updateCommandMetadata({ subtitle: subtitleOf(next) }).catch(() => undefined);
+  await updateCommandMetadata({ subtitle: subtitleOf(next) }).catch(
+    () => undefined,
+  );
   return next;
 }
 
 /** 在菜单栏里给习惯打卡，并立即更新缓存 */
-export async function checkinFromMenu(habit: PendingHabit): Promise<TodoSummary | undefined> {
+export async function checkinFromMenu(
+  habit: PendingHabit,
+): Promise<TodoSummary | undefined> {
   await checkinHabit(habit);
   const cached = await readSummary();
   if (!cached) return undefined;
-  const next: TodoSummary = { ...cached, habits: cached.habits.filter((h) => h.id !== habit.id) };
+  const next: TodoSummary = {
+    ...cached,
+    habits: cached.habits.filter((h) => h.id !== habit.id),
+  };
   await writeSummary(next);
-  await updateCommandMetadata({ subtitle: subtitleOf(next) }).catch(() => undefined);
+  await updateCommandMetadata({ subtitle: subtitleOf(next) }).catch(
+    () => undefined,
+  );
   return next;
 }

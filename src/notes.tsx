@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getNoteId, NoteInfo, searchNotes, TodoItem, updateTodos } from "./api";
 import { extractDate, listDailyNotes } from "./daily";
+import { summaryHud, writeDaySummary } from "./day-summary";
 import { DetailDoc } from "./detail-doc";
 import { DossierData, DossierNote, loadDossier } from "./dossier";
 import { NoteDetailView } from "./note-detail-view";
@@ -564,6 +565,28 @@ export function NotesBrowser({
                     title="打开 Daily Note"
                     icon={Icon.Calendar}
                     target={<NotesBrowser dailyOnly />}
+                  />
+                  <Action
+                    title="生成今日小结（插到今天 Daily Note 最前面）"
+                    icon={Icon.Document}
+                    onAction={async () => {
+                      const toast = await showToast({
+                        style: Toast.Style.Animated,
+                        title: "正在汇总今天…",
+                      });
+                      try {
+                        const r = await writeDaySummary();
+                        toast.style = r
+                          ? Toast.Style.Success
+                          : Toast.Style.Failure;
+                        toast.title = summaryHud(r);
+                      } catch (e) {
+                        toast.style = Toast.Style.Failure;
+                        toast.title = "生成失败";
+                        toast.message =
+                          e instanceof Error ? e.message : String(e);
+                      }
+                    }}
                   />
                 </ActionPanel>
               }
