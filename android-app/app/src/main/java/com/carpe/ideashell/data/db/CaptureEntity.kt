@@ -1,5 +1,6 @@
 package com.carpe.ideashell.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -38,6 +39,10 @@ data class CaptureEntity(
     val resultText: String? = null,
     val lastError: String? = null,
     val updatedAt: Long = createdAt,
+    /** 随笔记一起上传的图片（本地文件路径，换行分隔）；同步成功后文件会被删除 */
+    @ColumnInfo(defaultValue = "") val images: String = "",
 )
 
 fun CaptureEntity.tagList(): List<String> = if (tags.isEmpty()) emptyList() else tags.split('\n')
+
+fun CaptureEntity.imageList(): List<String> = if (images.isEmpty()) emptyList() else images.split('\n')

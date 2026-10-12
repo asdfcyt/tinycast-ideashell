@@ -7,6 +7,7 @@ import com.carpe.ideashell.core.capture.ClipInput
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.data.db.CaptureDao
 import com.carpe.ideashell.data.db.CaptureEntity
+import com.carpe.ideashell.data.db.imageList
 import com.carpe.ideashell.data.ideashell.FolderRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -35,7 +36,33 @@ class CaptureRepository(
     val recent: Flow<List<CaptureEntity>> = dao.observeRecent(RECENT_LIMIT)
 
     /** 万能输入。返回 null 表示没有可保存的内容。 */
-    suspend fun submitText(input: String, override: CaptureKind?, origin: String): SubmitReceipt? {
+    suspend fun submitText(
+        input: String,
+        override: CaptureKind?,
+        origin: String,
+        /** 随笔记一起上传的本地图片文件；有图片时一律存为笔记（自动识别，忽略待办 / 日记），文字可以为空 */
+        images: List<String> = emptyList(),
+    ): SubmitReceipt? {
+        if (images.isNotEmpty()) {
+            // 带图片：一律存为笔记（待办和 Daily Note 都装不下图片）；文字可以为空
+            val fallback = if (input.isBlank()) "图片" else input
+            val plan = CapturePlanner.plan(fallback, CaptureKind.NOTE, folders.folders.value) ?: return null
+            val base = entityOf(plan, origin)
+            val title = if (input.isBlank()) {
+                "图片 " + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("M月d日 HH:mm"))
+            } else {
+                base.noteTitle
+            }
+            return enqueue(
+                base.copy(
+                    noteTitle = title,
+                    body = if (input.isBlank()) "" else base.body,
+                    summary = title ?: base.summary,
+                    detail = base.detail + " · ${images.size} 张图片",
+                    images = images.joinToString("\n"),
+                ),
+            )
+        }
         val plan = CapturePlanner.plan(input, override, folders.folders.value) ?: return null
         return enqueue(entityOf(plan, origin))
     }
@@ -103,7 +130,12 @@ class CaptureRepository(
     }
 
     /** 撤销还没开始发送的记录；返回是否成功 */
-    suspend fun undo(id: Long): Boolean = dao.deletePending(id) > 0
+    suspend fun undo(id: Long): Boolean {
+        val item = dao.get(id)
+        val ok = dao.deletePending(id) > 0
+        if (ok && item != null) CaptureImages.delete(item.imageList())
+        return ok
+    }
 
     /** 立即同步（跳过撤销缓冲） */
     fun syncNow() {

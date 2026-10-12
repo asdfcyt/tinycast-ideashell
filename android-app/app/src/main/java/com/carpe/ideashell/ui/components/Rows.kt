@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Warning
@@ -186,6 +187,12 @@ fun CircleIconButton(
     ) {
         Icon(icon, contentDescription = contentDescription, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
     }
+}
+
+/** 标题栏右侧的搜索按钮：各主页签统一用它进入搜索页 */
+@Composable
+fun SearchButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    CircleIconButton(Icons.Filled.Search, "搜索", onClick, modifier)
 }
 
 /** 行与行之间的细分隔线（左侧缩进，与文字对齐） */

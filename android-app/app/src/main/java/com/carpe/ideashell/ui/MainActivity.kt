@@ -25,13 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.outlined.CheckCircle as CheckCircleOutlined
-import androidx.compose.material.icons.outlined.Home as HomeOutlined
-import androidx.compose.material.icons.outlined.DateRange as DateRangeOutlined
-import androidx.compose.material.icons.outlined.Search as SearchOutlined
-import androidx.compose.material.icons.outlined.Settings as SettingsOutlined
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -73,18 +67,17 @@ import com.carpe.ideashell.ui.todos.TodoViewModel
 private const val PAGE_TABS = 0
 private const val PAGE_CONNECTION = 1
 private const val PAGE_NOTE = 2
+private const val PAGE_SEARCH = 3
 private const val TAB_HOME = 0
 private const val TAB_TODOS = 1
-private const val TAB_SEARCH = 2
-private const val TAB_REVIEW = 3
-private const val TAB_SETTINGS = 4
+private const val TAB_REVIEW = 2
+private const val TAB_SETTINGS = 3
 
 private val NAV_ITEMS = listOf(
-    NavItem("今天", Icons.Outlined.HomeOutlined, Icons.Filled.Home),
-    NavItem("待办", Icons.Outlined.CheckCircleOutlined, Icons.Filled.CheckCircle),
-    NavItem("搜索", Icons.Outlined.SearchOutlined, Icons.Filled.Search),
-    NavItem("回看", Icons.Outlined.DateRangeOutlined, Icons.Filled.DateRange),
-    NavItem("设置", Icons.Outlined.SettingsOutlined, Icons.Filled.Settings),
+    NavItem("今天", Icons.Filled.Home),
+    NavItem("待办", Icons.Filled.CheckCircle),
+    NavItem("回看", Icons.Filled.DateRange),
+    NavItem("设置", Icons.Filled.Settings),
 )
 
 class MainActivity : ComponentActivity() {
@@ -121,7 +114,8 @@ class MainActivity : ComponentActivity() {
 
 /**
  * 根布局：纯色背景 + 当前页面 + 底部导航。
- * 五个主页签（记录 / 待办 / 搜索 / 回看 / 设置）；「连接与诊断」与「笔记全文」作为子页面盖在上面，此时隐藏导航栏。
+ * 四个主页签（今天 / 待办 / 回看 / 设置）；「搜索」「连接与诊断」「笔记全文」作为子页面盖在上面，此时隐藏导航栏。
+ * 搜索入口在各页面标题栏的右侧。
  *
  * 切页签不做任何转场动画：同时存在两个整页的组合 + 缩放 / 渐隐，是之前卡顿的主要来源。
  * 页签之间直接切换，每个页签的滚动位置等界面状态由 [rememberSaveableStateHolder] 保存；
@@ -131,19 +125,21 @@ class MainActivity : ComponentActivity() {
 private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(requestedTab ?: TAB_HOME) }
     var connection by rememberSaveable { mutableStateOf(false) }
+    var search by rememberSaveable { mutableStateOf(false) }
     var noteId by rememberSaveable { mutableStateOf<String?>(null) }
     // 退出动画期间 noteId 已经是 null，但旧页面还要再画一会儿，所以留一份最后打开的 id
     val lastNoteId = remember { arrayOf<String?>(null) }
     if (noteId != null) lastNoteId[0] = noteId
     val review: ReviewViewModel = viewModel(factory = ReviewViewModel.Factory)
     val todo: TodoViewModel = viewModel(factory = TodoViewModel.Factory)
-    val subpage = connection || noteId != null
+    val subpage = connection || search || noteId != null
     val stateHolder = rememberSaveableStateHolder()
 
     LaunchedEffect(requestedTab) {
         if (requestedTab != null) {
             tab = requestedTab
             connection = false
+            search = false
             noteId = null
             onTabConsumed()
         }
@@ -153,25 +149,26 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
         when {
             noteId != null -> noteId = null
             connection -> connection = false
+            search -> search = false
             else -> tab = TAB_HOME
         }
     }
 
     val systemNav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    // 右下角的万能输入「+」：今天 / 待办 / 回看页显示；搜索和设置页不需要
-    val fabVisible = !subpage && (tab == TAB_HOME || tab == TAB_TODOS || tab == TAB_REVIEW)
-    val bottomPadding = when {
-        subpage -> systemNav + 16.dp
-        fabVisible -> systemNav + NavBarHeight + NavBarGap + 80.dp
-        else -> systemNav + NavBarHeight + NavBarGap + 12.dp
-    }
+    // 导航胶囊和右侧的「+」在同一行，列表只需要避开这一行
+    val bottomPadding = if (subpage) systemNav + 16.dp else systemNav + NavBarHeight + NavBarGap + 12.dp
     val context = LocalContext.current
 
     Box(Modifier.fillMaxSize()) {
         AuroraBackground()
         CompositionLocalProvider(LocalBottomBarPadding provides bottomPadding) {
             AnimatedContent(
-                targetState = if (noteId != null) PAGE_NOTE else if (connection) PAGE_CONNECTION else PAGE_TABS,
+                targetState = when {
+                    noteId != null -> PAGE_NOTE
+                    connection -> PAGE_CONNECTION
+                    search -> PAGE_SEARCH
+                    else -> PAGE_TABS
+                },
                 transitionSpec = {
                     if (targetState != PAGE_TABS) {
                         (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(220))) togetherWith fadeOut(tween(120))
@@ -183,6 +180,26 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
             ) { page ->
                 when (page) {
                     PAGE_CONNECTION -> DiagnosticsScreen(onBack = { connection = false })
+                    PAGE_SEARCH -> SearchScreen(
+                        onBack = { search = false },
+                        onOpenConnection = { connection = true },
+                        onOpenNote = { noteId = it },
+                        onOpenDossier = { keyword ->
+                            search = false
+                            tab = TAB_REVIEW
+                            review.jumpToDossier(keyword)
+                        },
+                        onOpenProject = { keyword ->
+                            search = false
+                            todo.openProject = keyword
+                            tab = TAB_TODOS
+                        },
+                        onOpenTask = { id ->
+                            search = false
+                            todo.pendingTask = id
+                            tab = TAB_TODOS
+                        },
+                    )
                     PAGE_NOTE -> NoteDetailScreen(
                         noteId = lastNoteId[0].orEmpty(),
                         onBack = { noteId = null },
@@ -196,38 +213,24 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
                     else -> stateHolder.SaveableStateProvider(tab) {
                         when (tab) {
                             TAB_REVIEW -> ReviewScreen(
+                                onOpenSearch = { search = true },
                                 onOpenConnection = { connection = true },
                                 onOpenNote = { noteId = it },
                             )
 
                             TAB_TODOS -> TodoScreen(
+                                onOpenSearch = { search = true },
                                 onOpenConnection = { connection = true },
                                 onOpenNote = { noteId = it },
                                 onOpenDossier = { keyword ->
                                     tab = TAB_REVIEW
                                     review.jumpToDossier(keyword)
-                                },
-                            )
-
-                            TAB_SEARCH -> SearchScreen(
-                                onOpenConnection = { connection = true },
-                                onOpenNote = { noteId = it },
-                                onOpenDossier = { keyword ->
-                                    tab = TAB_REVIEW
-                                    review.jumpToDossier(keyword)
-                                },
-                                onOpenProject = { keyword ->
-                                    todo.openProject = keyword
-                                    tab = TAB_TODOS
-                                },
-                                onOpenTask = { id ->
-                                    todo.pendingTask = id
-                                    tab = TAB_TODOS
                                 },
                             )
 
                             TAB_SETTINGS -> SettingsScreen(onOpenConnection = { connection = true })
                             else -> HomeScreen(
+                                onOpenSearch = { search = true },
                                 onOpenConnection = { connection = true },
                                 onOpenTodos = { tab = TAB_TODOS },
                             )
@@ -235,27 +238,6 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
                     }
                 }
             }
-        }
-
-        AnimatedVisibility(
-            visible = fabVisible,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 20.dp, bottom = systemNav + NavBarHeight + NavBarGap + 16.dp),
-            enter = fadeIn(tween(160)),
-            exit = fadeOut(tween(120)),
-        ) {
-            AddFab(
-                onClick = {
-                    context.startActivity(
-                        Intent(context, QuickCaptureActivity::class.java).apply {
-                            action = QuickCaptureActivity.ACTION_QUICK_CAPTURE
-                            // 在待办页点 + 默认记待办，其他页由输入内容自动判断
-                            if (tab == TAB_TODOS) putExtra(QuickCaptureActivity.EXTRA_KIND, "TODO")
-                        },
-                    )
-                },
-            )
         }
 
         AnimatedVisibility(
@@ -268,6 +250,18 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
                 items = NAV_ITEMS,
                 selected = tab,
                 onSelect = { tab = it },
+                fab = {
+                    AddFab(
+                        onClick = {
+                            context.startActivity(
+                                Intent(context, QuickCaptureActivity::class.java).apply {
+                                    action = QuickCaptureActivity.ACTION_QUICK_CAPTURE
+                                    // 不预设类型：由输入内容自动判断，也可以在面板上方手动指定
+                                },
+                            )
+                        },
+                    )
+                },
             )
         }
     }

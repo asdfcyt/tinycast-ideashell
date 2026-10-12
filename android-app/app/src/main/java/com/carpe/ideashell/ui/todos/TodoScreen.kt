@@ -76,6 +76,7 @@ import com.carpe.ideashell.ui.components.ListGroup
 import com.carpe.ideashell.ui.components.NoticeLine
 import com.carpe.ideashell.ui.components.RowDivider
 import com.carpe.ideashell.ui.components.ScreenHeader
+import com.carpe.ideashell.ui.components.SearchButton
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -186,6 +187,7 @@ private fun summaryOf(overview: DidaOverview, today: LocalDate): String {
 @Composable
 fun TodoScreen(
     onOpenConnection: () -> Unit,
+    onOpenSearch: () -> Unit = {},
     onOpenNote: (String) -> Unit = {},
     onOpenDossier: (String) -> Unit = {},
     viewModel: TodoViewModel = viewModel(factory = TodoViewModel.Factory),
@@ -306,6 +308,7 @@ fun TodoScreen(
             ScreenHeader(
                 title = "待办",
                 subtitle = if (overview != null && view == TodoView.LIST) summaryOf(overview, today) else today.label(),
+                action = { SearchButton(onOpenSearch) },
             )
             ViewTabs(view) { viewModel.view = it }
 

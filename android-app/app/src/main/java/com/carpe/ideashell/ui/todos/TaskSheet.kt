@@ -46,6 +46,7 @@ import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.project.Project
 import com.carpe.ideashell.data.project.TaskNoteRef
 import com.carpe.ideashell.data.project.didaTaskUrl
+import com.carpe.ideashell.system.openInApp
 import com.carpe.ideashell.ui.components.ConfirmDialog
 import com.carpe.ideashell.ui.components.FormDialog
 import com.carpe.ideashell.ui.components.FormField
@@ -229,14 +230,10 @@ internal fun TaskSheet(
                     DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
                         DropdownMenuItem(text = { Text("改标题") }, onClick = { more = false; dialog = SheetDialog.RENAME })
                         DropdownMenuItem(
-                            text = { Text("在滴答中打开") },
+                            text = { Text("用滴答清单打开") },
                             onClick = {
                                 more = false
-                                runCatching {
-                                    context.startActivity(
-                                        Intent(Intent.ACTION_VIEW, Uri.parse(didaTaskUrl(task.projectId, task.id))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                    )
-                                }
+                                openInApp(context, didaTaskUrl(task.projectId, task.id), "滴答清单")
                             },
                         )
                         DropdownMenuItem(

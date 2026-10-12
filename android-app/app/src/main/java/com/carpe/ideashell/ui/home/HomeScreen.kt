@@ -23,6 +23,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -48,7 +49,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.data.db.CaptureEntity
 import com.carpe.ideashell.data.db.CaptureStatus
-import com.carpe.ideashell.ui.components.CircleIconButton
+import com.carpe.ideashell.ui.components.SearchButton
 import com.carpe.ideashell.ui.components.DividedRows
 import com.carpe.ideashell.ui.components.GroupCard
 import com.carpe.ideashell.ui.components.kindColors
@@ -71,6 +72,7 @@ import java.util.Locale
  */
 @Composable
 fun HomeScreen(
+    onOpenSearch: () -> Unit,
     onOpenConnection: () -> Unit,
     onOpenTodos: () -> Unit,
     viewModel: HomeViewModel = viewModel(factory = HomeViewModel.Factory.instance),
@@ -78,9 +80,7 @@ fun HomeScreen(
     val connected by viewModel.connected.collectAsStateWithLifecycle()
     val recent by viewModel.recent.collectAsStateWithLifecycle()
     val overview by viewModel.overview.collectAsStateWithLifecycle()
-    val templates by viewModel.templates.collectAsStateWithLifecycle()
-    var showTemplates by remember { mutableStateOf(false) }
-    var recentOpen by rememberSaveable { mutableStateOf(true) }
+    var recentOpen by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val today = remember { LocalDate.now() }
 
@@ -126,12 +126,7 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item(key = "header") {
-                Header(
-                    today = today,
-                    hasDone = hasDone,
-                    onTemplates = { showTemplates = true },
-                    onClearDone = viewModel::clearDone,
-                )
+                Header(today = today, onOpenSearch = onOpenSearch)
             }
 
             if (!connected) {
@@ -185,6 +180,9 @@ fun HomeScreen(
                         count = recent.size,
                         expanded = recentOpen,
                         onToggle = { recentOpen = !recentOpen },
+                        trailing = if (hasDone) {
+                            { RecentMenu(onClearDone = viewModel::clearDone) }
+                        } else null,
                         content = {
                             DividedRows(recent, inset = 58.dp) { item ->
                                 RecentRow(
@@ -201,21 +199,10 @@ fun HomeScreen(
             }
         }
     }
-
-    if (showTemplates) {
-        TemplateSheet(
-            templates = templates,
-            onDismiss = { showTemplates = false },
-            onSubmit = viewModel::submitTemplate,
-            onSave = viewModel::saveTemplate,
-            onDelete = viewModel::deleteTemplate,
-        )
-    }
 }
 
 @Composable
-private fun Header(today: LocalDate, hasDone: Boolean, onTemplates: () -> Unit, onClearDone: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
+private fun Header(today: LocalDate, onOpenSearch: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -230,12 +217,20 @@ private fun Header(today: LocalDate, hasDone: Boolean, onTemplates: () -> Unit, 
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        androidx.compose.foundation.layout.Box {
-            CircleIconButton(Icons.Filled.MoreVert, "更多", onClick = { menu = true })
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text("用模板记录") }, onClick = { menu = false; onTemplates() })
-                if (hasDone) DropdownMenuItem(text = { Text("清除已完成的记录") }, onClick = { menu = false; onClearDone() })
-            }
+        SearchButton(onOpenSearch)
+    }
+}
+
+/** 「最近记录」标题栏右侧的更多选项 */
+@Composable
+private fun RecentMenu(onClearDone: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    androidx.compose.foundation.layout.Box {
+        IconButton(onClick = { menu = true }) {
+            Icon(Icons.Filled.MoreVert, contentDescription = "更多", tint = MaterialTheme.colorScheme.outline)
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text("清除已完成的记录") }, onClick = { menu = false; onClearDone() })
         }
     }
 }

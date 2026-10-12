@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -47,6 +48,8 @@ import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.core.parse.TimeRanges
 import com.carpe.ideashell.data.ideashell.NoteDetail
 import com.carpe.ideashell.data.mcp.McpAuthException
+import com.carpe.ideashell.data.project.noteUrl
+import com.carpe.ideashell.system.openInApp
 import com.carpe.ideashell.ui.components.MarkdownText
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
@@ -126,7 +129,14 @@ fun NoteDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 when {
-                    note != null -> NoteBody(note, onOpenDossier)
+                    note != null -> {
+                        // 用闪念贝壳 App 打开这条笔记（没装就用浏览器）
+                        OutlinedButton(
+                            onClick = { openInApp(context, noteUrl(noteId), "闪念贝壳") },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
+                        ) { Text("用闪念贝壳 App 打开") }
+                        NoteBody(note, onOpenDossier)
+                    }
 
                     state.error != null -> GlassSurface(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

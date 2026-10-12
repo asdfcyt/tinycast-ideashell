@@ -24,6 +24,9 @@ data class NoteBrief(val id: String, val title: String)
 
 data class NoteContent(val id: String, val title: String, val content: String)
 
+/** 随笔记上传的图片：[bytes] 是 JPEG / PNG 原始字节，[name] 含扩展名 */
+class ImageUpload(val name: String, val bytes: ByteArray)
+
 data class TodoDraft(val content: String, val date: String? = null, val time: String? = null)
 
 /** 闪念贝壳 MCP 的业务封装（M1 只包含「记录」需要的接口，其余在后续里程碑补充） */
@@ -36,6 +39,7 @@ class IdeashellApi(private val mcp: McpClient) {
         folderId: String? = null,
         /** 把标签以 `#标签` 写进正文末尾（闪念贝壳 App 只识别正文里的行内标签），默认开启 */
         inlineTags: Boolean = true,
+        images: List<ImageUpload> = emptyList(),
     ): String {
         val content = if (inlineTags) withInlineTags(body, tags) else body
         return mcp.callText(
@@ -45,6 +49,18 @@ class IdeashellApi(private val mcp: McpClient) {
                 if (content.isNotEmpty()) put("content", content)
                 if (tags.isNotEmpty()) putJsonArray("tags") { tags.forEach { add(it) } }
                 if (folderId != null) put("folder_id", folderId)
+                if (images.isNotEmpty()) {
+                    putJsonArray("images") {
+                        images.forEach { img ->
+                            add(
+                                buildJsonObject {
+                                    put("data", java.util.Base64.getEncoder().encodeToString(img.bytes))
+                                    put("name", img.name)
+                                },
+                            )
+                        }
+                    }
+                }
             },
         )
     }

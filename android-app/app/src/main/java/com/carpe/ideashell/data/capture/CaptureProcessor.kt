@@ -4,11 +4,13 @@ import com.carpe.ideashell.core.capture.truncate
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.data.db.CaptureDao
 import com.carpe.ideashell.data.db.CaptureEntity
+import com.carpe.ideashell.data.db.imageList
 import com.carpe.ideashell.data.db.tagList
 import com.carpe.ideashell.data.dida.DidaApi
 import com.carpe.ideashell.data.ideashell.DailyNoteService
 import com.carpe.ideashell.data.ideashell.FolderRepository
 import com.carpe.ideashell.data.ideashell.IdeashellApi
+import com.carpe.ideashell.data.ideashell.ImageUpload
 import com.carpe.ideashell.data.ideashell.TodoDraft
 import com.carpe.ideashell.data.mcp.McpAuthException
 import com.carpe.ideashell.data.mcp.McpException
@@ -120,10 +122,16 @@ class CaptureProcessor(
     }
 
     private suspend fun sendDaily(item: CaptureEntity): String {
-        val entry = (listOf(item.body) + item.tagList().map { "#$it" }).joinToString(" ")
+        val entry = (listOf(item.body.trim()) + item.tagList().map { "#$it" }).joinToString(" ").trim()
         val recordedAt: LocalDateTime = Instant.ofEpochMilli(item.createdAt).atZone(ZoneId.systemDefault()).toLocalDateTime()
         dailyNotes.append(entry, recordedAt)
         return "已追加到当天的 Daily Note"
+    }
+
+    /** 本地文件丢了就当没有这张图（不要因为一张图卡住整条记录） */
+    private fun loadImages(paths: List<String>): List<ImageUpload> = paths.mapNotNull { path ->
+        val file = java.io.File(path)
+        if (file.isFile) ImageUpload(file.name, file.readBytes()) else null
     }
 
     private suspend fun sendNote(item: CaptureEntity): String {
@@ -141,8 +149,11 @@ class CaptureProcessor(
         }
         val tags = (settings.current.defaultTags + item.tagList()).distinct()
         val title = item.noteTitle?.takeIf { it.isNotBlank() } ?: truncate(item.body.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().trim(), 30)
-        ideashell.createNote(title = title, body = item.body, tags = tags, folderId = folderId)
-        return "已保存为笔记$folderNote"
+        val paths = item.imageList()
+        val uploads = loadImages(paths)
+        ideashell.createNote(title = title, body = item.body, tags = tags, folderId = folderId, images = uploads)
+        CaptureImages.delete(paths)
+        return "已保存为笔记$folderNote" + if (uploads.isNotEmpty()) "（${uploads.size} 张图片）" else ""
     }
 
     private fun retryDelay(attempt: Int): Long = minOf(30_000L * attempt, 10 * 60_000L)

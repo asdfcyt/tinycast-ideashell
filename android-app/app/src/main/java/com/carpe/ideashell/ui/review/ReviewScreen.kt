@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carpe.ideashell.ui.components.ScreenHeader
+import com.carpe.ideashell.ui.components.SearchButton
 import com.carpe.ideashell.ui.components.SegmentedTabs
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
 import kotlinx.coroutines.launch
@@ -52,6 +53,7 @@ import java.time.ZoneOffset
 @Composable
 fun ReviewScreen(
     onOpenConnection: () -> Unit,
+    onOpenSearch: () -> Unit = {},
     onOpenNote: (String) -> Unit,
     viewModel: ReviewViewModel = viewModel(factory = ReviewViewModel.Factory),
 ) {
@@ -90,7 +92,11 @@ fun ReviewScreen(
         snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
     ) { padding ->
       Column(Modifier.padding(padding)) {
-        ScreenHeader(title = "回看", subtitle = "笔记、待办与回忆，一屏看完")
+        ScreenHeader(
+            title = "回看",
+            subtitle = "笔记、待办与回忆，一屏看完",
+            action = { SearchButton(onOpenSearch) },
+        )
         SegmentedTabs(
             labels = ReviewPane.entries.map { it.label },
             selected = pane.ordinal,

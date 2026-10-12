@@ -11,7 +11,9 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -141,12 +143,16 @@ fun IdeashellTheme(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
     content: @Composable () -> Unit,
 ) {
+    val scheme = if (isDark(themeMode)) DarkColors else LightColors
     MaterialTheme(
-        colorScheme = if (isDark(themeMode)) DarkColors else LightColors,
+        colorScheme = scheme,
         typography = AppTypography,
         shapes = AppShapes,
-        content = content,
-    )
+    ) {
+        // 默认的内容色是黑色，只有 Surface / Scaffold 会按主题重设它。
+        // 我们的页面是自己画的 Box 和卡片，没有 Surface，没写颜色的文字和图标在深色模式下会一直是黑的，所以在最外层统一设成 onSurface
+        CompositionLocalProvider(LocalContentColor provides scheme.onSurface, content = content)
+    }
 }
 
 /** 边到边显示，并让状态栏 / 导航栏图标颜色跟随应用主题（而不只是系统深浅色） */

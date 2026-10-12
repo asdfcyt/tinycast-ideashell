@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -108,7 +111,7 @@ fun GlassBadge(
     }
 }
 
-/** [icon] 是未选中时的线性图标，[selectedIcon] 是选中时的实心图标（与 iOS Tab Bar 一致） */
+/** [icon] 是未选中时的图标，[selectedIcon] 是选中时的图标（可以相同） */
 data class NavItem(val label: String, val icon: ImageVector, val selectedIcon: ImageVector = icon)
 
 /** 悬浮导航胶囊的高度、与屏幕底部的间距（不含系统导航栏） */
@@ -116,8 +119,8 @@ val NavBarHeight = 64.dp
 val NavBarGap = 12.dp
 
 /**
- * 底部悬浮导航（对标滴答清单）：一颗浮在内容上方的白色胶囊，投影很淡；
- * 每项是图标 + 小字，选中项套一块青绿淡底的圆角高亮，并换成实心图标。
+ * 底部悬浮导航（对标滴答清单）：左边一颗白色胶囊，右边是同一行的圆形「+」（[fab]），投影很淡。
+ * 每项是粗体图标 + 粗体小字：选中项整体变主题色，没有底色块；其余项是深色。
  */
 @Composable
 fun AppNavBar(
@@ -125,33 +128,33 @@ fun AppNavBar(
     selected: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    fab: (@Composable () -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
     val capsule = RoundedCornerShape(32.dp)
-    Box(
+    Row(
         modifier
             .fillMaxWidth()
             .navigationBarsPadding()
             .padding(start = 16.dp, end = 16.dp, bottom = NavBarGap),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
             Modifier
-                .fillMaxWidth()
+                .weight(1f)
                 .height(NavBarHeight)
                 .shadow(10.dp, capsule, ambientColor = Color.Black.copy(alpha = 0.12f), spotColor = Color.Black.copy(alpha = 0.12f))
                 .clip(capsule)
                 .background(scheme.surfaceContainerLowest)
-                .padding(6.dp),
+                .padding(horizontal = 6.dp),
         ) {
             items.forEachIndexed { index, item ->
                 val active = index == selected
-                val color = if (active) scheme.primary else scheme.onSurfaceVariant
+                val color = if (active) scheme.primary else scheme.onSurface
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clip(RoundedCornerShape(26.dp))
-                        .background(if (active) scheme.primaryContainer else Color.Transparent)
                         .selectable(
                             selected = active,
                             role = Role.Tab,
@@ -166,28 +169,38 @@ fun AppNavBar(
                         if (active) item.selectedIcon else item.icon,
                         contentDescription = null,
                         tint = color,
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(26.dp),
                     )
-                    Text(item.label, style = MaterialTheme.typography.labelSmall, color = color, maxLines = 1)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        item.label,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = color,
+                        maxLines = 1,
+                    )
                 }
             }
+        }
+        if (fab != null) {
+            Spacer(Modifier.width(12.dp))
+            fab()
         }
     }
 }
 
-/** 右下角的圆形悬浮「+」：全应用的万能输入入口 */
+/** 底部导航右侧的圆形悬浮「+」：全应用的万能输入入口 */
 @Composable
 fun AddFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
     Box(
         modifier = modifier
-            .size(56.dp)
+            .size(NavBarHeight)
             .shadow(8.dp, CircleShape, ambientColor = scheme.primary.copy(alpha = 0.35f), spotColor = scheme.primary.copy(alpha = 0.35f))
             .clip(CircleShape)
             .background(scheme.primary)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(Icons.Filled.Add, contentDescription = "记一条", tint = scheme.onPrimary, modifier = Modifier.size(28.dp))
+        Icon(Icons.Filled.Add, contentDescription = "记一条", tint = scheme.onPrimary, modifier = Modifier.size(32.dp))
     }
 }

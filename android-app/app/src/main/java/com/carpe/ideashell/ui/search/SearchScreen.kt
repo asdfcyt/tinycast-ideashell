@@ -30,6 +30,9 @@ import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.project.Project
 import com.carpe.ideashell.domain.NoteText
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import com.carpe.ideashell.ui.components.CircleIconButton
 import com.carpe.ideashell.ui.components.DividedRows
 import com.carpe.ideashell.ui.components.EmptyNote
 import com.carpe.ideashell.ui.components.GroupLabel
@@ -51,6 +54,7 @@ private const val TASK_LIMIT = 10
  */
 @Composable
 fun SearchScreen(
+    onBack: () -> Unit,
     onOpenConnection: () -> Unit,
     onOpenNote: (String) -> Unit,
     onOpenDossier: (String) -> Unit,
@@ -73,7 +77,11 @@ fun SearchScreen(
         contentWindowInsets = WindowInsets.statusBars,
     ) { padding ->
         Column(Modifier.padding(padding)) {
-            ScreenHeader(title = "搜索", subtitle = "笔记、待办和项目，一处找")
+            ScreenHeader(
+                title = "搜索",
+                subtitle = "笔记、待办和项目，一处找",
+                action = { CircleIconButton(Icons.AutoMirrored.Filled.ArrowBack, "返回", onBack) },
+            )
             GlassSearchField(
                 value = viewModel.query,
                 onValueChange = { viewModel.query = it },
