@@ -15,5 +15,9 @@
     <string name="notification_next">下一项</string>
     <string name="notification_add">记一条</string>
     <string name="widget_description">逾期与今天的待办，点圆圈直接完成</string>
+    <string name="widget_focus_title">专注</string>
+    <string name="widget_focus_description">今天的专注进度；一键开始、暂停、结束，计入滴答清单</string>
+    <string name="widget_river_title">记录</string>
+    <string name="widget_river_description">最近的笔记、日记和完成的待办，按时间排成一条线</string>
     <string name="todo_channel_name">待办常驻通知</string>
 </resources>

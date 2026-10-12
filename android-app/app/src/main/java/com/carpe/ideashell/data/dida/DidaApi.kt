@@ -24,15 +24,17 @@ class DidaApi(private val mcp: McpClient) {
      * 有具体时间：准点提醒；只有日期：当天 9:00 提醒。
      * @param priority 0 无 / 1 低 / 3 中 / 5 高
      */
-    suspend fun createTask(title: String, date: String?, time: String?, priority: Int = 0) {
+    suspend fun createTask(title: String, date: String?, time: String?, priority: Int = 0): DidaTask? {
         val zone = ZoneId.systemDefault()
-        mcp.callText(
+        val text = mcp.callText(
             "create_task",
             buildJsonObject {
                 put("task", taskObject(title, date, time, priority, zone))
                 put("client_timezone", zone.id)
             },
         )
+        // 返回里通常带着新任务（含 id）；解析不出来返回 null，由调用方自己去列表里找
+        return runCatching { DidaParser.extractTasks(text, zone).firstOrNull { it.title == title } }.getOrNull()
     }
 
     /** 完成任务 */
@@ -182,6 +184,24 @@ class DidaApi(private val mcp: McpClient) {
                 put("from_time", dueString(from.toString(), null, zone))
                 put("to_time", dueString(toExclusive.toString(), null, zone))
                 put("type", type)
+            },
+        )
+    }
+
+    /**
+     * 写入一条专注记录（番茄钟，type 0），滴答里会出现在专注统计中；[taskId] 为空 = 不关联任务。
+     * 起止时间用 UTC（带 Z），与桌面端 `create_focus` 的调用一致。
+     */
+    suspend fun createFocus(startMs: Long, endMs: Long, taskId: String?) {
+        fun iso(ms: Long) = java.time.Instant.ofEpochMilli(ms).truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString()
+        mcp.callText(
+            "create_focus",
+            buildJsonObject {
+                put("start_time", iso(startMs))
+                put("end_time", iso(endMs))
+                put("type", 0)
+                if (!taskId.isNullOrBlank()) put("task_id", taskId)
+                put("client_timezone", ZoneId.systemDefault().id)
             },
         )
     }

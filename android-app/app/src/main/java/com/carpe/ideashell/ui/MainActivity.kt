@@ -40,6 +40,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.R
 import com.carpe.ideashell.ui.diagnostics.DiagnosticsScreen
+import com.carpe.ideashell.ui.focus.FocusScreen
 import com.carpe.ideashell.ui.glass.AddFab
 import com.carpe.ideashell.ui.glass.AppNavBar
 import com.carpe.ideashell.ui.glass.AuroraBackground
@@ -67,6 +68,7 @@ private const val PAGE_TABS = 0
 private const val PAGE_CONNECTION = 1
 private const val PAGE_NOTE = 2
 private const val PAGE_SEARCH = 3
+private const val PAGE_FOCUS = 4
 private const val TAB_HOME = 0
 private const val TAB_TODOS = 1
 private const val TAB_REVIEW = 2
@@ -83,16 +85,25 @@ class MainActivity : ComponentActivity() {
     /** 小部件 / 通知点进来时指定要打开的页签；界面消费后清空 */
     private var requestedTab by mutableStateOf<Int?>(null)
 
+    /** 通知上的专注圆环 / 专注通知点进来：直接打开专注页；界面消费后清空 */
+    private var requestedFocus by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as IdeashellApp).container
         requestedTab = readTab(intent)
+        requestedFocus = intent?.getBooleanExtra(EXTRA_OPEN_FOCUS, false) == true
 
         setContent {
             val settings by container.settings.state.collectAsStateWithLifecycle()
             IdeashellTheme(settings.themeMode) {
                 ApplyEdgeToEdge(isDark(settings.themeMode))
-                AppRoot(requestedTab = requestedTab, onTabConsumed = { requestedTab = null })
+                AppRoot(
+                    requestedTab = requestedTab,
+                    onTabConsumed = { requestedTab = null },
+                    requestedFocus = requestedFocus,
+                    onFocusConsumed = { requestedFocus = false },
+                )
             }
         }
     }
@@ -101,6 +112,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         requestedTab = readTab(intent)
+        requestedFocus = intent.getBooleanExtra(EXTRA_OPEN_FOCUS, false)
     }
 
     private fun readTab(intent: Intent?): Int? =
@@ -108,6 +120,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_TAB = "tab"
+        const val EXTRA_OPEN_FOCUS = "open_focus"
     }
 }
 
@@ -121,10 +134,11 @@ class MainActivity : ComponentActivity() {
  * 数据本来就在各自的 ViewModel 里，回来时先显示已有内容。只有进入 / 退出子页面才有横向滑入动画。
  */
 @Composable
-private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
+private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit, requestedFocus: Boolean, onFocusConsumed: () -> Unit) {
     var tab by rememberSaveable { mutableIntStateOf(requestedTab ?: TAB_HOME) }
     var connection by rememberSaveable { mutableStateOf(false) }
     var search by rememberSaveable { mutableStateOf(false) }
+    var focus by rememberSaveable { mutableStateOf(requestedFocus) }
     var noteId by rememberSaveable { mutableStateOf<String?>(null) }
     // 退出动画期间 noteId 已经是 null，但旧页面还要再画一会儿，所以留一份最后打开的 id
     val lastNoteId = remember { arrayOf<String?>(null) }
@@ -141,7 +155,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
             review.ensureLoaded()
         }
     }
-    val subpage = connection || search || noteId != null
+    val subpage = connection || search || focus || noteId != null
     val stateHolder = rememberSaveableStateHolder()
 
     LaunchedEffect(requestedTab) {
@@ -149,8 +163,19 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
             tab = requestedTab
             connection = false
             search = false
+            focus = false
             noteId = null
             onTabConsumed()
+        }
+    }
+
+    LaunchedEffect(requestedFocus) {
+        if (requestedFocus) {
+            focus = true
+            connection = false
+            search = false
+            noteId = null
+            onFocusConsumed()
         }
     }
 
@@ -159,6 +184,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
             noteId != null -> noteId = null
             connection -> connection = false
             search -> search = false
+            focus -> focus = false
             else -> tab = TAB_HOME
         }
     }
@@ -176,6 +202,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
                     noteId != null -> PAGE_NOTE
                     connection -> PAGE_CONNECTION
                     search -> PAGE_SEARCH
+                    focus -> PAGE_FOCUS
                     else -> PAGE_TABS
                 },
                 transitionSpec = {
@@ -189,6 +216,10 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
             ) { page ->
                 when (page) {
                     PAGE_CONNECTION -> DiagnosticsScreen(onBack = { connection = false })
+                    PAGE_FOCUS -> FocusScreen(
+                        onBack = { focus = false },
+                        onOpenConnection = { connection = true },
+                    )
                     PAGE_SEARCH -> SearchScreen(
                         viewModel = searchVm,
                         onBack = { search = false },
@@ -248,6 +279,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
                                 onOpenSearch = { search = true },
                                 onOpenConnection = { connection = true },
                                 onOpenTodos = { tab = TAB_TODOS },
+                                onOpenFocus = { focus = true },
                                 onOpenNote = { noteId = it },
                             )
                         }

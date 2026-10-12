@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -48,8 +47,7 @@ import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.core.parse.TimeRanges
 import com.carpe.ideashell.data.ideashell.NoteDetail
 import com.carpe.ideashell.data.mcp.McpAuthException
-import com.carpe.ideashell.data.project.noteUrl
-import com.carpe.ideashell.system.openInApp
+import com.carpe.ideashell.system.openIdeaShellNote
 import com.carpe.ideashell.ui.components.MarkdownText
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
@@ -101,7 +99,7 @@ fun NoteDetailScreen(
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 RoundAction(Icons.AutoMirrored.Filled.ArrowBack, "返回", onBack)
                 Spacer(Modifier.weight(1f))
@@ -118,6 +116,8 @@ fun NoteDetailScreen(
                         }
                         context.startActivity(Intent.createChooser(send, "分享笔记"))
                     }
+                    // 跳到闪念贝壳 App 里的这条笔记（没装 / 打不开时退回网页版）
+                    PillAction("闪念贝壳") { openIdeaShellNote(context, noteId) }
                 }
                 RoundAction(Icons.Filled.Refresh, "刷新") { attempt++ }
             }
@@ -130,11 +130,6 @@ fun NoteDetailScreen(
             ) {
                 when {
                     note != null -> {
-                        // 用闪念贝壳 App 打开这条笔记（没装就用浏览器）
-                        OutlinedButton(
-                            onClick = { openInApp(context, noteUrl(noteId), "闪念贝壳") },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
-                        ) { Text("用闪念贝壳 App 打开") }
                         NoteBody(note, onOpenTag)
                     }
 
@@ -215,7 +210,7 @@ private fun PillAction(text: String, onClick: () -> Unit) {
             text,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.align(Alignment.Center).padding(horizontal = 16.dp),
+            modifier = Modifier.align(Alignment.Center).padding(horizontal = 14.dp),
         )
     }
 }

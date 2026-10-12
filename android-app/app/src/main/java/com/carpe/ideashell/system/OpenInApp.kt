@@ -31,3 +31,40 @@ fun openInApp(context: Context, url: String, appName: String) {
         Toast.makeText(context, "无法打开：没有可用的应用", Toast.LENGTH_SHORT).show()
     }
 }
+
+/** 闪念贝壳的 Android 版：国内版 / Google Play 国际版，各自的包名与自定义链接协议 */
+private val IDEASHELL_APPS = listOf(
+    "com.roundreddot.ideashell" to "ideashellcn",
+    "com.rrd.ideaShell" to "ideashell",
+)
+
+/**
+ * 在闪念贝壳 App 里打开一条笔记。
+ * App 并不认 `ideashell.site/boards/…` 这种网页链接（它只接管 api.ideashell.cn），所以改用它自己的链接协议
+ * `ideashellcn://note/detail?id=笔记id`（国内版；推送通知点开笔记用的就是这种格式）。
+ * 链接打不开时至少把 App 拉起来；没装 App 才退回网页版。
+ */
+fun openIdeaShellNote(context: Context, noteId: String) {
+    val id = Uri.encode(noteId)
+    for ((pkg, scheme) in IDEASHELL_APPS) {
+        try {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://note/detail?id=$id"))
+                    .setPackage(pkg)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            return
+        } catch (_: ActivityNotFoundException) {
+            // 这个版本没装 / 不认这个链接，试下一个
+        } catch (_: SecurityException) {
+        }
+        val launch = context.packageManager.getLaunchIntentForPackage(pkg) ?: continue
+        try {
+            context.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            Toast.makeText(context, "已打开闪念贝壳，请在里面找这条笔记", Toast.LENGTH_SHORT).show()
+            return
+        } catch (_: Exception) {
+        }
+    }
+    openInApp(context, com.carpe.ideashell.data.project.noteUrl(noteId), "闪念贝壳")
+}

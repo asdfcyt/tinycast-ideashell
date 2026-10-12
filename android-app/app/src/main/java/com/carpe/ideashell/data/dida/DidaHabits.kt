@@ -124,7 +124,7 @@ object HabitParser {
 data class TaskFocus(val todayMin: Int = 0, val todayCount: Int = 0, val weekMin: Int = 0, val weekCount: Int = 0)
 
 /** 一次专注：起止时刻（毫秒时间戳）；回顾用它画专注趋势、时间线和最佳时段 */
-data class FocusSession(val startMs: Long, val endMs: Long)
+data class FocusSession(val startMs: Long, val endMs: Long, val taskId: String? = null, val title: String? = null)
 
 data class FocusSummary(
     val todayMin: Int = 0,
@@ -161,7 +161,6 @@ object FocusParser {
                 val id = o.str("id") ?: "${if (isPomo) "pomo" else "timing"}-$start"
                 if (!seen.add(id)) continue
                 val minutes = Math.round((end - start) / 60000.0).toInt()
-                sessions += FocusSession(start, end)
                 val isToday = start >= todayStart
                 weekMin += minutes
                 if (isPomo) weekPomos++
@@ -178,6 +177,7 @@ object FocusParser {
                     ids += tid
                     b.str("title")?.takeIf { it.isNotEmpty() }?.let { titles[tid] = it }
                 }
+                sessions += FocusSession(start, end, ids.firstOrNull(), ids.firstNotNullOfOrNull { titles[it] })
                 for (tid in ids) {
                     val f = byTask[tid] ?: TaskFocus()
                     byTask[tid] = TaskFocus(

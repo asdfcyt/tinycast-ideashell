@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小部件上的主按钮：橙色胶囊（浅色柔橙 / 深色暗橙） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/widget_chip" />
+    <corners android:radius="20dp" />
+</shape>

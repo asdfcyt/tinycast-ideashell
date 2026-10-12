@@ -31,7 +31,7 @@ const PREFIXES: Array<[RegExp, CaptureKind]> = [
  * - `#标签`、`@文件夹` 会被抽出（要求前面是行首或空白，避免误伤 C#、邮箱）
  * - 自动判断：
  *   待办 = 含「今天及以后的明确时间」或「明天及以后的日期」
- *   笔记 = 带标签/文件夹、多行、或超过 100 字
+ *   笔记 = 带标签/文件夹（有意归类的才是笔记）；长文字、多行默认也追加到 Daily Note
  *   其余短句 = 追加到 Daily Note
  */
 export function analyzeCapture(input: string, now = new Date()): CaptureAnalysis {
@@ -67,7 +67,7 @@ export function analyzeCapture(input: string, now = new Date()): CaptureAnalysis
 
   let recommended: CaptureKind;
   if (futureCue) recommended = "todo";
-  else if (tags.length > 0 || folderName || body.length > 100 || body.includes("\n")) recommended = "note";
+  else if (tags.length > 0 || folderName) recommended = "note";
   else recommended = "daily";
 
   return { text, body, tags: [...new Set(tags)], folderName, todo, forced, recommended };

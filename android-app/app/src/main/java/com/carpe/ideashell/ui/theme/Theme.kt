@@ -27,7 +27,7 @@ import com.carpe.ideashell.data.settings.ThemeMode
 
 /*
  * 设计系统「环」：来自闪念贝壳图标——一个带缺口的圆环和几颗星光。
- * - 色彩：深色模式用品牌橙 #FF5A00；浅色模式换成降饱和的柔橙 #E8794A（大面积的 #FF5A00 太刺眼），只用在「填充」上（圆环、导航选中、记一条按钮），
+ * - 色彩：深色模式用压低亮度的暗橙 #E0703F（纯品牌橙 #FF5A00 在深色底上太刺眼）；浅色模式用降饱和的柔橙 #E8794A，只用在「填充」上（圆环、导航选中、记一条按钮），
  *   上面的文字一律用深棕。橙色当文字、链接用时对比度不够，所以 [MaterialTheme.colorScheme.primary] 是加深的 #A9441C（浅色）/ 橙色（深色）。
  *   浅色底色是偏灰的燕麦米色 #F7F2EA，文字是暖灰深棕 #2A2118，不用纯黑纯白。
  * - 分层：奶油底 + 白色圆角块（任务是一条一条的胶囊，不是一整张大卡片）；逾期任务反白成深棕胶囊，是页面上最重的东西。
@@ -40,7 +40,7 @@ import com.carpe.ideashell.data.settings.ThemeMode
 
 /**
  * 品牌的三个颜色，用在「填充」上（色块、圆环、导航、记一条按钮）。
- * 深色模式保持品牌橙 #FF5A00；浅色模式下大面积 #FF5A00 太刺眼，换成降饱和的柔橙 #E8794A，底色是偏灰的燕麦米色，墨色略带暖灰。
+ * 深色模式用暗橙 #E0703F（#FF5A00 在深色底上发光刺眼）；浅色模式用降饱和的柔橙 #E8794A，底色是偏灰的燕麦米色，墨色略带暖灰。
  * 读的是 Compose 状态，主题切换时由 [IdeashellTheme] 同步，用到它的界面会自动重组。
  */
 object Brand {
@@ -50,14 +50,14 @@ object Brand {
         if (dark != isDark) dark = isDark
     }
 
-    val Orange: Color get() = if (dark) Color(0xFFFF5A00) else Color(0xFFE8794A)
+    val Orange: Color get() = if (dark) Color(0xFFE0703F) else Color(0xFFE8794A)
     val Brown: Color get() = if (dark) Color(0xFF24150C) else Color(0xFF2A2118)
     val Cream: Color get() = if (dark) Color(0xFFFFF8F0) else Color(0xFFF7F2EA)
 
     /** 橙色的两个浅阶（热力图 / 随机漫步卡背面），以及再深一档（文字、最深的格子） */
     val OrangeSoft: Color get() = if (dark) Color(0xFFFFD9BF) else Color(0xFFF6DCCB)
-    val OrangeMid: Color get() = if (dark) Color(0xFFFF9A5C) else Color(0xFFEFA67F)
-    val OrangeDeep: Color get() = if (dark) Color(0xFFC23F00) else Color(0xFFA9441C)
+    val OrangeMid: Color get() = if (dark) Color(0xFFE8956B) else Color(0xFFEFA67F)
+    val OrangeDeep: Color get() = if (dark) Color(0xFFB4532C) else Color(0xFFA9441C)
 
     /** 环的第三层：琥珀 */
     val Amber: Color get() = if (dark) Color(0xFFFFB020) else Color(0xFFD9A441)
@@ -131,7 +131,7 @@ private val DarkColors = darkColorScheme(
     surfaceContainerHighest = Color(0xFF4A352A),
     inverseSurface = Color(0xFFFFF1E4),
     inverseOnSurface = Brand.Brown,
-    inversePrimary = Color(0xFFC23F00),
+    inversePrimary = Color(0xFFB4532C),
     scrim = Color(0xFF000000),
 )
 

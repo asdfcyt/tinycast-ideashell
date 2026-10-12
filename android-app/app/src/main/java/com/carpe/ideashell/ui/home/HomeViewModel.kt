@@ -21,6 +21,7 @@ import com.carpe.ideashell.data.db.CaptureEntity
 import com.carpe.ideashell.data.dida.DidaOverview
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.dida.FocusSummary
+import com.carpe.ideashell.data.focus.FocusRun
 import com.carpe.ideashell.data.ideashell.NoteInfo
 import com.carpe.ideashell.domain.MemoryData
 import com.carpe.ideashell.domain.MemoryLane
@@ -92,6 +93,24 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     val focus: StateFlow<FocusSummary?> = _focus.asStateFlow()
     private var focusAt = 0L
 
+    /** 是否正在专注（应用内的倒计时）：今天页的专注行据此显示「专注中」 */
+    val focusRunning: StateFlow<Boolean> = container.focus.session.map { it != null }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), container.focus.session.value != null)
+
+    /** 正在进行的专注：今天页顶部的「专注中」条据此显示剩余时间；没有为 null */
+    val focusSession: StateFlow<FocusRun?> = container.focus.session
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), container.focus.session.value)
+
+    fun pauseOrResumeFocus() {
+        val s = container.focus.session.value ?: return
+        if (s.paused) container.focus.resume() else container.focus.pause()
+    }
+
+    /** 倒计时走完：马上结束并记录（不等闹钟），记录在进程级作用域里跑，离开页面也不会中断 */
+    fun settleFocus() {
+        container.appScope.launch { container.focus.settle() }
+    }
+
     /** 记录热力图：近半年每天 Daily Note 的条目数；没连接闪念贝壳为 null，[HeatState.loading] 表示还在读 */
     private val _heat = MutableStateFlow<HeatState?>(null)
     val heat: StateFlow<HeatState?> = _heat.asStateFlow()
@@ -145,7 +164,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             return
         }
         val now = System.currentTimeMillis()
-        if (now - focusAt < FOCUS_TTL_MS && _focus.value != null) return
+        // 刚在专注页记了一条（写进滴答）时，不等缓存过期，马上重读
+        val freshRecord = container.focus.recordedAt.value > focusAt
+        if (!freshRecord && now - focusAt < FOCUS_TTL_MS && _focus.value != null) return
         focusAt = now
         viewModelScope.launch {
             runCatching { container.daySummary.focus(LocalDate.now()) }

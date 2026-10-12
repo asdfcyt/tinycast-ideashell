@@ -15,11 +15,16 @@ import java.util.concurrent.TimeUnit
 class TodoRefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val container = (applicationContext as IdeashellApp).container
+        // 记录时间河小部件读的是闪念贝壳，不依赖滴答；没放小部件 / 没连接时它自己什么也不做
+        runCatching { container.widgets.refreshRiver() }
         if (container.credentials.didaToken.isNullOrBlank()) return Result.success()
         container.todos.refreshNow()
         // 通知栏的专注环要用：读一下今天的专注时长（失败就沿用上次的）
         runCatching { container.daySummary.focus() }
         container.surfaces.updateAll()
+        container.widgets.updateFocus()
+        // 顺手对账专注：到点没记的补记、没传成功的补传
+        runCatching { container.focus.settle() }
         return Result.success()
     }
 }

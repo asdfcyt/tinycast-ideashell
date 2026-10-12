@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -77,6 +78,7 @@ import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.db.CaptureEntity
 import com.carpe.ideashell.data.db.CaptureStatus
+import com.carpe.ideashell.data.focus.FocusRun
 import com.carpe.ideashell.data.ideashell.NoteInfo
 import com.carpe.ideashell.ui.components.RowPill
 import com.carpe.ideashell.ui.components.SearchButton
@@ -107,10 +109,13 @@ fun HomeScreen(
     onOpenSearch: () -> Unit,
     onOpenConnection: () -> Unit,
     onOpenTodos: () -> Unit,
+    onOpenFocus: () -> Unit,
     onOpenNote: (String) -> Unit,
     viewModel: HomeViewModel = viewModel(factory = HomeViewModel.Factory.instance),
 ) {
     val connected by viewModel.connected.collectAsStateWithLifecycle()
+    val focusRunning by viewModel.focusRunning.collectAsStateWithLifecycle()
+    val focusSession by viewModel.focusSession.collectAsStateWithLifecycle()
     val recent by viewModel.recent.collectAsStateWithLifecycle()
     val overview by viewModel.overview.collectAsStateWithLifecycle()
     val focus by viewModel.focus.collectAsStateWithLifecycle()
@@ -206,6 +211,19 @@ fun HomeScreen(
                 }
             }
 
+            // 正在专注：顶部一条状态，显示剩余时长；专注结束后这一条消失，页面恢复原样
+            focusSession?.let { run ->
+                item(key = "focusing") {
+                    FocusingStrip(
+                        run = run,
+                        onOpen = onOpenFocus,
+                        onPauseOrResume = viewModel::pauseOrResumeFocus,
+                        onDue = viewModel::settleFocus,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
+            }
+
             if (!connected) {
                 item(key = "connect") { ConnectCard(onOpenConnection, Modifier.padding(horizontal = 16.dp)) }
             }
@@ -223,6 +241,8 @@ fun HomeScreen(
                     todoTotal = todoTotal,
                     focusMin = focus?.todayMin,
                     focusGoal = focusGoal,
+                    focusRunning = focusRunning,
+                    onOpenFocus = onOpenFocus,
                     projectProgress = projectProgress,
                     heat = heat,
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -352,6 +372,8 @@ private fun Dashboard(
     todoTotal: Int,
     focusMin: Int?,
     focusGoal: Int,
+    focusRunning: Boolean,
+    onOpenFocus: () -> Unit,
     projectProgress: Float?,
     heat: HeatState?,
     modifier: Modifier = Modifier,
@@ -376,7 +398,10 @@ private fun Dashboard(
             .background(scheme.surfaceContainerLowest),
     ) {
         Row(
-            modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClickLabel = "打开专注", onClick = onOpenFocus)
+                .padding(start = 18.dp, end = 14.dp, top = 14.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -440,6 +465,26 @@ private fun Dashboard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            // 进入专注页：没在专注时是橙色的播放钮，专注中换成「专注中」小标签
+            if (focusRunning) {
+                Text(
+                    "专注中",
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(focusColor.copy(alpha = if (dark) 0.22f else 0.16f))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (dark) Brand.OrangeMid else Brand.OrangeDeep,
+                )
+            } else {
+                Box(
+                    Modifier.size(36.dp).clip(CircleShape).background(focusColor),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = "开始专注", tint = Brand.Brown, modifier = Modifier.size(22.dp))
+                }
             }
         }
         if (heat != null) Heatmap(today, heat, Modifier.padding(start = 18.dp, end = 18.dp, bottom = 14.dp))
@@ -786,6 +831,87 @@ private fun FreshStrip(item: CaptureEntity, remainingSec: Long, onUndo: () -> Un
             contentAlignment = Alignment.Center,
         ) {
             Text("撤销", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = scheme.inverseOnSurface)
+        }
+    }
+}
+
+/** 专注进行中的顶部状态条：圆点 + 任务 + 剩余时间（每秒走），右侧「暂停 / 继续」；整条点开专注页 */
+@Composable
+private fun FocusingStrip(
+    run: FocusRun,
+    onOpen: () -> Unit,
+    onPauseOrResume: () -> Unit,
+    onDue: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val paused = run.paused
+    val now by produceState(System.currentTimeMillis(), run) {
+        while (!run.paused) {
+            value = System.currentTimeMillis()
+            delay(1_000)
+        }
+        value = System.currentTimeMillis()
+    }
+    val remain = run.remainingMs(now)
+    val due = !paused && run.isDue(now)
+    LaunchedEffect(due) { if (due) onDue() }
+    val sec = ((remain + 999) / 1000).coerceAtLeast(0)
+    val clock = if (sec >= 3600) "%d:%02d:%02d".format(sec / 3600, sec / 60 % 60, sec % 60) else "%02d:%02d".format(sec / 60, sec % 60)
+    val what = run.title.trim().takeIf { it.isNotEmpty() } ?: "自由专注"
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .clip(CircleShape)
+            .background(scheme.primary.copy(alpha = 0.14f))
+            .clickable(onClickLabel = "打开专注", onClick = onOpen)
+            .padding(start = 18.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(if (paused) scheme.onSurfaceVariant else scheme.primary),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                if (paused) "专注已暂停" else "专注中",
+                style = MaterialTheme.typography.labelMedium,
+                color = scheme.onSurfaceVariant,
+            )
+            Text(
+                what,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            "剩 $clock",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = scheme.primary,
+        )
+        Box(
+            modifier = Modifier
+                .height(36.dp)
+                .clip(CircleShape)
+                .background(scheme.primary)
+                .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onPauseOrResume)
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                if (paused) "继续" else "暂停",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = scheme.onPrimary,
+            )
         }
     }
 }

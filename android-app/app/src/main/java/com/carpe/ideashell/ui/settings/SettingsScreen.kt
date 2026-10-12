@@ -72,6 +72,8 @@ import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.R
 import com.carpe.ideashell.data.settings.ThemeMode
 import com.carpe.ideashell.system.QuickCaptureTileService
+import com.carpe.ideashell.system.FocusWidgetProvider
+import com.carpe.ideashell.system.RiverWidgetProvider
 import com.carpe.ideashell.system.TodoWidgetProvider
 import com.carpe.ideashell.ui.glass.GlassBadge
 import com.carpe.ideashell.ui.glass.GlassSurface
@@ -82,6 +84,7 @@ private sealed interface Dialog {
     data object DailyFolder : Dialog
     data object Theme : Dialog
     data object FocusGoal : Dialog
+    data object AddWidget : Dialog
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -213,9 +216,9 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
                 )
                 SettingsItem(
                     icon = Icons.Filled.Add,
-                    title = "添加待办小部件",
-                    summary = "放到桌面，逾期和今天的待办一眼可见，点圆圈直接完成。也可以长按桌面空白处 → 小组件 → 闪念",
-                    onClick = { requestPinTodoWidget(context) },
+                    title = "添加小部件",
+                    summary = "待办、专注、记录（时间河）三种，选一个放到桌面。也可以长按桌面空白处 → 小组件 → 闪念",
+                    onClick = { dialog = Dialog.AddWidget },
                 )
             }
 
@@ -274,8 +277,52 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
             onDismiss = { dialog = null },
         )
 
+        Dialog.AddWidget -> AddWidgetDialog(
+            onPick = { widget -> requestPinWidget(context, widget) },
+            onDismiss = { dialog = null },
+        )
+
         null -> Unit
     }
+}
+
+/** 可以放到桌面的小部件 */
+private enum class PinnableWidget(val title: String, val summary: String, val provider: Class<*>) {
+    Todo("待办", "逾期和今天的待办一眼可见，点圆圈直接完成", TodoWidgetProvider::class.java),
+    Focus("专注", "今日专注进度；一键开始、暂停、结束，计入滴答清单", FocusWidgetProvider::class.java),
+    River("记录", "最近的日记、笔记和完成的待办，按时间排成一条线", RiverWidgetProvider::class.java),
+}
+
+@Composable
+private fun AddWidgetDialog(onPick: (PinnableWidget) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("添加小部件") },
+        text = {
+            Column {
+                PinnableWidget.entries.forEach { widget ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(role = Role.Button) {
+                                onPick(widget)
+                                onDismiss()
+                            }
+                            .padding(vertical = 10.dp),
+                    ) {
+                        Text(widget.title, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            widget.summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 private val FOCUS_GOAL_PRESETS = listOf(30, 60, 90, 120, 180, 240, 300, 360)
@@ -469,12 +516,12 @@ private fun toast(context: Context, text: String) {
     Toast.makeText(context, text, Toast.LENGTH_LONG).show()
 }
 
-/** 请求把待办小部件固定到桌面；启动器不支持时给出手动添加的提示 */
-private fun requestPinTodoWidget(context: Context) {
+/** 请求把小部件固定到桌面；启动器不支持时给出手动添加的提示 */
+private fun requestPinWidget(context: Context, widget: PinnableWidget) {
     val manager = AppWidgetManager.getInstance(context)
     if (manager.isRequestPinAppWidgetSupported) {
-        manager.requestPinAppWidget(ComponentName(context, TodoWidgetProvider::class.java), null, null)
+        manager.requestPinAppWidget(ComponentName(context, widget.provider), null, null)
     } else {
-        Toast.makeText(context, "请长按桌面空白处 → 小组件 → 闪念", Toast.LENGTH_LONG).show()
+        Toast.makeText(context, "请长按桌面空白处 → 小组件 → 闪念 → ${widget.title}", Toast.LENGTH_LONG).show()
     }
 }

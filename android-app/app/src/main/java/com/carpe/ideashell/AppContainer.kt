@@ -20,6 +20,9 @@ import com.carpe.ideashell.data.project.ProjectService
 import com.carpe.ideashell.data.project.WorkspaceStore
 import com.carpe.ideashell.data.secure.CredentialStore
 import com.carpe.ideashell.data.secure.SecureStore
+import com.carpe.ideashell.data.focus.FocusRepository
+import com.carpe.ideashell.system.ExtraWidgets
+import com.carpe.ideashell.system.FocusNotifier
 import com.carpe.ideashell.system.TodoRefreshScheduler
 import com.carpe.ideashell.system.TodoSurfaces
 import com.carpe.ideashell.data.settings.SettingsStore
@@ -141,6 +144,26 @@ class AppContainer(context: Context) {
         hasDida = { !credentials.didaToken.isNullOrBlank() },
     )
 
+    /** 专注：应用内倒计时，结束后写进滴答（create_focus），并把滴答里的专注读回来 */
+    val focus = FocusRepository(
+        context = context,
+        api = didaApi,
+        daySummary = daySummary,
+        hasDida = { !credentials.didaToken.isNullOrBlank() },
+        notifier = FocusNotifier(context.applicationContext),
+    )
+
+    /** 专注小部件 + 记录时间河小部件 */
+    val widgets = ExtraWidgets(
+        context = context.applicationContext,
+        focus = focus,
+        notes = notes,
+        settings = settings,
+        credentials = credentials,
+        todayFocusMin = { daySummary.todayFocus.value?.takeIf { it.first == LocalDate.now() }?.second },
+        cacheFile = File(context.filesDir, "river_widget_cache.json"),
+    )
+
     /** 项目 / 任务笔记 / 项目主页（防弹笔记法） */
     val projects = ProjectService(
         ideashell = ideashellApi,
@@ -155,6 +178,9 @@ class AppContainer(context: Context) {
 
     init {
         startSurfaceSync(context.applicationContext)
+        // 进程被杀后重新起来：让专注通知 / 闹钟与存盘的状态一致，并补记到点没来得及记的专注
+        focus.restore()
+        appScope.launch { focus.settle() }
     }
 
     /**
@@ -168,14 +194,19 @@ class AppContainer(context: Context) {
                 todos.state.map { it.overview }.distinctUntilChanged(),
                 settings.state.map { it.persistentNotification to it.focusGoalMin }.distinctUntilChanged(),
                 daySummary.todayFocus,
-            ) { _, _, _ -> }
+                focus.session,
+            ) { _, _, _, _ -> }
                 .debounce(300)
-                .collect { surfaces.updateAll() }
+                .collect {
+                    surfaces.updateAll()
+                    widgets.updateFocus()
+                }
         }
         appScope.launch {
             credentials.didaConnected.collect { connected ->
                 if (connected) TodoRefreshScheduler.schedule(appContext) else TodoRefreshScheduler.cancel(appContext)
                 surfaces.updateAll()
+                widgets.updateAll()
             }
         }
     }

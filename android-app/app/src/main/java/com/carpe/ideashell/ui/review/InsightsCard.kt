@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -423,7 +424,7 @@ private fun RhythmCard(r: RhythmInsight, rangeLabel: String) {
     }
 }
 
-/** 24 小时的柱，[lit] 里的小时涂橙，底下一行 0 / 6 / 12 / 18 / 24 */
+/** 24 小时的柱，[lit] 里的小时涂橙，底下是每 2 小时一个数字的横轴 */
 @Composable
 private fun HourBars(values: List<Int>, lit: IntRange, ink: Color) {
     val scheme = MaterialTheme.colorScheme
@@ -444,13 +445,62 @@ private fun HourBars(values: List<Int>, lit: IntRange, ink: Color) {
                 )
             }
         }
-        Row(Modifier.fillMaxWidth().padding(top = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            listOf("0", "6", "12", "18", "24").forEach {
-                Text(it, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.ExtraBold, color = scheme.onSurfaceVariant)
+        // 每根柱底下一个小刻度；每 2 小时在柱子正中标出它是几点（「17」那根柱就在 16 和 18 之间）
+        HourAxis(cellCentered = true, modifier = Modifier.padding(top = 2.dp))
+    }
+}
+
+/**
+ * 24 小时的横轴，每 2 小时一个数字。
+ * [cellCentered] = true（柱状图）：数字在「这个小时那根柱」的正中，表示 [h:00, h+1:00)；
+ * false（时间线）：数字落在 h:00 这条分界线上，和同一位置的竖线对齐，0 在最左、24 在最右。
+ */
+@Composable
+private fun HourAxis(cellCentered: Boolean, modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    val ink = scheme.onSurfaceVariant
+    val tick = scheme.onSurface.copy(alpha = 0.28f)
+    BoxWithConstraints(modifier.fillMaxWidth().height(AXIS_HEIGHT)) {
+        val w = maxWidth
+        val labelW = 20.dp
+        Canvas(Modifier.fillMaxSize()) {
+            val ticks = if (cellCentered) 0..23 else 0..24
+            for (h in ticks) {
+                val x = size.width * (if (cellCentered) h + 0.5f else h.toFloat()) / 24f
+                val long = h % 2 == 0
+                drawLine(
+                    color = tick,
+                    start = Offset(x, 0f),
+                    end = Offset(x, (if (long) 4.dp else 2.dp).toPx()),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+        }
+        for (h in 0..(if (cellCentered) 22 else 24) step 2) {
+            val x = w * (if (cellCentered) h + 0.5f else h.toFloat()) / 24f
+            val natural = x - labelW / 2
+            val (left, align) = when {
+                natural < 0.dp -> 0.dp to Alignment.TopStart
+                natural > w - labelW -> (w - labelW) to Alignment.TopEnd
+                else -> natural to Alignment.TopCenter
+            }
+            Box(Modifier.offset(x = left).width(labelW), contentAlignment = align) {
+                Text(
+                    h.toString(),
+                    fontSize = 10.5.sp,
+                    lineHeight = 12.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = ink,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
         }
     }
 }
+
+private val AXIS_HEIGHT = 18.dp
 
 // ───────────────────────── 连续记录 ─────────────────────────
 
@@ -568,6 +618,7 @@ private fun BarChart(
 private fun FocusTimeline(lines: List<FocusLine>) {
     val scheme = MaterialTheme.colorScheme
     val track = scheme.onSurface.copy(alpha = 0.07f)
+    val grid = scheme.onSurface.copy(alpha = 0.16f)
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).fillMaxWidth()) {
             lines.forEach { line ->
@@ -595,24 +646,22 @@ private fun FocusTimeline(lines: List<FocusLine>) {
                         val top = (size.height - h) / 2
                         val r = CornerRadius(h / 2)
                         drawRoundRect(track, Offset(0f, top), Size(size.width, h), r)
+                        // 每 2 小时一条竖线，和底下的数字对齐：一眼看出一块橙色落在哪两个整点之间
+                        for (g in 2..22 step 2) {
+                            val gx = size.width * g / 24f
+                            drawLine(grid, Offset(gx, top), Offset(gx, top + h), strokeWidth = 1.dp.toPx())
+                        }
                         for (b in line.blocks) {
                             val x = size.width * b.start / 24f
-                            // 很短的专注也给一个圆点大小，免得看不见
-                            val w = (size.width * (b.endInclusive - b.start) / 24f).coerceAtLeast(h)
-                            drawRoundRect(Brand.Orange, Offset(x.coerceAtMost(size.width - w), top), Size(w, h), r)
+                            // 位置按开始时刻精确画；太短的专注至少给 4dp，免得看不见（不再撑成一整个圆点盖住前后的整点）
+                            val w = (size.width * (b.endInclusive - b.start) / 24f).coerceAtLeast(4.dp.toPx())
+                            drawRoundRect(Brand.Orange, Offset(x.coerceAtMost(size.width - w), top), Size(w, h), CornerRadius(minOf(h / 2, w / 2)))
                         }
                     }
                 }
             }
         }
-        Row(
-            Modifier.fillMaxWidth().padding(start = 18.dp, top = 3.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            listOf("0", "6", "12", "18", "24").forEach {
-                Text(it, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.ExtraBold, color = scheme.onSurfaceVariant)
-            }
-        }
+        HourAxis(cellCentered = false, modifier = Modifier.padding(start = 18.dp, top = 2.dp))
     }
 }
 

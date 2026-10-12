@@ -36,8 +36,8 @@ data class CaptureAnalysis(
  * - `#标签`、`@文件夹` 会被抽出（要求前面是行首或空白，避免误伤 C#、邮箱）
  * - 自动判断：
  *   待办 = 含「今天及以后的明确时间」或「明天及以后的日期」
- *   笔记 = 带标签 / 文件夹、多行、或超过 100 字
- *   其余短句 = 追加到 Daily Note
+ *   笔记 = 带标签 / 文件夹（有意归类的才是笔记）
+ *   其余 = 追加到 Daily Note，长文字、多行也是：想存成笔记就用「笔记 …」前缀、#标签 / @文件夹，或在输入框下面直接选「笔记」
  */
 object CaptureParser {
     private const val SEP = "(?:\\s*[:：,，]\\s*|\\s+)"
@@ -85,7 +85,7 @@ object CaptureParser {
 
         val recommended = when {
             futureCue -> CaptureKind.TODO
-            tags.isNotEmpty() || folderName != null || body.length > 100 || body.contains("\n") -> CaptureKind.NOTE
+            tags.isNotEmpty() || folderName != null -> CaptureKind.NOTE
             else -> CaptureKind.DAILY
         }
 

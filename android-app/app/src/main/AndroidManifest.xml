@@ -8,8 +8,17 @@
     <!-- 常驻通知（Android 13+ 需要用户授权，设置里开启时才会申请） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 专注倒计时到点准时叫醒应用去记录；没授权时退回到系统的省电闹钟（可能晚几分钟，打开应用时也会补记） -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+    <!-- Android 16+：专注中的通知申请「实时通知」（状态栏胶囊 / 荣耀灵动胶囊是否采用由系统决定） -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+
     <!-- 分享 / 选中文字时，用来把来源应用的包名换成应用名 -->
     <queries>
+        <!-- 「在闪念贝壳打开」要知道它装没装（国内版 / 国际版） -->
+        <package android:name="com.roundreddot.ideashell" />
+        <package android:name="com.rrd.ideaShell" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -133,9 +142,46 @@
                 android:value="honorcard" />
         </receiver>
 
+        <!-- 桌面专注小部件 -->
+        <receiver
+            android:name=".system.FocusWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_focus_title">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/focus_widget_info" />
+            <meta-data
+                android:name="com.hihonor.widget.type"
+                android:value="honorcard" />
+        </receiver>
+
+        <!-- 桌面记录时间河小部件 -->
+        <receiver
+            android:name=".system.RiverWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_river_title">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/river_widget_info" />
+            <meta-data
+                android:name="com.hihonor.widget.type"
+                android:value="honorcard" />
+        </receiver>
+
         <!-- 小部件 / 通知上的按钮（完成、内联回复快记、刷新），只给本应用自己的 PendingIntent 用 -->
         <receiver
             android:name=".system.TodoActionReceiver"
+            android:exported="false" />
+
+        <!-- 专注通知上的按钮（暂停 / 继续 / 结束）与到点闹钟 -->
+        <receiver
+            android:name=".system.FocusActionReceiver"
             android:exported="false" />
 
         <!-- 快速设置磁贴 -->

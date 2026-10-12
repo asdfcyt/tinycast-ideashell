@@ -12,9 +12,13 @@
     <color name="widget_text_secondary">#6E5C4E</color>
     <color name="widget_accent">#2A2118</color>
 
+    <!-- 专注 / 记录时间河小部件的辅助色：次级按钮底、时间线的线、日记节点的琥珀色 -->
+    <color name="widget_soft">#1F2A2118</color>
+    <color name="widget_line">#262A2118</color>
+    <color name="widget_amber">#D9A441</color>
+
     <!-- 通知栏：强调色（逾期时间等）。浅色用对比度足够的深橙，深色用品牌橙 -->
     <color name="notification_accent">#A9441C</color>
     <!-- 通知里「+」圆和圆环弧的填充色：浅色用柔橙，深色用品牌橙 -->
     <color name="notification_fill">#E8794A</color>
-    <color name="notification_ink">#2A2118</color>
 </resources>

@@ -3,11 +3,13 @@
     <color name="widget_bg_top">#F22A1A10</color>
     <color name="widget_bg_bottom">#F22A1A10</color>
     <color name="widget_stroke">#00FFFFFF</color>
-    <color name="widget_chip">#FF5A00</color>
+    <color name="widget_chip">#E0703F</color>
     <color name="widget_text">#FFF1E4</color>
     <color name="widget_text_secondary">#C9B3A3</color>
     <color name="widget_accent">#24150C</color>
-    <color name="notification_accent">#FF5A00</color>
-    <color name="notification_fill">#FF5A00</color>
-    <color name="notification_ink">#FFF1E4</color>
+    <color name="widget_soft">#29FFF1E4</color>
+    <color name="widget_line">#33FFF1E4</color>
+    <color name="widget_amber">#FFB020</color>
+    <color name="notification_accent">#E8855A</color>
+    <color name="notification_fill">#E0703F</color>
 </resources>
