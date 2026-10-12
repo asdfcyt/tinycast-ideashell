@@ -60,8 +60,8 @@ import kotlinx.coroutines.CancellationException
 fun NoteDetailScreen(
     noteId: String,
     onBack: () -> Unit,
-    /** 点标签 / 「看档案」时跳到该关键词的档案 */
-    onOpenDossier: (String) -> Unit,
+    /** 点标签：是项目就进项目页，不是就去搜索这个词 */
+    onOpenTag: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val container = (context.applicationContext as IdeashellApp).container
@@ -135,7 +135,7 @@ fun NoteDetailScreen(
                             onClick = { openInApp(context, noteUrl(noteId), "闪念贝壳") },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
                         ) { Text("用闪念贝壳 App 打开") }
-                        NoteBody(note, onOpenDossier)
+                        NoteBody(note, onOpenTag)
                     }
 
                     state.error != null -> GlassSurface(Modifier.fillMaxWidth()) {
@@ -158,7 +158,7 @@ fun NoteDetailScreen(
 }
 
 @Composable
-private fun NoteBody(note: NoteDetail, onOpenDossier: (String) -> Unit) {
+private fun NoteBody(note: NoteDetail, onOpenTag: (String) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     Text(note.title.ifEmpty { "无标题" }, style = MaterialTheme.typography.headlineSmall)
 
@@ -172,7 +172,7 @@ private fun NoteBody(note: NoteDetail, onOpenDossier: (String) -> Unit) {
     if (note.tags.isNotEmpty()) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             note.tags.take(6).forEach { tag ->
-                GlassSurface(shape = CircleShape, elevated = false, tint = scheme.primary, onClick = { onOpenDossier(tag) }) {
+                GlassSurface(shape = CircleShape, elevated = false, tint = scheme.primary, onClick = { onOpenTag(tag) }) {
                     Text(
                         "#$tag",
                         style = MaterialTheme.typography.labelMedium,

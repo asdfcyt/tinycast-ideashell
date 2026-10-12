@@ -81,6 +81,7 @@ private sealed interface Dialog {
     data object Tags : Dialog
     data object DailyFolder : Dialog
     data object Theme : Dialog
+    data object FocusGoal : Dialog
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -131,8 +132,8 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
         ) {
             Text(
                 "设置",
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(start = 4.dp, top = 16.dp),
             )
 
             Group("连接") {
@@ -192,6 +193,12 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
             }
 
             Group("待办") {
+                SettingsItem(
+                    icon = Icons.Filled.Star,
+                    title = "每日专注目标",
+                    summary = "${formatGoal(settings.focusGoalMin)} · 「今天」页的专注环以它为满环",
+                    onClick = { dialog = Dialog.FocusGoal },
+                )
                 SettingsItem(
                     icon = Icons.Filled.Notifications,
                     title = "常驻通知",
@@ -261,8 +268,56 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
             onDismiss = { dialog = null },
         )
 
+        Dialog.FocusGoal -> FocusGoalDialog(
+            current = settings.focusGoalMin,
+            onSelect = { container.settings.setFocusGoalMin(it) },
+            onDismiss = { dialog = null },
+        )
+
         null -> Unit
     }
+}
+
+private val FOCUS_GOAL_PRESETS = listOf(30, 60, 90, 120, 180, 240, 300, 360)
+
+private fun formatGoal(min: Int): String = when {
+    min < 60 -> "$min 分钟"
+    min % 60 == 0 -> "${min / 60} 小时"
+    else -> "${min / 60} 小时 ${min % 60} 分钟"
+}
+
+@Composable
+private fun FocusGoalDialog(current: Int, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
+    val options = (FOCUS_GOAL_PRESETS + current).distinct().sorted()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("每日专注目标") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                options.forEach { min ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = min == current,
+                                role = Role.RadioButton,
+                                onClick = {
+                                    onSelect(min)
+                                    onDismiss()
+                                },
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = min == current, onClick = null)
+                        Text(formatGoal(min), modifier = Modifier.padding(start = 12.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable

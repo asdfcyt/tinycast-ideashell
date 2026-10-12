@@ -13,6 +13,7 @@ import com.carpe.ideashell.data.dida.HabitRepository
 import com.carpe.ideashell.data.ideashell.IdeashellApi
 import com.carpe.ideashell.data.notes.NotesRepository
 import com.carpe.ideashell.domain.Dossier
+import com.carpe.ideashell.domain.DossierNote
 import com.carpe.ideashell.domain.NoteText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -39,6 +40,14 @@ data class ProjectStats(
     val series: List<Int>,
     /** Markdown 简报（可复制） */
     val brief: String,
+    /** 第一次提及的日期 */
+    val firstDay: LocalDate? = null,
+    /** 直接提及的笔记（关键词与标签合并去重，新的在前）：项目页「提及的笔记」 */
+    val mentions: List<DossierNote> = emptyList(),
+    /** 语义相关但没有直接写到关键词的笔记（去重，至多 6 条） */
+    val related: List<DossierNote> = emptyList(),
+    /** 提及这些笔记时常带的标签 */
+    val topTags: List<Pair<String, Int>> = emptyList(),
 )
 
 /** 一条任务笔记（任务 id + 对应关系） */
@@ -118,6 +127,15 @@ class ProjectService(
             .filter { it.day != null }
             .sortedByDescending { it.note.createdAt.orEmpty() }
         val days = direct.mapNotNull { it.day }
+        val directIds = direct.map { it.note.id }.toSet()
+        val related = datas.flatMap { it.related }
+            .distinctBy { it.note.id }
+            .filter { it.note.id !in directIds }
+            .take(6)
+        val tagCount = LinkedHashMap<String, Int>()
+        for (d in datas) for ((t, c) in d.topTags) {
+            if (p.terms.none { it.equals(t, ignoreCase = true) }) tagCount[t] = (tagCount[t] ?: 0) + c
+        }
         val stats = ProjectStats(
             keyword = p.keyword,
             at = System.currentTimeMillis(),
@@ -127,6 +145,10 @@ class ProjectService(
             total = days.size,
             series = Dossier.monthlySeries(days, today).second,
             brief = datas.firstOrNull()?.brief.orEmpty(),
+            firstDay = days.lastOrNull(),
+            mentions = direct,
+            related = related,
+            topTags = tagCount.entries.sortedByDescending { it.value }.take(6).map { it.key to it.value },
         )
         _stats.update { it + (p.keyword to stats) }
         return stats
@@ -346,6 +368,12 @@ class ProjectService(
         val id = noteIdOf(created)
         store.update { it.copy(homes = it.homes + (p.keyword to id)) }
         return id
+    }
+
+    /** 改项目主页笔记里的某个小节（[fn] 收到现有正文、返回新正文）；没有项目主页就报错 */
+    suspend fun editHomeSection(keyword: String, section: String, fn: (String) -> String) {
+        val homeId = resolveHome(keyword) ?: error("还没有项目主页笔记")
+        editNote(homeId, section, fn)
     }
 
     /** 只刷新项目主页里「任务笔记（自动汇总）」小节 */

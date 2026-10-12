@@ -13,6 +13,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.carpe.ideashell.AppContainer
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.core.parse.Quadrant
+import com.carpe.ideashell.core.notes.NoteSections
 import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.dida.Habit
@@ -27,6 +28,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+
+/** 过去某一天的任务（时间轴往前翻看）：[tasks] 为 null 表示还没读到 */
+data class PastDay(val tasks: List<DidaTask>? = null, val loading: Boolean = false, val error: String? = null)
 
 sealed interface TodoEvent {
     data class Message(val text: String) : TodoEvent
@@ -44,6 +48,21 @@ enum class TodoView(val label: String) {
     LIST("任务"),
     PROJECTS("项目"),
     HABITS("习惯"),
+}
+
+/** 往项目主页笔记的某个小节写内容的方式 */
+enum class HomeEditMode {
+    /** 整节替换（目标、交付成果） */
+    REPLACE,
+
+    /** 追加一条列表项（资料与链接） */
+    LINK,
+
+    /** 追加一行带时间的记录（里程碑与进展） */
+    MILESTONE,
+
+    /** 追加一段带时间的文字（复盘与经验） */
+    REVIEW,
 }
 
 data class HabitUi(
@@ -65,11 +84,40 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
     /** 任务视图的象限筛选；null 表示全部 */
     var quadrantFilter by mutableStateOf<Quadrant?>(null)
 
+    /** 任务视图选中的那一天；null 表示今天 */
+    var day by mutableStateOf<java.time.LocalDate?>(null)
+
+    /** 过去几天的任务缓存：读过的日子再点回来直接显示，需要时 [loadPast] 强制刷新 */
+    val past = mutableStateMapOf<java.time.LocalDate, PastDay>()
+
+    fun loadPast(day: java.time.LocalDate, force: Boolean = false) {
+        val cur = past[day]
+        if (!force && (cur?.loading == true || cur?.tasks != null)) return
+        past[day] = PastDay(cur?.tasks, loading = true)
+        viewModelScope.launch {
+            runCatching { container.todos.dayTasks(day) }
+                .onSuccess { past[day] = PastDay(it) }
+                .onFailure { past[day] = PastDay(cur?.tasks, error = it.message ?: "网络异常") }
+        }
+    }
+
+    /** 过去那天里的任务：没完成就完成它，完成了就撤销；操作完重读这一天 */
+    fun togglePast(task: DidaTask, day: java.time.LocalDate) {
+        viewModelScope.launch {
+            val r = if (task.done) container.todos.undoComplete(task) else container.todos.complete(task)
+            r.onFailure { fail(if (task.done) "撤销失败" else "完成失败", it) }
+            loadPast(day, force = true)
+        }
+    }
+
     /** 当前视图（留在 ViewModel 里：打开笔记再回来仍在原处） */
     var view by mutableStateOf(TodoView.LIST)
 
     /** 正在查看的项目主页（项目关键词） */
     var openProject by mutableStateOf<String?>(null)
+
+    /** 项目列表页：false 看进行中，true 看搁置 */
+    var showPausedProjects by mutableStateOf(false)
 
     /** 从搜索页点进来要打开详情的任务 id；待办页消费后清空 */
     var pendingTask by mutableStateOf<String?>(null)
@@ -143,6 +191,15 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
     fun reschedule(task: DidaTask, date: String, time: String?) {
         viewModelScope.launch {
             container.todos.reschedule(task, date, time).onFailure { fail("改期失败", it) }
+        }
+    }
+
+    /** 把一批任务（通常是全部逾期）改到某一天，时间清空；失败的会单独提示 */
+    fun rescheduleAll(tasks: List<DidaTask>, date: String) {
+        viewModelScope.launch {
+            var failed = 0
+            tasks.forEach { t -> container.todos.reschedule(t, date, null).onFailure { failed++ } }
+            message(if (failed == 0) "已把 ${tasks.size} 项改到今天" else "有 $failed 项没有改成功")
         }
     }
 
@@ -317,6 +374,37 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
         throw e
     } catch (_: Exception) {
         ""
+    }
+
+    /**
+     * 往项目主页笔记的某个小节写内容：先改本机显示的正文（立刻看到），再同步到闪念贝壳里的那篇笔记；同步失败就还原并提示。
+     * 笔记本身仍是一篇完整的笔记，这里只是把每个 `## 小节` 拆成不同的组件来读写。
+     */
+    fun saveHome(p: Project, section: String, mode: HomeEditMode, input: String) {
+        val text = input.trim()
+        if (text.isEmpty() && mode != HomeEditMode.REPLACE) return
+        val fn: (String) -> String = { old ->
+            val kept = old.lines().filterNot { NoteSections.isPlaceholderLine(it) }.joinToString("\n").trim()
+            val gap = if (kept.isNotEmpty()) "\n" else ""
+            when (mode) {
+                HomeEditMode.REPLACE -> text
+                HomeEditMode.LINK -> kept + gap + NoteSections.bullets(text)
+                HomeEditMode.MILESTONE -> kept + gap + "- ${NoteSections.minuteStamp()} ${text.replace(Regex("\\s*\\n\\s*"), " ")}"
+                HomeEditMode.REVIEW -> kept + (if (kept.isNotEmpty()) "\n\n" else "") + "${NoteSections.minuteStamp()}：$text"
+            }
+        }
+        val before = homeText
+        if (before != null) homeText = NoteSections.editSection(before, section, fn)
+        viewModelScope.launch {
+            try {
+                container.projects.editHomeSection(p.keyword, section, fn)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                homeText = before
+                fail("保存失败", e)
+            }
+        }
     }
 
     fun createHome(p: Project) {

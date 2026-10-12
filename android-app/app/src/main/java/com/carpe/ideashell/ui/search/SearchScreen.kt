@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,6 +33,7 @@ import com.carpe.ideashell.data.project.Project
 import com.carpe.ideashell.domain.NoteText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import com.carpe.ideashell.ui.components.DoneMark
 import com.carpe.ideashell.ui.components.CircleIconButton
 import com.carpe.ideashell.ui.components.DividedRows
 import com.carpe.ideashell.ui.components.EmptyNote
@@ -49,7 +51,7 @@ import com.carpe.ideashell.ui.review.NoteRow
 private const val TASK_LIMIT = 10
 
 /**
- * 搜索：一个输入框，下面按「项目 / 待办 / 笔记」分组。
+ * 搜索：一个输入框，下面按「项目 / 待办 / 笔记」分组；笔记上方有这个词的「提及概览」（原来回看里的档案）。
  * 项目和待办边输边过滤（都在本机）；笔记是语义搜索，回车后才发起。
  */
 @Composable
@@ -57,7 +59,6 @@ fun SearchScreen(
     onBack: () -> Unit,
     onOpenConnection: () -> Unit,
     onOpenNote: (String) -> Unit,
-    onOpenDossier: (String) -> Unit,
     onOpenProject: (String) -> Unit,
     onOpenTask: (String) -> Unit,
     viewModel: SearchViewModel = viewModel(factory = SearchViewModel.Factory),
@@ -66,6 +67,7 @@ fun SearchScreen(
     val todoData by viewModel.todoData.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val notes by viewModel.notes.collectAsStateWithLifecycle()
+    val overview by viewModel.overview.collectAsStateWithLifecycle()
     val query = viewModel.query.trim()
     val submitted = viewModel.submitted
 
@@ -166,15 +168,22 @@ fun SearchScreen(
 
                     else -> {
                         val list = notes.data.orEmpty()
+                        // 提及概览：原来「回看」里的档案。已经是项目的词指向项目页，还不是的可以一键设为项目
+                        item(key = "s-overview") {
+                            MentionOverview(
+                                keyword = submitted,
+                                open = viewModel.overviewOpen,
+                                state = overview,
+                                project = workspace.projects.firstOrNull { it.keyword.equals(submitted, ignoreCase = true) },
+                                onToggle = viewModel::toggleOverview,
+                                onRetry = { viewModel.loadOverview(force = true) },
+                                onMakeProject = { viewModel.makeProject(submitted) },
+                                onOpenProject = onOpenProject,
+                            )
+                        }
                         item(key = "s-notes") {
                             Column {
-                                GroupLabel(
-                                    text = "笔记",
-                                    count = list.size,
-                                    trailing = {
-                                        TextButton(onClick = { onOpenDossier(submitted) }) { Text("查看档案") }
-                                    },
-                                )
+                                GroupLabel(text = "笔记", count = list.size)
                                 if (list.isEmpty()) {
                                     Text(
                                         "没有找到相关笔记，换个说法或缩短描述再试一次。",
@@ -226,7 +235,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.emptyQuery(viewModel:
     item(key = "s-hint") {
         EmptyNote(
             title = "想找什么？",
-            text = "项目和待办会边输边过滤；笔记按意思搜索，不必记得原话，例如「上次聊过的合作方案」。回车开始搜索笔记。",
+            text = "项目和待办会边输边过滤；笔记按意思搜索，不必记得原话，例如「上次聊过的合作方案」。回车开始搜索笔记，搜完可以展开「提及概览」。",
         )
     }
 }
@@ -267,11 +276,7 @@ private fun TaskHit(t: DidaTask, onClick: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            if (t.done) "✓" else "○",
-            color = if (t.done) scheme.primary else scheme.onSurfaceVariant,
-            modifier = Modifier.width(28.dp),
-        )
+        Box(Modifier.width(32.dp), contentAlignment = Alignment.CenterStart) { DoneMark(t.done) }
         Text(
             TodoMeta.cleanTitle(t.title),
             style = MaterialTheme.typography.bodyLarge,

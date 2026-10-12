@@ -1,8 +1,8 @@
 package com.carpe.ideashell.ui.glass
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -10,45 +10,47 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.remember
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.carpe.ideashell.R
+import com.carpe.ideashell.ui.theme.Brand
 
 /*
- * 全应用共用的「面」（Apple 分组列表风格）：灰底上的白色圆角卡片，没有描边、没有阴影、没有模糊。
+ * 全应用共用的「面」（设计系统「环」）：奶油底上的白色圆角块，没有描边、没有阴影、没有模糊。
  *
  * 早期版本这里是「液态玻璃」（Haze 实时模糊 + 光晕背景 + 渐变描边 + 投影 + 按压弹性缩放），
- * 切页签时整页内容都在模糊源里，每帧重算，低端和中端机上明显卡顿。现在改为：
+ * 切页签时整页内容都在模糊源里，每帧重算，低端和中端机上明显卡顿。现在是：
  * - 背景：纯色（跟随主题），没有逐帧重绘的渐变；
- * - 卡片：surfaceContainerLowest 白 / #1C1C1E，靠与灰底的明度差分层；
- * - 底部导航：悬浮的白色胶囊，选中项带一块淡色高亮（对标滴答清单）。
+ * - 卡片：surfaceContainerLowest 白 / 深棕，靠与奶油底的明度差分层，圆角 24dp；
+ * - 底部导航：深棕悬浮胶囊，选中项是一块贝壳橙，右边是同一行的橙色「记一条」圆钮。
  * 为了不大面积改调用点，类名与包名沿用 Glass 前缀（GlassSurface / GlassBadge / AuroraBackground）。
  */
 
@@ -72,7 +74,7 @@ fun AuroraBackground(modifier: Modifier = Modifier.fillMaxSize()) {
 @Composable
 fun GlassSurface(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(16.dp),
+    shape: Shape = RoundedCornerShape(24.dp),
     tint: Color = Color.Unspecified,
     @Suppress("UNUSED_PARAMETER") elevated: Boolean = false,
     onClick: (() -> Unit)? = null,
@@ -92,35 +94,45 @@ fun GlassSurface(
     )
 }
 
-/** 图标底座（设置项、最近记录等处）：像 iOS 设置里的彩色圆角方块，白色图标 */
+/**
+ * 图标底座（设置项等处）：深棕圆底 + 橙色图标，是页面上唯一的橙色小点缀。
+ * [tint] 不指定时用默认配色；指定了就用它做底、白色图标（给需要按类型着色的地方留的口子）。
+ */
 @Composable
 fun GlassBadge(
     icon: ImageVector,
     modifier: Modifier = Modifier,
-    tint: Color = MaterialTheme.colorScheme.primary,
-    size: Dp = 32.dp,
+    tint: Color = Color.Unspecified,
+    size: Dp = 36.dp,
 ) {
+    val dark = isDarkSurface()
+    val bg = if (tint == Color.Unspecified) (if (dark) MaterialTheme.colorScheme.surfaceContainerHigh else Brand.Brown) else tint
+    val fg = if (tint == Color.Unspecified) Brand.Orange else Color.White
     Box(
         modifier = modifier
             .size(size)
-            .clip(RoundedCornerShape(size * 0.28f))
-            .background(tint),
+            .clip(CircleShape)
+            .background(bg),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.6f))
+        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(size * 0.56f))
     }
 }
 
-/** [icon] 是未选中时的图标，[selectedIcon] 是选中时的图标（可以相同） */
-data class NavItem(val label: String, val icon: ImageVector, val selectedIcon: ImageVector = icon)
+/** [icon] 是未选中时的图标，[selectedIcon] 是选中时的图标（可以相同）；都是 drawable 资源 */
+data class NavItem(
+    val label: String,
+    @DrawableRes val icon: Int,
+    @DrawableRes val selectedIcon: Int = icon,
+)
 
 /** 悬浮导航胶囊的高度、与屏幕底部的间距（不含系统导航栏） */
 val NavBarHeight = 64.dp
 val NavBarGap = 12.dp
 
 /**
- * 底部悬浮导航（对标滴答清单）：左边一颗白色胶囊，右边是同一行的圆形「+」（[fab]），投影很淡。
- * 每项是粗体图标 + 粗体小字：选中项整体变主题色，没有底色块；其余项是深色。
+ * 底部悬浮导航：左边一颗深棕胶囊，右边是同一行的橙色圆形「记一条」（[fab]）。
+ * 每项是图标 + 12sp 粗体小字：选中项整块变贝壳橙、内容是深棕；其余项是奶油色。
  */
 @Composable
 fun AppNavBar(
@@ -132,6 +144,8 @@ fun AppNavBar(
 ) {
     val scheme = MaterialTheme.colorScheme
     val capsule = RoundedCornerShape(32.dp)
+    val container = if (isDarkSurface()) scheme.surfaceContainerHigh else Brand.Brown
+    val idle = if (isDarkSurface()) scheme.onSurface else Brand.Cream
     Row(
         modifier
             .fillMaxWidth()
@@ -143,38 +157,38 @@ fun AppNavBar(
             Modifier
                 .weight(1f)
                 .height(NavBarHeight)
-                .shadow(10.dp, capsule, ambientColor = Color.Black.copy(alpha = 0.12f), spotColor = Color.Black.copy(alpha = 0.12f))
                 .clip(capsule)
-                .background(scheme.surfaceContainerLowest)
+                .background(container)
                 .padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             items.forEachIndexed { index, item ->
                 val active = index == selected
-                val color = if (active) scheme.primary else scheme.onSurface
+                val color = if (active) Brand.Brown else idle
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxHeight()
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(if (active) Brand.Orange else Color.Transparent)
                         .selectable(
                             selected = active,
                             role = Role.Tab,
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
                             onClick = { onSelect(index) },
                         ),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Icon(
-                        if (active) item.selectedIcon else item.icon,
+                        painterResource(if (active) item.selectedIcon else item.icon),
                         contentDescription = null,
                         tint = color,
-                        modifier = Modifier.size(26.dp),
+                        modifier = Modifier.size(22.dp),
                     )
                     Spacer(Modifier.height(2.dp))
                     Text(
                         item.label,
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.labelSmall,
                         color = color,
                         maxLines = 1,
                     )
@@ -188,19 +202,34 @@ fun AppNavBar(
     }
 }
 
-/** 底部导航右侧的圆形悬浮「+」：全应用的万能输入入口 */
+/** 底部导航右侧的橙色圆钮「记一条」：全应用的万能输入入口，右上角带一颗星光（来自贝壳图标） */
 @Composable
 fun AddFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    val scheme = MaterialTheme.colorScheme
-    Box(
-        modifier = modifier
-            .size(NavBarHeight)
-            .shadow(8.dp, CircleShape, ambientColor = scheme.primary.copy(alpha = 0.35f), spotColor = scheme.primary.copy(alpha = 0.35f))
-            .clip(CircleShape)
-            .background(scheme.primary)
-            .clickable(role = Role.Button, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(Icons.Filled.Add, contentDescription = "记一条", tint = scheme.onPrimary, modifier = Modifier.size(32.dp))
+    Box(modifier = modifier.size(NavBarHeight)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .shadow(
+                    8.dp,
+                    CircleShape,
+                    ambientColor = Brand.Orange.copy(alpha = 0.35f),
+                    spotColor = Brand.Orange.copy(alpha = 0.35f),
+                )
+                .clip(CircleShape)
+                .background(Brand.Orange)
+                .clickable(role = Role.Button, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "记一条", tint = Brand.Brown, modifier = Modifier.size(34.dp))
+        }
+        Icon(
+            painterResource(R.drawable.ic_sparkle),
+            contentDescription = null,
+            tint = if (isDarkSurface()) Brand.Orange else Brand.Brown,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = 4.dp, y = (-8).dp)
+                .size(20.dp),
+        )
     }
 }

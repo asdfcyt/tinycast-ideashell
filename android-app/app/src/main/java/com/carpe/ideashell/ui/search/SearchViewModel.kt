@@ -19,6 +19,7 @@ import com.carpe.ideashell.data.ideashell.NoteInfo
 import com.carpe.ideashell.data.mcp.McpAuthException
 import com.carpe.ideashell.data.project.Project
 import com.carpe.ideashell.data.project.Workspace
+import com.carpe.ideashell.domain.DossierData
 import com.carpe.ideashell.ui.review.Async
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -45,6 +46,13 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     val notes: StateFlow<Async<List<NoteInfo>>> = _notes.asStateFlow()
     private var job: Job? = null
 
+    /** 「提及概览」（原回看里的档案）：展开才加载；换了搜索词就收起并丢弃 */
+    var overviewOpen by mutableStateOf(false)
+        private set
+    private val _overview = MutableStateFlow(Async<DossierData>())
+    val overview: StateFlow<Async<DossierData>> = _overview.asStateFlow()
+    private var overviewJob: Job? = null
+
     fun submit(text: String = query) {
         val q = text.trim()
         if (q.isEmpty()) return
@@ -54,6 +62,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         recent.add(0, q)
         while (recent.size > MAX_RECENT) recent.removeAt(recent.lastIndex)
         job?.cancel()
+        resetOverview()
         _notes.value = Async(loading = true)
         job = viewModelScope.launch {
             _notes.value = try {
@@ -76,8 +85,48 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         query = ""
         submitted = ""
         job?.cancel()
+        resetOverview()
         _notes.value = Async()
     }
+
+    private fun resetOverview() {
+        overviewJob?.cancel()
+        overviewOpen = false
+        _overview.value = Async()
+    }
+
+    fun toggleOverview() {
+        overviewOpen = !overviewOpen
+        if (overviewOpen) loadOverview()
+    }
+
+    /** 展开时加载（已经是这个词的概览就不重复请求）；失败后再点「重试」 */
+    fun loadOverview(force: Boolean = false) {
+        val q = submitted
+        if (q.isEmpty()) return
+        val cur = _overview.value
+        if (!force && (cur.loading || cur.data?.query == q)) return
+        overviewJob?.cancel()
+        _overview.value = Async(loading = true)
+        overviewJob = viewModelScope.launch {
+            _overview.value = try {
+                Async(data = container.notes.dossier(q))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Async(
+                    error = if (e is McpAuthException) {
+                        "闪念贝壳 API Key 无效或已失效，请到「连接与诊断」重新填写"
+                    } else {
+                        e.message ?: "加载失败"
+                    },
+                )
+            }
+        }
+    }
+
+    /** 把搜索词设为项目；已经是项目返回 false */
+    fun makeProject(keyword: String): Boolean = container.projects.add(keyword)
 
     fun clearRecent() = recent.clear()
 

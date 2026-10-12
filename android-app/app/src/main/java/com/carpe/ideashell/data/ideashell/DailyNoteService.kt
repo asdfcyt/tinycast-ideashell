@@ -2,6 +2,12 @@ package com.carpe.ideashell.data.ideashell
 
 import com.carpe.ideashell.core.parse.FolderInfo
 import com.carpe.ideashell.data.settings.SettingsStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -63,6 +69,95 @@ class DailyNoteService(
         return id
     }
 
+    /** 指定日期的 Daily Note 的全部条目（时间 + 文字）；那天没有 Daily Note 时为 null */
+    suspend fun entriesOn(date: LocalDate): DailyDay? {
+        val note = findNote(date.toString()) ?: return null
+        return DailyDay(note.id, DailyFormat.entries(note.content))
+    }
+
+    /**
+     * [from]..[today] 之间每天的 Daily Note 条目数（没有 Daily Note 的天不在结果里）。
+     * 过去的日子读过就缓存在本机，只有今天每次重读；没缓存的天最多 [READ_PARALLEL] 路并发读全文，
+     * 每读完 [PROGRESS_BATCH] 天回调一次 [onProgress]。读失败的天跳过（不缓存，下次再试）。
+     */
+    suspend fun entryCounts(
+        from: LocalDate,
+        today: LocalDate,
+        onProgress: (Map<LocalDate, Int>) -> Unit,
+    ): Map<LocalDate, Int> = coroutineScope {
+        val ids = LinkedHashMap<LocalDate, String>()
+        for (b in list()) {
+            val d = RE_DATE.find(b.title)?.value?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: continue
+            if (!d.isBefore(from) && !d.isAfter(today)) ids.putIfAbsent(d, b.id)
+        }
+        val counts = HashMap<LocalDate, Int>()
+        val missing = ArrayList<Map.Entry<LocalDate, String>>()
+        for (e in ids.entries) {
+            val cached = if (e.key.isBefore(today)) settings.dailyEntryCount(e.key.toString()) else null
+            if (cached != null) counts[e.key] = cached else missing += e
+        }
+        onProgress(HashMap(counts))
+
+        val gate = Semaphore(READ_PARALLEL)
+        val lock = Any()
+        var sinceReport = 0
+        // 今天排在最前面：最重要的先出来
+        missing.sortedByDescending { it.key.toEpochDay() }.map { e ->
+            async {
+                gate.withPermit {
+                    val n = try {
+                        DailyFormat.entries(api.noteDetail(e.value).content).size
+                    } catch (c: CancellationException) {
+                        throw c
+                    } catch (_: Exception) {
+                        null
+                    }
+                    if (n != null) {
+                        if (e.key.isBefore(today)) settings.setDailyEntryCount(e.key.toString(), n)
+                        val snapshot = synchronized(lock) {
+                            counts[e.key] = n
+                            if (++sinceReport >= PROGRESS_BATCH) {
+                                sinceReport = 0
+                                HashMap(counts)
+                            } else {
+                                null
+                            }
+                        }
+                        if (snapshot != null) onProgress(snapshot)
+                    }
+                }
+            }
+        }.awaitAll()
+        synchronized(lock) { HashMap(counts) }.also(onProgress)
+    }
+
+    /**
+     * [from]..[toInclusive] 之间每天的 Daily Note（含按时间戳拆开的条目）；没有 Daily Note 的天不在结果里。
+     * 全文最多 [READ_PARALLEL] 路并发读，读失败的那一天跳过（不影响其它天）。
+     * 「回看」的时间河用它把每条日记拆成独立的一行。
+     */
+    suspend fun daysInRange(from: LocalDate, toInclusive: LocalDate): Map<LocalDate, DailyDay> = coroutineScope {
+        val ids = LinkedHashMap<LocalDate, String>()
+        for (b in list()) {
+            val d = RE_DATE.find(b.title)?.value?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: continue
+            if (!d.isBefore(from) && !d.isAfter(toInclusive)) ids.putIfAbsent(d, b.id)
+        }
+        val gate = Semaphore(READ_PARALLEL)
+        ids.entries.map { e ->
+            async {
+                gate.withPermit {
+                    try {
+                        e.key to DailyDay(e.value, DailyFormat.entries(api.noteDetail(e.value).content))
+                    } catch (c: CancellationException) {
+                        throw c
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+            }
+        }.awaitAll().filterNotNull().toMap()
+    }
+
     /** Daily Note 文件夹里的全部笔记，按标题里的日期倒序；文件夹不存在时为空 */
     suspend fun list(): List<NoteBrief> {
         val folder = findFolder() ?: return emptyList()
@@ -119,6 +214,8 @@ class DailyNoteService(
         name.lowercase().replace(RE_SEPARATORS, "").replace(RE_TRAILING_S, "")
 
     private companion object {
+        const val READ_PARALLEL = 4
+        const val PROGRESS_BATCH = 8
         val RE_ID = Regex("[a-f0-9]{32}", RegexOption.IGNORE_CASE)
         val RE_DATE = Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}")
         val RE_FOLDER_ID = Regex("folder_id[:\\s\"]*([a-f0-9]+)", RegexOption.IGNORE_CASE)
@@ -126,6 +223,12 @@ class DailyNoteService(
         val RE_TRAILING_S = Regex("s\$")
     }
 }
+
+/** Daily Note 里的一条：时间 `HH:mm` + 文字（多行合并成一行，换行变空格） */
+data class DailyEntry(val time: String, val text: String)
+
+/** 某一天的 Daily Note：笔记 id + 条目（按写入顺序） */
+data class DailyDay(val noteId: String, val entries: List<DailyEntry>)
 
 /** Daily Note 的排版（纯函数） */
 object DailyFormat {
@@ -140,6 +243,33 @@ object DailyFormat {
         val first = lines.firstOrNull().orEmpty()
         val rest = lines.drop(1).map { if (it.isNotBlank()) "  $it" else "" }
         return (listOf("- **$stamp** $first") + rest).joinToString("\n")
+    }
+
+    /** 解析出全部条目：时间戳行开头，后面缩进的行算同一条；引用块（今日简报之类）和其他文字跳过 */
+    fun entries(content: String): List<DailyEntry> {
+        val out = ArrayList<DailyEntry>()
+        var time: String? = null
+        val text = StringBuilder()
+        fun flush() {
+            val t = time
+            if (t != null && text.isNotBlank()) out += DailyEntry(t, text.toString().trim())
+            time = null
+            text.setLength(0)
+        }
+        for (line in content.lines()) {
+            val m = ENTRY_RE.find(line)
+            when {
+                m != null -> {
+                    flush()
+                    time = m.groupValues[1].substring(11)
+                    text.append(m.groupValues[2])
+                }
+                time != null && line.isNotBlank() && line.first().isWhitespace() -> text.append(' ').append(line.trim())
+                else -> flush()
+            }
+        }
+        flush()
+        return out
     }
 
     /** 把旧格式的条目统一整理为列表格式；其余内容原样保留 */

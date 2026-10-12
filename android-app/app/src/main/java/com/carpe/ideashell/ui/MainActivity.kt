@@ -21,11 +21,6 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -42,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carpe.ideashell.IdeashellApp
+import com.carpe.ideashell.R
 import com.carpe.ideashell.ui.diagnostics.DiagnosticsScreen
 import com.carpe.ideashell.ui.glass.AddFab
 import com.carpe.ideashell.ui.glass.AppNavBar
@@ -55,8 +51,8 @@ import com.carpe.ideashell.ui.glass.NavItem
 import com.carpe.ideashell.ui.home.HomeScreen
 import com.carpe.ideashell.ui.review.NoteDetailScreen
 import com.carpe.ideashell.ui.review.ReviewScreen
-import com.carpe.ideashell.ui.review.ReviewViewModel
 import com.carpe.ideashell.ui.search.SearchScreen
+import com.carpe.ideashell.ui.search.SearchViewModel
 import com.carpe.ideashell.ui.settings.SettingsScreen
 import com.carpe.ideashell.ui.theme.ApplyEdgeToEdge
 import com.carpe.ideashell.ui.theme.IdeashellTheme
@@ -74,10 +70,10 @@ private const val TAB_REVIEW = 2
 private const val TAB_SETTINGS = 3
 
 private val NAV_ITEMS = listOf(
-    NavItem("今天", Icons.Filled.Home),
-    NavItem("待办", Icons.Filled.CheckCircle),
-    NavItem("回看", Icons.Filled.DateRange),
-    NavItem("设置", Icons.Filled.Settings),
+    NavItem("今天", R.drawable.ic_nav_today),
+    NavItem("待办", R.drawable.ic_nav_todo),
+    NavItem("回看", R.drawable.ic_nav_review),
+    NavItem("设置", R.drawable.ic_nav_settings),
 )
 
 class MainActivity : ComponentActivity() {
@@ -130,7 +126,8 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
     // 退出动画期间 noteId 已经是 null，但旧页面还要再画一会儿，所以留一份最后打开的 id
     val lastNoteId = remember { arrayOf<String?>(null) }
     if (noteId != null) lastNoteId[0] = noteId
-    val review: ReviewViewModel = viewModel(factory = ReviewViewModel.Factory)
+    // 搜索页的 ViewModel 提升到这里：笔记里点非项目标签时，要从外面直接发起一次搜索
+    val searchVm: SearchViewModel = viewModel(factory = SearchViewModel.Factory)
     val todo: TodoViewModel = viewModel(factory = TodoViewModel.Factory)
     val subpage = connection || search || noteId != null
     val stateHolder = rememberSaveableStateHolder()
@@ -181,14 +178,10 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
                 when (page) {
                     PAGE_CONNECTION -> DiagnosticsScreen(onBack = { connection = false })
                     PAGE_SEARCH -> SearchScreen(
+                        viewModel = searchVm,
                         onBack = { search = false },
                         onOpenConnection = { connection = true },
                         onOpenNote = { noteId = it },
-                        onOpenDossier = { keyword ->
-                            search = false
-                            tab = TAB_REVIEW
-                            review.jumpToDossier(keyword)
-                        },
                         onOpenProject = { keyword ->
                             search = false
                             todo.openProject = keyword
@@ -203,10 +196,19 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
                     PAGE_NOTE -> NoteDetailScreen(
                         noteId = lastNoteId[0].orEmpty(),
                         onBack = { noteId = null },
-                        onOpenDossier = { keyword ->
+                        onOpenTag = { tag ->
+                            // 标签是项目 → 进项目页；不是 → 打开搜索并直接搜这个词（可展开「提及概览」）
+                            val project = searchVm.workspace.value.projects
+                                .firstOrNull { it.keyword.equals(tag, ignoreCase = true) }
                             noteId = null
-                            tab = TAB_REVIEW
-                            review.jumpToDossier(keyword)
+                            if (project != null) {
+                                search = false
+                                todo.openProject = project.keyword
+                                tab = TAB_TODOS
+                            } else {
+                                search = true
+                                searchVm.submit(tag)
+                            }
                         },
                     )
 
@@ -216,16 +218,16 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
                                 onOpenSearch = { search = true },
                                 onOpenConnection = { connection = true },
                                 onOpenNote = { noteId = it },
+                                onOpenProject = { keyword ->
+                                    todo.openProject = keyword
+                                    tab = TAB_TODOS
+                                },
                             )
 
                             TAB_TODOS -> TodoScreen(
                                 onOpenSearch = { search = true },
                                 onOpenConnection = { connection = true },
                                 onOpenNote = { noteId = it },
-                                onOpenDossier = { keyword ->
-                                    tab = TAB_REVIEW
-                                    review.jumpToDossier(keyword)
-                                },
                             )
 
                             TAB_SETTINGS -> SettingsScreen(onOpenConnection = { connection = true })
@@ -233,6 +235,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
                                 onOpenSearch = { search = true },
                                 onOpenConnection = { connection = true },
                                 onOpenTodos = { tab = TAB_TODOS },
+                                onOpenNote = { noteId = it },
                             )
                         }
                     }

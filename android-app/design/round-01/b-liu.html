@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390, initial-scale=1">
+<title>闪念 · 今天 · 流</title>
+<style>
+:root{
+  --bg:#0F1012;
+  --bg-2:#17181B;
+  --line:#26282C;
+  --text:#ECEDEE;
+  --text-2:#9A9DA3;
+  --accent:#FF5A00;
+  --red:#FF7B72;
+  --amber:#F2C14E;
+  --blue:#8AB4F8;
+  --mono:"JetBrains Mono","SF Mono",Menlo,monospace;
+  --sans:-apple-system,"PingFang SC","Noto Sans SC","Helvetica Neue",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:390px;height:844px;background:var(--bg);overflow:hidden}
+body{font-family:var(--sans);color:var(--text);-webkit-font-smoothing:antialiased}
+.phone{position:relative;width:390px;height:844px;overflow:hidden;background:var(--bg)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+.status{height:32px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+.status .ico{display:flex;gap:6px;align-items:center}
+.status svg{display:block}
+
+/* 顶部导航：文字页签，没有底部栏 */
+.top{height:48px;display:flex;align-items:center;padding:0 16px;gap:22px}
+.top a{font-size:16px;color:var(--text-2);font-weight:500;display:flex;align-items:center;height:48px}
+.top a.on{color:var(--text);font-weight:700}
+.top a.on::before{content:"";width:7px;height:7px;background:var(--accent);margin-right:7px}
+.top .sp{flex:1}
+.top .ib{width:44px;height:44px;display:flex;align-items:center;justify-content:center;margin-right:-8px}
+
+.strip{height:38px;padding:0 16px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:13px;color:var(--text-2)}
+.strip .r{display:flex;gap:14px}
+.strip .od{color:var(--red)}
+
+/* 流 */
+.stream{position:absolute;left:0;right:0;top:118px;height:610px;overflow:hidden}
+.e{display:grid;grid-template-columns:50px 18px 1fr auto;column-gap:10px;padding:11px 16px;border-bottom:1px solid var(--line);min-height:58px}
+.e .tm{font-size:13px;color:var(--text-2);padding-top:3px;white-space:nowrap}
+.e .gl{padding-top:3px}
+.e .t{font-size:16px;line-height:23px}
+.e .m{margin-top:2px;font-size:13px;line-height:18px;color:var(--text-2)}
+.e .m .tag{color:var(--blue)}
+.e .m .im{color:var(--accent);font-weight:600}
+.e .ax{padding-top:7px;display:flex;align-items:flex-start;gap:6px}
+.e.done .t{color:var(--text-2);text-decoration:line-through}
+.e.pin{background:rgba(255,123,114,.07);box-shadow:inset 2px 0 0 var(--red)}
+.e.pin .tm,.e.pin .m{color:var(--red)}
+
+.dots{display:flex;gap:4px;align-items:center;height:10px}
+.dots i{width:6px;height:6px;border-radius:50%;background:var(--text-2)}
+.dots i.off{background:transparent;box-shadow:inset 0 0 0 1.2px var(--text-2)}
+.dots i.live{background:var(--accent);box-shadow:0 0 0 3px rgba(255,90,0,.25)}
+.undo{all:unset;font-size:13px;color:var(--accent);font-weight:700;margin-left:6px}
+
+.now{height:26px;padding:0 16px;display:grid;grid-template-columns:50px 1fr;column-gap:10px;align-items:center}
+.now b{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:700}
+.now span{height:1px;background:var(--accent);display:block}
+
+/* 底部：命令式输入条 */
+.dock{position:absolute;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line)}
+.parse{height:40px;padding:0 16px;display:flex;align-items:center;gap:6px;overflow:hidden}
+.chip{height:24px;padding:0 8px;display:inline-flex;align-items:center;font-family:var(--mono);font-size:12.5px;border:1px solid var(--text-2);color:var(--text-2);white-space:nowrap;border-radius:2px}
+.chip.k{background:var(--accent);border-color:var(--accent);color:#0F1012;font-weight:700;font-family:var(--sans)}
+.chip.d{border-color:var(--amber);color:var(--amber);font-family:var(--sans)}
+.chip.i{border-color:var(--accent);color:var(--accent);font-family:var(--sans)}
+.chip.g{border-color:var(--blue);color:var(--blue)}
+.cmd{margin:0 12px 10px;height:54px;background:var(--bg-2);border:1px solid #34363B;border-radius:3px;display:flex;align-items:center;padding:0 7px 0 14px;gap:10px}
+.cmd .pr{font-family:var(--mono);color:var(--accent);font-size:20px;font-weight:700}
+.cmd .in{flex:1;min-width:0;font-size:17px;white-space:nowrap;overflow:hidden}
+.cmd .in .d{color:var(--amber)}
+.cmd .in .g{color:var(--blue)}
+.cmd .in .i{color:var(--accent);font-weight:600}
+.cmd .caret{display:inline-block;width:2px;height:20px;background:var(--accent);vertical-align:-4px;margin-left:1px}
+.cmd .go{width:40px;height:40px;background:var(--accent);border-radius:2px;display:flex;align-items:center;justify-content:center}
+.gesture{height:22px;position:relative}
+.gesture::after{content:"";position:absolute;left:50%;bottom:8px;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:var(--text)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="status">
+    <span>09:36</span>
+    <span class="ico">
+      <svg width="18" height="12" viewBox="0 0 18 12" fill="#ECEDEE"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+      <svg width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="#ECEDEE" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 4.2a9.5 9.5 0 0 1 13 0M4 7a6 6 0 0 1 8 0"/><circle cx="8" cy="10" r="1" fill="#ECEDEE" stroke="none"/></svg>
+      <svg width="26" height="12" viewBox="0 0 26 12" fill="none"><rect x="0.8" y="0.8" width="21.4" height="10.4" rx="3" stroke="#ECEDEE" stroke-width="1.4"/><rect x="2.6" y="2.6" width="14" height="6.8" rx="1.6" fill="#ECEDEE"/><rect x="23.4" y="4" width="1.8" height="4" rx=".9" fill="#ECEDEE"/></svg>
+    </span>
+  </div>
+
+  <nav class="top">
+    <a class="on">流</a><a>待办</a><a>回看</a><a>我</a>
+    <span class="sp"></span>
+    <span class="ib" aria-label="搜索">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ECEDEE" stroke-width="1.8" stroke-linecap="square"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
+    </span>
+  </nav>
+
+  <div class="strip mono">
+    <span>10-12 周一</span>
+    <span class="r"><span class="od">逾期 1</span><span>今天 4</span><span>完成 3</span></span>
+  </div>
+
+  <main class="stream">
+    <div class="e pin">
+      <span class="tm mono">10-09</span>
+      <span class="gl"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#FF7B72" stroke-width="1.6"><rect x="1.8" y="1.8" width="12.4" height="12.4" rx="1.5"/></svg></span>
+      <div><div class="t">交周报</div><div class="m">逾期 3 天 · 15:30 · #工作</div></div>
+      <span class="ax"></span>
+    </div>
+
+    <div class="e done">
+      <span class="tm mono">08:12</span>
+      <span class="gl"><svg width="16" height="16" viewBox="0 0 16 16"><rect x="1" y="1" width="14" height="14" rx="1.8" fill="#9A9DA3"/><path d="M4.4 8.2 7 10.6l4.6-5" fill="none" stroke="#0F1012" stroke-width="1.8" stroke-linecap="square"/></svg></span>
+      <div><div class="t">买墨水</div><div class="m">已完成 · 滴答清单</div></div>
+      <span class="ax"></span>
+    </div>
+
+    <div class="e">
+      <span class="tm mono">09:34</span>
+      <span class="gl"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#9A9DA3" stroke-width="1.6" stroke-linecap="square"><path d="M2 3.5h12M2 8h12M2 12.5h7"/></svg></span>
+      <div><div class="t">《穷查理宝典》很有启发</div><div class="m">笔记 · <span class="tag">#读书</span></div></div>
+      <span class="ax"><span class="dots"><i></i><i></i><i></i></span></span>
+    </div>
+
+    <div class="e">
+      <span class="tm mono">09:35</span>
+      <span class="gl"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#9A9DA3" stroke-width="1.6" stroke-linecap="square"><rect x="2" y="3" width="12" height="11" rx="1"/><path d="M2 6.6h12M5.2 1.6v3M10.8 1.6v3"/></svg></span>
+      <div><div class="t">今天试了新的工作流</div><div class="m">日记 · 追加到 Daily Note</div></div>
+      <span class="ax"><span class="dots"><i></i><i></i><i class="live"></i></span><button class="undo">撤销</button></span>
+    </div>
+
+    <div class="now"><b>09:36</b><span></span></div>
+
+    <div class="e">
+      <span class="tm mono">10:30</span>
+      <span class="gl"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#ECEDEE" stroke-width="1.6"><rect x="1.8" y="1.8" width="12.4" height="12.4" rx="1.5"/></svg></span>
+      <div><div class="t">和设计师对稿 · 闪念 App 首页</div><div class="m">闪念 · <span class="tag">#设计</span></div></div>
+      <span class="ax"></span>
+    </div>
+
+    <div class="e">
+      <span class="tm mono">15:00</span>
+      <span class="gl"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#FF5A00" stroke-width="2"><rect x="1.8" y="1.8" width="12.4" height="12.4" rx="1.5"/></svg></span>
+      <div><div class="t">评审 Q4 方案</div><div class="m"><span class="im">重要</span> · 滴答清单</div></div>
+      <span class="ax"></span>
+    </div>
+
+    <div class="e">
+      <span class="tm mono">20:00</span>
+      <span class="gl"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#ECEDEE" stroke-width="1.6"><rect x="1.8" y="1.8" width="12.4" height="12.4" rx="1.5"/></svg></span>
+      <div><div class="t">临《洛神赋》第三段，写 5 遍</div><div class="m">书法 · <span class="tag">#练字</span></div></div>
+      <span class="ax"></span>
+    </div>
+
+    <div class="e">
+      <span class="tm mono">全天</span>
+      <span class="gl"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#ECEDEE" stroke-width="1.6"><rect x="1.8" y="1.8" width="12.4" height="12.4" rx="1.5"/></svg></span>
+      <div><div class="t">给导师回邮件</div><div class="m">滴答清单</div></div>
+      <span class="ax"></span>
+    </div>
+  </main>
+
+  <footer class="dock">
+    <div class="parse">
+      <span class="chip k">待办</span>
+      <span class="chip d">明天 15:00</span>
+      <span class="chip i">重要</span>
+      <span class="chip g">#工作</span>
+    </div>
+    <div class="cmd">
+      <span class="pr">›</span>
+      <span class="in"><span class="d">明天 15:00</span> 交周报 <span class="g">#工作</span> <span class="i">!重要</span><span class="caret"></span></span>
+      <span class="go"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0F1012" stroke-width="2.6" stroke-linecap="square"><path d="M12 19V5M5.5 11.5 12 5l6.500 6.500"/></svg></span>
+    </div>
+    <div class="gesture"></div>
+  </footer>
+</div>
+</body>
+</html>

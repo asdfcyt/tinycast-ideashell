@@ -1,0 +1,119 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=390, initial-scale=1"><title>闪念 · 回看 · 碎成一条河</title><style>
+:root{--orange:#E8794A;--deep:#A9441C;--cream:#F7F2EA;--brown:#2A2118;--brown2:#6E5C4E;--soft:#F6DCCB;--sand:#EDE4D8;--sans:-apple-system,"PingFang SC","Noto Sans SC","Helvetica Neue",sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:390px;height:844px;background:var(--cream);overflow:hidden}
+body{font-family:var(--sans);color:var(--brown);-webkit-font-smoothing:antialiased}
+.phone{position:relative;width:390px;height:844px;overflow:hidden;background:var(--cream)}
+.status{height:32px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+.status .ico{display:flex;gap:6px;align-items:center}
+.circ{width:40px;height:40px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+.fade{position:absolute;left:0;right:0;bottom:0;height:170px;background:linear-gradient(rgba(247,242,234,0),var(--cream) 66%);pointer-events:none}
+.dock{position:absolute;left:16px;right:16px;bottom:30px;display:flex;gap:12px;align-items:center}
+.nav{flex:1;height:60px;border-radius:30px;background:var(--brown);display:grid;grid-template-columns:repeat(4,1fr);padding:0 6px;align-items:center}
+.nav a{height:48px;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:var(--cream);font-size:11px;font-weight:700}
+.nav a.on{background:var(--orange);color:var(--brown)}
+.fab{flex:none;width:60px;height:60px;border-radius:50%;background:var(--orange);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(232,121,74,.28)}
+.gesture{position:absolute;left:0;right:0;bottom:0;height:22px}
+.gesture::after{content:"";position:absolute;left:50%;bottom:8px;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:var(--brown)}
+
+.hd{height:52px;padding:0 14px 0 20px;display:flex;align-items:center;gap:8px}
+.hd .t{flex:1}.hd h1{font-size:20px;line-height:26px;font-weight:800}.hd p{font-size:12px;line-height:16px;font-weight:600;color:var(--brown2)}
+.rp{height:40px;padding:0 10px 0 16px;border-radius:20px;background:#fff;display:flex;align-items:center;gap:2px;font-size:13px;font-weight:800}
+
+/* 战报：压成一屏的四分之一 */
+.hero{margin:4px 16px 0;border-radius:26px;background:var(--orange);padding:12px 18px 10px}
+.stats{display:grid;grid-template-columns:1fr 1.15fr 1fr}
+.stats b{display:block;font-size:36px;line-height:40px;font-weight:900;letter-spacing:-1px;font-variant-numeric:tabular-nums}
+.stats b small{font-size:18px;font-weight:900;letter-spacing:0}
+.stats span{font-size:13px;font-weight:800;color:#3E1B08}
+.wb{display:flex;gap:5px;align-items:flex-end;height:22px;margin-top:8px}
+.wb i{flex:1;border-radius:4px;background:rgba(42,33,24,.28)}
+.wb i.hi{background:var(--brown)}
+.wl{display:flex;gap:5px;margin-top:3px}
+.wl em{flex:1;text-align:center;font-style:normal;font-size:11.5px;font-weight:800;color:#3E1B08}
+
+/* 推进了的项目：一行药丸 */
+.pj{display:flex;align-items:center;gap:6px;margin:10px 0 0 20px;overflow:hidden;white-space:nowrap}
+.pj .pl{flex:none;font-size:13px;font-weight:800;color:var(--brown2);margin-right:2px}
+.pj a{flex:none;height:34px;padding:0 13px;border-radius:17px;background:#fff;display:flex;align-items:center;gap:6px;font-size:14px;font-weight:800}
+.pj a em{font-style:normal;font-size:12.5px;font-weight:900;color:var(--deep)}
+.pj a.hot{box-shadow:inset 0 0 0 2px var(--orange)}
+
+/* 河：Daily 的每一条按时间戳拆开，和笔记、待办混在同一条时间轴上 */
+.rv{position:relative;margin:14px 16px 0}
+.rv::before{content:"";position:absolute;left:21px;top:6px;bottom:0;width:2px;background:rgba(42,33,24,.14)}
+.dy{position:relative;display:flex;margin-bottom:12px}
+.dn{position:relative;z-index:1;width:44px;flex:none;align-self:flex-start;text-align:center;margin-top:24px;padding:3px 0;background:var(--cream)}
+.dn b{display:block;font-size:19px;line-height:22px;font-weight:900;font-variant-numeric:tabular-nums}
+.dn small{font-size:12px;line-height:15px;font-weight:700;color:var(--brown2)}
+.nd{position:absolute;left:16px;top:3px;width:12px;height:12px;border-radius:50%;background:var(--cream);border:2.5px solid var(--brown)}
+.dy.now .nd{background:var(--orange);border-color:var(--orange);box-shadow:0 0 0 4px rgba(232,121,74,.22)}
+.dy.now .dn b{color:var(--deep)}
+.bd{flex:1;min-width:0;padding-left:10px}
+.dh{display:flex;align-items:baseline;height:24px;font-size:13px;font-weight:800}
+.dh span{margin-left:auto;font-size:12px;font-weight:700;color:var(--brown2)}
+.box{background:#fff;border-radius:22px;overflow:hidden}
+.rw{display:flex;align-items:flex-start;gap:8px;padding:9px 14px 9px 14px;border-top:1px solid rgba(42,33,24,.07)}
+.rw:first-child{border-top:0}
+.rw .tm{flex:none;width:36px;font-size:12px;font-weight:900;color:var(--deep);line-height:22px;font-variant-numeric:tabular-nums}
+.rw .ic{flex:none;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+.ic.dl{background:var(--soft)}
+.ic.nt{background:var(--sand)}
+.ic.td{background:var(--brown)}
+.rw .tx{flex:1;min-width:0}
+.rw .tt{font-size:15px;line-height:22px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rw .sm{font-size:13px;line-height:18px;color:var(--brown2);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 日记一句：没有标题，整句就是内容，可折两行 */
+.rw.d .tx{font-size:14.5px;line-height:22px;font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rw.t .tt{font-size:14.5px;font-weight:600;color:var(--brown2);text-decoration:line-through}
+</style></head><body><div class="phone">
+<div class="status"><span>10:12</span><span class="ico">
+<svg width="18" height="12" viewBox="0 0 18 12" fill="#2A2118"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+<svg width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="#2A2118" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 4.2a9.5 9.5 0 0 1 13 0M4 7a6 6 0 0 1 8 0"/><circle cx="8" cy="10" r="1" fill="#2A2118" stroke="none"/></svg>
+<svg width="26" height="12" viewBox="0 0 26 12" fill="none"><rect x="0.8" y="0.8" width="21.4" height="10.4" rx="3" stroke="#2A2118" stroke-width="1.5"/><rect x="2.6" y="2.6" width="14" height="6.8" rx="1.6" fill="#2A2118"/><rect x="23.4" y="4" width="1.8" height="4" rx=".9" fill="#2A2118"/></svg></span></div>
+
+<div class="hd"><div class="t"><h1>回看</h1><p>10月6日 – 12日</p></div>
+<span class="rp">最近 7 天<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m7 10 5 5 5-5"/></svg></span>
+<span class="circ"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg></span></div>
+
+<div class="hero">
+  <div class="stats">
+    <div><b>18</b><span>篇笔记</span></div>
+    <div><b>9<small>/14</small></b><span>待办完成</span></div>
+    <div><b>6<small>h</small>20</b><span>专注</span></div>
+  </div>
+  <div class="wb"><i style="height:16px"></i><i style="height:22px"></i><i style="height:8px"></i><i style="height:16px"></i><i style="height:16px"></i><i style="height:12px"></i><i class="hi" style="height:12px"></i></div>
+  <div class="wl"><em>二</em><em>三</em><em>四</em><em>五</em><em>六</em><em>日</em><em>一</em></div>
+</div>
+
+<div class="pj"><span class="pl">推进了</span><a>内审<em>7</em></a><a>闪念 App<em>5</em></a><a class="hot">书法<em>5 天没记</em></a></div>
+
+<div class="rv">
+  <section class="dy now"><div class="dn"><b>12</b><small>周一</small></div><i class="nd"></i><div class="bd">
+    <div class="dh">今天<span>3 条日记 · 1 笔记 · 1/1 待办</span></div>
+    <div class="box">
+      <div class="rw d"><div class="tm">10:08</div><div class="ic dl"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#A9441C" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></div><div class="tx">档案并进项目页，没成项目的放去搜索</div></div>
+      <div class="rw d"><div class="tm">10:02</div><div class="ic dl"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#A9441C" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></div><div class="tx">和设计师约了周三对稿，回看页要重做</div></div>
+      <div class="rw t"><div class="tm">09:30</div><div class="ic td"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F7F2EA" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg></div><div class="tx"><div class="tt">提交差旅报销</div></div></div>
+      <div class="rw"><div class="tm">09:12</div><div class="ic nt"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6zM9 12h6M9 16h6"/></svg></div><div class="tx"><div class="tt">内审访谈提纲 · 第二稿</div><div class="sm">先问流程再问异常，财务部放最后</div></div></div>
+      <div class="rw d"><div class="tm">09:05</div><div class="ic dl"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#A9441C" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></div><div class="tx">晨间：先把内审访谈提纲过一遍，下午评审前留 30 分钟</div></div>
+    </div>
+  </div></section>
+  <section class="dy"><div class="dn"><b>11</b><small>周日</small></div><i class="nd"></i><div class="bd">
+    <div class="dh">昨天<span>3 条日记 · 2 笔记 · 1/1 待办</span></div>
+    <div class="box">
+      <div class="rw d"><div class="tm">22:05</div><div class="ic dl"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#A9441C" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg></div><div class="tx">睡前：明天先做数据核对，别再往后拖</div></div>
+      <div class="rw"><div class="tm">21:40</div><div class="ic nt"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6zM9 12h6M9 16h6"/></svg></div><div class="tx"><div class="tt">周日复盘：这周只推进了一半</div><div class="sm">访谈记录整理完 6 份，数据核对还剩一半</div></div></div>
+    </div>
+  </div></section>
+</div>
+
+<div class="fade"></div>
+<div class="dock"><nav class="nav">
+<a><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>今天</a>
+<a><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="m8.2 12.2 2.8 2.8 4.8-5.4"/></svg>待办</a>
+<a class="on"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>回看</a>
+<a><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/></svg>设置</a></nav>
+<div class="fab"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="3.2" stroke-linecap="round"><path d="M12 4.5v15M4.5 12h15"/></svg></div></div>
+<div class="gesture"></div>
+</div></body></html>

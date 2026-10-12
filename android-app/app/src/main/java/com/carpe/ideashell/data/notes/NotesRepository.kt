@@ -21,11 +21,13 @@ import com.carpe.ideashell.domain.TimelineData
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.ZoneId
 
 /**
- * 「回看」的数据来源：时间线 / Daily Note / 搜索 / 往日回顾 / 档案 / 笔记全文。
+ * 「回看」的数据来源：时间线（含 Daily Note 拆条）/ 搜索 / 往日回顾 / 提及概览 / 笔记全文。
  * 全部是只读查询，没有本地数据库；笔记全文在内存里留一份小缓存，来回翻看不用重复请求。
  */
 class NotesRepository(
@@ -62,21 +64,60 @@ class NotesRepository(
                 }
             }
         }
+        // Daily Note 按时间戳拆成一条一条放进时间河；读不到不影响笔记和待办
+        val dailyJob = async { softly { dailyNotes.daysInRange(range.start, range.last) } ?: emptyMap() }
         val found: NotesInRange = notesJob.await()
         val (tasks, todoNote) = tasksJob.await()
-        Timeline.build(range, found.notes, tasks, found.truncated, todoNote, zone)
+        Timeline.build(range, found.notes, tasks, found.truncated, todoNote, zone, dailyJob.await())
     }
 
-    suspend fun dailyNoteList(): List<NoteBrief> = dailyNotes.list()
 
     suspend fun search(query: String): List<NoteInfo> = ideashell.searchNotes(query.trim(), 20)
 
-    suspend fun memory(today: LocalDate = LocalDate.now()): MemoryData {
+    private var memoryCache: MemoryData? = null
+    private var memoryCacheAt = 0L
+    private var memoryCacheDay: LocalDate? = null
+    private val memoryLock = Mutex()
+
+    /**
+     * 往日回顾（5 年笔记）：拉一次要把区间二分到每段不超过 20 条，请求不少，
+     * 所以缓存 [MEMORY_TTL_MS]；[force] 用于用户主动刷新。
+     */
+    suspend fun memory(today: LocalDate = LocalDate.now(), force: Boolean = false): MemoryData = memoryLock.withLock {
+        val cached = memoryCache
+        val fresh = cached != null && memoryCacheDay == today &&
+            System.currentTimeMillis() - memoryCacheAt < MEMORY_TTL_MS
+        if (!force && fresh) return@withLock cached!!
+        loadMemory(today).also {
+            memoryCache = it
+            memoryCacheAt = System.currentTimeMillis()
+            memoryCacheDay = today
+        }
+    }
+
+    /** 缓存里已有的往日回顾（不发请求）；还没加载过为 null */
+    fun memoryCached(): MemoryData? = memoryCache
+
+    private suspend fun loadMemory(today: LocalDate): MemoryData {
         val zone = ZoneId.systemDefault()
         val start = today.minusYears(MemoryLane.LOOKBACK_YEARS.toLong()).atStartOfDay(zone).toInstant()
         val end = today.plusDays(1).atStartOfDay(zone).toInstant()
         val found = ideashell.notesInRange(start, end)
         return MemoryLane.build(found.notes, found.truncated, today)
+    }
+
+    /**
+     * 「今天」页热力图：近 [weeks] 周每天 Daily Note 里有几条记录。
+     * 列表 1 次请求拿全部日期；每天的条数要读那天的全文，过去的日子读过一次就存在本机，之后只重读今天。
+     * [onProgress] 每读完一批回调一次（已知的天数 → 条数），界面可以边读边画。
+     */
+    suspend fun dailyHeat(
+        today: LocalDate = LocalDate.now(),
+        weeks: Int,
+        onProgress: (Map<LocalDate, Int>) -> Unit,
+    ): Map<LocalDate, Int> {
+        val first = today.minusDays((today.dayOfWeek.value - 1).toLong()).minusWeeks((weeks - 1).toLong())
+        return dailyNotes.entryCounts(first, today, onProgress)
     }
 
     suspend fun dossier(query: String, today: LocalDate = LocalDate.now()): DossierData = coroutineScope {
@@ -134,5 +175,6 @@ class NotesRepository(
 
     private companion object {
         const val DETAIL_CACHE_SIZE = 24
+        const val MEMORY_TTL_MS = 20 * 60 * 1000L
     }
 }

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "project": "闪念 · 安卓端",
+  "brief": "回看页（第 07 轮）：按你的选择，顶部用 C 的「这 7 天」战报，下面用 A 的时间河，并把 Daily Note 按时间戳拆成一条一条，和笔记、完成的待办混在同一条时间轴里，不再单独成页。",
+  "round": "07",
+  "nativeViewport": "390x844",
+  "candidates": [
+    {
+      "id": "d-suihe",
+      "name": "D · 碎成一条河",
+      "concept": "先给一张七天战报，再让一周里发生的每件事——日记一句、笔记、完成的待办——按时间戳落在同一条河上。",
+      "typography": "系统黑体。战报数字 36px Black，日期 19px Black，笔记标题 15px Bold，日记一句 14.5px SemiBold，时间 12px Black。",
+      "palette": ["#F7F2EA", "#FFFFFF", "#2A2118", "#E8794A", "#A9441C"],
+      "traits": ["Daily Note 的每一条（HH:mm + 文字）单独成行，无标题", "三类条目靠 22px 圆形图标区分：日记（浅橙笔）、笔记（沙色文档）、待办（深棕对勾）", "「推进了」一行药丸连到项目页，久没记的项目橙色描边", "范围收进标题栏的「最近 7 天 ▾」，战报与河同步"],
+      "source": "d-suihe.html"
+    }
+  ]
+}

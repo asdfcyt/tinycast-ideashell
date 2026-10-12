@@ -29,10 +29,16 @@ class DaySummaryService(
     private val hasDida: () -> Boolean,
 ) {
     /** 近 7 天（含今天）的专注记录汇总；番茄钟与正计时两种都读，都失败才抛异常 */
-    suspend fun focus(today: LocalDate = LocalDate.now()): FocusSummary = coroutineScope {
+    suspend fun focus(today: LocalDate = LocalDate.now()): FocusSummary =
+        focusIn(today.minusDays(6), today.plusDays(1), today)
+
+    /**
+     * [from]（含）到 [toExclusive]（不含）的专注记录汇总，按任务拆分；[FocusSummary.weekMin] 就是整段的总时长。
+     * [today] 只用来划分「今天」那一栏。
+     */
+    suspend fun focusIn(from: LocalDate, toExclusive: LocalDate, today: LocalDate = LocalDate.now()): FocusSummary = coroutineScope {
         val zone = ZoneId.systemDefault()
-        val from = today.minusDays(6)
-        val to = today.plusDays(1)
+        val to = toExclusive
         val pomo = async { attempt { api.focusRaw(from, to, 0) } }
         val timing = async { attempt { api.focusRaw(from, to, 1) } }
         val a = pomo.await()

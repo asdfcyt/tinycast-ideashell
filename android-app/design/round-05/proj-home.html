@@ -1,0 +1,84 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=390, initial-scale=1"><title>闪念 · 项目主页</title><style>
+:root{--orange:#E8794A;--deep:#A9441C;--cream:#F7F2EA;--brown:#2A2118;--brown2:#6E5C4E;--amber:#D9A441;--sand:#EFE5D8;--sans:-apple-system,"PingFang SC","Noto Sans SC","Helvetica Neue",sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:390px;height:844px;background:var(--cream);overflow:hidden}
+body{font-family:var(--sans);color:var(--brown);-webkit-font-smoothing:antialiased}
+.phone{position:relative;width:390px;height:844px;overflow:hidden;background:var(--cream)}
+.status{position:relative;height:32px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--brown)}
+.status .ico{display:flex;gap:6px;align-items:center}
+.circ{width:40px;height:40px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+.fade{position:absolute;left:0;right:0;bottom:0;height:170px;background:linear-gradient(rgba(255,248,240,0),var(--cream) 66%);pointer-events:none}
+.dock{position:absolute;left:16px;right:16px;bottom:30px;display:flex;gap:12px;align-items:center}
+.nav{flex:1;height:60px;border-radius:30px;background:var(--brown);display:grid;grid-template-columns:repeat(4,1fr);padding:0 6px;align-items:center}
+.nav a{height:48px;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:var(--cream);font-size:11px;font-weight:700}
+.nav a.on{background:var(--orange);color:var(--brown)}
+.fab{flex:none;width:60px;height:60px;border-radius:50%;background:var(--orange);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(232,121,74,.28)}
+.gesture{position:absolute;left:0;right:0;bottom:0;height:22px}
+.gesture::after{content:"";position:absolute;left:50%;bottom:8px;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:var(--brown)}
+.h-search{display:block}
+.chk{flex:none;width:20px;height:20px;border-radius:50%;border:2px solid var(--brown)}
+.chk.hi{border-color:var(--orange)}
+
+
+.hd{height:52px;padding:0 14px 0 20px;display:flex;align-items:center}
+.hd .t{flex:1}.hd h1{font-size:20px;line-height:26px;font-weight:800}.hd p{font-size:12px;line-height:16px;font-weight:600;color:var(--brown2)}
+.circ.add{background:var(--orange)}
+.seg{margin:2px 16px 10px;height:40px;border-radius:20px;background:rgba(42,33,24,.07);display:grid;grid-template-columns:repeat(3,1fr);padding:3px}
+.seg a{border-radius:17px;display:flex;align-items:center;justify-content:center;gap:5px;font-size:13px;font-weight:800;color:var(--brown2)}
+.seg a em{font-style:normal;font-size:11.5px;font-weight:800;color:var(--deep)}
+.seg a.on{background:var(--brown);color:var(--cream)}.seg a.on em{color:#F6DCCB}
+.wk{display:flex;gap:6px;padding:0 16px}
+.day{flex:1;height:62px;border-radius:22px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.day small{font-size:12px;line-height:16px;font-weight:700;color:var(--brown2)}.day b{font-size:16px;line-height:20px;font-weight:900}
+.day .dt{display:flex;gap:3px;height:5px;margin-top:3px}.day .dt i{width:5px;height:5px;border-radius:50%;background:var(--orange)}
+.day.on{background:var(--brown);color:var(--cream)}.day.on small{color:rgba(247,242,234,.8)}
+.ob{margin:10px 16px 0;height:50px;border-radius:25px;background:var(--brown);color:var(--cream);display:flex;align-items:center;padding:0 7px 0 20px;gap:8px}
+.ob b{font-size:18px;font-weight:900}.ob span{flex:1;font-size:13px;font-weight:700}
+.ob u{text-decoration:none;height:36px;padding:0 15px;border-radius:18px;background:var(--orange);color:var(--brown);font-size:13px;font-weight:800;display:flex;align-items:center}
+.tl{position:relative;margin:12px 16px 0}
+.tl::before{content:"";position:absolute;left:58px;top:0;bottom:0;width:2px;background:rgba(42,33,24,.14)}
+.tr{position:relative;display:flex;align-items:center;margin-bottom:8px}
+.tr .l{width:44px;text-align:right;font-size:12px;font-weight:800;color:var(--brown2);font-variant-numeric:tabular-nums}
+.tr .n{flex:none;width:12px;height:12px;margin:0 10px 0 8px;border-radius:50%;background:var(--cream);border:2.5px solid var(--brown)}
+.tr .n.hi{border-color:var(--orange)}
+.tr .p{flex:1;min-height:50px;border-radius:24px;background:#fff;padding:0 16px;display:flex;align-items:center;font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tr.now .n{background:var(--orange);border-color:var(--orange);box-shadow:0 0 0 4px rgba(232,121,74,.22)}
+.tr.now .l{color:var(--deep);font-weight:900}.tr.now .ln{flex:1;height:2px;background:var(--orange);border-radius:1px}.tr.now{height:26px;margin-bottom:6px}
+.sh{display:flex;align-items:baseline;margin:14px 24px 8px;font-size:13px;font-weight:800}.sh span{margin-left:6px;font-size:12px;font-weight:700;color:var(--brown2)}.sh u{margin-left:auto;text-decoration:none;font-size:12px;font-weight:800;color:var(--deep)}
+.chip{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:11px;font-size:11.5px;font-weight:800;background:#F6DCCB;color:var(--deep);white-space:nowrap}
+
+.tp{height:52px;padding:0 14px 0 8px;display:flex;align-items:center;gap:6px}
+.tp .bk{width:40px;height:40px;display:flex;align-items:center;justify-content:center}
+.tp h1{font-size:20px;font-weight:800;line-height:26px}
+.tp .st{height:24px;padding:0 10px;border-radius:12px;background:rgba(42,33,24,.08);font-size:12px;font-weight:800;display:flex;align-items:center;gap:3px}
+.tp .mo{margin-left:auto}
+.hero{margin:2px 16px 10px;background:var(--orange);border-radius:26px;padding:14px 16px 14px;color:var(--brown)}
+.hero .r1{display:flex;gap:14px;align-items:center}
+.hero .rg{position:relative;width:64px;height:64px;flex:none}.hero .rg i{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-style:normal;font-size:16px;line-height:18px;font-weight:900}.hero .rg i small{font-size:10px;font-weight:800;margin-top:1px}
+.hero .nx{flex:1;min-width:0}.hero .nx span{font-size:12px;font-weight:800}.hero .nx p{margin-top:2px;font-size:15px;line-height:21px;font-weight:800;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hero .btns{display:flex;gap:8px;margin-top:12px}
+.hero .btns a{height:34px;padding:0 16px;border-radius:17px;display:flex;align-items:center;font-size:13px;font-weight:800}
+.hero .btns .p{background:var(--brown);color:var(--cream)}.hero .btns .q{background:rgba(255,255,255,.35)}
+.stats{display:flex;gap:8px;margin:0 16px 4px}
+.stats div{flex:1;background:#fff;border-radius:18px;padding:9px 12px}
+.stats b{display:block;font-size:16px;line-height:20px;font-weight:900}.stats span{font-size:11.5px;font-weight:700;color:var(--brown2)}
+.stats .sp{flex:1.3;display:flex;flex-direction:column;justify-content:space-between}
+.row{margin:0 16px 8px;min-height:50px;border-radius:24px;background:#fff;display:flex;align-items:center;gap:6px;padding:0 16px 0 14px;font-size:14px;font-weight:700}
+.row .chk{margin-right:6px}.row .tm{margin-left:auto;font-size:12px;color:var(--brown2);font-weight:700}
+.dn{margin:0 16px 8px;font-size:12px;font-weight:800;color:var(--deep);padding-left:8px}
+.dl{margin:0 16px 8px;background:#fff;border-radius:22px;padding:12px 16px}
+.dl b{font-size:14px;font-weight:800;display:block}.dl p{margin-top:3px;font-size:12.5px;line-height:18px;color:var(--brown2);font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dl .ft{display:flex;margin-top:6px;font-size:12px;font-weight:800;color:var(--deep)}.dl .ft span:last-child{margin-left:auto}
+</style></head><body><div class="phone"><div class="status"><span>10:12</span><span class="ico">
+<svg width="18" height="12" viewBox="0 0 18 12" fill="#2A2118"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+<svg width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="#2A2118" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 4.2a9.5 9.5 0 0 1 13 0M4 7a6 6 0 0 1 8 0"/><circle cx="8" cy="10" r="1" fill="#2A2118" stroke="none"/></svg>
+<svg width="26" height="12" viewBox="0 0 26 12" fill="none"><rect x="0.8" y="0.8" width="21.4" height="10.4" rx="3" stroke="#2A2118" stroke-width="1.5"/><rect x="2.6" y="2.6" width="14" height="6.8" rx="1.6" fill="#2A2118"/><rect x="23.4" y="4" width="1.8" height="4" rx=".9" fill="#2A2118"/></svg></span></div>
+<div class="tp"><span class="bk"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></span><h1>内审</h1><span class="st">进行中 ▾</span><span class="circ mo"><svg width="20" height="20" viewBox="0 0 24 24" fill="#2A2118"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></span></div><div class="hero"><div class="r1"><div class="rg"><svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32.0" cy="32.0" r="28.5" fill="none" stroke="rgba(42,33,24,.18)" stroke-width="7"/><circle cx="32.0" cy="32.0" r="28.5" fill="none" stroke="#2A2118" stroke-width="7" stroke-linecap="round" stroke-dasharray="53.7 179.1" transform="rotate(-90 32.0 32.0)"/></svg><i>30%<small>3/10</small></i></div><div class="nx"><span>下一步</span><p>整理被审计单位的访谈记录，列出 3 个待确认的问题</p></div></div><div class="btns"><a class="p">记一条</a><a class="q">修改</a></div></div>
+<div class="stats"><div><b>9 天前</b><span>最近提及</span></div><div><b>2 条</b><span>近 30 天</span></div><div class="sp"><span>30 天</span><svg width="64" height="20" viewBox="0 0 64 20"><rect x="0.5" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="5.1" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="9.6" y="0.0" width="3.1" height="20.0" rx="1.2" fill="#E8794A"/><rect x="14.2" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="18.8" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="23.4" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="27.9" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="32.5" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="37.1" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="41.6" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="46.2" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="50.8" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="55.4" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/><rect x="59.9" y="18.0" width="3.1" height="2.0" rx="1.2" fill="rgba(42,33,24,.12)"/></svg></div></div>
+<div class="sh">相关任务<span>3</span><u>全部 ›</u></div>
+<div class="row"><i class="chk hi"></i>开始写内审的相关情况说明<span class="tm">今天 09:00</span></div>
+<div class="row"><i class="chk"></i>内审访谈提纲定稿<span class="tm">10月14日</span></div>
+<div class="dn">已完成 3 项 ›</div>
+<div class="sh">要交付的成果<span>1</span></div>
+<div class="dl"><b>内审报告初稿</b><p>访谈记录已整理 6 份，数据核对完成，待补充结论部分……</p><div class="ft"><span>项目主页笔记 · 打开全文</span><span>记进展</span></div></div>
+<div class="fade"></div><div class="dock"><nav class="nav"><a style="position:relative"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>今天</a><a class=on style="position:relative"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="m8.2 12.2 2.8 2.8 4.8-5.4"/></svg>待办</a><a style="position:relative"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>回看</a><a style="position:relative"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/></svg>设置</a></nav><div class="fab"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="3.2" stroke-linecap="round"><path d="M12 4.5v15M4.5 12h15"/></svg></div></div><div class="gesture"></div></div></body></html>

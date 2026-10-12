@@ -115,6 +115,30 @@ class TodoRepository(
         }
     }
 
+    /**
+     * 某一天的任务（回看过去用）：当天完成的 + 当天到期但没完成的。
+     * 完成的任务没有计划时间时，用完成时刻当作它在时间轴上的位置。
+     */
+    suspend fun dayTasks(day: java.time.LocalDate): List<DidaTask> {
+        val zone = java.time.ZoneId.systemDefault()
+        val ds = day.toString()
+        return api.tasksInRange(day, day).filter { t ->
+            if (t.done) {
+                t.completedAt?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate() == day } ?: (t.date == ds)
+            } else {
+                t.date == ds
+            }
+        }.map { t ->
+            val at = t.completedAt
+            if (t.done && t.time == null && at != null) {
+                val z = java.time.Instant.ofEpochMilli(at).atZone(zone)
+                t.copy(time = "%02d:%02d".format(z.hour, z.minute))
+            } else {
+                t
+            }
+        }
+    }
+
     /** 撤销刚才的完成 */
     suspend fun undoComplete(task: DidaTask): Result<Unit> {
         val before = _state.value.overview

@@ -67,6 +67,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carpe.ideashell.R
+import com.carpe.ideashell.ui.theme.Brand
 import com.carpe.ideashell.core.capture.CapturePlanner
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.core.parse.FolderInfo
@@ -320,13 +321,13 @@ fun SubmitCorner(enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Mod
         modifier = modifier
             .size(56.dp)
             .clip(RoundedCornerShape(bottomStart = 56.dp))
-            .background(if (enabled) scheme.primary else scheme.primaryContainer)
+            .background(if (enabled) Brand.Orange else scheme.primaryContainer)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
     ) {
         Icon(
             Icons.Filled.Check,
             contentDescription = "保存",
-            tint = if (enabled) scheme.onPrimary else scheme.onPrimaryContainer.copy(alpha = 0.55f),
+            tint = if (enabled) Brand.Brown else scheme.onPrimaryContainer.copy(alpha = 0.55f),
             modifier = Modifier
                 .align(Alignment.Center)
                 .padding(start = 12.dp, bottom = 12.dp)

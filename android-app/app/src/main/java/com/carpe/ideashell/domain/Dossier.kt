@@ -208,7 +208,7 @@ object Dossier {
     /** 可复制的 Markdown 简报 */
     private fun brief(d: DossierData, today: LocalDate): String {
         val direct = d.direct
-        val out = mutableListOf("# 「${d.query}」档案", "", "> 直接提及 ${direct.size} 条笔记，另有 ${d.notes.size - direct.size} 条语义相关")
+        val out = mutableListOf("# 「${d.query}」提及简报", "", "> 直接提及 ${direct.size} 条笔记，另有 ${d.notes.size - direct.size} 条语义相关")
         if (direct.isEmpty() && d.todos.isEmpty()) {
             out += listOf("", "没有找到直接提及的记录。「可能相关」是语义相近的笔记，换个叫法（全名 / 昵称 / 项目代号）再试试。")
             return out.joinToString("\n")

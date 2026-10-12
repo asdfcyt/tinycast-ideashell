@@ -42,7 +42,7 @@ object MemoryLane {
     fun isDailyNote(note: NoteInfo): Boolean =
         RE_DATE_TITLE.containsMatchIn(note.title) || note.tags.contains("daily-note")
 
-    fun build(notes: List<NoteInfo>, truncated: Boolean, today: LocalDate = LocalDate.now()): MemoryData {
+        fun build(notes: List<NoteInfo>, truncated: Boolean, today: LocalDate = LocalDate.now()): MemoryData {
         val byDay = notes.mapNotNull { n -> n.localDate?.let { it to n } }.groupBy({ it.first }, { it.second })
 
         val seen = HashSet<LocalDate>()

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通知里的「记一条」：橙色实心圆（浅色柔橙 / 深色品牌橙）（与「今天」页右下角的「+」同一语言） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@color/notification_fill" />
+</shape>

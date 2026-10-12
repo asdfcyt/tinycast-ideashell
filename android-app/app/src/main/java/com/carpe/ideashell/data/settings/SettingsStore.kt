@@ -21,12 +21,15 @@ data class AppSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     /** 通知栏常驻「今天 N · 逾期 M」，可直接回复快记、点完成 */
     val persistentNotification: Boolean = false,
+    /** 每日专注目标（分钟）：「今天」页专注环以它为满环 */
+    val focusGoalMin: Int = DEFAULT_FOCUS_GOAL_MIN,
 ) {
     val defaultTags: List<String>
         get() = defaultTagsText.split(',', '，').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }
 
     companion object {
         const val DEFAULT_DAILY_FOLDER = "Daily Notes"
+        const val DEFAULT_FOCUS_GOAL_MIN = 120
     }
 }
 
@@ -49,6 +52,8 @@ class SettingsStore(context: Context) {
 
     fun setPersistentNotification(enabled: Boolean) = update { it.copy(persistentNotification = enabled) }
 
+    fun setFocusGoalMin(minutes: Int) = update { it.copy(focusGoalMin = minutes.coerceIn(10, 720)) }
+
     private fun update(transform: (AppSettings) -> AppSettings) {
         val next = transform(_state.value)
         prefs.edit()
@@ -56,6 +61,7 @@ class SettingsStore(context: Context) {
             .putString(KEY_DAILY_FOLDER, next.dailyFolder)
             .putString(KEY_THEME, next.themeMode.name)
             .putBoolean(KEY_PERSISTENT_NOTIFICATION, next.persistentNotification)
+            .putInt(KEY_FOCUS_GOAL, next.focusGoalMin)
             .apply()
         _state.value = next
     }
@@ -66,6 +72,7 @@ class SettingsStore(context: Context) {
         themeMode = runCatching { ThemeMode.valueOf(prefs.getString(KEY_THEME, null).orEmpty()) }
             .getOrDefault(ThemeMode.SYSTEM),
         persistentNotification = prefs.getBoolean(KEY_PERSISTENT_NOTIFICATION, false),
+        focusGoalMin = prefs.getInt(KEY_FOCUS_GOAL, AppSettings.DEFAULT_FOCUS_GOAL_MIN),
     )
 
     // ── 文件夹缓存 ──
@@ -100,7 +107,18 @@ class SettingsStore(context: Context) {
         prefs.edit().remove("$KEY_DAILY_ID_PREFIX$date").apply()
     }
 
+    // ── 过去某天 Daily Note 的条目数缓存（热力图用；过去的日子基本不会再变） ──
+
+    fun dailyEntryCount(date: String): Int? =
+        prefs.getInt("$KEY_DAILY_COUNT_PREFIX$date", -1).takeIf { it >= 0 }
+
+    fun setDailyEntryCount(date: String, count: Int) {
+        prefs.edit().putInt("$KEY_DAILY_COUNT_PREFIX$date", count).apply()
+    }
+
     private companion object {
+        const val KEY_FOCUS_GOAL = "focus_goal_min"
+        const val KEY_DAILY_COUNT_PREFIX = "daily_count_"
         const val KEY_TAGS = "default_tags"
         const val KEY_DAILY_FOLDER = "daily_folder"
         const val KEY_THEME = "theme_mode"

@@ -1,33 +1,29 @@
 package com.carpe.ideashell.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.text.font.FontWeight
-import com.carpe.ideashell.ui.glass.isDarkSurface
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -40,7 +36,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -48,9 +48,11 @@ import androidx.compose.ui.unit.dp
 import com.carpe.ideashell.ui.glass.GlassSurface
 
 /*
- * 全应用共用的「扁平列表」积木（遵循 Material 3 的列表规范）：
- * - 一屏只有三级文字：页面标题 / 分组标题 / 行内容；
- * - 同一类内容放进同一张容器卡片，行与行之间只用一条细分隔线，不再给每一行单独套卡片；
+ * 全应用共用的积木（设计系统「环」）：
+ * - 一屏只有三级文字：页面标题（ExtraBold）/ 分组标题（Bold）/ 行内容；
+ * - 任务和最近记录是「一条一个胶囊」，分组标题直接写在奶油底上；
+ *   设置、笔记这类成组的信息，放进同一张白色圆角块，行与行之间只用一条细分隔线；
+ * - 选中态统一是深色反白（分段控件、筛选胶囊），橙色只留给填充和强调；
  * - 次要操作收进菜单或详情，一屏只留一个主操作。
  */
 
@@ -65,7 +67,7 @@ fun ScreenHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 12.dp, top = 20.dp, bottom = 6.dp),
+            .padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -84,29 +86,28 @@ fun ScreenHeader(
     }
 }
 
-/** 分组标题：小号、弱化，位于一组行的上方；右侧可放一个文字按钮 */
+/** 分组标题：粗体，位于一组行的上方；右侧可放一个文字按钮 */
 @Composable
 fun GroupLabel(
     text: String,
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    color: Color = MaterialTheme.colorScheme.onSurface,
     count: Int? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 36.dp)
-            .padding(start = 16.dp, end = 0.dp, top = 14.dp, bottom = 2.dp),
+            .heightIn(min = 40.dp)
+            .padding(start = 8.dp, end = 0.dp, top = 10.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // iOS 分组标题：小号、灰色，贴着下面那张卡片的左缘
-        Text(text, style = MaterialTheme.typography.labelLarge, color = color)
+        Text(text, style = MaterialTheme.typography.titleSmall, color = color)
         if (count != null) {
             Text(
                 "  $count",
                 style = MaterialTheme.typography.labelMedium,
-                color = color.copy(alpha = 0.7f),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Box(Modifier.weight(1f))
@@ -114,20 +115,21 @@ fun GroupLabel(
     }
 }
 
-/** 一组相关的行：一张容器卡片，里面的行用 [RowDivider] 分隔 */
+/** 一组相关的行：一张白色圆角块，里面的行用 [RowDivider] 分隔 */
 @Composable
 fun ListGroup(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    GlassSurface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+    GlassSurface(modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
         Column(content = content)
     }
 }
 
 /**
- * 带标题的分组卡片（对标滴答清单的列表分组）：标题写在卡片里面——左边加粗的标题，右边是数量和折叠箭头；
- * 下面是分组里的行。[onToggle] 不为空时点标题栏可以折叠 / 展开（[expanded] 为 false 时只剩标题栏）。
+ * 带标题的分组：标题直接写在奶油底上——左边粗体的标题，右边是数量和折叠箭头；
+ * 下面是分组里的行，每一行自己是一个胶囊（行与行之间留 8dp 的空隙）。
+ * [onToggle] 不为空时点标题栏可以折叠 / 展开（[expanded] 为 false 时只剩标题栏）。
  */
 @Composable
 fun GroupCard(
@@ -140,59 +142,99 @@ fun GroupCard(
     trailing: (@Composable () -> Unit)? = null,
     content: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
-    GlassSurface(modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp)
-                    .then(if (onToggle != null) Modifier.clickable(onClick = onToggle) else Modifier)
-                    .padding(start = 16.dp, end = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(title, style = MaterialTheme.typography.titleMedium, color = titleColor, modifier = Modifier.weight(1f))
-                if (count != null) {
-                    Text(count.toString(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
-                }
-                trailing?.invoke()
-                if (onToggle != null) {
-                    Icon(
-                        if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
-                        contentDescription = if (expanded) "收起" else "展开",
-                        tint = MaterialTheme.colorScheme.outline,
-                        modifier = Modifier.padding(start = 4.dp),
-                    )
-                }
+    Column(modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 44.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .then(if (onToggle != null) Modifier.clickable(onClick = onToggle) else Modifier)
+                .padding(start = 8.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, style = MaterialTheme.typography.titleSmall, color = titleColor)
+            if (count != null) {
+                Text(
+                    "  $count",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            if (expanded && content != null) content()
+            Box(Modifier.weight(1f))
+            trailing?.invoke()
+            if (onToggle != null) {
+                Icon(
+                    if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            }
+        }
+        if (expanded && content != null) {
+            Column(
+                modifier = Modifier.padding(top = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                content = content,
+            )
         }
     }
 }
 
-/** 页面顶部的圆形图标按钮（白底圆形，对标滴答清单的顶栏按钮） */
+/**
+ * 一条胶囊：白底（深色模式是深棕）、24dp 圆角，是任务行、最近记录行的外壳。
+ * [dark] 为 true 时反白成深棕胶囊（逾期任务），是页面上最重的一块。
+ */
+@Composable
+fun RowPill(
+    modifier: Modifier = Modifier,
+    dark: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(if (dark) scheme.inverseSurface else scheme.surfaceContainerLowest)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+    ) {
+        content()
+    }
+}
+
+/** 页面顶部的圆形图标按钮（白底圆形；放在橙色色场上时传 [container] 换成半透明深棕） */
 @Composable
 fun CircleIconButton(
     icon: ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    container: Color = MaterialTheme.colorScheme.surfaceContainerLowest,
+    content: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     Box(
         modifier = modifier
             .size(44.dp)
             .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+            .background(container)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = contentDescription, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
+        Icon(icon, contentDescription = contentDescription, tint = content, modifier = Modifier.size(22.dp))
     }
 }
 
 /** 标题栏右侧的搜索按钮：各主页签统一用它进入搜索页 */
 @Composable
-fun SearchButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    CircleIconButton(Icons.Filled.Search, "搜索", onClick, modifier)
+fun SearchButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    container: Color = MaterialTheme.colorScheme.surfaceContainerLowest,
+    content: Color = MaterialTheme.colorScheme.onSurface,
+) {
+    CircleIconButton(Icons.Filled.Search, "搜索", onClick, modifier, container, content)
 }
 
 /** 行与行之间的细分隔线（左侧缩进，与文字对齐） */
@@ -214,6 +256,38 @@ fun <T> ColumnScope.DividedRows(items: List<T>, inset: Dp = 16.dp, row: @Composa
     }
 }
 
+/**
+ * 完成状态的小标记：没完成是一圈细环，完成是实心橙底 + 深棕对勾。
+ * 取代用「✓ / ○」文字字符充当图标的写法，在时间线、搜索结果、档案里共用。
+ */
+@Composable
+fun DoneMark(done: Boolean, modifier: Modifier = Modifier, size: Dp = 20.dp) {
+    val scheme = MaterialTheme.colorScheme
+    if (done) {
+        Box(
+            modifier = modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(com.carpe.ideashell.ui.theme.Brand.Orange),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Check,
+                contentDescription = "已完成",
+                tint = com.carpe.ideashell.ui.theme.Brand.Brown,
+                modifier = Modifier.size(size * 0.66f),
+            )
+        }
+    } else {
+        Box(
+            modifier = modifier
+                .size(size)
+                .clip(CircleShape)
+                .border(2.dp, scheme.outline, CircleShape),
+        )
+    }
+}
+
 /** 「名称 ……… 当前值」的一行；点击后改这一项 */
 @Composable
 fun PropertyRow(
@@ -228,13 +302,13 @@ fun PropertyRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 52.dp)
+            .heightIn(min = 56.dp)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 6.dp),
+            .padding(horizontal = 18.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(label, style = MaterialTheme.typography.bodyLarge, color = labelColor, modifier = Modifier.weight(1f))
+        Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, color = labelColor, modifier = Modifier.weight(1f))
         if (value.isNotEmpty()) {
             Text(
                 value,
@@ -269,8 +343,8 @@ fun MenuPropertyRow(
 }
 
 /**
- * 分段控件（iOS Segmented Control）：灰色轨道 + 白色滑块，选中项文字加粗。
- * 页面内的视图切换、输入框里的「自动 / 待办 / 日记 / 笔记」都用它；每一项高度默认 40dp，接近触控下限，
+ * 分段控件：浅色轨道 + 深色反白的滑块（浅色模式是深棕底奶油字，深色模式反过来），全圆角。
+ * 页面内的视图切换、输入框里的「自动 / 待办 / 日记 / 笔记」都用它；每一项高度默认 44dp，满足触控下限，
  * 用 [outerPadding] 控制外边距（放在页面里时有左右边距，放在卡片里时设为 0）。
  */
 @Composable
@@ -280,19 +354,16 @@ fun SegmentedTabs(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
     outerPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-    height: Dp = 40.dp,
+    height: Dp = 44.dp,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val dark = isDarkSurface()
-    val thumb = if (dark) Color(0xFF636366) else scheme.surfaceContainerLowest
-    val thumbShape = RoundedCornerShape(9.dp)
     Row(
         modifier = modifier
             .padding(outerPadding)
             .height(height)
-            .clip(RoundedCornerShape(11.dp))
+            .clip(CircleShape)
             .background(scheme.surfaceContainerHigh)
-            .padding(2.dp),
+            .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         labels.forEachIndexed { i, label ->
@@ -301,17 +372,16 @@ fun SegmentedTabs(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .then(if (active) Modifier.shadow(1.dp, thumbShape) else Modifier)
-                    .clip(thumbShape)
-                    .background(if (active) thumb else Color.Transparent)
+                    .clip(CircleShape)
+                    .background(if (active) scheme.inverseSurface else Color.Transparent)
                     .selectable(selected = active, role = Role.Tab, onClick = { onSelect(i) }),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     label,
                     style = MaterialTheme.typography.labelLarge,
-                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (active) scheme.onSurface else scheme.onSurfaceVariant,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                    color = if (active) scheme.inverseOnSurface else scheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -321,8 +391,8 @@ fun SegmentedTabs(
 }
 
 /**
- * 胶囊按钮式的筛选项（iOS 风格的 filter pill）：未选中是浅灰底，选中是青绿淡底 + 青绿文字，没有描边。
- * [leading] 可以放一个色点或小图标。高度 36dp，行内间距 8dp 时整体触控区域满足要求。
+ * 胶囊筛选项：未选中是白底，选中是深色反白（和分段控件同一套逻辑），没有描边。
+ * [leading] 可以放一个色点或小图标。高度 40dp，行内间距 8dp 时整体触控区域满足要求。
  */
 @Composable
 fun PillChip(
@@ -335,11 +405,11 @@ fun PillChip(
     val scheme = MaterialTheme.colorScheme
     Row(
         modifier = modifier
-            .height(36.dp)
+            .height(40.dp)
             .clip(CircleShape)
-            .background(if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh)
+            .background(if (selected) scheme.inverseSurface else scheme.surfaceContainerLowest)
             .selectable(selected = selected, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -347,8 +417,8 @@ fun PillChip(
         Text(
             text,
             style = MaterialTheme.typography.labelLarge,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) scheme.primary else scheme.onSurface,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) scheme.inverseOnSurface else scheme.onSurface,
             maxLines = 1,
         )
     }

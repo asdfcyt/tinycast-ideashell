@@ -9,6 +9,11 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.view.View
@@ -40,8 +45,11 @@ class TodoSurfaces(
     private val order = compareBy<DidaTask>({ it.date ?: "" }, { it.time ?: "" }, { -it.priority })
 
     /** 小部件与通知都要显示的「逾期 + 今天」 */
-    private class Snapshot(val overdue: List<DidaTask>, val today: List<DidaTask>) {
+    private class Snapshot(val overdue: List<DidaTask>, val today: List<DidaTask>, val done: Int) {
         val all: List<DidaTask> get() = overdue + today
+
+        /** 今天的完成度：已完成 /（已完成 + 还剩），和「今天」页的圆环同一口径 */
+        val progress: Float get() = (done + all.size).let { if (it == 0) 0f else done.toFloat() / it }
         val summary: String
             get() = if (overdue.isEmpty() && today.isEmpty()) "今天没有待办" else buildString {
                 append("今天 ").append(today.size)
@@ -54,6 +62,7 @@ class TodoSurfaces(
         return Snapshot(
             overdue = overview.overdue.sortedWith(order),
             today = overview.upcoming.filter { it.date == todayStr }.sortedWith(order),
+            done = overview.done.size,
         )
     }
 
@@ -140,11 +149,11 @@ class TodoSurfaces(
     }
 
     private fun priorityColor(priority: Int, overdue: Boolean): Int = when {
-        priority >= 5 -> 0xFFE5484D.toInt()
+        priority >= 5 -> ContextCompat.getColor(context, R.color.notification_fill)
         priority >= 3 -> 0xFFF5A524.toInt()
         priority >= 1 -> 0xFF3E8BFF.toInt()
-        overdue -> 0xFFE5484D.toInt()
-        else -> 0xFF8A9A99.toInt()
+        overdue -> ContextCompat.getColor(context, R.color.notification_fill)
+        else -> 0xFF8C7566.toInt()
     }
 
     // ───────────────────────── 常驻通知 ─────────────────────────
@@ -176,6 +185,7 @@ class TodoSurfaces(
 
         // 收起：第一行 = 任务标题，第二行 =「今天 16:00」；右侧内联 > 下一项、+ 记一条（与滴答清单一致）
         val collapsed = RemoteViews(context.packageName, R.layout.notification_todo_collapsed).apply {
+            setImageViewBitmap(R.id.n_ring, ringBitmap(all.size, snap?.progress ?: 0f))
             when {
                 current != null -> {
                     setTextViewText(R.id.n_title, current.title)
@@ -196,7 +206,16 @@ class TodoSurfaces(
 
         // 展开：概览 + 逐行任务，每行圆圈直接完成
         val big = RemoteViews(context.packageName, R.layout.notification_todo_big).apply {
+            setImageViewBitmap(R.id.n_ring, ringBitmap(all.size, snap?.progress ?: 0f))
             setTextViewText(R.id.n_title, snap?.summary ?: "待办")
+            setTextViewText(
+                R.id.n_sub,
+                when {
+                    snap == null -> "正在同步…"
+                    all.isEmpty() -> if (snap.done > 0) "已完成 ${snap.done} 件" else "今天很清爽"
+                    else -> "还剩 ${all.size} 件" + if (snap.done > 0) " · 已完成 ${snap.done}" else ""
+                },
+            )
             setOnClickPendingIntent(R.id.n_add, quickAdd())
             removeAllViews(R.id.n_rows)
             if (all.isEmpty()) {
@@ -209,6 +228,7 @@ class TodoSurfaces(
                     val row = RemoteViews(context.packageName, R.layout.notification_todo_row)
                     row.setTextViewText(R.id.r_title, t.title)
                     row.setTextViewText(R.id.r_time, shortWhen(t, t in overdue))
+                    if (t in overdue) row.setTextColor(R.id.r_time, ContextCompat.getColor(context, R.color.notification_accent))
                     row.setInt(R.id.r_check, "setColorFilter", priorityColor(t.priority, t in overdue))
                     row.setOnClickPendingIntent(R.id.r_check, completeIntent(t.id))
                     row.setOnClickPendingIntent(R.id.r_title, openApp(tab = 1))
@@ -219,7 +239,7 @@ class TodoSurfaces(
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_tile)
-            .setColor(0xFF0F766E.toInt())
+            .setColor(0xFFFF5A00.toInt())
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setCustomContentView(collapsed)
             .setCustomBigContentView(big)
@@ -235,6 +255,39 @@ class TodoSurfaces(
         if (NotificationManagerCompat.from(context).areNotificationsEnabled()) {
             nm.notify(NOTIFICATION_ID, builder.build())
         }
+    }
+
+    /**
+     * 通知左侧的小圆环：和「今天」页的大圆环同一套画法——环弧是完成度，圆心是「还剩几件」。
+     * 通知背景由系统决定，所以只按系统深浅色选字色，环弧用 notification_fill（浅色柔橙 / 深色品牌橙）。
+     */
+    private fun ringBitmap(remaining: Int, progress: Float): Bitmap {
+        val size = (44 * context.resources.displayMetrics.density).toInt()
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val ink = ContextCompat.getColor(context, R.color.notification_ink)
+
+        val stroke = size * 0.16f
+        val rect = RectF(stroke / 2, stroke / 2, size - stroke / 2, size - stroke / 2)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = stroke
+            color = (ink and 0x00FFFFFF) or 0x33000000
+        }
+        canvas.drawArc(rect, 0f, 360f, false, paint)
+        if (progress > 0f) {
+            paint.color = ContextCompat.getColor(context, R.color.notification_fill)
+            canvas.drawArc(rect, -90f, 360f * progress.coerceAtMost(1f), false, paint)
+        }
+
+        val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ink
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            textSize = size * if (remaining >= 10) 0.30f else 0.38f
+        }
+        canvas.drawText(remaining.toString(), size / 2f, size / 2f - (text.ascent() + text.descent()) / 2f, text)
+        return bitmap
     }
 
     /** 通知上的「>」：切到下一项任务（循环），只刷新通知，不动数据 */

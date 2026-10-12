@@ -20,6 +20,16 @@ import com.carpe.ideashell.data.capture.SubmitReceipt
 import com.carpe.ideashell.data.db.CaptureEntity
 import com.carpe.ideashell.data.dida.DidaOverview
 import com.carpe.ideashell.data.dida.DidaTask
+import com.carpe.ideashell.data.dida.FocusSummary
+import com.carpe.ideashell.data.ideashell.NoteInfo
+import com.carpe.ideashell.domain.MemoryData
+import com.carpe.ideashell.domain.MemoryLane
+import com.carpe.ideashell.data.project.ProjectStatus
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import java.time.LocalDate
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -28,6 +38,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+/** 热力图数据：每天 Daily Note 的条目数 */
+data class HeatState(val counts: Map<LocalDate, Int>, val loading: Boolean)
+
+/** 热力图显示的周数（半年） */
+const val HEAT_WEEKS = 26
 
 sealed interface HomeEvent {
     data class Saved(val receipt: SubmitReceipt) : HomeEvent
@@ -52,8 +68,113 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         .map { it.overview }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), container.todos.state.value.overview)
 
+    /**
+     * 关注项目（搁置的不算）的进展：每个项目取相关任务的完成度（完成 ÷ 完成 + 未完成），再求平均。
+     * 只在滴答本地缓存里匹配，不额外请求；没有关注项目或没有相关任务为 null。
+     */
+    val projectProgress: StateFlow<Float?> = combine(container.projects.workspace, overview) { workspace, ov ->
+        if (ov == null) return@combine null
+        val open = ov.overdue + ov.upcoming + ov.undated
+        val each = workspace.projects.filter { it.status != ProjectStatus.PAUSED }.mapNotNull { p ->
+            val o = open.count { t -> p.matches(t.title, t.tags) }
+            val d = ov.done.count { t -> p.matches(t.title, t.tags) }
+            if (o + d == 0) null else d.toFloat() / (o + d)
+        }
+        if (each.isEmpty()) null else each.average().toFloat()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** 每日专注目标（分钟），在「设置」里改 */
+    val focusGoalMin: StateFlow<Int> = container.settings.state.map { it.focusGoalMin }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), container.settings.current.focusGoalMin)
+
+    /** 今天的专注（来自滴答，只读）；没连接滴答或还没加载为 null */
+    private val _focus = MutableStateFlow<FocusSummary?>(null)
+    val focus: StateFlow<FocusSummary?> = _focus.asStateFlow()
+    private var focusAt = 0L
+
+    /** 记录热力图：近半年每天 Daily Note 的条目数；没连接闪念贝壳为 null，[HeatState.loading] 表示还在读 */
+    private val _heat = MutableStateFlow<HeatState?>(null)
+    val heat: StateFlow<HeatState?> = _heat.asStateFlow()
+    private var heatJob: Job? = null
+    private var heatAt = 0L
+
+    /** 往日回顾的数据（5 年笔记，仓库里有 20 分钟缓存）；没连接闪念贝壳或还没加载为 null */
+    private val _memory = MutableStateFlow<MemoryData?>(container.notes.memoryCached())
+    val memory: StateFlow<MemoryData?> = _memory.asStateFlow()
+
+    /** 「随机漫步」当前这一条 */
+    var walkNote by mutableStateOf<NoteInfo?>(null)
+        private set
+
     init {
         container.todos.refresh()
+        refreshFocus()
+        refreshMemory()
+        refreshHeat()
+    }
+
+    /** 回到「今天」页时调用：一分钟内不重复读；读的时候边读边画 */
+    fun refreshHeat() {
+        if (!container.credentials.ideashellConnected.value) {
+            _heat.value = null
+            return
+        }
+        if (heatJob?.isActive == true) return
+        val now = System.currentTimeMillis()
+        if (now - heatAt < HEAT_TTL_MS && _heat.value?.loading == false) return
+        heatJob = viewModelScope.launch {
+            _heat.value = HeatState(_heat.value?.counts.orEmpty(), loading = true)
+            val result = runCatching {
+                container.notes.dailyHeat(LocalDate.now(), HEAT_WEEKS) { partial ->
+                    _heat.value = HeatState(partial, loading = true)
+                }
+            }
+            result.onSuccess {
+                heatAt = System.currentTimeMillis()
+                _heat.value = HeatState(it, loading = false)
+            }.onFailure {
+                _heat.value = HeatState(_heat.value?.counts.orEmpty(), loading = false)
+            }
+        }
+    }
+
+    /** 回到「今天」页时调用：两分钟内不重复请求 */
+    fun refreshFocus() {
+        if (container.credentials.didaToken.isNullOrBlank()) {
+            _focus.value = null
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (now - focusAt < FOCUS_TTL_MS && _focus.value != null) return
+        focusAt = now
+        viewModelScope.launch {
+            runCatching { container.daySummary.focus(LocalDate.now()) }
+                .onSuccess { _focus.value = it }
+                .onFailure { focusAt = 0L }
+        }
+    }
+
+    /** 仓库有 20 分钟缓存，频繁调用不会重复拉 */
+    fun refreshMemory() {
+        if (!container.credentials.ideashellConnected.value) {
+            _memory.value = null
+            walkNote = null
+            return
+        }
+        viewModelScope.launch {
+            runCatching { container.notes.memory() }.onSuccess { m ->
+                _memory.value = m
+                if (walkNote == null || m.pool.none { it.id == walkNote?.id }) {
+                    walkNote = MemoryLane.pickRandom(m.pool, MemoryLane.sameDayIds(m))
+                }
+            }
+        }
+    }
+
+    /** 换一条随机笔记（避开往年今日里已有的，也避开当前这条） */
+    fun shuffleWalk() {
+        val m = _memory.value ?: return
+        walkNote = MemoryLane.pickRandom(m.pool, MemoryLane.sameDayIds(m) + listOfNotNull(walkNote?.id))
     }
 
     fun refreshTodos() = container.todos.refresh(force = true)
@@ -146,6 +267,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     private companion object {
         const val ORIGIN_APP = "app"
+        const val FOCUS_TTL_MS = 2 * 60 * 1000L
+        const val HEAT_TTL_MS = 60 * 1000L
     }
 
     object Factory {

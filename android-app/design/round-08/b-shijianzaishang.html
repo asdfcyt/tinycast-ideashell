@@ -1,0 +1,69 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=390, initial-scale=1"><title>闪念 · 回看 · 时间在上</title><style>
+:root{--orange:#E8794A;--deep:#A9441C;--cream:#F7F2EA;--brown:#2A2118;--brown2:#6E5C4E;--soft:#F6DCCB;--sand:#EDE4D8;--tan:#B98A5E;--line:rgba(42,33,24,.14);--sans:-apple-system,"PingFang SC","Noto Sans SC","Helvetica Neue",sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:390px;height:844px;background:var(--cream);overflow:hidden}
+body{font-family:var(--sans);color:var(--brown);-webkit-font-smoothing:antialiased}
+.phone{position:relative;width:390px;height:844px;overflow:hidden;background:var(--cream)}
+.status{height:32px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+.status .ico{display:flex;gap:6px;align-items:center}
+.circ{width:40px;height:40px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+.fade{position:absolute;left:0;right:0;bottom:0;height:170px;background:linear-gradient(rgba(247,242,234,0),var(--cream) 66%);pointer-events:none}
+.dock{position:absolute;left:16px;right:16px;bottom:30px;display:flex;gap:12px;align-items:center}
+.nav{flex:1;height:60px;border-radius:30px;background:var(--brown);display:grid;grid-template-columns:repeat(4,1fr);padding:0 6px;align-items:center}
+.nav a{height:48px;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:var(--cream);font-size:11px;font-weight:700}
+.nav a.on{background:var(--orange);color:var(--brown)}
+.fab{flex:none;width:60px;height:60px;border-radius:50%;background:var(--orange);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(232,121,74,.28)}
+.gesture{position:absolute;left:0;right:0;bottom:0;height:22px}
+.gesture::after{content:"";position:absolute;left:50%;bottom:8px;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:var(--brown)}
+.hd{height:52px;padding:0 14px 0 20px;display:flex;align-items:center;gap:8px}
+.hd .t{flex:1;min-width:0}.hd h1{font-size:20px;line-height:26px;font-weight:800}
+.hd p{font-size:12px;line-height:16px;font-weight:600;color:var(--brown2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rp{flex:none;height:40px;padding:0 10px 0 16px;border-radius:20px;background:#fff;display:flex;align-items:center;gap:2px;font-size:13px;font-weight:800}
+
+.fs{margin:10px 20px 0;font-size:21px;line-height:32px;font-weight:800;letter-spacing:-.2px}
+.fs em{font-style:normal;box-shadow:inset 0 -9px 0 rgba(232,121,74,.38)}
+.fs em.w{box-shadow:inset 0 -9px 0 rgba(169,68,28,.28)}
+.cp{display:flex;gap:8px;margin:12px 20px 0}
+.cp a{height:32px;padding:0 13px;border-radius:16px;background:#fff;display:flex;align-items:center;gap:6px;font-size:13.5px;font-weight:800;white-space:nowrap}
+.cp a em{font-style:normal;font-size:12.5px;font-weight:900;color:var(--deep)}
+.cp a.hot{box-shadow:inset 0 0 0 2px var(--orange)}
+.wk{display:flex;gap:7px;align-items:flex-end;margin:14px 20px 0;height:58px}
+.wk div{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;justify-content:flex-end;height:100%}
+.wk i{display:block;width:100%;border-radius:7px;background:rgba(42,33,24,.2)}
+.wk div.now i{background:var(--orange)}
+.wk em{font-style:normal;font-size:11.5px;font-weight:800;color:var(--brown2)}
+.wk div.now em{color:var(--deep)}
+.rv{margin-top:18px}
+.dy{margin-bottom:16px}
+.dh{display:flex;align-items:center;gap:10px;padding:0 20px;height:30px}
+.dh b{font-size:22px;line-height:28px;font-weight:900;font-variant-numeric:tabular-nums}
+.dh i{font-style:normal;font-size:14px;font-weight:800}
+.dy.now .dh b,.dy.now .dh i{color:var(--deep)}
+.dh u{flex:1;height:1.5px;background:var(--line);min-width:12px}
+.dh span{font-size:12px;font-weight:700;color:var(--brown2)}
+.box{margin:2px 16px 0;background:#fff;border-radius:22px;overflow:hidden}
+.rw{padding:10px 18px 12px;border-top:1px solid rgba(42,33,24,.07)}
+.rw:first-child{border-top:0}
+.mt{display:flex;align-items:center;gap:6px;height:20px;font-size:12px;font-weight:800;color:var(--brown2)}
+.mt b{font-size:12.5px;font-weight:900;color:var(--deep);font-variant-numeric:tabular-nums}
+.mt svg{flex:none}
+.tt{font-size:15.5px;line-height:23px;font-weight:700;overflow-wrap:anywhere}
+.sm{font-size:13px;line-height:19px;color:var(--brown2);font-weight:500}
+.rw.d .tt{font-weight:600;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.rw.t .tt{font-weight:600;color:var(--brown2)}
+.rw.td .tt{font-weight:600;text-decoration:line-through;color:var(--brown2)}
+</style></head><body><div class="phone"><div class="status"><span>10:12</span><span class="ico">
+<svg width="18" height="12" viewBox="0 0 18 12" fill="#2A2118"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+<svg width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="#2A2118" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 4.2a9.5 9.5 0 0 1 13 0M4 7a6 6 0 0 1 8 0"/><circle cx="8" cy="10" r="1" fill="#2A2118" stroke="none"/></svg>
+<svg width="26" height="12" viewBox="0 0 26 12" fill="none"><rect x="0.8" y="0.8" width="21.4" height="10.4" rx="3" stroke="#2A2118" stroke-width="1.5"/><rect x="2.6" y="2.6" width="14" height="6.8" rx="1.6" fill="#2A2118"/><rect x="23.4" y="4" width="1.8" height="4" rx=".9" fill="#2A2118"/></svg></span></div>
+<div class="hd"><div class="t"><h1>回看</h1><p>最近 7 天 · 28 篇笔记 · 75 条日记 · 待办 9/14</p></div>
+<span class="rp">最近 7 天<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m7 10 5 5 5-5"/></svg></span>
+<span class="circ"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg></span></div>
+<div class="fs">这 7 天专注 <em>14 小时 10 分</em>，近一半在<em>内审</em>；<em class="w">书法</em>已 9 天没记。</div><div class="cp"><a>内审<em>6h20</em></a><a>闪念 App<em>4h05</em></a><a class="hot">书法<em>9 天没记</em></a></div><div class="wk"><div><i style="height:40px"></i><em>二</em></div><div><i style="height:56px"></i><em>三</em></div><div><i style="height:24px"></i><em>四</em></div><div><i style="height:44px"></i><em>五</em></div><div><i style="height:30px"></i><em>六</em></div><div><i style="height:36px"></i><em>日</em></div><div class="now"><i style="height:18px"></i><em>一</em></div></div><div class="rv"><section class="dy now"><div class="dh"><b>12</b><i>今天 · 周一</i><u></u><span>3 日记 · 2 笔记 · 0/1 待办</span></div><div class="box"><div class="rw d"><div class="mt"><b>09:26</b><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#E8794A" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg><span>日记</span></div><div class="tt">我来试一下这个是否能够直接一键添加</div></div><div class="rw d"><div class="mt"><b>09:24</b><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#E8794A" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg><span>日记</span></div><div class="tt">我来试试吧 [🖼 1 张图片](https://ideashell.site/boards/897351e7324…</div></div><div class="rw d"><div class="mt"><b>09:19</b><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#E8794A" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg><span>日记</span></div><div class="tt">试试如何用</div></div><div class="rw n"><div class="mt"><b>09:11</b><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6zM9 12h6M9 16h6"/></svg><span>笔记</span></div><div class="tt">如果加了图片 就无法保存到日记中了</div><div class="sm">提交时只带上了文字，图片链接被当成正文吃掉了</div></div><div class="rw n"><div class="mt"><b>09:08</b><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6zM9 12h6M9 16h6"/></svg><span>笔记</span></div><div class="tt">再来试试能来自动提交</div><div class="sm">Daily Note 里每条记录会带上时间戳</div></div><div class="rw t"><div class="mt"><b>09:00</b><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="3.2"><circle cx="12" cy="12" r="8"/></svg><span>待办</span></div><div class="tt">开始写内审的相关情况说明</div></div></div></section><section class="dy"><div class="dh"><b>11</b><i>昨天 · 周日</i><u></u><span>1 日记 · 1 笔记 · 1/1 待办</span></div><div class="box"><div class="rw d"><div class="mt"><b>23:48</b><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#E8794A" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg><span>日记</span></div><div class="tt">籍田指古代帝王亲耕的象征性农田，籍田礼是帝王在春耕前举行的典礼，…</div></div><div class="rw n"><div class="mt"><b>23:39</b><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6zM9 12h6M9 16h6"/></svg><span>笔记</span></div><div class="tt">籍田，指的是天子借民力耕种公田，将公田的收…</div><div class="sm">获得的粮食用于祭祀，也象征劝农</div></div><div class="rw td"><div class="mt"><b>21:10</b><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6E5C4E" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" stroke-width="2.4"/><path d="m8 12.5 3 3 5-6"/></svg><span>已完成</span></div><div class="tt">提交差旅报销</div></div></div></section></div><div class="fade"></div>
+<div class="dock"><nav class="nav">
+<a><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>今天</a>
+<a><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="m8.2 12.2 2.8 2.8 4.8-5.4"/></svg>待办</a>
+<a class="on"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>回看</a>
+<a><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/></svg>设置</a></nav>
+<div class="fab"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#2A2118" stroke-width="3.2" stroke-linecap="round"><path d="M12 4.5v15M4.5 12h15"/></svg></div></div>
+<div class="gesture"></div></div></body></html>

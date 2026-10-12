@@ -47,6 +47,25 @@ object NoteSections {
         return (lines.take(start + 1) + listOf(next, "") + lines.drop(end)).joinToString("\n")
     }
 
+    /** 读 `## 标题` 小节的正文（去掉首尾空白）；小节不存在返回 null。规则与 [editSection] 一致 */
+    fun sectionBody(content: String, title: String): String? {
+        val lines = content.lines()
+        val start = lines.indexOfFirst { headingOf(it) == title }
+        if (start < 0) return null
+        var end = lines.indices.firstOrNull { it > start && HEADING.containsMatchIn(lines[it]) } ?: -1
+        if (end < 0) {
+            end = lines.size
+            while (end > start + 1 && (lines[end - 1].isBlank() || TAG_LINE.matches(lines[end - 1].trim()))) end--
+        }
+        return lines.subList(start + 1, end).joinToString("\n").trim()
+    }
+
+    /** 模板里的占位行：整行（可带列表符号）是一句用全角括号包起来的提示，例如「（这个项目最终要达成什么？）」 */
+    fun isPlaceholderLine(line: String): Boolean {
+        val t = line.trim().removePrefix("-").removePrefix("*").trim()
+        return t.startsWith("（") && t.endsWith("）")
+    }
+
     /** 统计「行动步骤」小节里的 `- [x]` / `- [ ]`；没有步骤返回 null（模板里的占位步骤不算） */
     fun stepProgress(content: String): Pair<Int, Int>? {
         val lines = content.lines()

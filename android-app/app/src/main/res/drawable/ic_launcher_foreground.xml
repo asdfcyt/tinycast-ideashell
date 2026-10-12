@@ -4,8 +4,15 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 临时占位图标：一道闪电，M5 阶段替换为正式图标 -->
+    <!-- 闪念贝壳图标：圆环 + 右上角星光（安全区在中间 66dp 内）；背景是品牌橙 -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M60,26 L42,58 L53,58 L47,82 L67,48 L55,48 Z" />
+        android:fillColor="#FFF7F2EA"
+        android:fillType="evenOdd"
+        android:pathData="M50,35 A19,19 0 1 1 50,73 A19,19 0 1 1 50,35 Z M50,46 A8,8 0 1 0 50,62 A8,8 0 1 0 50,46 Z" />
+    <path
+        android:fillColor="#FFF7F2EA"
+        android:pathData="M69,25 C69.6,31 72.4,33.8 78.400,34.400 C72.400,35 69.600,37.800 69,43.800 C68.400,37.800 65.600,35 59.600,34.400 C65.600,33.800 68.400,31 69,25 Z" />
+    <path
+        android:fillColor="#FFF7F2EA"
+        android:pathData="M79,45 C79.300,48 80.700,49.400 83.700,49.700 C80.700,50 79.300,51.400 79,54.400 C78.700,51.400 77.300,50 74.300,49.700 C77.300,49.400 78.700,48 79,45 Z" />
 </vector>

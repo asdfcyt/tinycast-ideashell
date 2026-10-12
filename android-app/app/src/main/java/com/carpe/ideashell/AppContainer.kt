@@ -111,7 +111,7 @@ class AppContainer(context: Context) {
         onTodoCreated = { todos.refresh(force = true) },
     )
 
-    /** 回看：时间线 / Daily Note / 搜索 / 往日回顾 / 档案 / 笔记全文 */
+    /** 回看：时间线（含 Daily Note 拆条）/ 搜索 / 往日回顾 / 提及概览 / 笔记全文 */
     val notes = NotesRepository(
         ideashell = ideashellApi,
         dida = didaApi,

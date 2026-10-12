@@ -92,6 +92,7 @@ import com.carpe.ideashell.ui.home.TemplateSheet
 import com.carpe.ideashell.ui.components.SubmitCorner
 import com.carpe.ideashell.ui.components.resolveKind
 import com.carpe.ideashell.ui.components.InfoPill
+import com.carpe.ideashell.ui.theme.Brand
 import kotlinx.coroutines.delay
 
 /** 轻量输入面板：半透明遮罩 + 从底部升起的卡片，键盘弹出时整体上移 */
@@ -153,8 +154,8 @@ fun QuickCaptureScreen(
             enter = slideInVertically(tween(280)) { it } + fadeIn(tween(200)),
             exit = slideOutVertically(tween(200)) { it } + fadeOut(tween(160)),
         ) {
-            val sheetShape = RoundedCornerShape(16.dp)
-            Column(Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp)) {
+            val sheetShape = RoundedCornerShape(28.dp)
+            Column(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) {
                 // 类型选择浮在面板上方（对标滴答清单的「任务 / 笔记 / 习惯」）；分享进来的内容、未连接、保存完成时不显示
                 if (composing && viewModel.clip == null) {
                     KindSelector(
@@ -241,10 +242,10 @@ private fun KindSelector(active: CaptureKind?, override: CaptureKind?, onSelect:
                     modifier = Modifier
                         .size(38.dp)
                         .clip(CircleShape)
-                        .background(if (lit) Color.White else Color.White.copy(alpha = 0.28f)),
+                        .background(if (lit) Brand.Orange else Color.White.copy(alpha = 0.28f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    val tint = if (lit) Color(0xFF0F766E) else Color.White
+                    val tint = if (lit) Brand.Brown else Color.White
                     if (kind == null) {
                         Icon(painterResource(R.drawable.ic_auto), contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
                     } else {
@@ -531,13 +532,13 @@ private fun SavedContent(state: QuickState.Saved, viewModel: QuickCaptureViewMod
                     scaleY = scale
                 },
             shape = CircleShape,
-            color = MaterialTheme.colorScheme.primaryContainer,
+            color = Brand.Orange,
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     Icons.Filled.Check,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    tint = Brand.Brown,
                     modifier = Modifier.size(30.dp),
                 )
             }

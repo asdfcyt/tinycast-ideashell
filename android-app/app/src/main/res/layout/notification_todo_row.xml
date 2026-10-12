@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:gravity="center_vertical"
-    android:minHeight="36dp"
+    android:minHeight="38dp"
     android:orientation="horizontal">
 
     <ImageView
@@ -30,5 +30,6 @@
         android:layout_height="wrap_content"
         android:paddingStart="8dp"
         android:textColor="?android:attr/textColorSecondary"
-        android:textSize="12sp" />
+        android:textSize="12sp"
+        android:textStyle="bold" />
 </LinearLayout>

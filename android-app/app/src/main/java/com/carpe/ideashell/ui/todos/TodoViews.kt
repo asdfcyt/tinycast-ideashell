@@ -78,6 +78,7 @@ internal fun TodoCtx.TaskItem(task: DidaTask, modifier: Modifier = Modifier, tra
         onOpen = { onOpen(task) },
         modifier = modifier,
         trailing = trailing,
+        pill = false,
     )
 }
 

@@ -1,13 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#006A6A</color>
+    <!-- 启动图标背景：柔橙（与浅色主题一致） -->
+    <color name="ic_launcher_background">#E8794A</color>
 
-    <!-- 桌面小部件（浅色）。背景半透明，系统若提供液态玻璃材质会叠在它下面 -->
-    <color name="widget_bg_top">#D9FFFFFF</color>
-    <color name="widget_bg_bottom">#A6EAF7F5</color>
-    <color name="widget_stroke">#E6FFFFFF</color>
-    <color name="widget_chip">#66FFFFFF</color>
-    <color name="widget_text">#0F1F1E</color>
-    <color name="widget_text_secondary">#4B5A59</color>
-    <color name="widget_accent">#0F766E</color>
+    <!-- 桌面小部件（浅色）：奶油底 + 深棕字，橙色（柔橙）只用在「+」上。背景半透明，系统若提供液态玻璃材质会叠在它下面 -->
+    <color name="widget_bg_top">#F2F7F2EA</color>
+    <color name="widget_bg_bottom">#F2F7F2EA</color>
+    <color name="widget_stroke">#00FFFFFF</color>
+    <color name="widget_chip">#E8794A</color>
+    <color name="widget_text">#2A2118</color>
+    <color name="widget_text_secondary">#6E5C4E</color>
+    <color name="widget_accent">#2A2118</color>
+
+    <!-- 通知栏：强调色（逾期时间等）。浅色用对比度足够的深橙，深色用品牌橙 -->
+    <color name="notification_accent">#A9441C</color>
+    <!-- 通知里「+」圆和圆环弧的填充色：浅色用柔橙，深色用品牌橙 -->
+    <color name="notification_fill">#E8794A</color>
+    <color name="notification_ink">#2A2118</color>
 </resources>

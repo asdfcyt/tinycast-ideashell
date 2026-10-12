@@ -1,0 +1,84 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=390, initial-scale=1"><title>闪念 · 今天 · 夜环</title><style>
+:root{--orange:#FF5A00;--deep:#C23F00;--cream:#FFF8F0;--brown:#24150C;--brown2:#6B5546;--amber:#F2A100;--sand:#F6EBDD;--sans:-apple-system,"PingFang SC","Noto Sans SC","Helvetica Neue",sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:390px;height:844px;background:var(--cream);overflow:hidden}
+body{font-family:var(--sans);color:var(--brown);-webkit-font-smoothing:antialiased}
+.phone{position:relative;width:390px;height:844px;overflow:hidden;background:var(--cream)}
+.status{position:relative;height:32px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--brown)}
+.status .ico{display:flex;gap:6px;align-items:center}
+.circ{width:40px;height:40px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+.fade{position:absolute;left:0;right:0;bottom:0;height:170px;background:linear-gradient(rgba(255,248,240,0),var(--cream) 66%);pointer-events:none}
+.dock{position:absolute;left:16px;right:16px;bottom:30px;display:flex;gap:12px;align-items:center}
+.nav{flex:1;height:60px;border-radius:30px;background:var(--brown);display:grid;grid-template-columns:repeat(4,1fr);padding:0 6px;align-items:center}
+.nav a{height:48px;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;color:var(--cream);font-size:11px;font-weight:700}
+.nav a.on{background:var(--orange);color:var(--brown)}
+.fab{flex:none;width:60px;height:60px;border-radius:50%;background:var(--orange);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(255,90,0,.3)}
+.gesture{position:absolute;left:0;right:0;bottom:0;height:22px}
+.gesture::after{content:"";position:absolute;left:50%;bottom:8px;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:var(--brown)}
+.h-search{display:block}
+.chk{flex:none;width:20px;height:20px;border-radius:50%;border:2px solid var(--brown)}
+.chk.hi{border-color:var(--orange)}
+
+body,.phone,html{background:var(--cream)}
+.field{position:absolute;left:0;right:0;top:0;height:330px;background:#24150C;color:#FFF1E4}
+.hd{position:relative;height:52px;padding:0 14px 0 20px;display:flex;align-items:center}
+.hd .t{flex:1}.hd h1{font-size:18px;line-height:22px;font-weight:800}.hd p{font-size:12px;line-height:16px;font-weight:600;color:#C9B3A3}
+.hd .circ{background:rgba(255,241,228,.1)}
+.hero{position:relative;display:flex;flex-direction:column;align-items:center;margin-top:6px}
+.rg{position:relative;width:176px;height:176px}
+.rg .c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.rg .c b{font-size:34px;line-height:36px;font-weight:900;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.rg .c span{font-size:11.5px;font-weight:700;color:#C9B3A3;margin-top:2px}
+.lgs{display:flex;gap:8px;margin-top:16px}
+.lgs div{height:34px;padding:0 12px;border-radius:17px;background:rgba(255,241,228,.09);display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:#E7D5C7;white-space:nowrap}
+.lgs i{width:8px;height:8px;border-radius:50%}
+.lgs b{font-size:13.5px;font-weight:800;color:#FFF1E4}
+.drawer{position:absolute;left:0;right:0;top:312px;bottom:0;background:var(--cream);border-radius:28px 28px 0 0;padding:14px 16px 0;overflow:hidden}
+.seg{height:38px;border-radius:19px;background:rgba(36,21,12,.07);display:grid;grid-template-columns:1fr 1fr;padding:3px}
+.seg a{border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:var(--brown2)}
+.seg a.on{background:var(--brown);color:var(--cream)}
+.rc{margin-top:10px;background:#fff;border-radius:24px;padding:14px 16px}
+.rc .tp{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:800;color:var(--deep);margin-bottom:6px}
+.rc .tp span{margin-left:auto;color:var(--brown2);font-weight:700}
+.rc p{font-size:14.5px;line-height:23px;font-weight:500;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.rc .dots{display:flex;gap:5px;margin-top:10px}.rc .dots i{width:16px;height:4px;border-radius:2px;background:rgba(36,21,12,.14)}.rc .dots i.on{background:var(--orange);width:26px}
+.sh{display:flex;align-items:baseline;margin:14px 8px 4px;font-size:13px;font-weight:800}.sh span{margin-left:6px;color:var(--brown2);font-weight:700}.sh u{margin-left:auto;text-decoration:none;color:var(--deep);font-size:12px;font-weight:800}
+.ls{padding:0 8px}
+.li{display:flex;align-items:center;gap:10px;height:44px;font-size:14px;font-weight:600;border-bottom:1px solid rgba(36,21,12,.08)}
+.li:last-child{border:none}
+.li .tt{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li .tm{font-size:12px;font-weight:700;color:var(--brown2);font-variant-numeric:tabular-nums}
+.li .tm.od{color:var(--deep)}
+.fade{position:absolute;left:0;right:0;bottom:0;height:170px;background:linear-gradient(rgba(255,248,240,0),var(--cream) 66%);pointer-events:none}
+</style></head><body><div class="phone"><div class="status"><span>10:12</span><span class="ico">
+<svg width="18" height="12" viewBox="0 0 18 12" fill="#FFF1E4"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+<svg width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="#FFF1E4" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 4.2a9.5 9.5 0 0 1 13 0M4 7a6 6 0 0 1 8 0"/><circle cx="8" cy="10" r="1" fill="#FFF1E4" stroke="none"/></svg>
+<svg width="26" height="12" viewBox="0 0 26 12" fill="none"><rect x="0.8" y="0.8" width="21.4" height="10.4" rx="3" stroke="#FFF1E4" stroke-width="1.5"/><rect x="2.6" y="2.6" width="14" height="6.8" rx="1.6" fill="#FFF1E4"/><rect x="23.4" y="4" width="1.8" height="4" rx=".9" fill="#FFF1E4"/></svg></span></div>
+<div class="field">
+ <div style="height:32px"></div>
+ <div class="hd"><div class="t"><h1>10月12日 周一</h1><p>还剩 5 件 · 专注 1h25m</p></div><span class="circ"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFF1E4" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg></span></div>
+ <div class="hero">
+  <div class="rg"><svg width="176" height="176" viewBox="0 0 176 176"><circle cx="88.0" cy="88.0" r="82.0" fill="none" stroke="rgba(255,241,228,.1)" stroke-width="12"/><circle cx="88.0" cy="88.0" r="82.0" fill="none" stroke="#FF5A00" stroke-width="12" stroke-linecap="round" stroke-dasharray="365.8 515.2" transform="rotate(-90 88.0 88.0)"/><circle cx="88.0" cy="88.0" r="66.0" fill="none" stroke="rgba(255,241,228,.1)" stroke-width="12"/><circle cx="88.0" cy="88.0" r="66.0" fill="none" stroke="#FFB020" stroke-width="12" stroke-linecap="round" stroke-dasharray="240.5 414.7" transform="rotate(-90 88.0 88.0)"/><circle cx="88.0" cy="88.0" r="50.0" fill="none" stroke="rgba(255,241,228,.1)" stroke-width="12"/><circle cx="88.0" cy="88.0" r="50.0" fill="none" stroke="#FFF1E4" stroke-width="12" stroke-linecap="round" stroke-dasharray="135.1 314.2" transform="rotate(-90 88.0 88.0)"/></svg><div class="c"><b>1h25</b><span>今日专注</span></div></div>
+  <div class="lgs"><div><i style="background:#FF5A00"></i>专注 <b>71%</b></div><div><i style="background:#FFB020"></i>项目 <b>58%</b></div><div><i style="background:#FFF1E4"></i>待办 <b>3/8</b></div></div>
+ </div>
+</div>
+<section class="drawer">
+ <div class="seg"><a class="on">每日回顾</a><a>随机漫步</a></div>
+ <div class="rc"><div class="tp">1 年前的今天<span>2025-10-12 · #想法</span></div>
+  <p>试了一下 flomo 的随机漫步，发现翻旧笔记比写新笔记更有意思：好像在和过去的自己聊天。以后每天早上先看一条旧的，再决定今天写什么。</p>
+  <div class="dots"><i class="on"></i><i></i><i></i></div></div>
+ <div class="sh">今天<span>5</span><u>全部</u></div>
+ <div class="ls">
+  <div class="li"><i class="chk"></i><span class="tt">交周报</span><span class="tm od">逾期 10月9日</span></div>
+  <div class="li"><i class="chk"></i><span class="tt">和设计师对稿 · 闪念 App 首页</span><span class="tm">10:30</span></div>
+  <div class="li"><i class="chk hi"></i><span class="tt">评审 Q4 方案</span><span class="tm">15:00</span></div>
+  <div class="li"><i class="chk"></i><span class="tt">临《洛神赋》第三段</span><span class="tm">20:00</span></div>
+ </div>
+ <div class="fade"></div>
+</section>
+<div class="dock"><nav class="nav">
+<a class="on"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>今天</a>
+<a><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="m8.2 12.2 2.8 2.8 4.8-5.4"/></svg>待办</a>
+<a><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>回看</a>
+<a><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/></svg>设置</a>
+</nav><div class="fab"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#24150C" stroke-width="3.2" stroke-linecap="round"><path d="M12 4.5v15M4.5 12h15"/></svg></div></div><div class="gesture"></div></div></body></html>

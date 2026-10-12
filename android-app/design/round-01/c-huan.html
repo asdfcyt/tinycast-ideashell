@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=390, initial-scale=1">
+<title>闪念 · 今天 · 环</title>
+<style>
+:root{
+  --orange:#FF5A00;
+  --orange-deep:#E04E00;
+  --cream:#FFF8F0;
+  --brown:#24150C;
+  --brown-2:#6B5546;
+  --sans:-apple-system,"PingFang SC","Noto Sans SC","Helvetica Neue",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:390px;height:844px;background:var(--cream);overflow:hidden}
+body{font-family:var(--sans);color:var(--brown);-webkit-font-smoothing:antialiased}
+.phone{position:relative;width:390px;height:844px;overflow:hidden;background:var(--cream)}
+
+/* 橙色色场 */
+.field{position:absolute;left:0;right:0;top:0;height:352px;background:var(--orange)}
+.status{position:relative;height:32px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
+.status .ico{display:flex;gap:6px;align-items:center}
+.status svg{display:block}
+.bar{position:relative;height:56px;padding:0 12px 0 24px;display:flex;align-items:center;justify-content:space-between}
+.bar h1{font-size:20px;font-weight:800;letter-spacing:0}
+.bar h1 span{font-weight:600;margin-left:8px;font-size:17px}
+.bar .sb{width:44px;height:44px;border-radius:50%;background:rgba(36,21,12,.12);display:flex;align-items:center;justify-content:center}
+
+.hero{position:relative;height:236px;padding:6px 24px 0;display:flex;gap:20px}
+.ring{position:relative;width:232px;height:232px;flex:none}
+.ring svg.r{position:absolute;inset:0}
+.ring .c{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.ring .c b{font-size:68px;line-height:68px;font-weight:900;letter-spacing:-0.03em;font-variant-numeric:tabular-nums}
+.ring .c span{font-size:15px;font-weight:700;margin-top:2px}
+.spark{position:absolute;fill:var(--cream)}
+.stats{display:flex;flex-direction:column;gap:10px;padding-top:34px;flex:1}
+.st{display:flex;align-items:baseline;gap:8px;height:48px;padding:0 4px;align-items:center}
+.st b{font-size:36px;font-weight:900;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-0.02em}
+.st span{font-size:15px;font-weight:700}
+.st.od{background:var(--brown);color:var(--cream);border-radius:24px;padding:0 16px 0 14px}
+
+/* 奶油色抽屉 */
+.drawer{position:absolute;left:0;right:0;top:332px;bottom:0;background:var(--cream);border-radius:32px 32px 0 0;padding:10px 16px 0;overflow:hidden}
+.grab{width:36px;height:4px;border-radius:2px;background:rgba(36,21,12,.2);margin:0 auto 14px}
+.fresh{height:42px;border-radius:21px;background:rgba(36,21,12,.08);display:flex;align-items:center;gap:10px;padding:0 8px 0 14px;font-size:14px;margin-bottom:14px}
+.fresh .tx{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.fresh .cd{color:var(--brown-2);font-weight:600;font-variant-numeric:tabular-nums}
+.fresh button{all:unset;height:30px;padding:0 14px;border-radius:15px;background:var(--brown);color:var(--cream);font-size:14px;font-weight:700;display:flex;align-items:center}
+.gh{display:flex;align-items:baseline;gap:8px;height:30px;padding:0 4px;font-size:16px;font-weight:800}
+.gh span{font-weight:700;color:var(--brown-2);font-size:14px;font-variant-numeric:tabular-nums}
+.pill{display:flex;align-items:center;gap:14px;height:62px;padding:0 16px 0 14px;border-radius:24px;background:#fff;margin-bottom:8px}
+.pill .cb{flex:none;width:28px;height:28px;border-radius:50%;border:2.5px solid var(--brown)}
+.pill .cb.hi{border-color:var(--orange)}
+.pill .t{font-size:17px;line-height:22px;font-weight:700}
+.pill .m{font-size:13px;line-height:18px;color:var(--brown-2);font-weight:500}
+.pill .m em{font-style:normal;color:#C23F00;font-weight:700}
+.pill.od{background:var(--brown);color:var(--cream)}
+.pill.od .cb{border-color:var(--cream)}
+.pill.od .m{color:rgba(255,248,240,.78)}
+.fade{position:absolute;left:0;right:0;bottom:0;height:170px;background:linear-gradient(rgba(255,248,240,0),var(--cream) 62%);pointer-events:none}
+
+/* 悬浮导航 + 记一条 */
+.dock{position:absolute;left:16px;right:16px;bottom:30px;display:flex;gap:12px;align-items:center}
+.nav{flex:1;height:64px;border-radius:32px;background:var(--brown);display:grid;grid-template-columns:repeat(4,1fr);padding:0 6px;align-items:center}
+.nav a{height:52px;border-radius:26px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:var(--cream);font-size:12px;font-weight:700}
+.nav a.on{background:var(--orange);color:var(--brown)}
+.fab{position:relative;flex:none;width:64px;height:64px;border-radius:50%;background:var(--orange);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(255,90,0,.35)}
+.fab .sp{position:absolute;right:-4px;top:-8px;width:20px;height:20px;fill:var(--brown)}
+.gesture{position:absolute;left:0;right:0;bottom:0;height:22px}
+.gesture::after{content:"";position:absolute;left:50%;bottom:8px;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:var(--brown)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="field">
+    <div class="status">
+      <span>09:36</span>
+      <span class="ico">
+        <svg width="18" height="12" viewBox="0 0 18 12" fill="#24150C"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5" width="3" height="7" rx="1"/><rect x="10" y="2.5" width="3" height="9.5" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+        <svg width="16" height="12" viewBox="0 0 16 12" fill="none" stroke="#24150C" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 4.2a9.5 9.5 0 0 1 13 0M4 7a6 6 0 0 1 8 0"/><circle cx="8" cy="10" r="1" fill="#24150C" stroke="none"/></svg>
+        <svg width="26" height="12" viewBox="0 0 26 12" fill="none"><rect x="0.8" y="0.8" width="21.4" height="10.4" rx="3" stroke="#24150C" stroke-width="1.5"/><rect x="2.6" y="2.6" width="14" height="6.8" rx="1.6" fill="#24150C"/><rect x="23.4" y="4" width="1.8" height="4" rx=".9" fill="#24150C"/></svg>
+      </span>
+    </div>
+    <div class="bar">
+      <h1>今天<span>10月12日 周一</span></h1>
+      <span class="sb" aria-label="搜索">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#24150C" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 20 20"/></svg>
+      </span>
+    </div>
+
+    <div class="hero">
+      <div class="ring">
+        <svg class="r" viewBox="0 0 232 232">
+          <circle cx="116" cy="116" r="92" fill="none" stroke="#24150C" stroke-opacity=".2" stroke-width="40"/>
+          <circle cx="116" cy="116" r="92" fill="none" stroke="#FFF8F0" stroke-width="40" stroke-dasharray="217 361" transform="rotate(-90 116 116)"/>
+        </svg>
+        <div class="c"><b>5</b><span>还剩</span></div>
+        <svg class="spark" style="left:196px;top:10px" width="40" height="40" viewBox="0 0 24 24"><path d="M12 2c.6 6 4 9.4 10 10-6 .6-9.4 4-10 10-.6-6-4-9.4-10-10 6-.6 9.4-4 10-10Z"/></svg>
+        <svg class="spark" style="left:170px;top:-2px" width="22" height="22" viewBox="0 0 24 24"><path d="M12 2c.6 6 4 9.4 10 10-6 .6-9.4 4-10 10-.6-6-4-9.4-10-10 6-.6 9.4-4 10-10Z"/></svg>
+        <svg class="spark" style="left:210px;top:-6px" width="15" height="15" viewBox="0 0 24 24"><path d="M12 2c.6 6 4 9.4 10 10-6 .6-9.4 4-10 10-.6-6-4-9.4-10-10 6-.6 9.4-4 10-10Z"/></svg>
+      </div>
+      <div class="stats">
+        <div class="st od"><b>1</b><span>逾期</span></div>
+        <div class="st"><b>4</b><span>今天</span></div>
+        <div class="st"><b>3</b><span>完成</span></div>
+      </div>
+    </div>
+  </div>
+
+  <section class="drawer">
+    <div class="grab"></div>
+    <div class="fresh">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="#FF5A00"><path d="M12 2c.6 6 4 9.4 10 10-6 .6-9.4 4-10 10-.6-6-4-9.4-10-10 6-.6 9.4-4 10-10Z"/></svg>
+      <span class="tx">今天试了新的工作流</span>
+      <span class="cd">3 秒</span>
+      <button>撤销</button>
+    </div>
+
+    <div class="gh">逾期<span>1</span></div>
+    <div class="pill od">
+      <i class="cb"></i>
+      <div><div class="t">交周报</div><div class="m">10月9日 周五 15:30</div></div>
+    </div>
+
+    <div class="gh" style="margin-top:8px">今天<span>4</span></div>
+    <div class="pill">
+      <i class="cb"></i>
+      <div><div class="t">和设计师对稿 · 闪念 App 首页</div><div class="m">10:30 · 闪念</div></div>
+    </div>
+    <div class="pill">
+      <i class="cb hi"></i>
+      <div><div class="t">评审 Q4 方案</div><div class="m">15:00 · <em>重要</em></div></div>
+    </div>
+    <div class="pill">
+      <i class="cb"></i>
+      <div><div class="t">临《洛神赋》第三段，写 5 遍</div><div class="m">20:00 · 书法</div></div>
+    </div>
+    <div class="pill">
+      <i class="cb"></i>
+      <div><div class="t">给导师回邮件</div><div class="m">全天</div></div>
+    </div>
+    <div class="fade"></div>
+  </section>
+
+  <div class="dock">
+    <nav class="nav">
+      <a class="on">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.500" rx="3.500"/><path d="M3.500 10h17M8 3v4M16 3v4"/></svg>今天</a>
+      <a>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.500"/><path d="m8.200 12.200 2.800 2.800 4.800-5.400"/></svg>待办</a>
+      <a>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.500"/><path d="M12 7.500V12l3 2"/></svg>回看</a>
+      <a>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/></svg>设置</a>
+    </nav>
+    <div class="fab">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#24150C" stroke-width="3.200" stroke-linecap="round"><path d="M12 4.500v15M4.500 12h15"/></svg>
+      <svg class="sp" viewBox="0 0 24 24"><path d="M12 2c.6 6 4 9.4 10 10-6 .6-9.4 4-10 10-.6-6-4-9.4-10-10 6-.6 9.4-4 10-10Z"/></svg>
+    </div>
+  </div>
+  <div class="gesture"></div>
+</div>
+</body>
+</html>

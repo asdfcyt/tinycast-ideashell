@@ -104,7 +104,7 @@ fun NoteRow(
 fun ConnectIdeashellCard(onOpenConnection: () -> Unit) {
     EmptyNote(
         title = "先连接闪念贝壳",
-        text = "笔记来自闪念贝壳。填入 API Key 后，这里会出现时间线、Daily Note、搜索和往日回顾。",
+        text = "笔记来自闪念贝壳。填入 API Key 后，这里会出现按时间排开的笔记与日记，以及这段时间的时间去向。",
         action = { Button(onClick = onOpenConnection) { Text("去连接") } },
     )
 }
