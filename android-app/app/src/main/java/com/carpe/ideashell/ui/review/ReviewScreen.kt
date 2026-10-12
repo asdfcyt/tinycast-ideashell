@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carpe.ideashell.ui.components.ScreenHeader
+import com.carpe.ideashell.ui.components.SegmentedTabs
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -57,6 +58,7 @@ fun ReviewScreen(
     val connected by viewModel.connected.collectAsStateWithLifecycle()
     val timeline by viewModel.timeline.collectAsStateWithLifecycle()
     val daily by viewModel.daily.collectAsStateWithLifecycle()
+    val dailyToday by viewModel.dailyToday.collectAsStateWithLifecycle()
     val memory by viewModel.memory.collectAsStateWithLifecycle()
     val dossier by viewModel.dossier.collectAsStateWithLifecycle()
     val pane = viewModel.pane
@@ -89,23 +91,11 @@ fun ReviewScreen(
     ) { padding ->
       Column(Modifier.padding(padding)) {
         ScreenHeader(title = "回看", subtitle = "笔记、待办与回忆，一屏看完")
-        TabRow(
-            selectedTabIndex = pane.ordinal,
-            containerColor = Color.Transparent,
-            contentColor = MaterialTheme.colorScheme.primary,
-            divider = {},
-            modifier = Modifier.padding(horizontal = 8.dp),
-        ) {
-            ReviewPane.entries.forEach { p ->
-                Tab(
-                    selected = pane == p,
-                    onClick = { viewModel.selectPane(p) },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
-                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    text = { Text(p.label, style = MaterialTheme.typography.titleSmall) },
-                )
-            }
-        }
+        SegmentedTabs(
+            labels = ReviewPane.entries.map { it.label },
+            selected = pane.ordinal,
+            onSelect = { viewModel.selectPane(ReviewPane.entries[it]) },
+        )
         PullToRefreshBox(
             isRefreshing = refreshing,
             onRefresh = { if (connected) viewModel.refresh(pane) },
@@ -143,6 +133,7 @@ fun ReviewScreen(
 
                         ReviewPane.DAILY -> dailyItems(
                             state = daily,
+                            today = dailyToday,
                             folderName = viewModel.dailyFolder,
                             onOpenNote = onOpenNote,
                             onRetry = viewModel::loadDaily,

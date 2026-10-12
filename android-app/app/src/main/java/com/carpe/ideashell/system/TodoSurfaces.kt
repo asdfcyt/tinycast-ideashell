@@ -15,7 +15,6 @@ import android.view.View
 import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
 import com.carpe.ideashell.R
 import com.carpe.ideashell.data.dida.DidaOverview
@@ -34,6 +33,10 @@ class TodoSurfaces(
     private val settings: SettingsStore,
     private val credentials: CredentialStore,
 ) {
+    /** 通知上「>」当前停在哪个任务 */
+    @Volatile
+    private var cursorId: String? = null
+
     private val order = compareBy<DidaTask>({ it.date ?: "" }, { it.time ?: "" }, { -it.priority })
 
     /** 小部件与通知都要显示的「逾期 + 今天」 */
@@ -98,7 +101,7 @@ class TodoSurfaces(
 
             snap.all.isEmpty() -> {
                 rv.setTextViewText(R.id.widget_summary, snap.summary)
-                showEmpty(rv, "今天没有待办 🎉")
+                showEmpty(rv, "今天没有待办")
             }
 
             else -> {
@@ -166,62 +169,95 @@ class TodoSurfaces(
         )
 
         val snap = todos.peek()?.let { snapshot(it) }
-        val title = snap?.summary ?: "待办"
-        val first = snap?.all?.firstOrNull()
-        val text = flash ?: first?.title ?: if (snap == null) "正在同步…" else "没有要做的事 🎉"
+        val all = snap?.all.orEmpty()
+        // 当前显示的那一项：按任务 id 记位置，任务被完成或列表变化后回到第一项
+        val currentIndex = all.indexOfFirst { it.id == cursorId }.let { if (it < 0) 0 else it }
+        val current = all.getOrNull(currentIndex)
 
-        val replyInput = RemoteInput.Builder(KEY_REPLY).setLabel("记点什么…").build()
-        val replyAction = NotificationCompat.Action.Builder(
-            R.drawable.ic_tile,
-            "记一条",
-            PendingIntent.getBroadcast(
-                context, 10,
-                Intent(context, TodoActionReceiver::class.java).setAction(TodoActionReceiver.ACTION_REPLY),
-                // 内联回复需要系统往里填输入的文字，必须是 MUTABLE
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-            ),
-        ).addRemoteInput(replyInput).build()
+        // 收起：第一行 = 任务标题，第二行 =「今天 16:00」；右侧内联 > 下一项、+ 记一条（与滴答清单一致）
+        val collapsed = RemoteViews(context.packageName, R.layout.notification_todo_collapsed).apply {
+            when {
+                current != null -> {
+                    setTextViewText(R.id.n_title, current.title)
+                    val suffix = if (all.size > 1) " · ${currentIndex + 1}/${all.size}" else ""
+                    setTextViewText(R.id.n_sub, flash ?: (whenLabel(current, current in (snap?.overdue.orEmpty())) + suffix))
+                }
+
+                else -> {
+                    setTextViewText(R.id.n_title, if (snap == null) "待办" else "今天没有待办")
+                    setTextViewText(R.id.n_sub, flash ?: if (snap == null) "正在同步…" else "点右侧 + 记一条")
+                }
+            }
+            setViewVisibility(R.id.n_next, if (all.size > 1) View.VISIBLE else View.GONE)
+            setOnClickPendingIntent(R.id.n_next, nextIntent())
+            setOnClickPendingIntent(R.id.n_add, quickAdd())
+            setOnClickPendingIntent(R.id.n_info, openApp(tab = 1))
+        }
+
+        // 展开：概览 + 逐行任务，每行圆圈直接完成
+        val big = RemoteViews(context.packageName, R.layout.notification_todo_big).apply {
+            setTextViewText(R.id.n_title, snap?.summary ?: "待办")
+            setOnClickPendingIntent(R.id.n_add, quickAdd())
+            removeAllViews(R.id.n_rows)
+            if (all.isEmpty()) {
+                setViewVisibility(R.id.n_empty, View.VISIBLE)
+                setTextViewText(R.id.n_empty, flash ?: if (snap == null) "正在同步…" else "今天没有要做的事，点右上角 + 记一条")
+            } else {
+                setViewVisibility(R.id.n_empty, View.GONE)
+                val overdue = snap?.overdue.orEmpty()
+                all.take(MAX_BIG_ROWS).forEach { t ->
+                    val row = RemoteViews(context.packageName, R.layout.notification_todo_row)
+                    row.setTextViewText(R.id.r_title, t.title)
+                    row.setTextViewText(R.id.r_time, shortWhen(t, t in overdue))
+                    row.setInt(R.id.r_check, "setColorFilter", priorityColor(t.priority, t in overdue))
+                    row.setOnClickPendingIntent(R.id.r_check, completeIntent(t.id))
+                    row.setOnClickPendingIntent(R.id.r_title, openApp(tab = 1))
+                    addView(R.id.n_rows, row)
+                }
+            }
+        }
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_tile)
-            .setColor(0xFF006A6A.toInt())
-            .setContentTitle(title)
-            .setContentText(text)
+            .setColor(0xFF0F766E.toInt())
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(collapsed)
+            .setCustomBigContentView(big)
+            // 无障碍 / 不支持自定义视图的场景用的纯文本兜底
+            .setContentTitle(current?.title ?: snap?.summary ?: "待办")
+            .setContentText(flash ?: snap?.summary)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setContentIntent(openApp(tab = 1))
-            .addAction(replyAction)
-
-        if (snap != null && snap.all.isNotEmpty()) {
-            val style = NotificationCompat.InboxStyle().setBigContentTitle(title)
-            snap.all.take(5).forEach { t ->
-                style.addLine(if (t.time != null && t in snap.today) "${t.time}  ${t.title}" else t.title)
-            }
-            builder.setStyle(style)
-        }
-        if (first != null) {
-            builder.addAction(
-                R.drawable.ic_tile,
-                "完成：" + first.title.take(8),
-                completeIntent(first.id),
-            )
-        }
-        builder.addAction(
-            R.drawable.ic_tile,
-            "刷新",
-            PendingIntent.getBroadcast(
-                context, 11,
-                Intent(context, TodoActionReceiver::class.java).setAction(TodoActionReceiver.ACTION_REFRESH),
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            ),
-        )
 
         if (NotificationManagerCompat.from(context).areNotificationsEnabled()) {
             nm.notify(NOTIFICATION_ID, builder.build())
         }
     }
+
+    /** 通知上的「>」：切到下一项任务（循环），只刷新通知，不动数据 */
+    fun showNext() {
+        val snap = todos.peek()?.let { snapshot(it) } ?: return
+        val all = snap.all
+        if (all.isEmpty()) return
+        val index = all.indexOfFirst { it.id == cursorId }
+        cursorId = all[(index + 1).mod(all.size)].id
+        updateNotification()
+    }
+
+    /** 「今天 16:00」「今天」「逾期 · 10月9日」 */
+    private fun whenLabel(t: DidaTask, overdue: Boolean): String {
+        if (overdue) return "逾期 · " + (dateLabel(t.date) ?: "")
+        return if (t.time != null) "今天 ${t.time}" else "今天"
+    }
+
+    private fun shortWhen(t: DidaTask, overdue: Boolean): String =
+        if (overdue) dateLabel(t.date).orEmpty() else t.time.orEmpty()
+
+    private fun dateLabel(date: String?): String? =
+        date?.let { runCatching { LocalDate.parse(it) }.getOrNull() }?.let { "${it.monthValue}月${it.dayOfMonth}日" }
 
     // ───────────────────────── PendingIntent ─────────────────────────
 
@@ -234,6 +270,16 @@ class TodoSurfaces(
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
+    /** 通知上的「＋」：打开轻量输入面板，不预设类型，由输入内容自动判断待办 / 笔记 / 日记 */
+    private fun quickAdd(): PendingIntent = PendingIntent.getActivity(
+        context, 101,
+        Intent(context, QuickCaptureActivity::class.java).apply {
+            action = QuickCaptureActivity.ACTION_QUICK_CAPTURE
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        },
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
     private fun quickAddTodo(): PendingIntent = PendingIntent.getActivity(
         context, 100,
         Intent(context, QuickCaptureActivity::class.java).apply {
@@ -241,6 +287,12 @@ class TodoSurfaces(
             putExtra(QuickCaptureActivity.EXTRA_KIND, "TODO")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         },
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun nextIntent(): PendingIntent = PendingIntent.getBroadcast(
+        context, 11,
+        Intent(context, TodoActionReceiver::class.java).setAction(TodoActionReceiver.ACTION_NEXT),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
@@ -258,6 +310,6 @@ class TodoSurfaces(
     companion object {
         const val CHANNEL_ID = "todo_summary"
         const val NOTIFICATION_ID = 2001
-        const val KEY_REPLY = "quick_reply"
+        private const val MAX_BIG_ROWS = 5
     }
 }

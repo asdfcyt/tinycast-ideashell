@@ -11,6 +11,8 @@
     <string name="widget_title">待办</string>
     <string name="widget_add">新建待办</string>
     <string name="widget_complete">完成</string>
+    <string name="notification_next">下一项</string>
+    <string name="notification_add">记一条</string>
     <string name="widget_description">逾期与今天的待办，点圆圈直接完成</string>
     <string name="todo_channel_name">待办常驻通知</string>
 </resources>

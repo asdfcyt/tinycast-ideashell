@@ -53,6 +53,18 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         this.origin = origin
     }
 
+    /**
+     * 面板已经开着时又来了一份新内容（例如荣耀任意门连续拖了两次、分享菜单再点一次）：
+     * 丢掉旧输入，按新内容重新开始。和 [configure] 不同，它每次都生效。
+     */
+    fun reconfigure(clip: ClipInput?, preset: CaptureKind?, origin: String) {
+        configured = false
+        text = ""
+        error = null
+        state = QuickState.Composing
+        configure(clip, preset, origin)
+    }
+
     fun submit(readClipboard: () -> String?) {
         error = null
         val currentClip = clip

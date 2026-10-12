@@ -6,12 +6,11 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
-import androidx.core.app.RemoteInput
 import com.carpe.ideashell.IdeashellApp
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** 小部件与通知上的按钮：完成任务、通知栏内联回复快记、手动刷新 */
+/** 小部件与通知上的按钮：完成任务、通知栏「下一项」、手动刷新 */
 class TodoActionReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -41,22 +40,7 @@ class TodoActionReceiver : BroadcastReceiver() {
                 }
             }
 
-            ACTION_REPLY -> {
-                val text = RemoteInput.getResultsFromIntent(intent)
-                    ?.getCharSequence(TodoSurfaces.KEY_REPLY)?.toString()?.trim().orEmpty()
-                val pending = goAsync()
-                container.appScope.launch {
-                    try {
-                        val receipt = if (text.isEmpty()) null else container.captures.submitText(text, null, "notification")
-                        // 通知上的转圈要靠重新发布通知才会停
-                        container.surfaces.updateNotification(
-                            flash = if (receipt != null) "已记下 · ${receipt.detail}" else null,
-                        )
-                    } finally {
-                        pending.finish()
-                    }
-                }
-            }
+            ACTION_NEXT -> container.surfaces.showNext()
 
             ACTION_REFRESH -> {
                 val pending = goAsync()
@@ -78,7 +62,7 @@ class TodoActionReceiver : BroadcastReceiver() {
 
     companion object {
         const val ACTION_COMPLETE = "com.carpe.ideashell.action.COMPLETE_TODO"
-        const val ACTION_REPLY = "com.carpe.ideashell.action.QUICK_REPLY"
+        const val ACTION_NEXT = "com.carpe.ideashell.action.NEXT_TODO"
         const val ACTION_REFRESH = "com.carpe.ideashell.action.REFRESH_TODOS"
         const val EXTRA_TASK_ID = "task_id"
     }

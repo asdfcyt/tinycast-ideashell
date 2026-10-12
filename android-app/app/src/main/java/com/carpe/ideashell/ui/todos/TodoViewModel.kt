@@ -12,6 +12,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.carpe.ideashell.AppContainer
 import com.carpe.ideashell.IdeashellApp
+import com.carpe.ideashell.core.parse.Quadrant
 import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.dida.Habit
@@ -34,11 +35,13 @@ sealed interface TodoEvent {
     data class Completed(val task: DidaTask) : TodoEvent
 }
 
-/** 待办页的视图：列表 / 四象限 / 整理收集箱 / 项目 / 习惯 */
+/**
+ * 待办页的视图：任务 / 项目 / 习惯。
+ * 「任务」是原来的列表 + 四象限 + 收集箱合并后的一个视图：按日期分组，行内带象限色点，顶部可按象限筛选，
+ * 没有日期的任务在末尾的「无日期」分组里，行尾「定日期」一键排期。
+ */
 enum class TodoView(val label: String) {
-    LIST("列表"),
-    QUADRANT("四象限"),
-    INBOX("收集箱"),
+    LIST("任务"),
     PROJECTS("项目"),
     HABITS("习惯"),
 }
@@ -58,6 +61,9 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
 
     var showDone by mutableStateOf(false)
     var showAllUndated by mutableStateOf(false)
+
+    /** 任务视图的象限筛选；null 表示全部 */
+    var quadrantFilter by mutableStateOf<Quadrant?>(null)
 
     /** 当前视图（留在 ViewModel 里：打开笔记再回来仍在原处） */
     var view by mutableStateOf(TodoView.LIST)

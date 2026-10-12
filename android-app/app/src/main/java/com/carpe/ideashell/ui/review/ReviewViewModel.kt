@@ -37,6 +37,9 @@ data class Async<T>(
     val error: String? = null,
 )
 
+/** 今天的 Daily Note；[note] 为空表示今天还没有记过日记 */
+data class TodayDaily(val note: com.carpe.ideashell.data.ideashell.NoteDetail?)
+
 enum class ReviewPane(val label: String) {
     TIMELINE("时间线"),
     DAILY("Daily"),
@@ -90,6 +93,10 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
     private val _daily = MutableStateFlow(Async<List<NoteBrief>>())
     val daily: StateFlow<Async<List<NoteBrief>>> = _daily.asStateFlow()
 
+    /** 今天的 Daily Note 全文（没有就是 note 为空） */
+    private val _dailyToday = MutableStateFlow(Async<TodayDaily>())
+    val dailyToday: StateFlow<Async<TodayDaily>> = _dailyToday.asStateFlow()
+
     // ── 往日回顾 ──
     private val _memory = MutableStateFlow(Async<MemoryData>())
     val memory: StateFlow<Async<MemoryData>> = _memory.asStateFlow()
@@ -107,7 +114,8 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
         if (!connected.value) return
         when (pane) {
             ReviewPane.TIMELINE -> if (_timeline.value.data == null && !_timeline.value.loading) loadTimeline()
-            ReviewPane.DAILY -> if (_daily.value.data == null && !_daily.value.loading) loadDaily()
+            // 每次进入 Daily 都悄悄刷新一次：刚在「记录」页写的日记要立刻能在这里看到（旧内容先显示，不白屏）
+            ReviewPane.DAILY -> if (!_daily.value.loading && !_dailyToday.value.loading) loadDaily()
             ReviewPane.MEMORY -> if (_memory.value.data == null && !_memory.value.loading) loadMemory()
             ReviewPane.DOSSIER -> Unit
         }
@@ -172,7 +180,28 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
 
     fun loadDaily() {
         _daily.update { it.copy(loading = true, error = null) }
-        viewModelScope.launch { runLoad(_daily) { repo.dailyNoteList() } }
+        _dailyToday.update { it.copy(loading = true, error = null) }
+        viewModelScope.launch {
+            runLoad(_daily) { repo.dailyNoteList() }
+            loadToday()
+        }
+    }
+
+    /** 从已加载的 Daily 列表里找出今天那一篇，拉取全文（强制刷新，保证看到刚记下的内容） */
+    private suspend fun loadToday() {
+        val list = _daily.value.data
+        if (list == null) {
+            // 列表本身没加载成功，今天的内容也无从谈起；错误信息由列表那一块展示
+            _dailyToday.update { it.copy(loading = false) }
+            return
+        }
+        val today = java.time.LocalDate.now().toString()
+        val brief = list.firstOrNull { it.title.contains(today) }
+        if (brief == null) {
+            _dailyToday.value = Async(data = TodayDaily(null))
+            return
+        }
+        runLoad(_dailyToday) { TodayDaily(repo.note(brief.id, force = true)) }
     }
 
     // ── 往日回顾 ──

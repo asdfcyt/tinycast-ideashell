@@ -51,9 +51,23 @@
                 <action android:name="com.carpe.ideashell.action.QUICK_CAPTURE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+
+            <!--
+                荣耀任意门 / 其他应用的 deeplink 入口：
+                ideashell://capture?text=正文&title=标题&url=链接&source=来源&kind=todo|note|daily（都可省略，text 至少要有）
+                任意门的「文字」类服务就是用这种 deeplink 拉起应用；图片 / 文件类走分享 Intent，本应用暂不接收。
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="capture"
+                    android:scheme="ideashell" />
+            </intent-filter>
         </activity>
 
-        <!-- 系统分享菜单里的「闪念 · 摘录」 -->
+        <!-- 系统分享菜单里的「闪念 · 摘录」；荣耀任意门把拖拽的文字也是按分享 Intent 投递的，一并接住 -->
         <activity-alias
             android:name=".ShareToIdeashell"
             android:exported="true"
@@ -62,7 +76,12 @@
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
             </intent-filter>
         </activity-alias>
 

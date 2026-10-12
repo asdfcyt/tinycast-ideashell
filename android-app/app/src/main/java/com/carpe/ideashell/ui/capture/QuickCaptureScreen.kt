@@ -13,12 +13,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import com.carpe.ideashell.ui.glass.AuroraBackground
 import com.carpe.ideashell.ui.glass.GlassSurface
-import com.carpe.ideashell.ui.glass.isDarkSurface
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
@@ -42,7 +37,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -68,6 +62,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -105,44 +100,21 @@ fun QuickCaptureScreen(
             enter = slideInVertically(tween(280)) { it } + fadeIn(tween(200)),
             exit = slideOutVertically(tween(200)) { it } + fadeOut(tween(160)),
         ) {
-            val sheetShape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)
-            val dark = isDarkSurface()
+            val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     // 吃掉点击，避免点到卡片时误触发「点遮罩关闭」
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
-                    .shadow(20.dp, sheetShape)
                     .clip(sheetShape)
-                    .border(
-                        1.dp,
-                        Brush.verticalGradient(listOf(Color.White.copy(alpha = if (dark) 0.40f else 0.95f), Color.White.copy(alpha = 0.04f))),
-                        sheetShape,
-                    ),
+                    .background(MaterialTheme.colorScheme.surfaceContainerLowest),
             ) {
-                // 面板下面是别的 App，没有可模糊的内容，所以自带一层光晕背景，再蒙一层薄雾，玻璃感才立得住
-                AuroraBackground(Modifier.matchParentSize())
-                Box(
-                    Modifier
-                        .matchParentSize()
-                        .background(Color.White.copy(alpha = if (dark) 0.04f else 0.38f)),
-                )
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp),
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .width(36.dp)
-                            .height(4.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.outlineVariant),
-                    )
-                    Spacer(Modifier.height(14.dp))
-
                     AnimatedContent(
                         targetState = viewModel.state,
                         transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
@@ -179,18 +151,15 @@ private fun ComposingContent(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            text = when {
-                clip != null -> "${clip.kindTag}到闪念"
-                viewModel.override == CaptureKind.TODO -> "记待办"
-                viewModel.override == CaptureKind.NOTE -> "记笔记"
-                viewModel.override == CaptureKind.DAILY -> "记日记"
-                else -> "记一条"
-            },
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 4.dp),
-        )
+        if (clip != null) {
+            Text(
+                text = "${clip.kindTag}到闪念",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
 
         if (!connected) {
             NotConnected(onOpenApp)
@@ -231,7 +200,7 @@ private fun NotConnected(onOpenApp: () -> Unit) {
     GlassSurface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        elevated = false,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("还没有连接闪念贝壳", style = MaterialTheme.typography.titleSmall)
@@ -251,7 +220,7 @@ private fun ClipPreviewCard(clip: ClipInput) {
     GlassSurface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        elevated = false,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
     ) {
         Row(Modifier.height(IntrinsicSize.Min)) {
             Box(
@@ -316,7 +285,8 @@ private fun ClipAnnotation(
 
     GlassSurface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(20.dp),
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
     ) {
         Column(Modifier.padding(start = 8.dp, end = 12.dp, top = 4.dp, bottom = 12.dp)) {
             TextField(
@@ -354,14 +324,12 @@ private fun ClipAnnotation(
                     InfoPill(text = kindTag, container = MaterialTheme.colorScheme.secondaryContainer, content = MaterialTheme.colorScheme.onSecondaryContainer)
                     analysis.folderName?.let { name ->
                         val hit = folders.any { it.equals(name, ignoreCase = true) }
-                        InfoPill(text = "📁 $name${if (hit) "" else "（新建）"}")
+                        InfoPill(text = "$name${if (hit) "" else "（新建）"}")
                     }
                     analysis.tags.forEach { InfoPill(text = "#$it") }
                 }
                 Spacer(Modifier.width(8.dp))
-                androidx.compose.material3.FilledIconButton(onClick = onSubmit, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "保存")
-                }
+                com.carpe.ideashell.ui.components.SendButton(onClick = onSubmit, enabled = true)
             }
         }
     }

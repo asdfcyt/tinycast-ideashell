@@ -32,6 +32,7 @@ import com.carpe.ideashell.domain.DossierStats
 import com.carpe.ideashell.domain.MemoryData
 import com.carpe.ideashell.ui.components.DividedRows
 import com.carpe.ideashell.ui.components.GroupLabel
+import com.carpe.ideashell.ui.components.MarkdownText
 import com.carpe.ideashell.ui.components.ListGroup
 import com.carpe.ideashell.ui.components.NoticeLine
 import com.carpe.ideashell.ui.components.RowDivider
@@ -43,6 +44,7 @@ private val RE_DAY = Regex("\\d{4}-\\d{2}-\\d{2}")
 
 fun LazyListScope.dailyItems(
     state: Async<List<NoteBrief>>,
+    today: Async<TodayDaily>,
     folderName: String,
     onOpenNote: (String) -> Unit,
     onRetry: () -> Unit,
@@ -55,28 +57,91 @@ fun LazyListScope.dailyItems(
 
         list == null -> item(key = "dn-loading") { LoadingBlock() }
 
-        list.isEmpty() -> item(key = "dn-empty") {
-            InfoCard(
-                "还没有 Daily Note",
-                "在「记录」页用「日记 …」开头写一句，内容会追加到当天的 Daily Note（文件夹「$folderName」）。",
-            )
-        }
-
         else -> {
             state.error?.let { err -> item(key = "dn-stale") { NoticeLine(err) } }
-            val today = LocalDate.now()
-            // 已按日期倒序，按「年-月」分组后顺序不变
-            list.groupBy { RE_DAY.find(it.title)?.value?.take(7) ?: "其他" }.forEach { (month, notes) ->
-                item(key = "dn-$month") {
-                    Column(Modifier.animateItem()) {
-                        GroupLabel(
-                            text = if (month == "其他") "其他" else "${month.take(4)} 年 ${month.drop(5).trimStart('0')} 月",
-                            count = notes.size,
-                        )
-                        ListGroup(Modifier.padding(top = 2.dp)) {
-                            DividedRows(notes) { DailyRow(it, today, onOpenNote) }
+            val todayDate = LocalDate.now()
+
+            // 今天：直接把正文摊开，不用再点进去
+            item(key = "dn-today") {
+                TodayDailyBlock(todayDate, today, folderName, onOpenNote, onRetry)
+            }
+
+            // 往期：已按日期倒序，按「年-月」分组后顺序不变；今天那一篇上面已经展示，这里去掉
+            val past = list.filter { RE_DAY.find(it.title)?.value != todayDate.toString() }
+            if (past.isNotEmpty()) {
+                item(key = "dn-past") {
+                    GroupLabel(text = "往期", count = past.size)
+                }
+                past.groupBy { RE_DAY.find(it.title)?.value?.take(7) ?: "其他" }.forEach { (month, notes) ->
+                    item(key = "dn-$month") {
+                        Column(Modifier.animateItem()) {
+                            GroupLabel(
+                                text = if (month == "其他") "其他" else "${month.take(4)} 年 ${month.drop(5).trimStart('0')} 月",
+                                count = notes.size,
+                            )
+                            ListGroup(Modifier.padding(top = 2.dp)) {
+                                DividedRows(notes) { DailyRow(it, todayDate, onOpenNote) }
+                            }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/** 今天的 Daily Note：标题 + 全文（Markdown）；还没有时给出写法提示 */
+@Composable
+private fun TodayDailyBlock(
+    today: LocalDate,
+    state: Async<TodayDaily>,
+    folderName: String,
+    onOpenNote: (String) -> Unit,
+    onRetry: () -> Unit,
+) {
+    val note = state.data?.note
+    Column {
+        GroupLabel(
+            text = "今天 · ${dayTitle(today)}",
+            color = MaterialTheme.colorScheme.primary,
+            trailing = {
+                if (note != null) {
+                    TextButton(onClick = { onOpenNote(note.id) }) { Text("打开全文") }
+                }
+            },
+        )
+        ListGroup(Modifier.padding(top = 2.dp)) {
+            when {
+                state.data == null && state.error != null -> Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "今天的内容没能加载：${state.error}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    TextButton(onClick = onRetry) { Text("重试") }
+                }
+
+                state.data == null -> LoadingBlock()
+
+                note == null -> Text(
+                    "今天还没有 Daily Note。在「记录」页用「日记 …」开头写一句，内容会追加到当天的 Daily Note（文件夹「$folderName」）。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp),
+                )
+
+                note.content.isBlank() -> Text(
+                    "今天的 Daily Note 还是空的。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp),
+                )
+
+                else -> Box(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                    MarkdownText(note.content)
                 }
             }
         }
@@ -221,7 +286,7 @@ fun LazyListScope.dossierItems(
                                 NoteRow(
                                     n.note,
                                     onClick = { onOpenNote(n.note.id) },
-                                    snippet = (if (n.viaSpeaker && n.mentions == 0) "🎙 有其发言　" else "") + n.snippet,
+                                    snippet = (if (n.viaSpeaker && n.mentions == 0) "有其发言　" else "") + n.snippet,
                                 )
                             }
                         }

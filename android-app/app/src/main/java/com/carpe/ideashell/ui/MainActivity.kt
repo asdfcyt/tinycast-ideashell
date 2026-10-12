@@ -10,7 +10,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -20,13 +19,19 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.CheckCircle as CheckCircleOutlined
+import androidx.compose.material.icons.outlined.Home as HomeOutlined
+import androidx.compose.material.icons.outlined.DateRange as DateRangeOutlined
+import androidx.compose.material.icons.outlined.Search as SearchOutlined
+import androidx.compose.material.icons.outlined.Settings as SettingsOutlined
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -35,6 +40,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,10 +49,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.ui.diagnostics.DiagnosticsScreen
+import com.carpe.ideashell.ui.glass.AddFab
+import com.carpe.ideashell.ui.glass.AppNavBar
 import com.carpe.ideashell.ui.glass.AuroraBackground
-import com.carpe.ideashell.ui.glass.GlassNavBar
-import com.carpe.ideashell.ui.glass.GlassNavItem
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
+import com.carpe.ideashell.ui.glass.NavBarGap
+import com.carpe.ideashell.ui.glass.NavBarHeight
+import com.carpe.ideashell.ui.capture.QuickCaptureActivity
+import androidx.compose.ui.platform.LocalContext
+import com.carpe.ideashell.ui.glass.NavItem
 import com.carpe.ideashell.ui.home.HomeScreen
 import com.carpe.ideashell.ui.review.NoteDetailScreen
 import com.carpe.ideashell.ui.review.ReviewScreen
@@ -58,11 +69,10 @@ import com.carpe.ideashell.ui.theme.IdeashellTheme
 import com.carpe.ideashell.ui.theme.isDark
 import com.carpe.ideashell.ui.todos.TodoScreen
 import com.carpe.ideashell.ui.todos.TodoViewModel
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeSource
 
-private const val PAGE_CONNECTION = -1
-private const val PAGE_NOTE = -2
+private const val PAGE_TABS = 0
+private const val PAGE_CONNECTION = 1
+private const val PAGE_NOTE = 2
 private const val TAB_HOME = 0
 private const val TAB_TODOS = 1
 private const val TAB_SEARCH = 2
@@ -70,11 +80,11 @@ private const val TAB_REVIEW = 3
 private const val TAB_SETTINGS = 4
 
 private val NAV_ITEMS = listOf(
-    GlassNavItem("记录", Icons.Filled.Create),
-    GlassNavItem("待办", Icons.Filled.CheckCircle),
-    GlassNavItem("搜索", Icons.Filled.Search),
-    GlassNavItem("回看", Icons.Filled.DateRange),
-    GlassNavItem("设置", Icons.Filled.Settings),
+    NavItem("今天", Icons.Outlined.HomeOutlined, Icons.Filled.Home),
+    NavItem("待办", Icons.Outlined.CheckCircleOutlined, Icons.Filled.CheckCircle),
+    NavItem("搜索", Icons.Outlined.SearchOutlined, Icons.Filled.Search),
+    NavItem("回看", Icons.Outlined.DateRangeOutlined, Icons.Filled.DateRange),
+    NavItem("设置", Icons.Outlined.SettingsOutlined, Icons.Filled.Settings),
 )
 
 class MainActivity : ComponentActivity() {
@@ -110,8 +120,12 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * 根布局：彩色光晕背景 + 当前页面（同属一个 Haze 背景源）+ 底部悬浮玻璃导航。
+ * 根布局：纯色背景 + 当前页面 + 底部导航。
  * 五个主页签（记录 / 待办 / 搜索 / 回看 / 设置）；「连接与诊断」与「笔记全文」作为子页面盖在上面，此时隐藏导航栏。
+ *
+ * 切页签不做任何转场动画：同时存在两个整页的组合 + 缩放 / 渐隐，是之前卡顿的主要来源。
+ * 页签之间直接切换，每个页签的滚动位置等界面状态由 [rememberSaveableStateHolder] 保存；
+ * 数据本来就在各自的 ViewModel 里，回来时先显示已有内容。只有进入 / 退出子页面才有横向滑入动画。
  */
 @Composable
 private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
@@ -124,7 +138,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
     val review: ReviewViewModel = viewModel(factory = ReviewViewModel.Factory)
     val todo: TodoViewModel = viewModel(factory = TodoViewModel.Factory)
     val subpage = connection || noteId != null
-    val haze = remember { HazeState() }
+    val stateHolder = rememberSaveableStateHolder()
 
     LaunchedEffect(requestedTab) {
         if (requestedTab != null) {
@@ -144,86 +158,116 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
     }
 
     val systemNav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    // 导航栏本体高度 66 + 上下外边距 28，再留一点呼吸空间
-    val bottomPadding = if (subpage) systemNav + 16.dp else systemNav + 66.dp + 28.dp + 12.dp
+    // 右下角的万能输入「+」：今天 / 待办 / 回看页显示；搜索和设置页不需要
+    val fabVisible = !subpage && (tab == TAB_HOME || tab == TAB_TODOS || tab == TAB_REVIEW)
+    val bottomPadding = when {
+        subpage -> systemNav + 16.dp
+        fabVisible -> systemNav + NavBarHeight + NavBarGap + 80.dp
+        else -> systemNav + NavBarHeight + NavBarGap + 12.dp
+    }
+    val context = LocalContext.current
 
     Box(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().hazeSource(haze)) {
-            AuroraBackground()
-            CompositionLocalProvider(LocalBottomBarPadding provides bottomPadding) {
-                AnimatedContent(
-                    targetState = if (noteId != null) PAGE_NOTE else if (connection) PAGE_CONNECTION else tab,
-                    transitionSpec = {
-                        when {
-                            targetState < 0 ->
-                                (slideInHorizontally(tween(300)) { it / 4 } + fadeIn(tween(260))) togetherWith fadeOut(tween(160))
+        AuroraBackground()
+        CompositionLocalProvider(LocalBottomBarPadding provides bottomPadding) {
+            AnimatedContent(
+                targetState = if (noteId != null) PAGE_NOTE else if (connection) PAGE_CONNECTION else PAGE_TABS,
+                transitionSpec = {
+                    if (targetState != PAGE_TABS) {
+                        (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(220))) togetherWith fadeOut(tween(120))
+                    } else {
+                        fadeIn(tween(200)) togetherWith (slideOutHorizontally(tween(220)) { it / 4 } + fadeOut(tween(160)))
+                    }
+                },
+                label = "page",
+            ) { page ->
+                when (page) {
+                    PAGE_CONNECTION -> DiagnosticsScreen(onBack = { connection = false })
+                    PAGE_NOTE -> NoteDetailScreen(
+                        noteId = lastNoteId[0].orEmpty(),
+                        onBack = { noteId = null },
+                        onOpenDossier = { keyword ->
+                            noteId = null
+                            tab = TAB_REVIEW
+                            review.jumpToDossier(keyword)
+                        },
+                    )
 
-                            initialState < 0 ->
-                                fadeIn(tween(260)) togetherWith (slideOutHorizontally(tween(260)) { it / 4 } + fadeOut(tween(200)))
+                    else -> stateHolder.SaveableStateProvider(tab) {
+                        when (tab) {
+                            TAB_REVIEW -> ReviewScreen(
+                                onOpenConnection = { connection = true },
+                                onOpenNote = { noteId = it },
+                            )
 
-                            else ->
-                                (fadeIn(tween(240)) + scaleIn(tween(240), initialScale = 0.97f)) togetherWith fadeOut(tween(120))
+                            TAB_TODOS -> TodoScreen(
+                                onOpenConnection = { connection = true },
+                                onOpenNote = { noteId = it },
+                                onOpenDossier = { keyword ->
+                                    tab = TAB_REVIEW
+                                    review.jumpToDossier(keyword)
+                                },
+                            )
+
+                            TAB_SEARCH -> SearchScreen(
+                                onOpenConnection = { connection = true },
+                                onOpenNote = { noteId = it },
+                                onOpenDossier = { keyword ->
+                                    tab = TAB_REVIEW
+                                    review.jumpToDossier(keyword)
+                                },
+                                onOpenProject = { keyword ->
+                                    todo.openProject = keyword
+                                    tab = TAB_TODOS
+                                },
+                                onOpenTask = { id ->
+                                    todo.pendingTask = id
+                                    tab = TAB_TODOS
+                                },
+                            )
+
+                            TAB_SETTINGS -> SettingsScreen(onOpenConnection = { connection = true })
+                            else -> HomeScreen(
+                                onOpenConnection = { connection = true },
+                                onOpenTodos = { tab = TAB_TODOS },
+                            )
                         }
-                    },
-                    label = "page",
-                ) { page ->
-                    when (page) {
-                        PAGE_CONNECTION -> DiagnosticsScreen(onBack = { connection = false })
-                        PAGE_NOTE -> NoteDetailScreen(
-                            noteId = lastNoteId[0].orEmpty(),
-                            onBack = { noteId = null },
-                            onOpenDossier = { keyword ->
-                                noteId = null
-                                tab = TAB_REVIEW
-                                review.jumpToDossier(keyword)
-                            },
-                        )
-                        TAB_REVIEW -> ReviewScreen(
-                            onOpenConnection = { connection = true },
-                            onOpenNote = { noteId = it },
-                        )
-                        TAB_TODOS -> TodoScreen(
-                            onOpenConnection = { connection = true },
-                            onOpenNote = { noteId = it },
-                            onOpenDossier = { keyword ->
-                                tab = TAB_REVIEW
-                                review.jumpToDossier(keyword)
-                            },
-                        )
-                        TAB_SEARCH -> SearchScreen(
-                            onOpenConnection = { connection = true },
-                            onOpenNote = { noteId = it },
-                            onOpenDossier = { keyword ->
-                                tab = TAB_REVIEW
-                                review.jumpToDossier(keyword)
-                            },
-                            onOpenProject = { keyword ->
-                                todo.openProject = keyword
-                                tab = TAB_TODOS
-                            },
-                            onOpenTask = { id ->
-                                todo.pendingTask = id
-                                tab = TAB_TODOS
-                            },
-                        )
-                        TAB_SETTINGS -> SettingsScreen(onOpenConnection = { connection = true })
-                        else -> HomeScreen(onOpenConnection = { connection = true })
                     }
                 }
             }
         }
 
         AnimatedVisibility(
+            visible = fabVisible,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 20.dp, bottom = systemNav + NavBarHeight + NavBarGap + 16.dp),
+            enter = fadeIn(tween(160)),
+            exit = fadeOut(tween(120)),
+        ) {
+            AddFab(
+                onClick = {
+                    context.startActivity(
+                        Intent(context, QuickCaptureActivity::class.java).apply {
+                            action = QuickCaptureActivity.ACTION_QUICK_CAPTURE
+                            // 在待办页点 + 默认记待办，其他页由输入内容自动判断
+                            if (tab == TAB_TODOS) putExtra(QuickCaptureActivity.EXTRA_KIND, "TODO")
+                        },
+                    )
+                },
+            )
+        }
+
+        AnimatedVisibility(
             visible = !subpage,
             modifier = Modifier.align(Alignment.BottomCenter),
-            enter = slideInVertically(tween(300)) { it } + fadeIn(tween(240)),
-            exit = slideOutVertically(tween(200)) { it } + fadeOut(tween(160)),
+            enter = slideInVertically(tween(240)) { it } + fadeIn(tween(200)),
+            exit = slideOutVertically(tween(180)) { it } + fadeOut(tween(140)),
         ) {
-            GlassNavBar(
+            AppNavBar(
                 items = NAV_ITEMS,
                 selected = tab,
                 onSelect = { tab = it },
-                hazeState = haze,
             )
         }
     }

@@ -7,7 +7,7 @@
     <color name="widget_bg_bottom">#A6EAF7F5</color>
     <color name="widget_stroke">#E6FFFFFF</color>
     <color name="widget_chip">#66FFFFFF</color>
-    <color name="widget_text">#161D1D</color>
-    <color name="widget_text_secondary">#4A5858</color>
-    <color name="widget_accent">#006A6A</color>
+    <color name="widget_text">#0F1F1E</color>
+    <color name="widget_text_secondary">#4B5A59</color>
+    <color name="widget_accent">#0F766E</color>
 </resources>

@@ -18,6 +18,8 @@ import com.carpe.ideashell.core.template.Template
 import com.carpe.ideashell.core.template.Templates
 import com.carpe.ideashell.data.capture.SubmitReceipt
 import com.carpe.ideashell.data.db.CaptureEntity
+import com.carpe.ideashell.data.dida.DidaOverview
+import com.carpe.ideashell.data.dida.DidaTask
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -44,6 +46,26 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     private val _events = Channel<HomeEvent>(Channel.BUFFERED)
     val events: Flow<HomeEvent> = _events.receiveAsFlow()
+
+    /** 「今天」页展示的待办（来自滴答的本地缓存，后台刷新） */
+    val overview: StateFlow<DidaOverview?> = container.todos.state
+        .map { it.overview }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), container.todos.state.value.overview)
+
+    init {
+        container.todos.refresh()
+    }
+
+    fun refreshTodos() = container.todos.refresh(force = true)
+
+    fun completeTask(task: DidaTask) {
+        viewModelScope.launch {
+            container.todos.complete(task).onFailure {
+                _events.send(HomeEvent.Message("完成失败：${it.message ?: "网络异常"}"))
+            }
+            container.surfaces.updateAll()
+        }
+    }
 
     /** @param readClipboard 输入「剪贴板」时由界面提供剪贴板里的文字 */
     fun submit(readClipboard: () -> String?) {

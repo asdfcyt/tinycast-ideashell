@@ -1,18 +1,32 @@
 package com.carpe.ideashell.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.text.font.FontWeight
+import com.carpe.ideashell.ui.glass.isDarkSurface
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -50,11 +64,11 @@ fun ScreenHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 4.dp),
+            .padding(start = 20.dp, end = 12.dp, top = 20.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.headlineMedium)
+            Text(title, style = MaterialTheme.typography.headlineSmall)
             if (!subtitle.isNullOrBlank()) {
                 Text(
                     subtitle,
@@ -81,11 +95,12 @@ fun GroupLabel(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 32.dp)
-            .padding(start = 8.dp, end = 0.dp, top = 8.dp),
+            .heightIn(min = 36.dp)
+            .padding(start = 16.dp, end = 0.dp, top = 14.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text, style = MaterialTheme.typography.titleSmall, color = color)
+        // iOS 分组标题：小号、灰色，贴着下面那张卡片的左缘
+        Text(text, style = MaterialTheme.typography.labelLarge, color = color)
         if (count != null) {
             Text(
                 "  $count",
@@ -104,8 +119,72 @@ fun ListGroup(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    GlassSurface(modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+    GlassSurface(modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
         Column(content = content)
+    }
+}
+
+/**
+ * 带标题的分组卡片（对标滴答清单的列表分组）：标题写在卡片里面——左边加粗的标题，右边是数量和折叠箭头；
+ * 下面是分组里的行。[onToggle] 不为空时点标题栏可以折叠 / 展开（[expanded] 为 false 时只剩标题栏）。
+ */
+@Composable
+fun GroupCard(
+    title: String,
+    modifier: Modifier = Modifier,
+    count: Int? = null,
+    titleColor: Color = MaterialTheme.colorScheme.onSurface,
+    expanded: Boolean = true,
+    onToggle: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    content: (@Composable ColumnScope.() -> Unit)? = null,
+) {
+    GlassSurface(modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .then(if (onToggle != null) Modifier.clickable(onClick = onToggle) else Modifier)
+                    .padding(start = 16.dp, end = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(title, style = MaterialTheme.typography.titleMedium, color = titleColor, modifier = Modifier.weight(1f))
+                if (count != null) {
+                    Text(count.toString(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+                }
+                trailing?.invoke()
+                if (onToggle != null) {
+                    Icon(
+                        if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                        contentDescription = if (expanded) "收起" else "展开",
+                        tint = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                }
+            }
+            if (expanded && content != null) content()
+        }
+    }
+}
+
+/** 页面顶部的圆形图标按钮（白底圆形，对标滴答清单的顶栏按钮） */
+@Composable
+fun CircleIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = contentDescription, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp))
     }
 }
 
@@ -115,7 +194,7 @@ fun RowDivider(inset: Dp = 16.dp) {
     HorizontalDivider(
         modifier = Modifier.padding(start = inset),
         thickness = 0.5.dp,
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f),
+        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
     )
 }
 
@@ -179,6 +258,92 @@ fun MenuPropertyRow(
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             menu { open = false }
         }
+    }
+}
+
+/**
+ * 分段控件（iOS Segmented Control）：灰色轨道 + 白色滑块，选中项文字加粗。
+ * 页面内的视图切换、输入框里的「自动 / 待办 / 日记 / 笔记」都用它；每一项高度默认 40dp，接近触控下限，
+ * 用 [outerPadding] 控制外边距（放在页面里时有左右边距，放在卡片里时设为 0）。
+ */
+@Composable
+fun SegmentedTabs(
+    labels: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    outerPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+    height: Dp = 40.dp,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val dark = isDarkSurface()
+    val thumb = if (dark) Color(0xFF636366) else scheme.surfaceContainerLowest
+    val thumbShape = RoundedCornerShape(9.dp)
+    Row(
+        modifier = modifier
+            .padding(outerPadding)
+            .height(height)
+            .clip(RoundedCornerShape(11.dp))
+            .background(scheme.surfaceContainerHigh)
+            .padding(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        labels.forEachIndexed { i, label ->
+            val active = i == selected
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .then(if (active) Modifier.shadow(1.dp, thumbShape) else Modifier)
+                    .clip(thumbShape)
+                    .background(if (active) thumb else Color.Transparent)
+                    .selectable(selected = active, role = Role.Tab, onClick = { onSelect(i) }),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (active) scheme.onSurface else scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 胶囊按钮式的筛选项（iOS 风格的 filter pill）：未选中是浅灰底，选中是青绿淡底 + 青绿文字，没有描边。
+ * [leading] 可以放一个色点或小图标。高度 36dp，行内间距 8dp 时整体触控区域满足要求。
+ */
+@Composable
+fun PillChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    leading: (@Composable () -> Unit)? = null,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = modifier
+            .height(36.dp)
+            .clip(CircleShape)
+            .background(if (selected) scheme.primaryContainer else scheme.surfaceContainerHigh)
+            .selectable(selected = selected, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        leading?.invoke()
+        Text(
+            text,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) scheme.primary else scheme.onSurface,
+            maxLines = 1,
+        )
     }
 }
 

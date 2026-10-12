@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -32,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import com.carpe.ideashell.core.parse.TimeRanges
 import com.carpe.ideashell.data.ideashell.NoteInfo
 import com.carpe.ideashell.ui.components.EmptyNote
-import com.carpe.ideashell.ui.glass.GlassSurface
 
 /**
  * 笔记行：标题 + 时间，下面一行摘要，再下面是标签。没有自己的卡片，成组放进 [com.carpe.ideashell.ui.components.ListGroup]。
@@ -134,7 +135,13 @@ fun GlassSearchField(
     onSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    GlassSurface(modifier.fillMaxWidth(), shape = CircleShape) {
+    // iOS 搜索框：浅灰底圆角矩形，没有描边
+    Box(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
         TextField(
             value = value,
             onValueChange = onValueChange,
