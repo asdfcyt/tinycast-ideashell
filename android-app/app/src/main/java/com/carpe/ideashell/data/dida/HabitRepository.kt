@@ -40,6 +40,32 @@ class HabitRepository(
         }
     }
 
+    /**
+     * [from]..[to]（含）每个习惯的打卡情况：只数「按重复规则当天需要打卡」的日子，今天也算上本机记下的打卡。
+     * 读不到打卡记录时抛异常，由调用方决定不显示。
+     */
+    suspend fun statsIn(from: LocalDate, to: LocalDate): List<HabitStat> {
+        val habits = loadHabits(false)
+        if (habits.isEmpty()) return emptyList()
+        val ids = habits.map { it.id }
+        val done = HabitParser.parseCheckinDays(
+            api.habitCheckinsRangeRaw(ids, HabitParser.stampOf(from), HabitParser.stampOf(to)),
+            ids.toSet(),
+        )
+        val todayStamp = HabitParser.stampOf(LocalDate.now())
+        val local = localDone(todayStamp)
+        val days = generateSequence(from) { it.plusDays(1) }.takeWhile { !it.isAfter(to) }.toList()
+        return habits.map { h ->
+            val due = days.filter { HabitParser.isDue(h.repeat, it) }
+            val doneStamps = done[h.id].orEmpty()
+            val n = due.count { d ->
+                val st = HabitParser.stampOf(d)
+                st in doneStamps || (st == todayStamp && h.id in local)
+            }
+            HabitStat(h.name, due.size, n)
+        }
+    }
+
     /** 给习惯打卡（写入目标值，状态为已完成） */
     suspend fun checkin(h: Habit, now: ZonedDateTime = ZonedDateTime.now()) {
         val stamp = HabitParser.stampOf(now.toLocalDate())

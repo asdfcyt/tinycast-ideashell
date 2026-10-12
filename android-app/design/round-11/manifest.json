@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "project": "闪念 · 安卓端",
+  "brief": "回看页（第 11 轮）：在 H（横滑洞察卡）基础上收紧——卡高从 254 降到 188，去掉底部三个数字，结论句收成一行，数字直接标在图里；仍然没有空白。",
+  "round": "11",
+  "nativeViewport": "390x844",
+  "candidates": [
+    {
+      "id": "h-jingjian",
+      "name": "H · 精简横滑卡",
+      "concept": "卡片只剩三层：标签 + 角标、一行结论、撑满的图。比第 9 轮的 200dp 卡还矮 12dp，但图更大、没有空白。",
+      "typography": "系统黑体。结论句 17px Extrabold 单行，标签 12.5px Extrabold，图内标注 10.5px。",
+      "palette": ["#F7F2EA", "#FFFFFF", "#2A2118", "#E8794A", "#A9441C"],
+      "traits": ["卡高 188px，首屏只占约 250px，时间轴看到更多", "右侧露出下一张卡，底部 9 个分页点", "图表区约 106px，柱、时间线、热力图都比之前大"],
+      "source": "h-jingjian.html"
+    },
+    {
+      "id": "k-quanji",
+      "name": "附 · 9 张卡全集（精简版）",
+      "concept": "时间分配、专注趋势、专注时间线、最佳专注时段、记录时刻、连续记录、记录热力图、待办、话题。",
+      "typography": "同上。",
+      "palette": ["#F7F2EA", "#FFFFFF", "#2A2118", "#E8794A", "#A9441C"],
+      "traits": ["每张卡 188px 高，一行结论 + 一张图", "热力图占满卡宽，近 26 周"],
+      "source": "k-quanji.html"
+    }
+  ]
+}

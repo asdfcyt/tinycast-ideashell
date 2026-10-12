@@ -3,10 +3,12 @@ package com.carpe.ideashell.ui.capture
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.core.content.IntentCompat
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.carpe.ideashell.IdeashellApp
@@ -21,7 +23,7 @@ import com.carpe.ideashell.ui.theme.isDark
 /**
  * 轻量输入面板，一个 Activity 服务所有入口：
  * - 快速设置磁贴 / 桌面快捷方式 / 通知上的「＋」：[ACTION_QUICK_CAPTURE]（可带 [EXTRA_KIND] 预设类型）
- * - 系统分享菜单：ACTION_SEND / ACTION_SEND_MULTIPLE（文字 / 链接）
+ * - 系统分享菜单：ACTION_SEND / ACTION_SEND_MULTIPLE（文字 / 链接 / 图片；图片走「闪念 · 图片」入口，存成带图片的笔记）
  * - 选中文字菜单：ACTION_PROCESS_TEXT
  * - 荣耀任意门：拖拽文字后系统以「分享」的方式（ACTION_SEND + EXTRA_TEXT）或 deeplink 拉起本页，
  *   所以与分享共用同一条路径；deeplink 形如 `ideashell://capture?text=正文&title=标题&url=链接&source=来源&kind=todo`
@@ -72,8 +74,15 @@ class QuickCaptureActivity : ComponentActivity() {
         var clip: ClipInput? = null
         var preset: CaptureKind? = null
         var origin = "quick"
+        // 分享进来的图片：不走「摘录」卡，直接进普通输入面板的图片栏，和相册选图是同一条路径
+        val sharedImages = sharedImageUris(intent)
+        var caption: String? = null
 
-        when (intent.action) {
+        if (sharedImages.isNotEmpty()) {
+            caption = (intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: intent.getStringExtra(Intent.EXTRA_SUBJECT))
+                ?.trim()?.takeIf { it.isNotEmpty() }
+            origin = "share"
+        } else when (intent.action) {
             Intent.ACTION_SEND -> {
                 val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: clipText(intent)
                 val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT) ?: intent.getStringExtra(Intent.EXTRA_TITLE)
@@ -114,6 +123,26 @@ class QuickCaptureActivity : ComponentActivity() {
         }
 
         if (fresh) viewModel.reconfigure(clip, preset, origin) else viewModel.configure(clip, preset, origin)
+        if (sharedImages.isNotEmpty()) {
+            if (caption != null) viewModel.text = caption
+            viewModel.addImages(this, sharedImages)
+        }
+    }
+
+    /** 分享 Intent 里的图片地址：单张在 EXTRA_STREAM，多张是列表；有些来源只把地址放在 ClipData 里 */
+    private fun sharedImageUris(intent: Intent): List<Uri> {
+        if (intent.action != Intent.ACTION_SEND && intent.action != Intent.ACTION_SEND_MULTIPLE) return emptyList()
+        val found = LinkedHashSet<Uri>()
+        IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let(found::add)
+        IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.let(found::addAll)
+        intent.clipData?.let { clip ->
+            for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(found::add)
+        }
+        // 只收图片：类型明确不是图片（比如分享一个文件）就不要硬塞进图片栏
+        return found.filter { uri ->
+            val type = contentResolver.getType(uri) ?: intent.type
+            type == null || type.startsWith("image/")
+        }
     }
 
     /** 有些来源（含部分系统拖拽）不填 EXTRA_TEXT，文字放在 ClipData 里 */

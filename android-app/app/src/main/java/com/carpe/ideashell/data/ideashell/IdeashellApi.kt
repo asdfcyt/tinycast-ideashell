@@ -137,7 +137,7 @@ class IdeashellApi(private val mcp: McpClient) {
         return NoteContent(id = noteId, title = title, content = content)
     }
 
-    // ───────────────────────── M3 回看：读取接口 ─────────────────────────
+    // ───────────────────────── M3 回顾：读取接口 ─────────────────────────
 
     /** 笔记全文（元信息 + Markdown 正文） */
     suspend fun noteFull(noteId: String): NoteDetail {

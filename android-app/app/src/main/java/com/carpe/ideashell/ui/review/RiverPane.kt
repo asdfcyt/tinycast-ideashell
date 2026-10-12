@@ -1,5 +1,6 @@
 package com.carpe.ideashell.ui.review
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -9,10 +10,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carpe.ideashell.core.parse.TimeRanges
+import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.ideashell.DailyEntry
 import com.carpe.ideashell.data.ideashell.NoteInfo
@@ -44,10 +52,12 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 /*
- * 回看的「河」（节点时刻表）：没有卡片外壳，正文直接落在底色上。每天一个大号日期头，
+ * 回顾的「河」（节点时刻表）：没有卡片外壳，正文直接落在底色上。每天一个大号日期头，
  * 下面是这一天的每一件事，按时间戳从晚到早排开：时间靠左、竖线居中、正文在右，每条记录自己是线上的一个节点。
  * Daily Note 里的每一条（`- **时间** 文字`）拆成独立的一行；Daily Note 那篇笔记本身不再重复出现。
  * 节点区分类型：日记 = 橙色实心圆，笔记 = 深色圆角方块，待办 = 空心环（完成后是灰色实心圆）。
+ * 默认只展开今天、昨天，更早的收起成一行日期头，点日期头展开 / 收起。
+ * 待办可以交互：点节点直接勾选完成（再点恢复），点文字打开任务详情。
  */
 
 /** 一天里的一行；[clock] 是 HH:mm，没有时间的待办是空字符串，排在最后 */
@@ -84,12 +94,16 @@ private fun rowsOf(day: DayBucket): List<RiverRow> = buildList {
 fun LazyListScope.riverItems(
     state: Async<TimelineData>,
     onOpenNote: (String) -> Unit,
+    onOpenTodo: (DidaTask) -> Unit,
+    onToggleTodo: (DidaTask) -> Unit,
+    isDayOpen: (LocalDate) -> Boolean,
+    onToggleDay: (LocalDate) -> Unit,
     onRetry: () -> Unit,
 ) {
     val data = state.data
     when {
         data == null && state.error != null -> item(key = "rv-error") {
-            InfoCard("没能加载回看", state.error.orEmpty(), "重试", onRetry)
+            InfoCard("没能加载回顾", state.error.orEmpty(), "重试", onRetry)
         }
 
         data == null -> item(key = "rv-loading") { LoadingBlock() }
@@ -107,7 +121,7 @@ fun LazyListScope.riverItems(
                 val today = LocalDate.now()
                 data.days.forEach { day ->
                     item(key = "rv-day-${day.date}") {
-                        DaySection(day, today, onOpenNote, Modifier.animateItem())
+                        DaySection(day, today, isDayOpen(day.date), { onToggleDay(day.date) }, onOpenNote, onOpenTodo, onToggleTodo, Modifier.animateItem())
                     }
                 }
             }
@@ -122,7 +136,11 @@ private enum class Kind { DAILY, NOTE, TODO, TODO_DONE }
 private fun DaySection(
     day: DayBucket,
     today: LocalDate,
+    open: Boolean,
+    onToggle: () -> Unit,
     onOpenNote: (String) -> Unit,
+    onOpenTodo: (DidaTask) -> Unit,
+    onToggleTodo: (DidaTask) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -138,9 +156,9 @@ private fun DaySection(
         day.todos.size.takeIf { it > 0 }?.let { "${day.todos.count { t -> t.done }}/$it 待办" },
     ).joinToString(" · ")
 
-    Column(modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+    Column(modifier.fillMaxWidth().padding(bottom = 6.dp).animateContentSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(40.dp),
+            modifier = Modifier.fillMaxWidth().height(40.dp).clickable(onClick = onToggle),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -161,14 +179,22 @@ private fun DaySection(
             }
             Box(Modifier.weight(1f))
             Text(counts, style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant, maxLines = 1)
+            Icon(
+                if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (open) "收起" else "展开",
+                tint = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp).size(20.dp),
+            )
         }
-        rows.forEachIndexed { i, row ->
-            val first = i == 0
-            val last = i == rows.lastIndex
-            when (row) {
-                is RiverRow.Daily -> DailyLine(row, first, last, onOpenNote)
-                is RiverRow.Note -> NoteLine(row.note, first, last, onOpenNote)
-                is RiverRow.Todo -> TodoLine(row.task, row.clock, first, last)
+        if (open) {
+            rows.forEachIndexed { i, row ->
+                val first = i == 0
+                val last = i == rows.lastIndex
+                when (row) {
+                    is RiverRow.Daily -> DailyLine(row, first, last, onOpenNote)
+                    is RiverRow.Note -> NoteLine(row.note, first, last, onOpenNote)
+                    is RiverRow.Todo -> TodoLine(row.task, row.clock, first, last, onOpenTodo, onToggleTodo)
+                }
             }
         }
     }
@@ -185,12 +211,14 @@ private fun TimelineRow(
     first: Boolean,
     last: Boolean,
     onClick: (() -> Unit)?,
+    onNodeClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     val line = scheme.onSurface.copy(alpha = 0.14f)
     val ink = scheme.onSurface
     val muted = scheme.onSurfaceVariant
+    Box(Modifier.fillMaxWidth()) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -227,6 +255,17 @@ private fun TimelineRow(
         )
         Spacer(Modifier.width(26.dp))
         Column(Modifier.weight(1f), content = content)
+    }
+    // 节点本身只有 12dp，点按区域放大到 36dp
+    if (onNodeClick != null) {
+        Box(
+            Modifier
+                .offset(x = (RAIL_X - 18).dp, y = (NODE_Y - 18).dp)
+                .size(36.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onNodeClick),
+        )
+    }
     }
 }
 
@@ -279,20 +318,28 @@ private fun NoteLine(note: NoteInfo, first: Boolean, last: Boolean, onOpenNote: 
 }
 
 @Composable
-private fun TodoLine(task: DidaTask, clock: String, first: Boolean, last: Boolean) {
+private fun TodoLine(
+    task: DidaTask,
+    clock: String,
+    first: Boolean,
+    last: Boolean,
+    onOpenTodo: (DidaTask) -> Unit,
+    onToggleTodo: (DidaTask) -> Unit,
+) {
     TimelineRow(
         clock = clock,
         kind = if (task.done) Kind.TODO_DONE else Kind.TODO,
         first = first,
         last = last,
-        onClick = null,
+        onClick = { onOpenTodo(task) },
+        onNodeClick = { onToggleTodo(task) },
     ) {
         Text(
-            task.title,
+            TodoMeta.cleanTitle(task.title),
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = FontWeight.SemiBold,
             textDecoration = if (task.done) TextDecoration.LineThrough else null,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (task.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )

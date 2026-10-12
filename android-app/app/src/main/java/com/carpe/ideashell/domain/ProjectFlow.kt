@@ -7,7 +7,7 @@ import com.carpe.ideashell.data.project.ProjectStatus
 import com.carpe.ideashell.data.project.firstMatching
 import java.time.LocalDate
 
-/** 一个项目在回看范围里占的份额 */
+/** 一个项目在回顾范围里占的份额 */
 data class ProjectSlice(
     val project: Project,
     /** 范围内归在这个项目名下的专注分钟（没有专注数据时为 0） */
@@ -21,7 +21,7 @@ data class ProjectSlice(
 )
 
 /**
- * 回看顶部的「时间去哪了」：把范围内的专注时长按项目拆开；
+ * 回顾顶部的「时间去哪了」：把范围内的专注时长按项目拆开；
  * 滴答没有专注记录（或没连接）时，退而按记录条数拆，由 [byFocus] 告诉界面用哪种单位。
  */
 data class ProjectFlow(

@@ -135,12 +135,15 @@ class DidaApi(private val mcp: McpClient) {
 
     suspend fun habitsRaw(): String = mcp.callText("list_habits", JsonObject(emptyMap()))
 
-    suspend fun habitCheckinsRaw(habitIds: List<String>, stamp: Int): String = mcp.callText(
+    suspend fun habitCheckinsRaw(habitIds: List<String>, stamp: Int): String = habitCheckinsRangeRaw(habitIds, stamp, stamp)
+
+    /** [fromStamp]..[toStamp]（含）每天的打卡记录 */
+    suspend fun habitCheckinsRangeRaw(habitIds: List<String>, fromStamp: Int, toStamp: Int): String = mcp.callText(
         "get_habit_checkins",
         buildJsonObject {
             putJsonArray("habit_ids") { habitIds.forEach { add(it) } }
-            put("from_stamp", stamp)
-            put("to_stamp", stamp)
+            put("from_stamp", fromStamp)
+            put("to_stamp", toStamp)
             put("client_timezone", ZoneId.systemDefault().id)
         },
     )
@@ -286,7 +289,7 @@ class DidaApi(private val mcp: McpClient) {
     }
 
     /**
-     * 指定日期范围内的任务（未完成 + 已完成），用于「时间线」回看。
+     * 指定日期范围内的任务（未完成 + 已完成），用于「时间线」回顾。
      * 接口单次最多 14 天，长范围按 14 天一段并行拉取；部分失败时跳过失败段，全部失败才抛异常。
      * 已完成任务的 `date` 为滴答返回的日期，`completedAt` 为完成时刻。
      */

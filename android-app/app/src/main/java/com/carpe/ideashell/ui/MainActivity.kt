@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +52,7 @@ import com.carpe.ideashell.ui.glass.NavItem
 import com.carpe.ideashell.ui.home.HomeScreen
 import com.carpe.ideashell.ui.review.NoteDetailScreen
 import com.carpe.ideashell.ui.review.ReviewScreen
+import com.carpe.ideashell.ui.review.ReviewViewModel
 import com.carpe.ideashell.ui.search.SearchScreen
 import com.carpe.ideashell.ui.search.SearchViewModel
 import com.carpe.ideashell.ui.settings.SettingsScreen
@@ -59,6 +61,7 @@ import com.carpe.ideashell.ui.theme.IdeashellTheme
 import com.carpe.ideashell.ui.theme.isDark
 import com.carpe.ideashell.ui.todos.TodoScreen
 import com.carpe.ideashell.ui.todos.TodoViewModel
+import kotlinx.coroutines.delay
 
 private const val PAGE_TABS = 0
 private const val PAGE_CONNECTION = 1
@@ -72,7 +75,7 @@ private const val TAB_SETTINGS = 3
 private val NAV_ITEMS = listOf(
     NavItem("今天", R.drawable.ic_nav_today),
     NavItem("待办", R.drawable.ic_nav_todo),
-    NavItem("回看", R.drawable.ic_nav_review),
+    NavItem("回顾", R.drawable.ic_nav_review),
     NavItem("设置", R.drawable.ic_nav_settings),
 )
 
@@ -110,7 +113,7 @@ class MainActivity : ComponentActivity() {
 
 /**
  * 根布局：纯色背景 + 当前页面 + 底部导航。
- * 四个主页签（今天 / 待办 / 回看 / 设置）；「搜索」「连接与诊断」「笔记全文」作为子页面盖在上面，此时隐藏导航栏。
+ * 四个主页签（今天 / 待办 / 回顾 / 设置）；「搜索」「连接与诊断」「笔记全文」作为子页面盖在上面，此时隐藏导航栏。
  * 搜索入口在各页面标题栏的右侧。
  *
  * 切页签不做任何转场动画：同时存在两个整页的组合 + 缩放 / 渐隐，是之前卡顿的主要来源。
@@ -129,6 +132,15 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
     // 搜索页的 ViewModel 提升到这里：笔记里点非项目标签时，要从外面直接发起一次搜索
     val searchVm: SearchViewModel = viewModel(factory = SearchViewModel.Factory)
     val todo: TodoViewModel = viewModel(factory = TodoViewModel.Factory)
+    // 回顾的 ViewModel 也提升到这里：启动后趁用户还在别的页签，先把时间河、专注、习惯悄悄读好，切过去就是现成的
+    val review: ReviewViewModel = viewModel(factory = ReviewViewModel.Factory)
+    val reviewConnected by review.connected.collectAsState()
+    LaunchedEffect(reviewConnected) {
+        if (reviewConnected) {
+            delay(1500)
+            review.ensureLoaded()
+        }
+    }
     val subpage = connection || search || noteId != null
     val stateHolder = rememberSaveableStateHolder()
 
@@ -215,6 +227,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit) {
                     else -> stateHolder.SaveableStateProvider(tab) {
                         when (tab) {
                             TAB_REVIEW -> ReviewScreen(
+                                viewModel = review,
                                 onOpenSearch = { search = true },
                                 onOpenConnection = { connection = true },
                                 onOpenNote = { noteId = it },

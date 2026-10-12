@@ -23,6 +23,7 @@ import com.carpe.ideashell.data.secure.SecureStore
 import com.carpe.ideashell.system.TodoRefreshScheduler
 import com.carpe.ideashell.system.TodoSurfaces
 import com.carpe.ideashell.data.settings.SettingsStore
+import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.combine
@@ -98,6 +99,7 @@ class AppContainer(context: Context) {
         todos = todos,
         settings = settings,
         credentials = credentials,
+        todayFocusMin = { daySummary.todayFocus.value?.takeIf { it.first == LocalDate.now() }?.second },
     )
 
     val processor = CaptureProcessor(
@@ -111,7 +113,7 @@ class AppContainer(context: Context) {
         onTodoCreated = { todos.refresh(force = true) },
     )
 
-    /** 回看：时间线（含 Daily Note 拆条）/ 搜索 / 往日回顾 / 提及概览 / 笔记全文 */
+    /** 回顾：时间线（含 Daily Note 拆条）/ 搜索 / 往日回顾 / 提及概览 / 笔记全文 */
     val notes = NotesRepository(
         ideashell = ideashellApi,
         dida = didaApi,
@@ -164,8 +166,9 @@ class AppContainer(context: Context) {
         appScope.launch {
             combine(
                 todos.state.map { it.overview }.distinctUntilChanged(),
-                settings.state.map { it.persistentNotification }.distinctUntilChanged(),
-            ) { _, _ -> }
+                settings.state.map { it.persistentNotification to it.focusGoalMin }.distinctUntilChanged(),
+                daySummary.todayFocus,
+            ) { _, _, _ -> }
                 .debounce(300)
                 .collect { surfaces.updateAll() }
         }

@@ -116,7 +116,7 @@ class TodoRepository(
     }
 
     /**
-     * 某一天的任务（回看过去用）：当天完成的 + 当天到期但没完成的。
+     * 某一天的任务（回顾过去用）：当天完成的 + 当天到期但没完成的。
      * 完成的任务没有计划时间时，用完成时刻当作它在时间轴上的位置。
      */
     suspend fun dayTasks(day: java.time.LocalDate): List<DidaTask> {

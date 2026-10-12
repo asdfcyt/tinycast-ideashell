@@ -17,6 +17,8 @@ class TodoRefreshWorker(context: Context, params: WorkerParameters) : CoroutineW
         val container = (applicationContext as IdeashellApp).container
         if (container.credentials.didaToken.isNullOrBlank()) return Result.success()
         container.todos.refreshNow()
+        // 通知栏的专注环要用：读一下今天的专注时长（失败就沿用上次的）
+        runCatching { container.daySummary.focus() }
         container.surfaces.updateAll()
         return Result.success()
     }

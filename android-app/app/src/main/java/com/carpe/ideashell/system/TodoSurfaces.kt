@@ -30,6 +30,7 @@ import com.carpe.ideashell.data.settings.SettingsStore
 import com.carpe.ideashell.ui.MainActivity
 import com.carpe.ideashell.ui.capture.QuickCaptureActivity
 import java.time.LocalDate
+import java.util.Locale
 
 /** 把待办投射到应用之外的两个地方：桌面小部件、通知栏常驻通知。数据都来自 [TodoRepository] 的本地缓存。 */
 class TodoSurfaces(
@@ -37,6 +38,8 @@ class TodoSurfaces(
     private val todos: TodoRepository,
     private val settings: SettingsStore,
     private val credentials: CredentialStore,
+    /** 今天已专注多少分钟；还没读到为 null */
+    private val todayFocusMin: () -> Int?,
 ) {
     /** 通知上「>」当前停在哪个任务 */
     @Volatile
@@ -182,10 +185,13 @@ class TodoSurfaces(
         // 当前显示的那一项：按任务 id 记位置，任务被完成或列表变化后回到第一项
         val currentIndex = all.indexOfFirst { it.id == cursorId }.let { if (it < 0) 0 else it }
         val current = all.getOrNull(currentIndex)
+        // 左侧的环：环弧 = 今天专注时长 / 每日专注目标，圆心 = 今天专注了多久（和「今天」页的专注环同一口径）
+        val focusMin = todayFocusMin()
+        val focusProgress = ((focusMin ?: 0).toFloat() / settings.current.focusGoalMin.coerceAtLeast(1)).coerceIn(0f, 1f)
 
         // 收起：第一行 = 任务标题，第二行 =「今天 16:00」；右侧内联 > 下一项、+ 记一条（与滴答清单一致）
         val collapsed = RemoteViews(context.packageName, R.layout.notification_todo_collapsed).apply {
-            setImageViewBitmap(R.id.n_ring, ringBitmap(all.size, snap?.progress ?: 0f))
+            setImageViewBitmap(R.id.n_ring, focusRingBitmap(focusMin, focusProgress))
             when {
                 current != null -> {
                     setTextViewText(R.id.n_title, current.title)
@@ -206,7 +212,7 @@ class TodoSurfaces(
 
         // 展开：概览 + 逐行任务，每行圆圈直接完成
         val big = RemoteViews(context.packageName, R.layout.notification_todo_big).apply {
-            setImageViewBitmap(R.id.n_ring, ringBitmap(all.size, snap?.progress ?: 0f))
+            setImageViewBitmap(R.id.n_ring, focusRingBitmap(focusMin, focusProgress))
             setTextViewText(R.id.n_title, snap?.summary ?: "待办")
             setTextViewText(
                 R.id.n_sub,
@@ -258,10 +264,10 @@ class TodoSurfaces(
     }
 
     /**
-     * 通知左侧的小圆环：和「今天」页的大圆环同一套画法——环弧是完成度，圆心是「还剩几件」。
+     * 通知左侧的小圆环：环弧是今天的专注完成度（专注时长 / 每日目标），圆心是今天专注了多久。
      * 通知背景由系统决定，所以只按系统深浅色选字色，环弧用 notification_fill（浅色柔橙 / 深色品牌橙）。
      */
-    private fun ringBitmap(remaining: Int, progress: Float): Bitmap {
+    private fun focusRingBitmap(focusMin: Int?, progress: Float): Bitmap {
         val size = (44 * context.resources.displayMetrics.density).toInt()
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -280,14 +286,30 @@ class TodoSurfaces(
             canvas.drawArc(rect, -90f, 360f * progress.coerceAtMost(1f), false, paint)
         }
 
+        val label = focusLabel(focusMin)
         val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = ink
             textAlign = Paint.Align.CENTER
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            textSize = size * if (remaining >= 10) 0.30f else 0.38f
+            // 圆心只有 ~30dp 宽：字越多字号越小
+            textSize = size * when (label.length) {
+                1 -> 0.42f
+                2 -> 0.36f
+                3 -> 0.30f
+                4 -> 0.26f
+                else -> 0.22f
+            }
         }
-        canvas.drawText(remaining.toString(), size / 2f, size / 2f - (text.ascent() + text.descent()) / 2f, text)
+        canvas.drawText(label, size / 2f, size / 2f - (text.ascent() + text.descent()) / 2f, text)
         return bitmap
+    }
+
+    /** 圆心里的专注时长：「–」未读到、「42分」「2h」「1.5h」 */
+    private fun focusLabel(min: Int?): String = when {
+        min == null -> "–"
+        min < 60 -> "${min}分"
+        min % 60 == 0 -> "${min / 60}h"
+        else -> String.format(Locale.ROOT, "%.1fh", min / 60.0)
     }
 
     /** 通知上的「>」：切到下一项任务（循环），只刷新通知，不动数据 */

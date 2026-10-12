@@ -22,7 +22,11 @@ class DailyNoteService(
     private val api: IdeashellApi,
     private val settings: SettingsStore,
 ) {
+    /** 过去日子的 Daily Note 内存缓存：日期 → (读取时间, 内容)。回顾反复进出时不用把每天的全文重读一遍 */
+    private val pastDays = HashMap<LocalDate, Pair<Long, DailyDay>>()
+
     suspend fun append(text: String, recordedAt: LocalDateTime) {
+        synchronized(pastDays) { pastDays.remove(recordedAt.toLocalDate()) }
         val date = recordedAt.toLocalDate().toString()
         val stamp = "$date ${"%02d:%02d".format(recordedAt.hour, recordedAt.minute)}"
 
@@ -134,7 +138,7 @@ class DailyNoteService(
     /**
      * [from]..[toInclusive] 之间每天的 Daily Note（含按时间戳拆开的条目）；没有 Daily Note 的天不在结果里。
      * 全文最多 [READ_PARALLEL] 路并发读，读失败的那一天跳过（不影响其它天）。
-     * 「回看」的时间河用它把每条日记拆成独立的一行。
+     * 「回顾」的时间河用它把每条日记拆成独立的一行。
      */
     suspend fun daysInRange(from: LocalDate, toInclusive: LocalDate): Map<LocalDate, DailyDay> = coroutineScope {
         val ids = LinkedHashMap<LocalDate, String>()
@@ -143,15 +147,25 @@ class DailyNoteService(
             if (!d.isBefore(from) && !d.isAfter(toInclusive)) ids.putIfAbsent(d, b.id)
         }
         val gate = Semaphore(READ_PARALLEL)
+        val today = LocalDate.now()
+        val now = System.currentTimeMillis()
         ids.entries.map { e ->
             async {
+                // 过去的日子很少再变：内存里有（且笔记 id 没变）就直接用，不再读全文
+                val hit = if (e.key.isBefore(today)) synchronized(pastDays) { pastDays[e.key] } else null
+                if (hit != null && hit.second.noteId == e.value && now - hit.first < PAST_DAY_TTL_MS) {
+                    return@async e.key to hit.second
+                }
                 gate.withPermit {
                     try {
-                        e.key to DailyDay(e.value, DailyFormat.entries(api.noteDetail(e.value).content))
+                        val day = DailyDay(e.value, DailyFormat.entries(api.noteDetail(e.value).content))
+                        if (e.key.isBefore(today)) synchronized(pastDays) { pastDays[e.key] = System.currentTimeMillis() to day }
+                        e.key to day
                     } catch (c: CancellationException) {
                         throw c
                     } catch (_: Exception) {
-                        null
+                        // 读失败：有旧的就先用旧的
+                        hit?.let { e.key to it.second }
                     }
                 }
             }
@@ -215,6 +229,7 @@ class DailyNoteService(
 
     private companion object {
         const val READ_PARALLEL = 4
+        const val PAST_DAY_TTL_MS = 10 * 60_000L
         const val PROGRESS_BATCH = 8
         val RE_ID = Regex("[a-f0-9]{32}", RegexOption.IGNORE_CASE)
         val RE_DATE = Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}")

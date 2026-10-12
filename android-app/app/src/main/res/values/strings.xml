@@ -3,6 +3,7 @@
     <string name="app_name">闪念</string>
     <string name="tile_label">闪念</string>
     <string name="share_label">闪念 · 摘录</string>
+    <string name="share_image_label">闪念 · 图片</string>
     <string name="process_text_label">记到闪念</string>
     <string name="shortcut_note_short">记一条</string>
     <string name="shortcut_note_long">快速记一条</string>

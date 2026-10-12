@@ -46,7 +46,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     val notes: StateFlow<Async<List<NoteInfo>>> = _notes.asStateFlow()
     private var job: Job? = null
 
-    /** 「提及概览」（原回看里的档案）：展开才加载；换了搜索词就收起并丢弃 */
+    /** 「提及概览」（原回顾里的档案）：展开才加载；换了搜索词就收起并丢弃 */
     var overviewOpen by mutableStateOf(false)
         private set
     private val _overview = MutableStateFlow(Async<DossierData>())

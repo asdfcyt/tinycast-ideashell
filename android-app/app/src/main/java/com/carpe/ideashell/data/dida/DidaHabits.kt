@@ -10,6 +10,9 @@ import java.time.LocalDate
 
 /** 滴答习惯 + 专注记录的宽松解析（接口返回没有公开样例，规则与桌面 `dida-habits.ts` / `dida-focus.ts` 一致） */
 
+/** 一个习惯在一段日期里：应打卡 [due] 天，完成 [done] 天 */
+data class HabitStat(val name: String, val due: Int, val done: Int)
+
 data class Habit(
     val id: String,
     val name: String,
@@ -61,6 +64,31 @@ object HabitParser {
 
     class Checkin(val id: String?, val done: Boolean)
 
+    /** 一段日期内的打卡：习惯 id → 完成了打卡的 stamp 集合（判断「完成」的规则与 [parseCheckins] 一致） */
+    fun parseCheckinDays(text: String, habitIds: Set<String>): Map<String, Set<Int>> {
+        val out = HashMap<String, MutableSet<Int>>()
+        fun walk(v: JsonElement, cur: String) {
+            when (v) {
+                is JsonArray -> v.forEach { walk(it, cur) }
+                is JsonObject -> {
+                    val hid = v.str("habitId") ?: cur
+                    val st = v.num("stamp")
+                    if (st != null && hid.isNotEmpty() && hid in habitIds) {
+                        val value = v.num("value") ?: 0.0
+                        val goal = v.num("goal") ?: 1.0
+                        val status = v.num("status")
+                        val done = status == 2.0 || (status == null && value > 0 && value >= goal)
+                        if (done) out.getOrPut(hid) { HashSet() }.add(st.toInt())
+                    }
+                    for ((k, child) in v) walk(child, if (k in habitIds) k else hid)
+                }
+                else -> Unit
+            }
+        }
+        DidaParser.parseAny(text).forEach { walk(it, "") }
+        return out
+    }
+
     /** 在返回内容里找出当天的打卡记录：对象带 stamp，所属习惯来自 habitId 字段或外层的键 */
     fun parseCheckins(text: String, habitIds: Set<String>, stamp: Int): Map<String, Checkin> {
         val out = HashMap<String, Checkin>()
@@ -95,6 +123,9 @@ object HabitParser {
 
 data class TaskFocus(val todayMin: Int = 0, val todayCount: Int = 0, val weekMin: Int = 0, val weekCount: Int = 0)
 
+/** 一次专注：起止时刻（毫秒时间戳）；回顾用它画专注趋势、时间线和最佳时段 */
+data class FocusSession(val startMs: Long, val endMs: Long)
+
 data class FocusSummary(
     val todayMin: Int = 0,
     val todayPomos: Int = 0,
@@ -102,6 +133,8 @@ data class FocusSummary(
     val weekPomos: Int = 0,
     val byTask: Map<String, TaskFocus> = emptyMap(),
     val titles: Map<String, String> = emptyMap(),
+    /** 范围内每一次专注，按开始时间从早到晚 */
+    val sessions: List<FocusSession> = emptyList(),
 )
 
 object FocusParser {
@@ -111,6 +144,7 @@ object FocusParser {
         val seen = HashSet<String>()
         val byTask = HashMap<String, TaskFocus>()
         val titles = HashMap<String, String>()
+        val sessions = ArrayList<FocusSession>()
         var todayMin = 0
         var todayPomos = 0
         var weekMin = 0
@@ -127,6 +161,7 @@ object FocusParser {
                 val id = o.str("id") ?: "${if (isPomo) "pomo" else "timing"}-$start"
                 if (!seen.add(id)) continue
                 val minutes = Math.round((end - start) / 60000.0).toInt()
+                sessions += FocusSession(start, end)
                 val isToday = start >= todayStart
                 weekMin += minutes
                 if (isPomo) weekPomos++
@@ -154,7 +189,7 @@ object FocusParser {
                 }
             }
         }
-        return FocusSummary(todayMin, todayPomos, weekMin, weekPomos, byTask, titles)
+        return FocusSummary(todayMin, todayPomos, weekMin, weekPomos, byTask, titles, sessions.sortedBy { it.startMs })
     }
 
     fun formatMinutes(min: Int): String = when {

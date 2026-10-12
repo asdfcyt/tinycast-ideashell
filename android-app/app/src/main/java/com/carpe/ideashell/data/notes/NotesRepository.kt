@@ -27,7 +27,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 /**
- * 「回看」的数据来源：时间线（含 Daily Note 拆条）/ 搜索 / 往日回顾 / 提及概览 / 笔记全文。
+ * 「回顾」的数据来源：时间线（含 Daily Note 拆条）/ 搜索 / 往日回顾 / 提及概览 / 笔记全文。
  * 全部是只读查询，没有本地数据库；笔记全文在内存里留一份小缓存，来回翻看不用重复请求。
  */
 class NotesRepository(

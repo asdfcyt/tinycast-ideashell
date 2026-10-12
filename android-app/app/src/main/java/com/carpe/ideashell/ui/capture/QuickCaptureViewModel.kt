@@ -33,7 +33,6 @@ import kotlinx.coroutines.launch
 sealed interface QuickState {
     data object Composing : QuickState
     data class Saved(val receipt: SubmitReceipt) : QuickState
-    data object Undone : QuickState
 }
 
 /** 轻量输入面板（磁贴 / 桌面快捷方式 / 分享 / 选中文字菜单共用）的状态 */
@@ -181,17 +180,6 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
                 return@launch
             }
             state = QuickState.Saved(receipt)
-        }
-    }
-
-    fun undo() {
-        val saved = state as? QuickState.Saved ?: return
-        viewModelScope.launch {
-            if (container.captures.undo(saved.receipt.id)) {
-                state = QuickState.Undone
-            } else {
-                error = "已经开始同步，无法撤销"
-            }
         }
     }
 

@@ -51,7 +51,7 @@ import com.carpe.ideashell.ui.review.NoteRow
 private const val TASK_LIMIT = 10
 
 /**
- * 搜索：一个输入框，下面按「项目 / 待办 / 笔记」分组；笔记上方有这个词的「提及概览」（原来回看里的档案）。
+ * 搜索：一个输入框，下面按「项目 / 待办 / 笔记」分组；笔记上方有这个词的「提及概览」（原来回顾里的档案）。
  * 项目和待办边输边过滤（都在本机）；笔记是语义搜索，回车后才发起。
  */
 @Composable
@@ -168,7 +168,7 @@ fun SearchScreen(
 
                     else -> {
                         val list = notes.data.orEmpty()
-                        // 提及概览：原来「回看」里的档案。已经是项目的词指向项目页，还不是的可以一键设为项目
+                        // 提及概览：原来「回顾」里的档案。已经是项目的词指向项目页，还不是的可以一键设为项目
                         item(key = "s-overview") {
                             MentionOverview(
                                 keyword = submitted,

@@ -458,9 +458,34 @@ private fun Heatmap(today: LocalDate, heat: HeatState, modifier: Modifier = Modi
     val scheme = MaterialTheme.colorScheme
     val dark = isDarkSurface()
     val empty = scheme.onSurface.copy(alpha = if (dark) 0.12f else 0.07f)
-    val levels = listOf(Brand.OrangeSoft, Brand.OrangeMid, Brand.Orange, Brand.OrangeDeep)
+    // 四档橙色由浅到深（半透明橙 → 实心橙 → 深橙），层次比固定的几个色块更分明
+    val levels = listOf(
+        Brand.Orange.copy(alpha = 0.28f),
+        Brand.Orange.copy(alpha = 0.55f),
+        Brand.Orange,
+        Brand.OrangeDeep,
+    )
     val weekStart = today.minusDays((today.dayOfWeek.value - 1).toLong())
     val first = weekStart.minusWeeks((HEAT_WEEKS - 1).toLong())
+    // 档位按这半年「有记录的日子」的条数分布来切（前 25% / 50% / 80%），而不是固定条数：
+    // 记得多的人不会满屏深色，记得少的人也看得出深浅
+    val cuts = remember(counts, today) {
+        val v = (0 until HEAT_WEEKS * 7).map { counts[first.plusDays(it.toLong())] ?: 0 }.filter { it > 0 }.sorted()
+        fun at(q: Double) = if (v.isEmpty()) 1 else v[((v.size - 1) * q).toInt()]
+        intArrayOf(at(0.25), at(0.5), at(0.8))
+    }
+    // 每个月第一次出现的那一列，上面标月份；开头那个月只剩一两列时不标，免得挤在一起
+    val months = remember(today) {
+        val out = ArrayList<Pair<Int, Int>>()
+        var prev = -1
+        for (w in 0 until HEAT_WEEKS) {
+            val m = first.plusWeeks(w.toLong()).month.value
+            if (m != prev) out += w to m
+            prev = m
+        }
+        if (out.size > 1 && out[1].first < 3) out.removeAt(0)
+        out.toList()
+    }
     val total = remember(counts, today) { (0 until HEAT_WEEKS * 7).sumOf { counts[first.plusDays(it.toLong())] ?: 0 } }
     val monthDays = remember(counts, today) {
         (1..today.dayOfMonth).count { (counts[today.withDayOfMonth(it)] ?: 0) > 0 }
@@ -483,7 +508,21 @@ private fun Heatmap(today: LocalDate, heat: HeatState, modifier: Modifier = Modi
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val gap = 3.dp
             val cell = (maxWidth - gap * (HEAT_WEEKS - 1)) / HEAT_WEEKS
-            Canvas(Modifier.fillMaxWidth().height(cell * 7 + gap * 6)) {
+            Box(Modifier.fillMaxWidth().height(14.dp)) {
+                months.forEach { (w, m) ->
+                    Text(
+                        "${m}月",
+                        fontSize = 10.sp,
+                        lineHeight = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.offset(x = (cell + gap) * w),
+                    )
+                }
+            }
+            Canvas(Modifier.fillMaxWidth().padding(top = 16.dp).height(cell * 7 + gap * 6)) {
                 val c = cell.toPx()
                 val g = gap.toPx()
                 for (w in 0 until HEAT_WEEKS) for (d in 0 until 7) {
@@ -492,9 +531,9 @@ private fun Heatmap(today: LocalDate, heat: HeatState, modifier: Modifier = Modi
                     val n = counts[date] ?: 0
                     val color = when {
                         n <= 0 -> empty
-                        n == 1 -> levels[0]
-                        n <= 3 -> levels[1]
-                        n <= 6 -> levels[2]
+                        n <= cuts[0] -> levels[0]
+                        n <= cuts[1] -> levels[1]
+                        n <= cuts[2] -> levels[2]
                         else -> levels[3]
                     }
                     drawRoundRect(

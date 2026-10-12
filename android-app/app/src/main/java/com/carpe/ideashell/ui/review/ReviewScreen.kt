@@ -50,20 +50,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carpe.ideashell.data.project.firstMatching
+import com.carpe.ideashell.data.project.taskKeyOf
 import com.carpe.ideashell.domain.Insights
 import com.carpe.ideashell.domain.TimelineData
 import com.carpe.ideashell.ui.components.ScreenHeader
 import com.carpe.ideashell.ui.components.SearchButton
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
+import com.carpe.ideashell.ui.todos.TaskSheet
+import com.carpe.ideashell.ui.todos.TaskSheetActions
+import com.carpe.ideashell.ui.todos.listNameOf
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
 /**
- * 回看：没有页签，只有一条按时间戳排开的河。
- * 顶部是「发现」一张卡：环形的时间分配（点项目进项目页）+ 记录时刻、连续记录、待办逾期、话题几条一句话结论；
- * 下面每天一个日期头，笔记、完成的待办和 Daily Note 里的每一条日记按时间戳混在一起，每条是竖线上的一个节点。
+ * 回顾：没有页签，只有一条按时间戳排开的河。
+ * 顶部是「发现」横滑卡：环形的时间分配（点项目进项目页）、专注趋势 / 时间线 / 最佳时段、记录时刻、连续记录、习惯、待办、话题；
+
+ * 下面每天一个日期头（默认只展开今天、昨天），笔记、完成的待办和 Daily Note 里的每一条日记按时间戳混在一起，每条是竖线上的一个节点。
  * 范围、今日小结、复制日报都收进标题栏的范围菜单。
  * 人物 / 主题的聚合（原来的「档案」）已经分流：成了项目的在项目页，没成项目的在搜索里。
  */
@@ -79,8 +85,10 @@ fun ReviewScreen(
     val connected by viewModel.connected.collectAsStateWithLifecycle()
     val timeline by viewModel.timeline.collectAsStateWithLifecycle()
     val flow by viewModel.flow.collectAsStateWithLifecycle()
-    // 记录时刻 / 连续记录 / 待办逾期 / 话题：全部由已加载的时间线算出，不额外请求
-    val insights = remember(timeline.data) { timeline.data?.let { Insights.build(it) } }
+    val todoData by viewModel.todoData.collectAsStateWithLifecycle()
+    val workspace by viewModel.workspace.collectAsStateWithLifecycle()
+    // 洞察卡（专注趋势 / 时间线 / 习惯 / 记录时刻……）在 ViewModel 里于后台线程算好，进页面直接用，不在组合时现算
+    val insights by viewModel.insights.collectAsStateWithLifecycle()
 
     val clipboard = LocalClipboardManager.current
     val snackbar = remember { SnackbarHostState() }
@@ -88,6 +96,7 @@ fun ReviewScreen(
     var showRangePicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(connected) { viewModel.ensureLoaded() }
+    LaunchedEffect(viewModel) { viewModel.messages.collect { text -> scope.launch { snackbar.currentSnackbarData?.dismiss(); snackbar.showSnackbar(text) } } }
 
     fun toast(text: String) {
         scope.launch {
@@ -103,7 +112,7 @@ fun ReviewScreen(
     ) { padding ->
         Column(Modifier.padding(padding)) {
             ScreenHeader(
-                title = "回看",
+                title = "回顾",
                 subtitle = subtitleOf(viewModel, timeline.data),
                 action = {
                     RangeMenu(
@@ -142,16 +151,61 @@ fun ReviewScreen(
                     if (!connected) {
                         item(key = "connect") { ConnectIdeashellCard(onOpenConnection) }
                     } else {
-                        insightsItem(flow, insights, onOpenProject)
+                        insightsItem(flow, insights, viewModel.preset?.label ?: viewModel.range.label, onOpenProject)
                         riverItems(
                             state = timeline,
                             onOpenNote = onOpenNote,
+                            onOpenTodo = { viewModel.openTodo(it.id) },
+                            onToggleTodo = viewModel::toggleTodo,
+                            isDayOpen = { viewModel.isDayOpen(it) },
+                            onToggleDay = { viewModel.toggleDay(it) },
                             onRetry = viewModel::refresh,
                         )
                     }
                 }
             }
         }
+    }
+
+    // 河里的待办：点文字打开详情，复用「待办」页的同一张任务详情（完成 / 改期 / 优先级 / 归入项目 / 任务笔记……）
+    val selected = viewModel.selectedTodo(timeline.data)
+    if (selected != null) {
+        // 清单名只在待办页打开过 / 同步过才有；没有时回落成「滴答清单」
+        val listName = todoData.overview?.let { listNameOf(it, selected.projectId) }?.ifBlank { null } ?: "滴答清单"
+        TaskSheet(
+            task = selected,
+            listName = listName,
+            today = remember { LocalDate.now() },
+            projects = workspace.projects,
+            currentProject = workspace.projects.firstMatching(selected.title, selected.tags),
+            note = workspace.taskNotes[taskKeyOf(selected.id)],
+            actions = TaskSheetActions(
+                onComplete = {
+                    viewModel.openTodo(null)
+                    viewModel.toggleTodo(selected)
+                },
+                onCompleteWithReview = { review ->
+                    viewModel.openTodo(null)
+                    viewModel.completeTodoWithReview(selected, review)
+                },
+                onReschedule = { date, time -> viewModel.rescheduleTodo(selected, date, time) },
+                onPriority = { viewModel.setTodoPriority(selected, it) },
+                onToggleMark = { viewModel.toggleTodoMark(selected, it) },
+                onRename = { viewModel.renameTodo(selected, it) },
+                onAssignProject = { viewModel.assignTodoProject(selected, it) },
+                onDelete = {
+                    viewModel.openTodo(null)
+                    viewModel.deleteTodo(selected)
+                },
+                onCreateNote = { d, p, st -> viewModel.createTodoNote(selected, d, p, st) },
+                onOpenNote = {
+                    viewModel.openTodo(null)
+                    onOpenNote(it)
+                },
+                onProgress = { noteId, text -> viewModel.addTodoProgress(selected, noteId, text) },
+            ),
+            onDismiss = { viewModel.openTodo(null) },
+        )
     }
 
     if (showRangePicker) {

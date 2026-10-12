@@ -6,10 +6,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +19,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -30,20 +33,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carpe.ideashell.core.parse.TimeRanges
+import com.carpe.ideashell.domain.FocusInsight
+import com.carpe.ideashell.domain.FocusLine
+import com.carpe.ideashell.domain.HabitInsight
 import com.carpe.ideashell.domain.Insights
 import com.carpe.ideashell.domain.ProjectFlow
 import com.carpe.ideashell.domain.ProjectSlice
@@ -53,23 +65,33 @@ import com.carpe.ideashell.domain.TodoInsight
 import com.carpe.ideashell.domain.TopicInsight
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.theme.Brand
+import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 /*
- * 回看顶部的「发现」：首屏只让一张卡当主角，其余横滑查看，把首屏的大部分留给下面的时间轴。
- * 第一张是环形的时间分配（按项目拆专注时长，没有专注数据时按记录条数）；
- * 后面每张卡讲一件事，一句结论 + 一张图：记录时刻（24 小时柱）、连续记录（七日点）、待办逾期、常提到的话题。
- * 结论里的关键数字用橙色荧光笔标出（文字里用 «» 包起来）；没有数据撑起来的卡直接不出现；只剩一张卡时不做分页。
+ * 回顾顶部的「发现」：首屏只让一张卡当主角，其余横滑查看，把首屏的大部分留给下面的时间轴。
+ * 每张卡只有三层：标签 + 右上角标、一行结论、撑满剩余空间的图——图占满，所以不会有大片空白。
+ *
+ * 卡的顺序（没有数据撑起来的那张直接不出现；只剩一张时不做分页）：
+ *   时间分配（环形，按项目拆专注时长）→ 专注趋势（每日柱 + 日均虚线）→ 专注时间线（每天一行，橙块 = 一次专注）
+ *   → 最佳专注时段（24 小时柱）→ 记录时刻（24 小时柱）→ 连续记录（每日记录量柱）
+ *   → 项目（谁记得最多、谁久没记）→ 习惯（打卡完成率）→ 待办（按时 / 延期 / 未完成）→ 话题（高频标签）。
+ * 结论里的关键数字用橙色荧光笔标出（文字里用 «» 包起来）。
  */
-fun LazyListScope.insightsItem(flow: ProjectFlow, insights: Insights?, onOpenProject: (String) -> Unit) {
+fun LazyListScope.insightsItem(
+    flow: ProjectFlow,
+    insights: Insights?,
+    rangeLabel: String,
+    onOpenProject: (String) -> Unit,
+) {
     val hasRing = flow.slices.any { flow.weightOf(it) > 0 || it.stale }
     val ins = insights ?: Insights.Empty
     if (!hasRing && ins.isEmpty) return
-    item(key = "insights") { InsightsPager(flow, ins, hasRing, onOpenProject) }
+    item(key = "insights") { InsightsPager(flow, ins, hasRing, rangeLabel, onOpenProject) }
 }
 
-private const val CARD_HEIGHT = 200
+private const val CARD_HEIGHT = 188
 
 private class Seg(val name: String, val value: Int, val color: Color, val keyword: String?)
 
@@ -80,15 +102,35 @@ private fun shortMinutes(min: Int): String = when {
     else -> "${min / 60}h${"%02d".format(min % 60)}"
 }
 
+/** 日均「2 小时」「45 分钟」 */
+private fun averageText(min: Int): String =
+    if (min >= 60) String.format(Locale.ROOT, "%.1f", min / 60.0).removeSuffix(".0") + " 小时" else "$min 分钟"
+
 @Composable
-private fun InsightsPager(flow: ProjectFlow, insights: Insights, hasRing: Boolean, onOpenProject: (String) -> Unit) {
+private fun InsightsPager(
+    flow: ProjectFlow,
+    insights: Insights,
+    hasRing: Boolean,
+    rangeLabel: String,
+    onOpenProject: (String) -> Unit,
+) {
     val pages = buildList<@Composable () -> Unit> {
-        if (hasRing) add { AllocationCard(flow, onOpenProject) }
-        insights.rhythm?.let { add { RhythmCard(it) } }
+        if (hasRing) add { AllocationCard(flow, rangeLabel, onOpenProject) }
+        insights.focus?.let { f ->
+            if (f.hasTrend) {
+                add { FocusTrendCard(f) }
+                add { FocusTimelineCard(f) }
+            }
+            if (f.bestStart != null) add { BestFocusCard(f, rangeLabel) }
+        }
+        insights.rhythm?.let { add { RhythmCard(it, rangeLabel) } }
         insights.streak?.let { add { StreakCard(it) } }
+        projectRows(flow)?.let { add { ProjectsCard(it, rangeLabel, onOpenProject) } }
+        insights.habit?.let { add { HabitCard(it) } }
         insights.todo?.let { add { TodoCard(it) } }
-        insights.topic?.let { add { TopicCard(it) } }
+        insights.topic?.let { add { TopicCard(it, rangeLabel) } }
     }
+    if (pages.isEmpty()) return
     if (pages.size == 1) {
         pages[0]()
         return
@@ -123,40 +165,64 @@ private fun InsightsPager(flow: ProjectFlow, insights: Insights, hasRing: Boolea
     }
 }
 
-/** 一张卡：固定高度，顶上一行小标签，其余由内容自己排 */
+/** 一张卡：固定高度；顶上标签 + 右上角标，下面一行结论，图占满剩下的全部空间 */
 @Composable
-private fun InsightCard(label: String, content: @Composable ColumnScope.() -> Unit) {
-    GlassSurface(Modifier.fillMaxWidth().height(CARD_HEIGHT.dp), shape = RoundedCornerShape(24.dp)) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.ExtraBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            content()
+private fun InsightCard(
+    label: String,
+    meta: String?,
+    headline: AnnotatedString?,
+    content: @Composable () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    GlassSurface(Modifier.fillMaxWidth().height(CARD_HEIGHT.dp), shape = RoundedCornerShape(22.dp)) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Row(
+                Modifier.fillMaxWidth().height(20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = scheme.onSurface,
+                )
+                if (!meta.isNullOrBlank()) {
+                    Text(
+                        meta,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .widthIn(max = 140.dp)
+                            .clip(CircleShape)
+                            .background(scheme.onSurface.copy(alpha = 0.06f))
+                            .padding(horizontal = 9.dp, vertical = 2.dp),
+                    )
+                }
+            }
+            if (headline != null) {
+                Text(
+                    headline,
+                    fontSize = 17.sp,
+                    lineHeight = 24.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Box(Modifier.weight(1f).fillMaxWidth().padding(top = 10.dp)) { content() }
         }
     }
-}
-
-/** 卡里的一句结论 */
-@Composable
-private fun Headline(text: AnnotatedString) {
-    Text(
-        text,
-        fontSize = 18.sp,
-        lineHeight = 25.sp,
-        fontWeight = FontWeight.ExtraBold,
-        modifier = Modifier.padding(top = 4.dp),
-        maxLines = 3,
-        overflow = TextOverflow.Ellipsis,
-    )
 }
 
 // ───────────────────────── 时间分配 ─────────────────────────
 
 @Composable
-private fun AllocationCard(flow: ProjectFlow, onOpenProject: (String) -> Unit) {
+private fun AllocationCard(flow: ProjectFlow, rangeLabel: String, onOpenProject: (String) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val palette = listOf(scheme.onSurface, Brand.Orange, Brand.OrangeMid)
     val weighted = flow.slices.filter { flow.weightOf(it) > 0 }
@@ -167,18 +233,20 @@ private fun AllocationCard(flow: ProjectFlow, onOpenProject: (String) -> Unit) {
         if (rest > 0) add(Seg("其他", rest, scheme.onSurface.copy(alpha = 0.18f), null))
     }
     val total = segs.sumOf { it.value }
-    val stale = flow.slices.filter { it.stale && flow.weightOf(it) == 0 }.take(2)
-    val title = when {
+    val stale = flow.slices.filter { it.stale && flow.weightOf(it) == 0 }.take((5 - segs.size).coerceIn(0, 2))
+    val top = segs.firstOrNull { it.keyword != null }
+    val headline = when {
         total == 0 -> "项目动态"
-        flow.byFocus -> "时间分配 · 本期共 ${shortMinutes(flow.totalMin)}"
-        else -> "项目动态 · 共 $total 条记录"
+        flow.byFocus -> "本期专注 «${shortMinutes(flow.totalMin)}»" +
+            (top?.let { "，${it.name}占 ${(100f * it.value / total).roundToInt()}%" } ?: "")
+        else -> "共 «$total 条» 记录" + (top?.let { "，${it.name}最多" } ?: "")
     }
 
-    InsightCard(title) {
+    InsightCard(if (flow.byFocus) "时间分配" else "项目动态", rangeLabel, marked(headline)) {
         Row(
-            Modifier.fillMaxWidth().weight(1f),
+            Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (total > 0) {
                 Ring(
@@ -205,9 +273,9 @@ private fun AllocationCard(flow: ProjectFlow, onOpenProject: (String) -> Unit) {
 
 @Composable
 private fun Ring(segs: List<Seg>, total: Int, center: String, caption: String) {
-    Box(Modifier.size(104.dp), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(104.dp)) {
-            val sw = 11.dp.toPx()
+    Box(Modifier.size(88.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(88.dp)) {
+            val sw = 10.dp.toPx()
             val arcSize = Size(size.width - sw, size.height - sw)
             var start = -90f
             for (seg in segs) {
@@ -226,8 +294,8 @@ private fun Ring(segs: List<Seg>, total: Int, center: String, caption: String) {
             }
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(center, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, maxLines = 1)
-            Text(caption, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(center, fontSize = 16.sp, lineHeight = 19.sp, fontWeight = FontWeight.Black, maxLines = 1)
+            Text(caption, fontSize = 10.5.sp, lineHeight = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -245,7 +313,7 @@ private fun LegendRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 28.dp)
+            .heightIn(min = 21.dp)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -285,36 +353,100 @@ private fun StaleRow(s: ProjectSlice, onOpenProject: (String) -> Unit) {
     )
 }
 
+// ───────────────────────── 专注：趋势 / 时间线 / 最佳时段 ─────────────────────────
+
+@Composable
+private fun FocusTrendCard(f: FocusInsight) {
+    val n = f.days.size
+    val shortDays = n <= 7
+    val weekday = TimeRanges.weekdayName(f.bestDay)
+    InsightCard(
+        label = "专注趋势",
+        meta = "共 ${shortMinutes(f.minutes.sum())}",
+        headline = marked("日均专注 «${averageText(f.avgMin)}»，$weekday 最多"),
+    ) {
+        BarChart(
+            values = f.minutes,
+            labels = f.days.map { if (shortDays) TimeRanges.weekdayName(it).takeLast(1) else it.dayOfMonth.toString() },
+            valueLabels = if (shortDays) f.minutes.map { if (it > 0) shortMinutes(it) else "" } else null,
+            lit = f.minutes.map { it >= f.avgMin },
+            nowIndex = n - 1,
+            average = f.avgMin,
+        )
+    }
+}
+
+@Composable
+private fun FocusTimelineCard(f: FocusInsight) {
+    val period = periodOf(f.hours)
+    val headline = when {
+        period == null -> "专注分散在一天里"
+        period.second >= 50 -> "«${period.first}»是主战场，占 ${period.second}%"
+        else -> "«${period.first}»专注最多，占 ${period.second}%"
+    }
+    InsightCard("专注时间线", "近 ${f.lines.size} 天", marked(headline)) { FocusTimeline(f.lines) }
+}
+
+@Composable
+private fun BestFocusCard(f: FocusInsight, rangeLabel: String) {
+    val start = f.bestStart ?: return
+    val scheme = MaterialTheme.colorScheme
+    InsightCard(
+        label = "最佳专注时段",
+        meta = rangeLabel,
+        headline = marked("«$start–${start + 2} 点»最容易专注，占 ${f.bestShare}%"),
+    ) {
+        HourBars(f.hours, start..(start + 1), scheme.onSurface.copy(alpha = 0.2f))
+    }
+}
+
+/** 凌晨 / 上午 / 下午 / 晚上里专注最多的一段和它的占比 */
+private fun periodOf(hours: List<Int>): Pair<String, Int>? {
+    val total = hours.sum()
+    if (total <= 0) return null
+    val parts = listOf("凌晨" to 0..4, "上午" to 5..11, "下午" to 12..17, "晚上" to 18..23)
+    val best = parts.maxByOrNull { (_, r) -> r.sumOf { hours[it] } } ?: return null
+    return best.first to (100f * best.second.sumOf { hours[it] } / total).roundToInt()
+}
+
 // ───────────────────────── 记录时刻 ─────────────────────────
 
 @Composable
-private fun RhythmCard(r: RhythmInsight) {
+private fun RhythmCard(r: RhythmInsight, rangeLabel: String) {
     val scheme = MaterialTheme.colorScheme
-    val maxV = (r.hours.maxOrNull() ?: 1).coerceAtLeast(1)
-    val ink = scheme.onSurface.copy(alpha = 0.22f)
-    InsightCard("记录时刻") {
-        Headline(
-            marked(if (r.verb == "记录") "最常在 «${r.peakLabel}» 记录" else "你习惯在 «${r.peakLabel}» ${r.verb}"),
-        )
-        Box(Modifier.weight(1f))
+    InsightCard(
+        label = "记录时刻",
+        meta = rangeLabel,
+        headline = marked(if (r.verb == "记录") "最常在 «${r.peakLabel}» 记录" else "习惯在 «${r.peakLabel}» ${r.verb}"),
+    ) {
+        HourBars(r.hours, r.peakRange, scheme.onSurface.copy(alpha = 0.22f))
+    }
+}
+
+/** 24 小时的柱，[lit] 里的小时涂橙，底下一行 0 / 6 / 12 / 18 / 24 */
+@Composable
+private fun HourBars(values: List<Int>, lit: IntRange, ink: Color) {
+    val scheme = MaterialTheme.colorScheme
+    val maxV = (values.maxOrNull() ?: 1).coerceAtLeast(1)
+    Column(Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(52.dp),
+            modifier = Modifier.weight(1f).fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
-            r.hours.forEachIndexed { h, v ->
+            values.forEachIndexed { h, v ->
                 Box(
                     Modifier
                         .weight(1f)
-                        .fillMaxHeight((v.toFloat() / maxV).coerceAtLeast(0.06f))
+                        .fillMaxHeight((v.toFloat() / maxV).coerceIn(0.04f, 1f))
                         .clip(RoundedCornerShape(2.dp))
-                        .background(if (h in r.peakRange) Brand.Orange else ink),
+                        .background(if (h in lit) Brand.Orange else ink),
                 )
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 3.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             listOf("0", "6", "12", "18", "24").forEach {
-                Text(it, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold, color = scheme.onSurfaceVariant)
+                Text(it, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.ExtraBold, color = scheme.onSurfaceVariant)
             }
         }
     }
@@ -324,31 +456,161 @@ private fun RhythmCard(r: RhythmInsight) {
 
 @Composable
 private fun StreakCard(s: StreakInsight) {
-    val scheme = MaterialTheme.colorScheme
-    InsightCard("连续记录") {
-        Headline(
-            marked("«${s.activeDays}/${s.spanDays} 天» 有记录" + if (s.streak >= 2) "，连续 ${s.streak} 天" else ""),
+    val headline = when {
+        s.streak >= 2 -> "«连续 ${s.streak} 天»有记录" +
+            (s.breakDay?.let { "，${TimeRanges.weekdayName(it)}断了" } ?: "")
+        else -> "«${s.activeDays}/${s.spanDays} 天»有记录"
+    }
+    val shortDays = s.days.size <= 7
+    InsightCard("连续记录", "${s.activeDays}/${s.spanDays} 天", marked(headline)) {
+        BarChart(
+            values = s.counts,
+            labels = s.days.map { if (shortDays) TimeRanges.weekdayName(it).takeLast(1) else it.dayOfMonth.toString() },
+            valueLabels = if (shortDays) s.counts.map { it.toString() } else null,
+            lit = s.counts.map { it > 0 },
+            nowIndex = s.days.lastIndex,
+            average = null,
         )
-        Box(Modifier.weight(1f))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            s.lastWeek.forEachIndexed { i, on ->
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Box(
-                        Modifier
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .then(
-                                if (on) Modifier.background(Brand.Orange)
-                                else Modifier.border(2.dp, scheme.onSurface.copy(alpha = 0.25f), CircleShape),
-                            ),
-                    )
+    }
+}
+
+/**
+ * 通用柱状图：每天一根柱，没有值的那天是空心小圆角；[average] 不为空时画一条横贯的日均虚线；
+ * [lit] 的柱涂橙色，其余是淡色；[nowIndex] 那一天的标签用主色。
+ */
+@Composable
+private fun BarChart(
+    values: List<Int>,
+    labels: List<String>,
+    valueLabels: List<String>?,
+    lit: List<Boolean>,
+    nowIndex: Int,
+    average: Int?,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val maxV = (values.maxOrNull() ?: 1).coerceAtLeast(1)
+    val labelH = 14.dp
+    val valueH = if (valueLabels != null) 12.dp else 0.dp
+    val gap = 2.dp
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        // 最高的柱：总高度减去上面的数值、下面的标签和三处小间距
+        val barMax: Dp = (maxHeight - labelH - valueH - gap * 3).coerceAtLeast(10.dp)
+        Row(
+            Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(if (values.size > 7) 4.dp else 8.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            values.forEachIndexed { i, v ->
+                Column(
+                    Modifier.weight(1f).fillMaxHeight(),
+                    verticalArrangement = Arrangement.Bottom,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    if (valueLabels != null) {
+                        Text(
+                            valueLabels[i],
+                            fontSize = 10.sp,
+                            lineHeight = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = scheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                    Spacer(Modifier.height(gap))
+                    if (v > 0) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(barMax * v / maxV)
+                                .clip(RoundedCornerShape(5.dp))
+                                .background(if (lit[i]) Brand.Orange else scheme.onSurface.copy(alpha = 0.2f)),
+                        )
+                    } else {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .border(2.dp, scheme.onSurface.copy(alpha = 0.25f), RoundedCornerShape(5.dp)),
+                        )
+                    }
+                    Spacer(Modifier.height(gap))
                     Text(
-                        TimeRanges.weekdayName(s.lastWeekDays[i]).takeLast(1),
-                        style = MaterialTheme.typography.labelSmall,
+                        labels[i],
+                        fontSize = 10.5.sp,
+                        lineHeight = 14.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color = if (i == s.lastWeek.lastIndex) scheme.primary else scheme.onSurfaceVariant,
+                        color = if (i == nowIndex) scheme.primary else scheme.onSurfaceVariant,
+                        maxLines = 1,
                     )
                 }
+            }
+        }
+        if (average != null && average > 0) {
+            val dash = scheme.onSurface.copy(alpha = 0.35f)
+            Canvas(Modifier.fillMaxSize()) {
+                val y = size.height - (labelH + gap).toPx() - barMax.toPx() * average / maxV
+                drawLine(
+                    color = dash,
+                    start = Offset(0f, y),
+                    end = Offset(size.width, y),
+                    strokeWidth = 2.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
+                )
+            }
+        }
+    }
+}
+
+// ───────────────────────── 专注时间线 ─────────────────────────
+
+/** 每天一行：灰色轨道是 0–24 点，橙块是当天的每一次专注 */
+@Composable
+private fun FocusTimeline(lines: List<FocusLine>) {
+    val scheme = MaterialTheme.colorScheme
+    val track = scheme.onSurface.copy(alpha = 0.07f)
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.weight(1f).fillMaxWidth()) {
+            lines.forEach { line ->
+                Row(
+                    Modifier.weight(1f).fillMaxWidth().padding(vertical = 1.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // 行高只有 11dp 上下：字去掉上下留白、不换行，并允许超出行高显示，免得被截成半个字
+                    Text(
+                        TimeRanges.weekdayName(line.date).takeLast(1),
+                        style = TextStyle(
+                            fontSize = 10.sp,
+                            lineHeight = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = scheme.onSurfaceVariant,
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.Both),
+                        ),
+                        softWrap = false,
+                        maxLines = 1,
+                        modifier = Modifier.width(18.dp).wrapContentHeight(align = Alignment.CenterVertically, unbounded = true),
+                    )
+                    Canvas(Modifier.weight(1f).fillMaxHeight()) {
+                        val h = size.height.coerceAtMost(10.dp.toPx())
+                        val top = (size.height - h) / 2
+                        val r = CornerRadius(h / 2)
+                        drawRoundRect(track, Offset(0f, top), Size(size.width, h), r)
+                        for (b in line.blocks) {
+                            val x = size.width * b.start / 24f
+                            // 很短的专注也给一个圆点大小，免得看不见
+                            val w = (size.width * (b.endInclusive - b.start) / 24f).coerceAtLeast(h)
+                            drawRoundRect(Brand.Orange, Offset(x.coerceAtMost(size.width - w), top), Size(w, h), r)
+                        }
+                    }
+                }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(start = 18.dp, top = 3.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            listOf("0", "6", "12", "18", "24").forEach {
+                Text(it, fontSize = 10.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.ExtraBold, color = scheme.onSurfaceVariant)
             }
         }
     }
@@ -360,38 +622,14 @@ private fun StreakCard(s: StreakInsight) {
 private fun TodoCard(t: TodoInsight) {
     val scheme = MaterialTheme.colorScheme
     val pct = if (t.total == 0) 0 else (100f * t.done / t.total).roundToInt()
-    InsightCard("待办") {
-        Headline(
-            marked(if (t.overdue > 0) "«${t.overdue} 条» 待办已逾期，最久 ${t.maxLateDays} 天" else "待办没有逾期，都在按时推进"),
-        )
-        Box(Modifier.weight(1f))
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text("$pct", fontSize = 30.sp, lineHeight = 34.sp, fontWeight = FontWeight.Black)
-            Text("%", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(bottom = 4.dp))
-            Box(Modifier.weight(1f))
-            Text(
-                "${t.done}/${t.total} 完成",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Black,
-                color = scheme.primary,
-                modifier = Modifier.padding(bottom = 4.dp),
-            )
-        }
-        Box(
-            Modifier
-                .padding(top = 6.dp)
-                .fillMaxWidth()
-                .height(8.dp)
-                .clip(CircleShape)
-                .background(scheme.onSurface.copy(alpha = 0.1f)),
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth(pct / 100f)
-                    .fillMaxHeight()
-                    .clip(CircleShape)
-                    .background(scheme.onSurface),
-            )
+    val headline = "完成率 «$pct%»" + if (t.overdue > 0) "，${t.overdue} 条已逾期" else "，没有逾期"
+    val open = (t.total - t.done).coerceAtLeast(0)
+    val peak = maxOf(t.onTime, t.lateDone, open, 1)
+    InsightCard("待办", "${t.done}/${t.total}", marked(headline)) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+            BarRow("按时完成", t.onTime, peak, scheme.onSurface)
+            BarRow("延期完成", t.lateDone, peak, Brand.Orange)
+            BarRow("还没做完", open, peak, scheme.onSurface.copy(alpha = 0.28f))
         }
     }
 }
@@ -399,25 +637,149 @@ private fun TodoCard(t: TodoInsight) {
 // ───────────────────────── 话题 ─────────────────────────
 
 @Composable
-private fun TopicCard(t: TopicInsight) {
+private fun TopicCard(t: TopicInsight, rangeLabel: String) {
     val scheme = MaterialTheme.colorScheme
-    InsightCard("话题") {
-        Headline(marked("常提到 " + t.tags.joinToString("、") { "«#${it.first}»" }))
-        Box(Modifier.weight(1f))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            t.tags.forEach { (tag, n) ->
-                Row(
-                    modifier = Modifier
-                        .heightIn(min = 30.dp)
-                        .clip(CircleShape)
-                        .background(scheme.onSurface.copy(alpha = 0.07f))
-                        .padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(tag, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
-                    Text("$n", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Black, color = scheme.primary)
+    val colors = listOf(scheme.onSurface, Brand.Orange, scheme.onSurface.copy(alpha = 0.28f))
+    val peak = (t.tags.firstOrNull()?.second ?: 1).coerceAtLeast(1)
+    InsightCard("话题", rangeLabel, marked("常提到 " + t.tags.joinToString("、") { "«#${it.first}»" })) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+            t.tags.forEachIndexed { i, (tag, n) -> BarRow("#$tag", n, peak, colors[i % colors.size]) }
+        }
+    }
+}
+
+/** 名字 + 一根按比例的横条 + 右侧数字（或 [trailing] 文字）；[onClick] 不为空时整行可点 */
+@Composable
+private fun BarRow(
+    name: String,
+    value: Int,
+    peak: Int,
+    color: Color,
+    trailing: String = "$value",
+    trailingColor: Color = Color.Unspecified,
+    onClick: (() -> Unit)? = null,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(28.dp)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.ExtraBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.width(66.dp),
+        )
+        Box(
+            Modifier
+                .weight(1f)
+                .height(8.dp)
+                .clip(CircleShape)
+                .background(scheme.onSurface.copy(alpha = 0.08f)),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth((value.toFloat() / peak).coerceIn(0f, 1f))
+                    .fillMaxHeight()
+                    .clip(CircleShape)
+                    .background(color),
+            )
+        }
+        Text(
+            trailing,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Black,
+            color = trailingColor,
+            maxLines = 1,
+            textAlign = TextAlign.End,
+            modifier = Modifier.widthIn(min = 28.dp),
+        )
+    }
+}
+
+// ───────────────────────── 项目 ─────────────────────────
+
+/** 项目卡的行：记得最多的几个项目 + 一个久没记的；只有按专注拆时间时才出（否则时间分配卡已经是这个意思） */
+private fun projectRows(flow: ProjectFlow): List<ProjectSlice>? {
+    if (!flow.byFocus) return null
+    val active = flow.slices.filter { it.activity > 0 }.sortedByDescending { it.activity }
+    val stale = flow.slices.firstOrNull { it.stale && it.activity == 0 }
+    val rows = active.take(if (stale != null) 2 else 3) + listOfNotNull(stale)
+    return rows.takeIf { it.isNotEmpty() }
+}
+
+@Composable
+private fun ProjectsCard(rows: List<ProjectSlice>, rangeLabel: String, onOpenProject: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val colors = listOf(scheme.onSurface, Brand.Orange, scheme.onSurface.copy(alpha = 0.28f))
+    val top = rows.firstOrNull { it.activity > 0 }
+    val stale = rows.firstOrNull { it.activity == 0 }
+    val headline = when {
+        top != null -> "«${top.project.keyword}» 记得最多，${top.activity} 条"
+        stale != null -> "«${stale.project.keyword}» 已经 ${stale.gapDays ?: "好几"} 天没记"
+        else -> "项目动态"
+    }
+    val peak = (rows.maxOfOrNull { it.activity } ?: 1).coerceAtLeast(1)
+    InsightCard("项目动态", rangeLabel, marked(headline)) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+            rows.forEachIndexed { i, s ->
+                if (s.activity > 0) {
+                    BarRow(
+                        name = s.project.keyword,
+                        value = s.activity,
+                        peak = peak,
+                        color = colors[i % colors.size],
+                        trailing = "${s.activity} 条",
+                        onClick = { onOpenProject(s.project.keyword) },
+                    )
+                } else {
+                    // 久没记的项目：空条 + 橙色「N 天没记」
+                    BarRow(
+                        name = s.project.keyword,
+                        value = 0,
+                        peak = peak,
+                        color = Brand.Orange,
+                        trailing = s.gapDays?.let { "$it 天没记" } ?: "该记一条了",
+                        trailingColor = Brand.OrangeDeep,
+                        onClick = { onOpenProject(s.project.keyword) },
+                    )
                 }
+            }
+        }
+    }
+}
+
+// ───────────────────────── 习惯 ─────────────────────────
+
+@Composable
+private fun HabitCard(h: HabitInsight) {
+    val scheme = MaterialTheme.colorScheme
+    val colors = listOf(scheme.onSurface, Brand.Orange, scheme.onSurface.copy(alpha = 0.28f))
+    val best = h.rows.first()
+    val worst = h.rows.last()
+    val headline = when {
+        h.rows.size == 1 -> "「${best.name}」打卡完成率 «${(best.rate * 100).roundToInt()}%»"
+        worst.rate < 0.5f && worst !== best -> "完成率 «${h.rate}%»，「${worst.name}」落下了"
+        else -> "完成率 «${h.rate}%»，「${best.name}」最稳"
+    }
+    // 最多 3 行：最稳的、最落后的，再补一个中间的
+    val rows = if (h.rows.size <= 3) h.rows else listOf(h.rows[0], h.rows[1], h.rows.last())
+    InsightCard("习惯打卡", "${h.rows.size} 个习惯", marked(headline)) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+            rows.forEachIndexed { i, r ->
+                BarRow(
+                    name = r.name,
+                    value = r.done,
+                    peak = r.due.coerceAtLeast(1),
+                    color = colors[i % colors.size],
+                    trailing = "${r.done}/${r.due}",
+                )
             }
         }
     }

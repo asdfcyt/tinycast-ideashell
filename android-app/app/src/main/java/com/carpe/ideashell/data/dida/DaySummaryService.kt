@@ -4,6 +4,9 @@ import com.carpe.ideashell.data.ideashell.DailyNoteService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -28,6 +31,11 @@ class DaySummaryService(
     private val dailyNotes: DailyNoteService,
     private val hasDida: () -> Boolean,
 ) {
+    private val _todayFocus = MutableStateFlow<Pair<LocalDate, Int>?>(null)
+
+    /** 最近一次读到的「某天的专注分钟」（日期, 分钟）：通知栏的专注环用它，读到新数据时自动刷新 */
+    val todayFocus: StateFlow<Pair<LocalDate, Int>?> = _todayFocus.asStateFlow()
+
     /** 近 7 天（含今天）的专注记录汇总；番茄钟与正计时两种都读，都失败才抛异常 */
     suspend fun focus(today: LocalDate = LocalDate.now()): FocusSummary =
         focusIn(today.minusDays(6), today.plusDays(1), today)
@@ -48,7 +56,10 @@ class DaySummaryService(
             listOf(true to a.getOrDefault(""), false to b.getOrDefault("")),
             today,
             zone,
-        )
+        ).also { summary ->
+            // 只有范围包含「今天」，todayMin 才是今天的专注时长
+            if (!today.isBefore(from) && today.isBefore(to)) _todayFocus.value = today to summary.todayMin
+        }
     }
 
     suspend fun collect(today: LocalDate = LocalDate.now()): DaySummary = coroutineScope {

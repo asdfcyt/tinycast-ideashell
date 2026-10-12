@@ -477,7 +477,7 @@ fun TodoScreen(
                                 }
                             } else if (openCount == 0) {
                                 item(key = "empty") {
-                                    EmptyNote("都做完了", "逾期、今天和未来 7 天都没有待办。下拉可以刷新，向右滑动上面的日期带可以回看过去。")
+                                    EmptyNote("都做完了", "逾期、今天和未来 7 天都没有待办。下拉可以刷新，向右滑动上面的日期带可以回顾过去。")
                                 }
                             } else {
                                 if (only != null) {

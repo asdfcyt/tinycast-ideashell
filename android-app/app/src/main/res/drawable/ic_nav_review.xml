@@ -4,7 +4,7 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <!-- 导航：回看（钟面） -->
+    <!-- 导航：回顾（钟面） -->
     <path
         android:fillColor="#00000000"
         android:pathData="M12,3.5 A8.5,8.5 0 1 1 12,20.5 A8.5,8.5 0 1 1 12,3.5 Z M12,7.5 L12,12 L15,14"

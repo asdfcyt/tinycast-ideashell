@@ -1,6 +1,7 @@
 package com.carpe.ideashell.ui.capture
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -118,6 +119,16 @@ fun QuickCaptureScreen(
     val canSubmit = viewModel.clip != null || resolvedKind != null
     val composing = connected && viewModel.state == QuickState.Composing
 
+    val haptic = LocalHapticFeedback.current
+    val saved = viewModel.state as? QuickState.Saved
+    LaunchedEffect(saved) {
+        if (saved != null) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            Toast.makeText(context, "已保存 · ${saved.receipt.detail}", Toast.LENGTH_SHORT).show()
+            onClose()
+        }
+    }
+
     // 相册：系统自带的照片选择器，不需要任何权限；拍照：交给系统相机，写到我们给的临时文件里
     val pickLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(CaptureImages.MAX_COUNT),
@@ -185,8 +196,9 @@ fun QuickCaptureScreen(
                         ) { state ->
                             when (state) {
                                 QuickState.Composing -> ComposingContent(viewModel, readClipboard, onOpenApp, canSubmit, pickImages, takePhoto)
-                                is QuickState.Saved -> SavedContent(state, viewModel, onClose)
-                                QuickState.Undone -> UndoneContent(onClose)
+                                // 保存成功后面板直接收起（只给一下震动和一句 Toast），不再停留一个带「撤销」的确认窗口；
+                                // 收起前仍画输入内容，避免面板先塌成一条空白
+                                is QuickState.Saved -> ComposingContent(viewModel, readClipboard, onOpenApp, canSubmit, pickImages, takePhoto)
                             }
                         }
                     }
@@ -497,86 +509,5 @@ private fun ClipAnnotation(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun SavedContent(state: QuickState.Saved, viewModel: QuickCaptureViewModel, onClose: () -> Unit) {
-    val haptic = LocalHapticFeedback.current
-    var shown by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue = if (shown) 1f else 0.4f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
-        label = "check-scale",
-    )
-
-    LaunchedEffect(Unit) {
-        shown = true
-        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-        delay(1200)
-        onClose()
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Surface(
-            modifier = Modifier
-                .size(56.dp)
-                .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                },
-            shape = CircleShape,
-            color = Brand.Orange,
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Filled.Check,
-                    contentDescription = null,
-                    tint = Brand.Brown,
-                    modifier = Modifier.size(30.dp),
-                )
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        Text("已保存", style = MaterialTheme.typography.titleLarge)
-        Text(
-            state.receipt.summary,
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            state.receipt.detail,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        viewModel.error?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        }
-        TextButton(onClick = { viewModel.undo() }) { Text("撤销") }
-    }
-}
-
-@Composable
-private fun UndoneContent(onClose: () -> Unit) {
-    LaunchedEffect(Unit) {
-        delay(800)
-        onClose()
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("已撤销", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
