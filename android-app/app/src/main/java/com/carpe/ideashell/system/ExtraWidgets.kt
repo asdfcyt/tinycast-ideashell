@@ -107,6 +107,7 @@ class ExtraWidgets(
             rv.setTextViewText(R.id.f_btn_sub, if (run.kind.isBreak) "跳过" else "结束")
             rv.setOnClickPendingIntent(R.id.f_btn_sub, action(FocusNotifier.ACTION_FINISH, 33))
         } else {
+            val next = focus.pendingBreak.value
             val min = todayFocusMin()
             val goal = settings.current.focusGoalMin.coerceAtLeast(1)
             rv.setImageViewBitmap(R.id.f_ring, ring(((min ?: 0).toFloat() / goal).coerceIn(0f, 1f)))
@@ -120,10 +121,9 @@ class ExtraWidgets(
             )
             rv.setViewVisibility(R.id.f_sub2, View.VISIBLE)
             rv.setTextViewText(R.id.f_sub2, "完成 ${((min ?: 0) * 100 / goal).coerceAtMost(100)}%")
-            rv.setTextViewText(R.id.f_btn_main, "开始 ${focus.lastMinutes} 分钟")
+            rv.setTextViewText(R.id.f_btn_main, "开始专注 ${focus.lastMinutes} 分钟")
             rv.setOnClickPendingIntent(R.id.f_btn_main, action(FocusNotifier.ACTION_START, 31))
-            // 番茄刚走完：主按钮变成「开始休息」，旁边可以跳过；平时只有「开始」
-            val next = focus.pendingBreak.value
+            // 番茄刚走完：主按钮变成「开始休息」，旁边可以跳过；平时只有「开始」，点圆环进入选时长
             if (next != null) {
                 rv.setTextViewText(R.id.f_title, "${next.label}一下")
                 rv.setTextViewText(R.id.f_sub, "番茄完成 ${focus.cycle.value} / ${FocusRepository.CYCLE_LENGTH}")
@@ -135,11 +135,8 @@ class ExtraWidgets(
                 rv.setOnClickPendingIntent(R.id.f_btn_sub, action(FocusNotifier.ACTION_SKIP_BREAK, 37))
             } else {
                 rv.setViewVisibility(R.id.f_btn_sub, View.GONE)
-                // 开始前可以用 − / + 选时长
-                rv.setViewVisibility(R.id.f_btn_minus, View.VISIBLE)
-                rv.setViewVisibility(R.id.f_btn_plus, View.VISIBLE)
-                rv.setOnClickPendingIntent(R.id.f_btn_minus, action(FocusNotifier.ACTION_MINUTES_DOWN, 38))
-                rv.setOnClickPendingIntent(R.id.f_btn_plus, action(FocusNotifier.ACTION_MINUTES_UP, 39))
+                // 点圆环：弹出可转动的圆盘选时长，选好在弹窗里开始
+                rv.setOnClickPendingIntent(R.id.f_ring_box, pickIntent())
             }
         }
         return rv
@@ -335,6 +332,15 @@ class ExtraWidgets(
         Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra(MainActivity.EXTRA_OPEN_FOCUS, true)
+        },
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    /** 点圆环：弹出和专注页一样的可转动圆盘，选好时长直接开始 */
+    private fun pickIntent(): PendingIntent = PendingIntent.getActivity(
+        context, 106,
+        Intent(context, com.carpe.ideashell.ui.focus.FocusPickActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         },
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )

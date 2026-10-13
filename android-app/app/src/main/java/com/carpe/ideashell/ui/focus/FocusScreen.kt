@@ -296,7 +296,7 @@ fun FocusScreen(
  * - 进行中：圆环是剩余比例（一圈走完正好归零），圆心是倒计时。
  */
 @Composable
-private fun TimerCard(
+internal fun TimerCard(
     run: FocusRun?,
     now: Long,
     kind: FocusKind,
@@ -557,7 +557,7 @@ private val BigNumber = TextStyle(
 // ───────────────────────── 专注什么 ─────────────────────────
 
 @Composable
-private fun TaskRow(run: FocusRun?, task: DidaTask?, project: String?, onClick: () -> Unit) {
+internal fun TaskRow(run: FocusRun?, task: DidaTask?, project: String?, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     // 专注进行中也可以补选 / 更换关联的任务和项目
     val shownProject = if (run != null) run.project else project
@@ -599,7 +599,7 @@ private fun TaskRow(run: FocusRun?, task: DidaTask?, project: String?, onClick: 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TaskPicker(
+internal fun TaskPicker(
     tasks: List<DidaTask>,
     projects: List<ProjectChoice>,
     selected: String?,

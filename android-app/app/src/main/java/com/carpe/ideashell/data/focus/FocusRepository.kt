@@ -130,18 +130,6 @@ class FocusRepository(
     fun lastMinutes(kind: FocusKind): Int =
         prefs.getInt(keyOf(kind), kind.defaultMin).coerceIn(kind.minMin, kind.maxMin)
 
-    /** 桌面小部件上的 − / +：把下次开始用的时长调高 / 调低一档（5 分钟一档，超过 60 分钟后 15 分钟一档；休息 1 分钟一档） */
-    fun stepMinutes(kind: FocusKind, up: Boolean) {
-        val cur = lastMinutes(kind)
-        val step = when {
-            kind.isBreak -> 1
-            (up && cur >= 60) || (!up && cur > 60) -> 15
-            else -> 5
-        }
-        val next = (if (up) cur + step else cur - step).coerceIn(kind.minMin, kind.maxMin)
-        prefs.edit().putInt(keyOf(kind), next).apply()
-    }
-
     private fun keyOf(kind: FocusKind) = if (kind == FocusKind.FOCUS) KEY_LAST_MIN else "last_minutes_${kind.name}"
 
     // ───────────── 计时控制 ─────────────
@@ -364,6 +352,7 @@ class FocusRepository(
 
     companion object {
         const val MIN_MINUTES = 5
+
         const val MAX_MINUTES = 180
         const val DEFAULT_MINUTES = 25
         val CHOICES = listOf(15, 25, 45, 60, 90)

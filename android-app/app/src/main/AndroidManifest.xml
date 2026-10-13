@@ -208,6 +208,15 @@
             android:theme="@style/Theme.Ideashell.Translucent"
             android:windowSoftInputMode="adjustResize|stateVisible" />
 
+        <!-- 专注小部件上点圆环：弹出可转动的圆盘选时长，选好直接开始 -->
+        <activity
+            android:name=".ui.focus.FocusPickActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Ideashell.Translucent" />
+
         <!-- 专注通知上的按钮（暂停 / 继续 / 结束）与到点闹钟 -->
         <receiver
             android:name=".system.FocusActionReceiver"
