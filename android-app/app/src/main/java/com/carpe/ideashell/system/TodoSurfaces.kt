@@ -170,6 +170,9 @@ class TodoSurfaces(
     /** @param flash 临时显示在通知正文的一句话（例如「已记下：…」），下一次刷新恢复正常 */
     fun updateNotification(flash: String? = null) {
         val nm = context.getSystemService(NotificationManager::class.java)
+        // 清掉旧 id 的通知和旧渠道（没有就什么都不会发生）
+        nm.cancel(LEGACY_NOTIFICATION_ID)
+        nm.deleteNotificationChannel(LEGACY_CHANNEL_ID)
         val enabled = settings.current.persistentNotification && !credentials.didaToken.isNullOrBlank()
         if (!enabled) {
             nm.cancel(NOTIFICATION_ID)
@@ -250,7 +253,7 @@ class TodoSurfaces(
         }
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_tile)
+            .setSmallIcon(R.drawable.ic_stat_shiyi)
             .setColor(ContextCompat.getColor(context, R.color.notification_fill))
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setCustomContentView(collapsed)
@@ -407,8 +410,11 @@ class TodoSurfaces(
     )
 
     companion object {
-        const val CHANNEL_ID = "todo_summary"
-        const val NOTIFICATION_ID = 2001
+        // 换过一次 id / 渠道：部分系统（荣耀 / 华为等）会缓存通知小图标，旧的 id 和渠道上还挂着以前的图标
+        const val CHANNEL_ID = "todo_summary_v2"
+        const val NOTIFICATION_ID = 2002
+        private const val LEGACY_CHANNEL_ID = "todo_summary"
+        private const val LEGACY_NOTIFICATION_ID = 2001
         private const val MAX_BIG_ROWS = 5
 
         /** 圆环轨道：中性灰 28% 透明，放在深色或浅色的通知底上都看得出来 */

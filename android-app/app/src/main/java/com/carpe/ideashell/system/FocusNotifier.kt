@@ -81,7 +81,7 @@ class FocusNotifier(private val context: Context) {
         val tail = if (synced) "已记入滴答清单" else "已保存在本机，联网后自动同步到滴答"
         val text = if (title.isBlank()) tail else "$title · $tail"
         val builder = NotificationCompat.Builder(context, if (completed) DONE_CHANNEL else QUIET_DONE_CHANNEL)
-            .setSmallIcon(R.drawable.ic_tile)
+            .setSmallIcon(R.drawable.ic_stat_shiyi)
             .setColor(ACCENT)
             .setContentTitle(head)
             .setContentText(text)
@@ -116,7 +116,7 @@ class FocusNotifier(private val context: Context) {
         val label = run.kind.label
         val taskPart = if (isBreak) label else run.title.ifBlank { "自由专注" }
         val builder = NotificationCompat.Builder(context, RUNNING_CHANNEL)
-            .setSmallIcon(R.drawable.ic_tile)
+            .setSmallIcon(R.drawable.ic_stat_shiyi)
             .setColor(ACCENT)
             .setContentTitle(if (run.paused) "${label}已暂停" else "${label}中")
             .setContentIntent(openFocus())
@@ -164,7 +164,7 @@ class FocusNotifier(private val context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
         ensureChannels(nm)
         val builder = NotificationCompat.Builder(context, DONE_CHANNEL)
-            .setSmallIcon(R.drawable.ic_tile)
+            .setSmallIcon(R.drawable.ic_stat_shiyi)
             .setColor(ACCENT)
             .setContentTitle("${kind.label}结束 · $minutes 分钟")
             .setContentText("休息好了，开始下一次专注吧")
@@ -183,7 +183,7 @@ class FocusNotifier(private val context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
         ensureChannels(nm)
         val builder = NotificationCompat.Builder(context, QUIET_DONE_CHANNEL)
-            .setSmallIcon(R.drawable.ic_tile)
+            .setSmallIcon(R.drawable.ic_stat_shiyi)
             .setColor(ACCENT)
             .setContentTitle(title)
             .setContentText(text)
