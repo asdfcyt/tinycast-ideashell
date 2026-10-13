@@ -234,7 +234,6 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
     fun setTodoPriority(task: DidaTask, priority: Int) =
         todoOp(task, "修改优先级失败", { it.copy(priority = priority) }) { container.todos.setPriority(task, priority) }
 
-    fun toggleTodoMark(task: DidaTask, mark: TodoMeta.Mark) = renameTodo(task, TodoMeta.toggleMark(task.title, mark))
 
     fun renameTodo(task: DidaTask, title: String) {
         val clean = title.trim()

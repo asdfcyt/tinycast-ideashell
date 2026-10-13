@@ -190,7 +190,6 @@ fun ReviewScreen(
                 },
                 onReschedule = { date, time -> viewModel.rescheduleTodo(selected, date, time) },
                 onPriority = { viewModel.setTodoPriority(selected, it) },
-                onToggleMark = { viewModel.toggleTodoMark(selected, it) },
                 onRename = { viewModel.renameTodo(selected, it) },
                 onAssignProject = { viewModel.assignTodoProject(selected, it) },
                 onDelete = {

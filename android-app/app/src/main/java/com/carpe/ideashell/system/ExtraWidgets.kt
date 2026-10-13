@@ -17,6 +17,7 @@ import com.carpe.ideashell.R
 import com.carpe.ideashell.core.parse.TimeRanges
 import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.dida.DidaTask
+import com.carpe.ideashell.data.focus.FocusKind
 import com.carpe.ideashell.data.focus.FocusRepository
 import com.carpe.ideashell.data.notes.NotesRepository
 import com.carpe.ideashell.data.secure.CredentialStore
@@ -89,8 +90,8 @@ class ExtraWidgets(
             rv.setViewVisibility(R.id.f_ring_timer, View.VISIBLE)
             rv.setChronometerCountDown(R.id.f_ring_timer, true)
             rv.setChronometer(R.id.f_ring_timer, SystemClock.elapsedRealtime() + remain, null, !run.paused)
-            rv.setTextViewText(R.id.f_title, if (run.paused) "专注已暂停" else "专注中")
-            val what = run.title.takeIf { it.isNotBlank() }?.let(TodoMeta::cleanTitle) ?: "自由专注"
+            rv.setTextViewText(R.id.f_title, if (run.paused) "${run.kind.label}已暂停" else "${run.kind.label}中")
+            val what = if (run.kind.isBreak) "放松一下" else run.title.takeIf { it.isNotBlank() }?.let(TodoMeta::cleanTitle) ?: "自由专注"
             rv.setTextViewText(R.id.f_sub, "$what · 共 ${run.plannedMin} 分钟")
             rv.setTextViewText(R.id.f_btn_main, if (run.paused) "继续" else "暂停")
             rv.setOnClickPendingIntent(
@@ -98,7 +99,7 @@ class ExtraWidgets(
                 action(if (run.paused) FocusNotifier.ACTION_RESUME else FocusNotifier.ACTION_PAUSE, 32),
             )
             rv.setViewVisibility(R.id.f_btn_sub, View.VISIBLE)
-            rv.setTextViewText(R.id.f_btn_sub, "结束")
+            rv.setTextViewText(R.id.f_btn_sub, if (run.kind.isBreak) "跳过" else "结束")
             rv.setOnClickPendingIntent(R.id.f_btn_sub, action(FocusNotifier.ACTION_FINISH, 33))
         } else {
             val min = todayFocusMin()
@@ -114,16 +115,21 @@ class ExtraWidgets(
             )
             rv.setTextViewText(R.id.f_btn_main, "开始 ${focus.lastMinutes} 分钟")
             rv.setOnClickPendingIntent(R.id.f_btn_main, action(FocusNotifier.ACTION_START, 31))
-            rv.setViewVisibility(R.id.f_btn_sub, View.GONE)
+            // 旁边一个「休息」：直接开一次短休息
+            rv.setViewVisibility(R.id.f_btn_sub, View.VISIBLE)
+            rv.setTextViewText(R.id.f_btn_sub, "休息 ${focus.lastMinutes(FocusKind.SHORT_BREAK)}′")
+            rv.setOnClickPendingIntent(R.id.f_btn_sub, action(FocusNotifier.ACTION_START_BREAK, 34))
         }
         return rv
     }
 
+    /** 和专注页圆盘同一个样子：粗圆环 + 圈内 60 根刻度（走过的刻度深一点） */
     private fun ring(progress: Float): Bitmap {
-        val size = (76 * context.resources.displayMetrics.density).toInt()
+        val size = (88 * context.resources.displayMetrics.density).toInt()
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        val stroke = size * 0.11f
+        val p = progress.coerceIn(0f, 1f)
+        val stroke = size * 0.13f
         val rect = RectF(stroke / 2, stroke / 2, size - stroke / 2, size - stroke / 2)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
@@ -131,10 +137,24 @@ class ExtraWidgets(
             color = RING_TRACK
         }
         canvas.drawArc(rect, 0f, 360f, false, paint)
-        if (progress > 0f) {
+        if (p > 0f) {
             paint.color = ContextCompat.getColor(context, R.color.widget_chip)
             paint.strokeCap = Paint.Cap.ROUND
-            canvas.drawArc(rect, -90f, 360f * progress.coerceAtMost(1f), false, paint)
+            canvas.drawArc(rect, -90f, 360f * p, false, paint)
+        }
+        // 刻度
+        val c = size / 2f
+        val outer = size / 2f - stroke - size * 0.035f
+        val tick = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+        for (i in 0 until 60) {
+            val long = i % 5 == 0
+            val len = size * if (long) 0.07f else 0.04f
+            val rad = Math.toRadians(i * 6.0 - 90.0)
+            val dx = Math.cos(rad).toFloat()
+            val dy = Math.sin(rad).toFloat()
+            tick.strokeWidth = size * if (long) 0.018f else 0.010f
+            tick.color = if (i / 60f < p) TICK_ON else TICK_OFF
+            canvas.drawLine(c + dx * outer, c + dy * outer, c + dx * (outer - len), c + dy * (outer - len), tick)
         }
         return bitmap
     }
@@ -311,6 +331,8 @@ class ExtraWidgets(
 
         /** 圆环轨道：中性灰半透明，深浅底都看得出来 */
         const val RING_TRACK = 0x47888888
+        const val TICK_ON = 0x99888888.toInt()
+        const val TICK_OFF = 0x33888888
     }
 }
 

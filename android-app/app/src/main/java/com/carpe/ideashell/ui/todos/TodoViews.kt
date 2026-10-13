@@ -24,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.carpe.ideashell.core.parse.Quadrant
 import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.dida.DidaOverview
 import com.carpe.ideashell.data.dida.DidaTask
@@ -56,8 +55,6 @@ internal fun toneOf(task: DidaTask, today: LocalDate): Tone {
 }
 
 internal fun badgesOf(task: DidaTask, workspace: Workspace): List<String> = buildList {
-    if (TodoMeta.isMarkedImportant(task.title)) add("重要")
-    if (TodoMeta.isMarkedUrgent(task.title)) add("紧急")
     if (workspace.taskNotes.containsKey(taskKeyOf(task.id))) add("任务笔记")
 }
 
@@ -73,7 +70,6 @@ internal fun TodoCtx.TaskItem(task: DidaTask, modifier: Modifier = Modifier, tra
         project = listNameOf(overview, task.projectId),
         today = today,
         badges = badgesOf(task, workspace),
-        quadrant = if (task.done) null else TodoMeta.quadrantOf(task.title, task.date, today),
         onToggle = { onToggle(task) },
         onOpen = { onOpen(task) },
         modifier = modifier,
@@ -92,50 +88,6 @@ internal fun ViewTabs(current: TodoView, onSelect: (TodoView) -> Unit) {
         selected = current.ordinal,
         onSelect = { onSelect(TodoView.entries[it]) },
     )
-}
-
-// ───────────────────────── 四象限（合并进任务列表） ─────────────────────────
-
-@Composable
-internal fun quadrantColor(q: Quadrant): Color = when (q) {
-    Quadrant.Q1 -> MaterialTheme.colorScheme.error
-    Quadrant.Q2 -> MaterialTheme.colorScheme.primary
-    Quadrant.Q3 -> MaterialTheme.colorScheme.tertiary
-    Quadrant.Q4 -> MaterialTheme.colorScheme.outline
-}
-
-/** 象限色点：任务行与筛选条共用，让「颜色 → 象限」只需要学一次 */
-@Composable
-internal fun QuadrantDot(q: Quadrant, modifier: Modifier = Modifier) {
-    Box(modifier.size(8.dp).clip(CircleShape).background(quadrantColor(q)))
-}
-
-/**
- * 象限筛选条：全部 / 四个象限，每个带当前数量。
- * 重要 / 紧急由任务标题里的 `!重要` `!紧急` 标记决定，日期在明天及以前自动算紧急；点开任务可以标记。
- */
-@Composable
-internal fun QuadrantFilterBar(
-    counts: Map<Quadrant, Int>,
-    total: Int,
-    selected: Quadrant?,
-    onSelect: (Quadrant?) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier.horizontalScroll(rememberScrollState()).padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        PillChip("全部 $total", selected == null, onClick = { onSelect(null) })
-        Quadrant.entries.forEach { q ->
-            PillChip(
-                text = "${q.title} ${counts[q] ?: 0}",
-                selected = selected == q,
-                onClick = { onSelect(if (selected == q) null else q) },
-                leading = { QuadrantDot(q) },
-            )
-        }
-    }
 }
 
 // ───────────────────────── 无日期任务的「定日期」 ─────────────────────────

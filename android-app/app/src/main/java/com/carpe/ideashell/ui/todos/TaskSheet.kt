@@ -66,7 +66,6 @@ internal class TaskSheetActions(
     val onCompleteWithReview: (String) -> Unit,
     val onReschedule: (date: String, time: String?) -> Unit,
     val onPriority: (Int) -> Unit,
-    val onToggleMark: (TodoMeta.Mark) -> Unit,
     val onRename: (String) -> Unit,
     val onAssignProject: (String) -> Unit,
     val onDelete: () -> Unit,
@@ -96,8 +95,6 @@ internal fun TaskSheet(
     val context = LocalContext.current
     val baseDate = task.date ?: today.toString()
     val title = TodoMeta.cleanTitle(task.title)
-    val important = TodoMeta.isMarkedImportant(task.title)
-    val urgent = TodoMeta.isMarkedUrgent(task.title)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -162,20 +159,6 @@ internal fun TaskSheet(
                             DropdownMenuItem(text = { Text(label) }, onClick = { close(); actions.onPriority(value) })
                         }
                     }
-                    RowDivider()
-                    PropertyRow(
-                        label = "重要",
-                        value = "",
-                        onClick = { actions.onToggleMark(TodoMeta.Mark.IMPORTANT) },
-                        trailing = { Switch(checked = important, onCheckedChange = null) },
-                    )
-                    RowDivider()
-                    PropertyRow(
-                        label = "紧急",
-                        value = "",
-                        onClick = { actions.onToggleMark(TodoMeta.Mark.URGENT) },
-                        trailing = { Switch(checked = urgent, onCheckedChange = null) },
-                    )
                     if (projects.isNotEmpty()) {
                         RowDivider()
                         MenuPropertyRow("项目", currentProject?.keyword ?: "未归入") { close ->
@@ -188,12 +171,6 @@ internal fun TaskSheet(
                         }
                     }
                 }
-                Text(
-                    "「重要 / 紧急」写在标题里（!重要 / !紧急），用于四象限；今天、明天到期或已逾期自动算紧急。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 8.dp),
-                )
             }
 
             // 任务笔记

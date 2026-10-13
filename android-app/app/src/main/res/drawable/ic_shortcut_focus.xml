@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#E8794A"
+        android:pathData="M24,24m-24,0a24,24 0,1 1,48 0a24,24 0,1 1,-48 0" />
+    <!-- 圆环 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#24150C"
+        android:strokeWidth="3.6"
+        android:strokeLineCap="round"
+        android:pathData="M24,24m-10.5,0a10.5,10.5 0,1 1,21 0a10.5,10.5 0,1 1,-21 0" />
+    <!-- 开始三角 -->
+    <path
+        android:fillColor="#24150C"
+        android:pathData="M21,18.5 L21,29.5 L30,24 Z" />
+</vector>

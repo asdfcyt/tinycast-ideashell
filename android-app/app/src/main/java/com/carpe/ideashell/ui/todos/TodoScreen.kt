@@ -64,7 +64,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.carpe.ideashell.core.parse.Quadrant
 import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.dida.DidaOverview
 import com.carpe.ideashell.data.dida.DidaTask
@@ -115,7 +114,6 @@ private val taskOrder = compareBy<DidaTask>({ it.date ?: "" }, { it.time ?: "" }
 private fun buildGroups(
     overview: DidaOverview,
     today: LocalDate,
-    only: Quadrant?,
     showDone: Boolean,
     showAllUndated: Boolean,
     onToggleDone: () -> Unit,
@@ -123,13 +121,10 @@ private fun buildGroups(
 ): List<TodoGroup> {
     val out = mutableListOf<TodoGroup>()
     val todayStr = today.toString()
-    fun List<DidaTask>.filtered(): List<DidaTask> =
-        if (only == null) this else this.filter { TodoMeta.quadrantOf(it.title, it.date, today) == only }
-
-    val overdue = overview.overdue.filtered().sortedWith(taskOrder)
+    val overdue = overview.overdue.sortedWith(taskOrder)
     if (overdue.isNotEmpty()) out += TodoGroup("g:overdue", "已逾期", overdue.size, Tone.OVERDUE, overdue)
 
-    overview.upcoming.filtered().sortedWith(taskOrder).groupBy { it.date!! }.toSortedMap().forEach { (dateStr, tasks) ->
+    overview.upcoming.sortedWith(taskOrder).groupBy { it.date!! }.toSortedMap().forEach { (dateStr, tasks) ->
         val d = LocalDate.parse(dateStr)
         val title = when (dateStr) {
             todayStr -> "今天 · ${d.label()}"
@@ -139,7 +134,7 @@ private fun buildGroups(
         out += TodoGroup("g:$dateStr", title, tasks.size, if (dateStr == todayStr) Tone.TODAY else Tone.NORMAL, tasks)
     }
 
-    val undated = overview.undated.filtered()
+    val undated = overview.undated
     if (undated.isNotEmpty()) {
         val shown = if (showAllUndated) undated else undated.take(UNDATED_PREVIEW)
         out += TodoGroup(
@@ -158,7 +153,7 @@ private fun buildGroups(
         )
     }
 
-    if (only == null && overview.done.isNotEmpty()) {
+    if (overview.done.isNotEmpty()) {
         out += TodoGroup(
             key = "g:done",
             title = "最近完成",
@@ -246,17 +241,12 @@ fun TodoScreen(
     }
 
     val today = remember(overview) { LocalDate.now() }
-    val quadrantCounts = remember(overview, today) {
-        overview?.let { o ->
-            (o.overdue + o.upcoming + o.undated).groupingBy { TodoMeta.quadrantOf(it.title, it.date, today) }.eachCount()
-        }.orEmpty()
-    }
-    val groups = remember(overview, viewModel.showDone, viewModel.showAllUndated, viewModel.quadrantFilter) {
+    val groups = remember(overview, viewModel.showDone, viewModel.showAllUndated) {
         if (overview == null) {
             emptyList()
         } else {
             buildGroups(
-                overview, today, viewModel.quadrantFilter, viewModel.showDone, viewModel.showAllUndated,
+                overview, today, viewModel.showDone, viewModel.showAllUndated,
                 onToggleDone = { viewModel.showDone = !viewModel.showDone },
                 onToggleUndated = { viewModel.showAllUndated = !viewModel.showAllUndated },
             )
@@ -341,9 +331,6 @@ fun TodoScreen(
                         ViewMenuButton(
                             view = view,
                             onSelectView = { viewModel.view = it },
-                            quadrant = viewModel.quadrantFilter,
-                            quadrantCounts = quadrantCounts,
-                            onSelectQuadrant = { viewModel.quadrantFilter = it },
                         )
                     }
                 },
@@ -406,15 +393,12 @@ fun TodoScreen(
                             data.error?.let { err -> item(key = "stale") { NoticeLine(err) } }
                             overview.warning?.let { w -> item(key = "warn") { NoticeLine(w) } }
                             val openCount = overview.overdue.size + overview.upcoming.size + overview.undated.size
-                            val only = viewModel.quadrantFilter
-                            fun List<DidaTask>.inQuadrant(): List<DidaTask> =
-                                if (only == null) this else filter { TodoMeta.quadrantOf(it.title, it.date, today) == only }
                             // 日期带可以往前翻 PAST_DAYS 天、往后看一周；过去的日子读滴答里那天完成 / 到期的任务
                             val day = viewModel.day?.takeIf { it >= today.minusDays(PAST_DAYS.toLong()) && it <= today.plusDays(6) } ?: today
                             val isToday = day == today
                             val isPast = day < today
-                            val overdue = overview.overdue.inQuadrant().sortedWith(taskOrder)
-                            val dayTasks = overview.upcoming.filter { it.date == day.toString() }.inQuadrant()
+                            val overdue = overview.overdue.sortedWith(taskOrder)
+                            val dayTasks = overview.upcoming.filter { it.date == day.toString() }
 
                             item(key = "week") {
                                 CalendarStrip(
@@ -429,7 +413,7 @@ fun TodoScreen(
                             }
                             if (isPast) {
                                 val state = viewModel.past[day]
-                                val list = state?.tasks?.inQuadrant()
+                                val list = state?.tasks
                                 item(key = "past-$day") {
                                     LaunchedEffect(day) { viewModel.loadPast(day) }
                                     when {
@@ -480,18 +464,6 @@ fun TodoScreen(
                                     EmptyNote("都做完了", "逾期、今天和未来 7 天都没有待办。下拉可以刷新，向右滑动上面的日期带可以回顾过去。")
                                 }
                             } else {
-                                if (only != null) {
-                                    item(key = "q-active") {
-                                        Row {
-                                            PillChip(
-                                                text = "${only.title}  ✕",
-                                                selected = true,
-                                                onClick = { viewModel.quadrantFilter = null },
-                                                leading = { QuadrantDot(only) },
-                                            )
-                                        }
-                                    }
-                                }
                                 if (overdue.isNotEmpty()) {
                                     item(key = "overdue") {
                                         OverdueBanner(
@@ -513,7 +485,6 @@ fun TodoScreen(
                                                         project = listNameOf(overview, t.projectId),
                                                         today = today,
                                                         badges = badgesOf(t, workspace),
-                                                        quadrant = TodoMeta.quadrantOf(t.title, t.date, today),
                                                         onToggle = { viewModel.complete(t) },
                                                         onOpen = { selectedId = t.id },
                                                     )
@@ -526,7 +497,7 @@ fun TodoScreen(
                                 item(key = "timeline-$day") {
                                     if (dayTasks.isEmpty()) {
                                         Text(
-                                            if (only != null) "这个象限里没有任务" else if (isToday) "今天没有安排" else "这天没有安排",
+                                            if (isToday) "今天没有安排" else "这天没有安排",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 8.dp),
@@ -540,7 +511,6 @@ fun TodoScreen(
                                                 project = listNameOf(overview, t.projectId),
                                                 today = today,
                                                 badges = badgesOf(t, workspace),
-                                                quadrant = TodoMeta.quadrantOf(t.title, t.date, today),
                                                 onToggle = { viewModel.complete(t) },
                                                 onOpen = { selectedId = t.id },
                                                 showWhen = false,
@@ -588,7 +558,6 @@ fun TodoScreen(
                                                 project = listNameOf(overview, t.projectId),
                                                 today = today,
                                                 badges = badgesOf(t, workspace),
-                                                quadrant = if (g.done) null else TodoMeta.quadrantOf(t.title, t.date, today),
                                                 onToggle = { if (g.done) viewModel.undoComplete(t) else viewModel.complete(t) },
                                                 onOpen = { selectedId = t.id },
                                                 trailing = quickDate,
@@ -637,7 +606,6 @@ fun TodoScreen(
                 },
                 onReschedule = { date, time -> viewModel.reschedule(selected, date, time) },
                 onPriority = { viewModel.setPriority(selected, it) },
-                onToggleMark = { viewModel.toggleMark(selected, it) },
                 onRename = { viewModel.rename(selected, it) },
                 onAssignProject = { viewModel.assignProject(selected, it) },
                 onDelete = {
@@ -708,8 +676,6 @@ internal fun TaskRow(
     onToggle: () -> Unit,
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
-    /** 所在象限：不为空时在说明行前面画一个象限色点（「不重要不紧急」不画，减少噪音） */
-    quadrant: Quadrant? = null,
     /** 行尾的额外操作（例如「无日期」分组里的「定日期」菜单） */
     trailing: (@Composable () -> Unit)? = null,
     pill: Boolean = true,
@@ -743,7 +709,7 @@ internal fun TaskRow(
         }
         badges.forEach { b ->
             sep()
-            withStyle(SpanStyle(color = if (b == "重要") hot else if (b == "紧急") scheme.tertiary else supportColor)) { append(b) }
+            withStyle(SpanStyle(color = supportColor)) { append(b) }
         }
         if (project.isNotEmpty()) {
             sep()
@@ -783,20 +749,14 @@ internal fun TaskRow(
                     textDecoration = if (showDone) TextDecoration.LineThrough else null,
                     color = if (showDone) titleColor.copy(alpha = 0.5f) else titleColor,
                 )
-                val showDot = quadrant != null && quadrant != Quadrant.Q4
-                if (support.isNotEmpty() || showDot) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (showDot && quadrant != null) {
-                            QuadrantDot(quadrant, Modifier.padding(end = 6.dp))
-                        }
-                        Text(
-                            support,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = supportColor,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                if (support.isNotEmpty()) {
+                    Text(
+                        support,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = supportColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
             trailing?.invoke()

@@ -9,6 +9,23 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import com.carpe.ideashell.data.focus.FocusKind
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -100,6 +117,7 @@ import java.time.format.DateTimeFormatter
  * - 下半是滴答里读回来的专注：今天 / 近 7 天 / 最近几次。结束后写进滴答（create_focus），所以手机和电脑的滴答里都看得到。
  * 计时靠系统的倒计时通知 + 闹钟，退出本页、锁屏、杀进程都不影响；到点没打开应用也会自动记录。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FocusScreen(
     onBack: () -> Unit,
@@ -148,14 +166,20 @@ fun FocusScreen(
                 title = "专注",
                 subtitle = when {
                     live == null -> summary?.let { "今天已专注 ${compact(it.todayMin)}" }
+                    live.kind.isBreak -> if (live.paused) "已暂停 · ${live.kind.label}" else "${live.kind.label}中"
                     live.paused -> "已暂停 · ${live.title.ifBlank { "自由专注" }}"
                     else -> "专注中 · ${live.title.ifBlank { "自由专注" }}"
                 },
                 action = { CircleIconButton(Icons.AutoMirrored.Filled.ArrowBack, "返回", onBack) },
             )
+            PullToRefreshBox(
+                isRefreshing = viewModel.refreshing,
+                onRefresh = viewModel::forceRefresh,
+                modifier = Modifier.weight(1f),
+            ) {
             Column(
                 modifier = Modifier
-                    .weight(1f)
+                    .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -163,18 +187,11 @@ fun FocusScreen(
                 TimerCard(
                     run = live,
                     now = now,
+                    kind = viewModel.kind,
                     minutes = viewModel.minutes,
+                    onKind = viewModel::selectKind,
                     onMinutes = { viewModel.minutes = it },
-                )
-
-                TaskRow(
-                    run = live,
-                    task = viewModel.task,
-                    onClick = { pickTask = true },
-                )
-
-                if (live == null) {
-                    PrimaryButton("开始专注 · ${viewModel.minutes} 分钟") {
+                    onStart = {
                         if (Build.VERSION.SDK_INT >= 33 &&
                             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
                         ) {
@@ -182,17 +199,31 @@ fun FocusScreen(
                             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
                         viewModel.start()
-                    }
-                } else {
+                    },
+                )
+
+                // 休息不绑定任务
+                if (if (live != null) !live.kind.isBreak else !viewModel.kind.isBreak) {
+                    TaskRow(
+                        run = live,
+                        task = viewModel.task,
+                        onClick = { pickTask = true },
+                    )
+                }
+
+                if (live != null) {
+                    val isBreak = live.kind.isBreak
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         SecondaryButton(if (live.paused) "继续" else "暂停", Modifier.weight(1f), viewModel::pauseOrResume)
-                        PrimaryButton("结束并记录", Modifier.weight(1f), viewModel::finish)
+                        PrimaryButton(if (isBreak) "结束休息" else "结束并记录", Modifier.weight(1f), viewModel::finish)
                     }
-                    TextButton(
-                        onClick = { confirmDiscard = true },
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                    ) {
-                        Text("放弃本次（不记录）", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    if (!isBreak) {
+                        TextButton(
+                            onClick = { confirmDiscard = true },
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        ) {
+                            Text("放弃本次（不记录）", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                        }
                     }
                 }
 
@@ -215,6 +246,7 @@ fun FocusScreen(
                 if (recent.isNotEmpty()) RecentCard(recent)
 
                 Spacer(Modifier.height(LocalBottomBarPadding.current))
+            }
             }
         }
     }
@@ -248,46 +280,174 @@ fun FocusScreen(
 
 // ───────────────────────── 计时环 ─────────────────────────
 
+/** 每种倒计时下面的快捷时长 */
+private fun presetsOf(kind: FocusKind): List<Int> = when (kind) {
+    FocusKind.FOCUS -> FocusRepository.CHOICES
+    FocusKind.SHORT_BREAK -> listOf(3, 5, 10, 15)
+    FocusKind.LONG_BREAK -> listOf(10, 15, 20, 30)
+}
+
+/**
+ * 计时圆盘：
+ * - 没开始：一整圈对应「最大时长」（专注 120 分钟、休息 60 分钟），拖动圆环上的把手或直接点圆环就能选时长，
+ *   圈里 60 根刻度、四个方位标出数值，圆心是大号分钟数和「开始」按钮；
+ * - 进行中：圆环是剩余比例（一圈走完正好归零），圆心是倒计时。
+ */
 @Composable
-private fun TimerCard(run: FocusRun?, now: Long, minutes: Int, onMinutes: (Int) -> Unit) {
+private fun TimerCard(
+    run: FocusRun?,
+    now: Long,
+    kind: FocusKind,
+    minutes: Int,
+    onKind: (FocusKind) -> Unit,
+    onMinutes: (Int) -> Unit,
+    onStart: () -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
     val dark = isDarkSurface()
     val remaining = run?.remainingMs(now)
-    // 没开始：整环；进行中：剩余比例，一圈走完正好归零
-    val fraction = if (run == null) 1f else (run.remainingMs(now).toFloat() / run.plannedMs).coerceIn(0f, 1f)
-    val arc = if (run?.paused == true) Brand.Orange.copy(alpha = 0.5f) else Brand.Orange
+    val shownKind = run?.kind ?: kind
+    val maxMin = shownKind.maxMin
+    // 没开始：选了多少占多少；进行中：剩余比例，一圈走完正好归零
+    val fraction = if (run == null) (minutes.toFloat() / maxMin).coerceIn(0f, 1f) else (run.remainingMs(now).toFloat() / run.plannedMs).coerceIn(0f, 1f)
+    val arcColor = when {
+        run?.paused == true -> Brand.Orange.copy(alpha = 0.5f)
+        shownKind.isBreak -> Color(0xFF4FAE8B)
+        else -> Brand.Orange
+    }
     val track = scheme.onSurface.copy(alpha = if (dark) 0.12f else 0.09f)
+    val tickOn = scheme.onSurface.copy(alpha = 0.55f)
+    val tickOff = scheme.onSurface.copy(alpha = if (dark) 0.2f else 0.16f)
+    val labelColor = scheme.onSurfaceVariant
+    val measurer = rememberTextMeasurer()
+    val haptic = LocalHapticFeedback.current
+    val currentMinutes by rememberUpdatedState(minutes)
+    val currentOnMinutes by rememberUpdatedState(onMinutes)
+    val currentKind by rememberUpdatedState(shownKind)
 
     GlassSurface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp)) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 20.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 18.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (run == null) {
+                KindTabs(kind, onKind)
+            } else {
+                Text(
+                    run.kind.label,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = arcColor,
+                )
+            }
+
             Box(
                 Modifier
-                    .size(236.dp)
+                    .widthIn(max = 300.dp)
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
                     .semantics {
-                        contentDescription = if (remaining == null) "已选 $minutes 分钟" else "剩余 ${spoken(remaining)}"
-                    },
+                        contentDescription = if (remaining == null) "已选 $minutes 分钟，拖动圆环调整" else "剩余 ${spoken(remaining)}"
+                    }
+                    .then(
+                        if (run != null) Modifier else Modifier
+                            .pointerInput(Unit) {
+                                // 点一下圆环：直接跳到那个时长
+                                detectTapGestures { pos ->
+                                    val k = currentKind
+                                    val m = minutesAt(pos, size.width.toFloat(), size.height.toFloat(), k, null)
+                                    if (m != currentMinutes) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        currentOnMinutes(m)
+                                    }
+                                }
+                            }
+                            .pointerInput(Unit) {
+                                var lastFraction = 0f
+                                detectDragGestures(
+                                    onDragStart = { pos ->
+                                        lastFraction = currentMinutes.toFloat() / currentKind.maxMin
+                                        val k = currentKind
+                                        val m = minutesAt(pos, size.width.toFloat(), size.height.toFloat(), k, lastFraction)
+                                        if (m != currentMinutes) currentOnMinutes(m)
+                                        lastFraction = m.toFloat() / k.maxMin
+                                    },
+                                    onDrag = { change, _ ->
+                                        change.consume()
+                                        val k = currentKind
+                                        val m = minutesAt(change.position, size.width.toFloat(), size.height.toFloat(), k, lastFraction)
+                                        lastFraction = m.toFloat() / k.maxMin
+                                        if (m != currentMinutes) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            currentOnMinutes(m)
+                                        }
+                                    },
+                                )
+                            },
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
-                Canvas(Modifier.size(236.dp)) {
-                    val stroke = 14.dp.toPx()
-                    val inset = stroke / 2
-                    val topLeft = Offset(inset, inset)
-                    val arcSize = Size(size.width - stroke, size.height - stroke)
-                    drawArc(track, 0f, 360f, false, topLeft, arcSize, style = Stroke(stroke))
+                Canvas(Modifier.fillMaxSize()) {
+                    val stroke = 26.dp.toPx()
+                    val c = center
+                    val outerR = size.minDimension / 2 - 2.dp.toPx()
+                    val ringR = outerR - stroke / 2
+                    val topLeft = Offset(c.x - ringR, c.y - ringR)
+                    val arcSize = Size(ringR * 2, ringR * 2)
+                    drawCircle(track, ringR, c, style = Stroke(stroke))
                     if (fraction > 0f) {
-                        drawArc(arc, -90f, 360f * fraction, false, topLeft, arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                        drawArc(arcColor, -90f, 360f * fraction, false, topLeft, arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                    }
+
+                    // 刻度：每 6° 一根（一圈 60 根），每 5 根一根长的
+                    val tickOuter = outerR - stroke - 8.dp.toPx()
+                    for (i in 0 until 60) {
+                        val long = i % 5 == 0
+                        val len = (if (long) 10.dp else 5.dp).toPx()
+                        val rad = Math.toRadians(i * 6.0 - 90.0)
+                        val dx = cos(rad).toFloat()
+                        val dy = sin(rad).toFloat()
+                        drawLine(
+                            color = if (i / 60f < fraction || (i == 0 && fraction > 0f)) tickOn else tickOff,
+                            start = Offset(c.x + dx * tickOuter, c.y + dy * tickOuter),
+                            end = Offset(c.x + dx * (tickOuter - len), c.y + dy * (tickOuter - len)),
+                            strokeWidth = (if (long) 2.dp else 1.2.dp).toPx(),
+                            cap = StrokeCap.Round,
+                        )
+                    }
+
+                    // 四个方位的数值：上 = 最大值，右 = 1/4，下 = 1/2，左 = 3/4
+                    if (run == null) {
+                        val labelR = tickOuter - 10.dp.toPx() - 14.dp.toPx()
+                        val style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, color = labelColor)
+                        listOf(maxMin to 0.0, maxMin / 4 to 90.0, maxMin / 2 to 180.0, maxMin * 3 / 4 to 270.0).forEach { (value, deg) ->
+                            val layout = measurer.measure(value.toString(), style)
+                            val rad = Math.toRadians(deg - 90.0)
+                            drawText(
+                                layout,
+                                topLeft = Offset(
+                                    c.x + cos(rad).toFloat() * labelR - layout.size.width / 2f,
+                                    c.y + sin(rad).toFloat() * labelR - layout.size.height / 2f,
+                                ),
+                            )
+                        }
+                        // 把手
+                        val a = Math.toRadians(360.0 * fraction - 90.0)
+                        val hc = Offset(c.x + cos(a).toFloat() * ringR, c.y + sin(a).toFloat() * ringR)
+                        drawCircle(Color.Black.copy(alpha = 0.18f), stroke * 0.46f, hc + Offset(0f, 1.5.dp.toPx()))
+                        drawCircle(Color.White, stroke * 0.42f, hc)
+                        drawCircle(arcColor, stroke * 0.16f, hc)
                     }
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     if (run == null) {
-                        Text(minutes.toString(), style = BigNumber.copy(fontSize = 76.sp, lineHeight = 80.sp))
+                        Text(minutes.toString(), style = BigNumber.copy(fontSize = 60.sp, lineHeight = 64.sp))
                         Text("分钟", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurfaceVariant)
+                        Spacer(Modifier.height(10.dp))
+                        StartPill(onStart)
                     } else {
-                        Text(countdown(remaining ?: 0L), style = BigNumber.copy(fontSize = 54.sp, lineHeight = 60.sp))
+                        Text(countdown(remaining ?: 0L), style = BigNumber.copy(fontSize = 50.sp, lineHeight = 56.sp))
                         Text(
                             if (run.paused) "已暂停" else "${clockOf(run.endAtMs)} 结束",
                             fontSize = 14.sp,
@@ -300,16 +460,79 @@ private fun TimerCard(run: FocusRun?, now: Long, minutes: Int, onMinutes: (Int) 
 
             if (run == null) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FocusRepository.CHOICES.forEach { m ->
+                    presetsOf(kind).forEach { m ->
                         DurationChip(m, selected = m == minutes, modifier = Modifier.weight(1f), onClick = { onMinutes(m) })
                     }
                 }
             } else {
                 Text(
-                    "共 ${run.plannedMin} 分钟 · 已专注 ${spoken(run.elapsedMs(now))}",
+                    "共 ${run.plannedMin} 分钟 · 已${if (run.kind.isBreak) "休息" else "专注"} ${spoken(run.elapsedMs(now))}",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = scheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** 点 / 拖的位置 → 分钟数。[lastFraction] 用来防止从 0 点附近一跨就从最大值跳到最小值（拖过头时停在端点） */
+private fun minutesAt(pos: Offset, width: Float, height: Float, kind: FocusKind, lastFraction: Float?): Int {
+    val dx = pos.x - width / 2f
+    val dy = pos.y - height / 2f
+    var deg = Math.toDegrees(atan2(dx.toDouble(), -dy.toDouble()))
+    if (deg < 0) deg += 360.0
+    var f = (deg / 360.0).toFloat()
+    if (lastFraction != null) {
+        if (lastFraction > 0.75f && f < 0.25f) f = 1f
+        else if (lastFraction < 0.25f && f > 0.75f) f = 0f
+    }
+    return Math.round(f * kind.maxMin).coerceIn(kind.minMin, kind.maxMin)
+}
+
+@Composable
+private fun StartPill(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .height(40.dp)
+            .clip(CircleShape)
+            .background(Brand.Orange)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 22.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("开始", fontSize = 15.sp, fontWeight = FontWeight.ExtraBold, color = Brand.Brown)
+        Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = Brand.Brown, modifier = Modifier.size(18.dp))
+    }
+}
+
+/** 专注 / 短休息 / 长休息 */
+@Composable
+private fun KindTabs(selected: FocusKind, onSelect: (FocusKind) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(scheme.onSurface.copy(alpha = 0.07f))
+            .padding(3.dp),
+    ) {
+        FocusKind.entries.forEach { k ->
+            val on = k == selected
+            Box(
+                modifier = Modifier
+                    .height(34.dp)
+                    .clip(CircleShape)
+                    .background(if (on) Brand.Orange else Color.Transparent)
+                    .clickable(role = Role.Tab, onClick = { onSelect(k) })
+                    .padding(horizontal = 18.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    k.label,
+                    fontSize = 14.sp,
+                    fontWeight = if (on) FontWeight.ExtraBold else FontWeight.SemiBold,
+                    color = if (on) Brand.Brown else scheme.onSurfaceVariant,
                 )
             }
         }

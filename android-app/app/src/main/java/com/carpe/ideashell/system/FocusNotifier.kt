@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
 import com.carpe.ideashell.R
 import com.carpe.ideashell.data.focus.FocusRun
@@ -27,7 +28,7 @@ import java.time.format.DateTimeFormatter
 class FocusNotifier(private val context: Context) {
 
     /** 专注状态变了（开始 / 暂停 / 继续 / 结束 / 放弃）：同步通知与闹钟 */
-    fun onSessionChanged(run: FocusRun?) {
+    fun onSessionChanged(run: FocusRun?, hint: String? = null) {
         val nm = context.getSystemService(NotificationManager::class.java)
         if (run == null) {
             cancelAlarm()
@@ -42,7 +43,7 @@ class FocusNotifier(private val context: Context) {
             scheduleAlarm(run.endAtMs)
             scheduleTick(run)
         }
-        showRunning(nm, run)
+        showRunning(nm, run, hint)
     }
 
     /**
@@ -91,15 +92,17 @@ class FocusNotifier(private val context: Context) {
 
     // ───────────────────────── 常驻通知 ─────────────────────────
 
-    private fun showRunning(nm: NotificationManager, run: FocusRun) {
+    private fun showRunning(nm: NotificationManager, run: FocusRun, hint: String? = null) {
         if (!canNotify()) return
         ensureChannels(nm)
         val now = System.currentTimeMillis()
-        val taskPart = run.title.ifBlank { "自由专注" }
+        val isBreak = run.kind.isBreak
+        val label = run.kind.label
+        val taskPart = if (isBreak) label else run.title.ifBlank { "自由专注" }
         val builder = NotificationCompat.Builder(context, RUNNING_CHANNEL)
             .setSmallIcon(R.drawable.ic_tile)
             .setColor(ACCENT)
-            .setContentTitle(if (run.paused) "专注已暂停" else "专注中")
+            .setContentTitle(if (run.paused) "${label}已暂停" else "${label}中")
             .setContentIntent(openFocus())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -108,20 +111,73 @@ class FocusNotifier(private val context: Context) {
             .addExtras(promotedExtras())
         if (run.paused) {
             val left = Math.ceil(run.remainingMs(now) / 60_000.0).toInt().coerceAtLeast(1)
-            builder.setContentText("$taskPart · 还剩 $left 分钟")
+            builder.setContentText(hint ?: "$taskPart · 还剩 $left 分钟")
                 .setShowWhen(false)
                 .addAction(0, "继续", action(ACTION_RESUME, 22))
         } else {
             // 系统自己倒计时到 endAt，不用每秒更新通知
-            builder.setContentText("$taskPart · ${run.plannedMin} 分钟 · ${clock(run.endAtMs)} 结束")
+            builder.setContentText(hint ?: "$taskPart · ${run.plannedMin} 分钟 · ${clock(run.endAtMs)} 结束")
                 .setUsesChronometer(true)
                 .setChronometerCountDown(true)
                 .setShowWhen(true)
                 .setWhen(run.endAtMs)
                 .addAction(0, "暂停", action(ACTION_PAUSE, 21))
         }
-        builder.addAction(0, "结束", action(ACTION_FINISH, 23))
+        // 「记录」：直接在通知里输入一句话，追加到当前任务的任务笔记（并同步成滴答评论）；休息和没绑任务的自由专注没有这个按钮
+        if (!isBreak && !run.taskId.isNullOrBlank()) builder.addAction(recordAction(run))
+        builder.addAction(0, if (isBreak) "跳过" else "结束", action(ACTION_FINISH, 23))
         if (NotificationManagerCompat.from(context).areNotificationsEnabled()) nm.notify(RUNNING_ID, builder.build())
+    }
+
+    private fun recordAction(run: FocusRun): NotificationCompat.Action {
+        val remote = RemoteInput.Builder(KEY_RECORD_TEXT)
+            .setLabel("记录到「${run.title.ifBlank { "当前任务" }}」")
+            .build()
+        // RemoteInput 要往 PendingIntent 里回填文字，必须是可变的
+        val pi = PendingIntent.getBroadcast(
+            context, 26,
+            Intent(context, FocusActionReceiver::class.java).setAction(ACTION_RECORD),
+            PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0,
+        )
+        return NotificationCompat.Action.Builder(0, "记录", pi)
+            .addRemoteInput(remote)
+            .setAllowGeneratedReplies(false)
+            .build()
+    }
+
+    /** 休息走完的提醒 */
+    fun showBreakDone(kind: com.carpe.ideashell.data.focus.FocusKind, minutes: Int) {
+        if (!canNotify()) return
+        val nm = context.getSystemService(NotificationManager::class.java)
+        ensureChannels(nm)
+        val builder = NotificationCompat.Builder(context, DONE_CHANNEL)
+            .setSmallIcon(R.drawable.ic_tile)
+            .setColor(ACCENT)
+            .setContentTitle("${kind.label}结束 · $minutes 分钟")
+            .setContentText("休息好了，开始下一次专注吧")
+            .setContentIntent(openFocus())
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setWhen(System.currentTimeMillis())
+            .setShowWhen(true)
+        if (NotificationManagerCompat.from(context).areNotificationsEnabled()) nm.notify(DONE_ID, builder.build())
+    }
+
+    /** 记录失败后的提示（独立一条，不影响常驻通知）；把原文带上，免得白写 */
+    fun showRecordResult(title: String, text: String) {
+        if (!canNotify()) return
+        val nm = context.getSystemService(NotificationManager::class.java)
+        ensureChannels(nm)
+        val builder = NotificationCompat.Builder(context, QUIET_DONE_CHANNEL)
+            .setSmallIcon(R.drawable.ic_tile)
+            .setColor(ACCENT)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+        if (NotificationManagerCompat.from(context).areNotificationsEnabled()) nm.notify(RECORD_ID, builder.build())
     }
 
     /**
@@ -199,12 +255,16 @@ class FocusNotifier(private val context: Context) {
         const val ACTION_FINISH = "com.carpe.ideashell.action.FOCUS_FINISH"
         const val ACTION_START = "com.carpe.ideashell.action.FOCUS_START"
         const val ACTION_TICK = "com.carpe.ideashell.action.FOCUS_TICK"
+        const val ACTION_START_BREAK = "com.carpe.ideashell.action.FOCUS_START_BREAK"
+        const val ACTION_RECORD = "com.carpe.ideashell.action.FOCUS_RECORD"
+        const val KEY_RECORD_TEXT = "focus_record_text"
 
         private const val RUNNING_CHANNEL = "focus_running"
         private const val DONE_CHANNEL = "focus_done"
         private const val QUIET_DONE_CHANNEL = "focus_record"
         private const val RUNNING_ID = 2002
         private const val DONE_ID = 2003
+        private const val RECORD_ID = 2004
         private const val ACCENT = 0xFFE0703F.toInt()
     }
 }

@@ -17,6 +17,21 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.time.LocalDate
 
+/** 倒计时的种类：专注 / 短休息 / 长休息。休息不记入滴答，也不绑定任务 */
+@Serializable
+enum class FocusKind(val label: String, val defaultMin: Int) {
+    FOCUS("专注", 25),
+    SHORT_BREAK("短休息", 5),
+    LONG_BREAK("长休息", 15),
+    ;
+
+    val isBreak: Boolean get() = this != FOCUS
+
+    /** 圆盘上能选的最大分钟数：专注 120，休息 60 */
+    val maxMin: Int get() = if (isBreak) 60 else 120
+    val minMin: Int get() = if (isBreak) 1 else 5
+}
+
 /**
  * 正在进行的一次专注（倒计时）。起止用挂钟毫秒时间戳存盘，进程被杀、手机重启后也能接着算。
  * 暂停：记下暂停开始的时刻；继续时把这段加进 [pausedTotalMs]，所以「已专注」不含暂停的时间。
@@ -31,6 +46,7 @@ data class FocusRun(
     /** 暂停开始的时刻；null = 进行中 */
     val pausedAtMs: Long? = null,
     val pausedTotalMs: Long = 0L,
+    val kind: FocusKind = FocusKind.FOCUS,
 ) {
     val paused: Boolean get() = pausedAtMs != null
     val plannedMs: Long get() = plannedMin * 60_000L
@@ -71,7 +87,7 @@ class FocusRepository(
     private val api: DidaApi,
     private val daySummary: DaySummaryService,
     private val hasDida: () -> Boolean,
-    private val notifier: FocusNotifier,
+    val notifier: FocusNotifier,
 ) {
     private val prefs = context.applicationContext.getSharedPreferences("focus", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
@@ -91,18 +107,34 @@ class FocusRepository(
     private val _recordedAt = MutableStateFlow(0L)
     val recordedAt: StateFlow<Long> = _recordedAt.asStateFlow()
 
-    /** 上次选的时长，下次打开直接用 */
+    /** 上次选的专注时长，下次打开直接用 */
     val lastMinutes: Int
-        get() = prefs.getInt(KEY_LAST_MIN, DEFAULT_MINUTES)
+        get() = lastMinutes(FocusKind.FOCUS)
+
+    /** 每种倒计时各记一个上次选的时长（短休息 / 长休息默认 5 / 15 分钟） */
+    fun lastMinutes(kind: FocusKind): Int =
+        prefs.getInt(keyOf(kind), kind.defaultMin).coerceIn(kind.minMin, kind.maxMin)
+
+    private fun keyOf(kind: FocusKind) = if (kind == FocusKind.FOCUS) KEY_LAST_MIN else "last_minutes_${kind.name}"
 
     // ───────────── 计时控制 ─────────────
 
     /** 开始一次专注；已经有一次在进行时返回 false */
-    fun start(taskId: String?, projectId: String?, title: String, minutes: Int): Boolean {
+    fun start(taskId: String?, projectId: String?, title: String, minutes: Int, kind: FocusKind = FocusKind.FOCUS): Boolean {
         if (_session.value != null) return false
-        val m = minutes.coerceIn(MIN_MINUTES, MAX_MINUTES)
-        prefs.edit().putInt(KEY_LAST_MIN, m).apply()
-        setSession(FocusRun(taskId, projectId, title, System.currentTimeMillis(), m))
+        val m = minutes.coerceIn(kind.minMin, if (kind.isBreak) kind.maxMin else MAX_MINUTES)
+        prefs.edit().putInt(keyOf(kind), m).apply()
+        val isBreak = kind.isBreak
+        setSession(
+            FocusRun(
+                taskId = if (isBreak) null else taskId,
+                projectId = if (isBreak) null else projectId,
+                title = if (isBreak) "" else title,
+                startMs = System.currentTimeMillis(),
+                plannedMin = m,
+                kind = kind,
+            ),
+        )
         return true
     }
 
@@ -132,6 +164,11 @@ class FocusRepository(
             val elapsed = s.elapsedMs(now)
             val completed = s.isDue(now)
             setSession(null)
+            if (s.kind.isBreak) {
+                // 休息不记录，只在自然走完时提醒一下
+                if (completed) notifier.showBreakDone(s.kind, s.plannedMin)
+                return@withLock FocusResult.None
+            }
             if (elapsed < MIN_RECORD_MS) return@withLock FocusResult.TooShort
             val record = PendingFocus(s.startMs, s.startMs + elapsed, s.taskId, s.title)
             _pending.value = _pending.value + record
@@ -165,6 +202,11 @@ class FocusRepository(
     fun tick() {
         val s = _session.value ?: return
         notifier.scheduleTick(s)
+    }
+
+    /** 记录内容已写入后刷新常驻通知（顺便把「输入中」的转圈停掉）；[hint] 会临时显示在通知正文里，下一次心跳恢复 */
+    fun refreshNotification(hint: String?) {
+        notifier.onSessionChanged(_session.value, hint)
     }
 
     /** 重启后让通知和闹钟与存盘的状态一致（应用启动时调用一次） */

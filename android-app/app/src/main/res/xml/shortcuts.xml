@@ -27,4 +27,19 @@
                 android:value="TODO" />
         </intent>
     </shortcut>
+    <shortcut
+        android:shortcutId="start_focus"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_focus"
+        android:shortcutShortLabel="@string/shortcut_focus_short"
+        android:shortcutLongLabel="@string/shortcut_focus_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.carpe.ideashell"
+            android:targetClass="com.carpe.ideashell.ui.MainActivity">
+            <extra
+                android:name="open_focus"
+                android:value="true" />
+        </intent>
+    </shortcut>
 </shortcuts>

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -43,6 +44,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -104,6 +106,7 @@ import java.util.Locale
  * - 下一件：只留最近要做的一件待办，其余去「待办」页。
  * 输入统一由右下角的「+」完成（见 MainActivity），这里不再放输入框。
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onOpenSearch: () -> Unit,
@@ -191,8 +194,14 @@ fun HomeScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
     ) { padding ->
-        LazyColumn(
+        // 下拉强制刷新：待办、专注、往日回顾、热力图都重新读，不看缓存
+        PullToRefreshBox(
+            isRefreshing = viewModel.refreshing,
+            onRefresh = viewModel::forceRefresh,
             modifier = Modifier.padding(padding),
+        ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = LocalBottomBarPadding.current),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -307,6 +316,7 @@ fun HomeScreen(
                     )
                 }
             }
+        }
         }
     }
 }
@@ -858,7 +868,7 @@ private fun FocusingStrip(
     LaunchedEffect(due) { if (due) onDue() }
     val sec = ((remain + 999) / 1000).coerceAtLeast(0)
     val clock = if (sec >= 3600) "%d:%02d:%02d".format(sec / 3600, sec / 60 % 60, sec % 60) else "%02d:%02d".format(sec / 60, sec % 60)
-    val what = run.title.trim().takeIf { it.isNotEmpty() } ?: "自由专注"
+    val what = if (run.kind.isBreak) "放松一下" else run.title.trim().takeIf { it.isNotEmpty() } ?: "自由专注"
 
     Row(
         modifier = modifier
@@ -879,7 +889,7 @@ private fun FocusingStrip(
         )
         Column(Modifier.weight(1f)) {
             Text(
-                if (paused) "专注已暂停" else "专注中",
+                if (paused) "${run.kind.label}已暂停" else "${run.kind.label}中",
                 style = MaterialTheme.typography.labelMedium,
                 color = scheme.onSurfaceVariant,
             )

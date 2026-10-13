@@ -14,6 +14,7 @@ import com.carpe.ideashell.AppContainer
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.data.dida.DidaOverview
 import com.carpe.ideashell.data.dida.DidaTask
+import com.carpe.ideashell.data.focus.FocusKind
 import com.carpe.ideashell.data.focus.FocusResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
@@ -44,6 +45,8 @@ class FocusViewModel(private val container: AppContainer) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), container.todos.state.value.overview?.let(::candidates).orEmpty())
 
     /** 开始前选的时长（分钟）、绑定的任务；开始后它们就存进 [session]，这里只管下一次 */
+    var kind by mutableStateOf(FocusKind.FOCUS)
+        private set
     var minutes by mutableIntStateOf(focus.lastMinutes)
     var task by mutableStateOf<DidaTask?>(null)
 
@@ -67,9 +70,40 @@ class FocusViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** 切换 专注 / 短休息 / 长休息：时长换成这一种上次选的 */
+    fun selectKind(k: FocusKind) {
+        if (k == kind) return
+        kind = k
+        minutes = focus.lastMinutes(k)
+    }
+
+    var refreshing by mutableStateOf(false)
+        private set
+
+    /** 下拉强制刷新：对账、读回滴答里的专注、重新拉待办，并刷新通知 / 小部件 */
+    fun forceRefresh() {
+        if (refreshing) return
+        refreshing = true
+        viewModelScope.launch {
+            try {
+                kotlinx.coroutines.coroutineScope {
+                    launch { container.todos.refreshNow() }
+                    launch {
+                        focus.settle()
+                        focus.refresh()
+                    }
+                }
+                container.surfaces.updateAll()
+                container.widgets.updateFocus()
+            } finally {
+                refreshing = false
+            }
+        }
+    }
+
     fun start() {
         val t = task
-        if (!focus.start(t?.id, t?.projectId, t?.title.orEmpty(), minutes)) {
+        if (!focus.start(t?.id, t?.projectId, t?.title.orEmpty(), minutes, kind)) {
             _messages.trySend("已经有一个专注在进行")
         }
     }

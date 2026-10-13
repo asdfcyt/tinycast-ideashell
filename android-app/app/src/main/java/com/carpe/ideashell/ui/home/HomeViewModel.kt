@@ -200,6 +200,43 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     fun refreshTodos() = container.todos.refresh(force = true)
 
+    /** 下拉刷新中 */
+    var refreshing by mutableStateOf(false)
+        private set
+
+    /** 下拉强制刷新：绕过各处的缓存，把待办、专注、往日回顾、热力图全部重新读一遍 */
+    fun forceRefresh() {
+        if (refreshing) return
+        refreshing = true
+        viewModelScope.launch {
+            try {
+                focusAt = 0L
+                heatAt = 0L
+                heatJob?.cancel()
+                val jobs = listOf(
+                    launch { runCatching { container.todos.refreshNow() } },
+                    launch {
+                        if (!container.credentials.didaToken.isNullOrBlank()) {
+                            runCatching { container.daySummary.focus(LocalDate.now()) }.onSuccess { _focus.value = it }
+                        }
+                    },
+                    launch {
+                        if (container.credentials.ideashellConnected.value) {
+                            runCatching { container.notes.memory(force = true) }.onSuccess { _memory.value = it }
+                        }
+                    },
+                )
+                refreshHeat()
+                jobs.forEach { it.join() }
+                heatJob?.join()
+                container.focus.settle()
+                container.surfaces.updateAll()
+            } finally {
+                refreshing = false
+            }
+        }
+    }
+
     fun completeTask(task: DidaTask) {
         viewModelScope.launch {
             container.todos.complete(task).onFailure {

@@ -12,7 +12,6 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.carpe.ideashell.AppContainer
 import com.carpe.ideashell.IdeashellApp
-import com.carpe.ideashell.core.parse.Quadrant
 import com.carpe.ideashell.core.notes.NoteSections
 import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.dida.DidaTask
@@ -41,7 +40,7 @@ sealed interface TodoEvent {
 
 /**
  * 待办页的视图：任务 / 项目 / 习惯。
- * 「任务」是原来的列表 + 四象限 + 收集箱合并后的一个视图：按日期分组，行内带象限色点，顶部可按象限筛选，
+ * 「任务」是原来的列表 + 收集箱合并后的一个视图：按日期分组，行首的圆圈颜色表示优先级，
  * 没有日期的任务在末尾的「无日期」分组里，行尾「定日期」一键排期。
  */
 enum class TodoView(val label: String) {
@@ -80,9 +79,6 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
 
     var showDone by mutableStateOf(false)
     var showAllUndated by mutableStateOf(false)
-
-    /** 任务视图的象限筛选；null 表示全部 */
-    var quadrantFilter by mutableStateOf<Quadrant?>(null)
 
     /** 任务视图选中的那一天；null 表示今天 */
     var day by mutableStateOf<java.time.LocalDate?>(null)
@@ -210,7 +206,6 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     /** 切换 `!重要` / `!紧急` 标记（直接写在待办标题里） */
-    fun toggleMark(task: DidaTask, mark: TodoMeta.Mark) = rename(task, TodoMeta.toggleMark(task.title, mark))
 
     fun rename(task: DidaTask, title: String) {
         val clean = title.trim()

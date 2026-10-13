@@ -31,6 +31,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -230,16 +232,33 @@ private fun TimelineRow(
                 val sw = 2.dp.toPx()
                 if (!first) drawLine(line, Offset(x, 0f), Offset(x, nodeY - gap), sw)
                 if (!last) drawLine(line, Offset(x, nodeY + gap), Offset(x, size.height), sw)
+                // 一眼分清：待办 = 方块（空心 = 没做，实心 = 做完），笔记 = 三角，日记 = 圆
                 when (kind) {
                     Kind.DAILY -> drawCircle(Brand.Orange, 6.dp.toPx(), Offset(x, nodeY))
-                    Kind.NOTE -> drawRoundRect(
+                    Kind.NOTE -> {
+                        val r = 7.dp.toPx()
+                        val tri = Path().apply {
+                            moveTo(x, nodeY - r * 0.92f)
+                            lineTo(x + r, nodeY + r * 0.72f)
+                            lineTo(x - r, nodeY + r * 0.72f)
+                            close()
+                        }
+                        drawPath(tri, ink, style = androidx.compose.ui.graphics.drawscope.Fill)
+                        drawPath(tri, ink, style = Stroke(2.dp.toPx(), join = StrokeJoin.Round))
+                    }
+                    Kind.TODO -> drawRoundRect(
                         ink,
+                        topLeft = Offset(x - 4.75.dp.toPx(), nodeY - 4.75.dp.toPx()),
+                        size = Size(9.5.dp.toPx(), 9.5.dp.toPx()),
+                        cornerRadius = CornerRadius(2.dp.toPx()),
+                        style = Stroke(2.5.dp.toPx()),
+                    )
+                    Kind.TODO_DONE -> drawRoundRect(
+                        muted,
                         topLeft = Offset(x - 5.5.dp.toPx(), nodeY - 5.5.dp.toPx()),
                         size = Size(11.dp.toPx(), 11.dp.toPx()),
-                        cornerRadius = CornerRadius(3.dp.toPx()),
+                        cornerRadius = CornerRadius(2.5.dp.toPx()),
                     )
-                    Kind.TODO -> drawCircle(ink, 4.75.dp.toPx(), Offset(x, nodeY), style = Stroke(2.5.dp.toPx()))
-                    Kind.TODO_DONE -> drawCircle(muted, 6.dp.toPx(), Offset(x, nodeY))
                 }
             }
             .padding(vertical = 8.dp),

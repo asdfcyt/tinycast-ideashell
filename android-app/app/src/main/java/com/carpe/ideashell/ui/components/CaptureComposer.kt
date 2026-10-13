@@ -216,7 +216,21 @@ fun CaptureComposer(
         }
         val tagText = plan?.tags?.takeIf { it.isNotEmpty() }?.let { "#${it.first()}" + if (it.size > 1) " +${it.size - 1}" else "" }
         val important = plan != null && plan.kind == CaptureKind.TODO && plan.important
-        var dateMenu by remember { mutableStateOf(false) }
+        var dateSheet by remember { mutableStateOf(false) }
+        if (dateSheet) {
+            val curDate = plan?.todoDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+            val curTime = plan?.todoTime?.let { runCatching { java.time.LocalTime.parse(it) }.getOrNull() }
+            DateTimeSheet(
+                initialDate = curDate,
+                initialTime = curTime,
+                onConfirm = { d, t ->
+                    dateSheet = false
+                    setText(applyDateTime(text, d, t))
+                    focusRequester?.let { runCatching { it.requestFocus() } }
+                },
+                onDismiss = { dateSheet = false },
+            )
+        }
         var folderMenu by remember { mutableStateOf(false) }
 
         Row(
@@ -229,21 +243,7 @@ fun CaptureComposer(
                     .horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box {
-                    ToolIcon(R.drawable.ic_calendar, "日期", { dateMenu = true }, label = dateText, active = dateText != null, enabled = todoLike)
-                    DropdownMenu(expanded = dateMenu, onDismissRequest = { dateMenu = false }) {
-                        listOf("今天", "明天", "后天", "下周一").forEach { word ->
-                            DropdownMenuItem(
-                                text = { Text(word) },
-                                onClick = {
-                                    dateMenu = false
-                                    setText("$word ${text.trimStart()}".trimEnd())
-                                    focusRequester?.let { runCatching { it.requestFocus() } }
-                                },
-                            )
-                        }
-                    }
-                }
+                ToolIcon(R.drawable.ic_calendar, "日期", { dateSheet = true }, label = dateText, active = dateText != null, enabled = todoLike)
                 ToolIcon(
                     R.drawable.ic_tag, "标签",
                     {
@@ -405,4 +405,19 @@ private fun ImageThumb(path: String, onRemove: () -> Unit) {
             Icon(Icons.Filled.Close, contentDescription = "移除图片", tint = MaterialTheme.colorScheme.inverseOnSurface, modifier = Modifier.size(14.dp))
         }
     }
+}
+
+/**
+ * 把选好的日期 / 时间写回输入框：先去掉原来识别到的日期和时间，再在最前面写入标准格式（yyyy-MM-dd HH:mm），
+ * 并加上「待办」前缀确保一定存成待办。选「没有日期」时只去掉日期，保留原来的待办前缀。
+ */
+internal fun applyDateTime(text: String, date: java.time.LocalDate?, time: java.time.LocalTime?): String {
+    val a = com.carpe.ideashell.core.parse.CaptureParser.analyze(text)
+    val base = if (a.text.isBlank()) "" else com.carpe.ideashell.core.parse.TodoParser.parse(a.text).content
+    if (date == null) {
+        val keepTodo = a.forced == CaptureKind.TODO
+        return (if (keepTodo) "待办 " else "") + base
+    }
+    val stamp = date.toString() + (time?.let { " %02d:%02d".format(it.hour, it.minute) } ?: "")
+    return "待办 $stamp $base".trimEnd()
 }

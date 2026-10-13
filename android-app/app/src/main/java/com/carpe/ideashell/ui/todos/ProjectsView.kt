@@ -412,7 +412,6 @@ private fun ProjectTaskRow(t: DidaTask, ctx: TodoCtx, done: Boolean) {
         project = listNameOf(ctx.overview, t.projectId),
         today = ctx.today,
         badges = badgesOf(t, ctx.workspace),
-        quadrant = if (done) null else TodoMeta.quadrantOf(t.title, t.date, ctx.today),
         onToggle = { ctx.onToggle(t) },
         onOpen = { ctx.onOpen(t) },
     )

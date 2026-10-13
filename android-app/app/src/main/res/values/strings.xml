@@ -9,6 +9,9 @@
     <string name="shortcut_note_long">快速记一条</string>
     <string name="shortcut_todo_short">记待办</string>
     <string name="shortcut_todo_long">快速记待办</string>
+    <string name="shortcut_focus_short">开始专注</string>
+    <string name="shortcut_focus_long">开始专注</string>
+    <string name="tile_focus_label">专注</string>
     <string name="widget_title">待办</string>
     <string name="widget_add">新建待办</string>
     <string name="widget_complete">完成</string>

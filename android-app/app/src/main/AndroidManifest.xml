@@ -195,6 +195,17 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+        <!-- 快速设置磁贴：专注（点一下打开专注页；专注中显示为点亮） -->
+        <service
+            android:name=".system.FocusTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_focus"
+            android:label="@string/tile_focus_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
         <!-- 拍照：给系统相机一个可写入的临时文件地址 -->
         <provider
             android:name="androidx.core.content.FileProvider"

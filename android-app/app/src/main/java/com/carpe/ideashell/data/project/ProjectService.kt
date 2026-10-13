@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 
 fun didaTaskUrl(projectId: String, taskId: String) = "https://dida365.com/webapp/#p/$projectId/tasks/$taskId"
@@ -222,6 +223,26 @@ class ProjectService(
         val line = text.trim()
         editNote(noteId, "进展记录") { old -> "$old${if (old.isNotEmpty()) "\n" else ""}- ${NoteSections.minuteStamp()} $line" }
         return task != null && comment(task.projectId, task.id, "进展：$line")
+    }
+
+    private val recordLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * 专注通知里的「记录」：把一句话记到当前任务。任务还没有任务笔记就先在闪念贝壳里建一条（第一次记录时创建），
+     * 然后把这句话追加到笔记的「进展记录」，同时在滴答任务下追加一条评论。
+     * 连点几次不会建出多条笔记（串行执行）。失败抛异常，由调用方提示。
+     * @return 是否同步到了滴答评论
+     */
+    suspend fun recordForTask(taskId: String, text: String): Boolean = recordLock.withLock {
+        val line = text.trim()
+        // 要拿到完整的任务：创建任务笔记时会把笔记链接追加到任务备注里，不能用空备注覆盖
+        val task = if (hasDida()) dida.fetchTask(taskId) else null
+        val ref = taskNote(taskId) ?: run {
+            val t = task ?: error("读不到滴答任务，无法创建任务笔记")
+            val goal = TodoMeta.cleanTitle(t.title).ifBlank { t.title }
+            createTaskNote(t, goal, "", "")
+        }
+        addProgress(ref.noteId, line, task)
     }
 
     suspend fun addReview(noteId: String, text: String) {

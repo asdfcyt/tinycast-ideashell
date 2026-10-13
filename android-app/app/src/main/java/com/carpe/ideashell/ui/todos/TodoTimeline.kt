@@ -55,7 +55,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carpe.ideashell.R
-import com.carpe.ideashell.core.parse.Quadrant
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.ui.components.CircleIconButton
 import com.carpe.ideashell.ui.components.ListGroup
@@ -543,33 +542,18 @@ private fun NowRow(text: String) {
 // ───────────────────────── 标题栏的视图 / 筛选菜单 ─────────────────────────
 
 /**
- * 标题栏右上角的菜单：切换「任务 / 项目 / 习惯」，任务视图下还能按象限筛选。
- * 有象限筛选时按钮右上角亮一个橙点，提醒列表被筛过。
+ * 标题栏右上角的菜单：切换「任务 / 项目 / 习惯」。
  */
 @Composable
 internal fun ViewMenuButton(
     view: TodoView,
     onSelectView: (TodoView) -> Unit,
-    quadrant: Quadrant?,
-    quadrantCounts: Map<Quadrant, Int>,
-    onSelectQuadrant: (Quadrant?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var open by remember { mutableStateOf(false) }
     val icon: ImageVector = ImageVector.vectorResource(R.drawable.ic_filter)
     Box(modifier) {
         CircleIconButton(icon, "视图与筛选", onClick = { open = true })
-        if (quadrant != null && view == TodoView.LIST) {
-            Box(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 6.dp, end = 6.dp)
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(Brand.Orange)
-                    .border(1.5.dp, MaterialTheme.colorScheme.background, CircleShape),
-            )
-        }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             TodoView.entries.forEach { v ->
                 MenuRow(v.label, selected = v == view) {
@@ -577,29 +561,15 @@ internal fun ViewMenuButton(
                     onSelectView(v)
                 }
             }
-            if (view == TodoView.LIST) {
-                HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                MenuRow("全部象限", selected = quadrant == null) {
-                    open = false
-                    onSelectQuadrant(null)
-                }
-                Quadrant.entries.forEach { q ->
-                    MenuRow("${q.title}  ${quadrantCounts[q] ?: 0}", selected = quadrant == q, dot = q) {
-                        open = false
-                        onSelectQuadrant(if (quadrant == q) null else q)
-                    }
-                }
-            }
         }
     }
 }
 
 @Composable
-private fun MenuRow(text: String, selected: Boolean, dot: Quadrant? = null, onClick: () -> Unit) {
+private fun MenuRow(text: String, selected: Boolean, onClick: () -> Unit) {
     DropdownMenuItem(
         text = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (dot != null) QuadrantDot(dot)
                 Text(text, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
             }
         },
