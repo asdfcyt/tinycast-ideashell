@@ -23,6 +23,7 @@ import java.time.DayOfWeek
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 
 /**
@@ -50,9 +51,13 @@ class RevisitReminderWorker(context: Context, params: WorkerParameters) : Corout
     }
 }
 
+/**
+ * 到期提醒是一条独立的、可以划掉的普通通知：独占 [NotificationIds.REVISIT_DUE] 和自己的渠道，
+ * 不是常驻通知（不 ongoing），不和待办常驻通知 / 专注实时通知共用 id；当天过完就自己消失。
+ */
 object RevisitNotifier {
     private const val CHANNEL = "revisit_reminder"
-    private const val NOTIFICATION_ID = 2010
+    private const val NOTIFICATION_ID = NotificationIds.REVISIT_DUE
 
     fun show(context: Context, count: Int) {
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -70,14 +75,18 @@ object RevisitNotifier {
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val endOfDay = LocalDate.now().plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_shiyi)
             .setContentTitle("今天有 $count 条待重温")
             .setContentText("点开开始，每条只要几秒钟")
             .setContentIntent(open)
+            .addAction(0, "开始重温", open)
             .setAutoCancel(true)
+            .setOngoing(false)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setTimeoutAfter((endOfDay - System.currentTimeMillis()).coerceAtLeast(60_000L))
             .build()
         runCatching { nm.notify(NOTIFICATION_ID, notification) }
     }

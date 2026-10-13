@@ -412,7 +412,7 @@ class TodoSurfaces(
     companion object {
         // 换过一次 id / 渠道：部分系统（荣耀 / 华为等）会缓存通知小图标，旧的 id 和渠道上还挂着以前的图标
         const val CHANNEL_ID = "todo_summary_v2"
-        const val NOTIFICATION_ID = 2002
+        const val NOTIFICATION_ID = NotificationIds.TODO_SUMMARY
         private const val LEGACY_CHANNEL_ID = "todo_summary"
         private const val LEGACY_NOTIFICATION_ID = 2001
         private const val MAX_BIG_ROWS = 5
