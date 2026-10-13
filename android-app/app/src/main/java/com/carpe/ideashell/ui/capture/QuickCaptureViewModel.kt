@@ -140,6 +140,24 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /**
+     * 相机页交回的结果：识别出的文字追加到输入框末尾（已有内容另起一行）；
+     * 图片已经在相机页缩小压缩好了，直接加入列表，超出张数上限的丢掉并删文件。
+     */
+    fun applyCameraResult(result: CameraCaptureResult) {
+        result.text?.let { recognized ->
+            text = if (text.isBlank()) recognized else text.trimEnd() + "\n" + recognized
+        }
+        if (result.images.isNotEmpty()) {
+            val room = (CaptureImages.MAX_COUNT - images.size).coerceAtLeast(0)
+            images.addAll(result.images.take(room))
+            result.images.drop(room).takeIf { it.isNotEmpty() }?.let {
+                CaptureImages.delete(it)
+                error = "最多 ${CaptureImages.MAX_COUNT} 张图片"
+            }
+        }
+    }
+
     fun removeImage(path: String) {
         if (images.remove(path)) CaptureImages.delete(listOf(path))
     }

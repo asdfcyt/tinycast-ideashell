@@ -23,6 +23,8 @@ data class AppSettings(
     val persistentNotification: Boolean = false,
     /** 每日专注目标（分钟）：「今天」页专注环以它为满环 */
     val focusGoalMin: Int = DEFAULT_FOCUS_GOAL_MIN,
+    /** 相机页上「识别文字」开关的上次状态 */
+    val ocrEnabled: Boolean = false,
 ) {
     val defaultTags: List<String>
         get() = defaultTagsText.split(',', '，').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }
@@ -54,6 +56,8 @@ class SettingsStore(context: Context) {
 
     fun setFocusGoalMin(minutes: Int) = update { it.copy(focusGoalMin = minutes.coerceIn(10, 720)) }
 
+    fun setOcrEnabled(enabled: Boolean) = update { it.copy(ocrEnabled = enabled) }
+
     private fun update(transform: (AppSettings) -> AppSettings) {
         val next = transform(_state.value)
         prefs.edit()
@@ -62,6 +66,7 @@ class SettingsStore(context: Context) {
             .putString(KEY_THEME, next.themeMode.name)
             .putBoolean(KEY_PERSISTENT_NOTIFICATION, next.persistentNotification)
             .putInt(KEY_FOCUS_GOAL, next.focusGoalMin)
+            .putBoolean(KEY_OCR_ENABLED, next.ocrEnabled)
             .apply()
         _state.value = next
     }
@@ -73,6 +78,7 @@ class SettingsStore(context: Context) {
             .getOrDefault(ThemeMode.SYSTEM),
         persistentNotification = prefs.getBoolean(KEY_PERSISTENT_NOTIFICATION, false),
         focusGoalMin = prefs.getInt(KEY_FOCUS_GOAL, AppSettings.DEFAULT_FOCUS_GOAL_MIN),
+        ocrEnabled = prefs.getBoolean(KEY_OCR_ENABLED, false),
     )
 
     // ── 文件夹缓存 ──
@@ -118,6 +124,7 @@ class SettingsStore(context: Context) {
 
     private companion object {
         const val KEY_FOCUS_GOAL = "focus_goal_min"
+        const val KEY_OCR_ENABLED = "ocr_enabled"
         const val KEY_DAILY_COUNT_PREFIX = "daily_count_"
         const val KEY_TAGS = "default_tags"
         const val KEY_DAILY_FOLDER = "daily_folder"

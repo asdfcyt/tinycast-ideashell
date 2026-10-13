@@ -95,7 +95,7 @@ fun resolveKind(text: String, override: CaptureKind?, folders: List<FolderInfo>,
  * 快记面板里的输入区（对标滴答清单的添加面板）：
  * - 上面是大块输入区，键盘右下角的按键就是「发送」（[onSubmit]），和聊天、搜索一个习惯；
  * - 选了图片时，在输入区下面的浅灰块里显示缩略图；
- * - 最下面一行工具图标：拍照、相册。
+ * - 最下面一行工具图标：日期、标签、重要、相机（拍照 / 相册 / 文字识别合一）。
  * 发送用面板右上角的圆角确认键，不在这里。
  *
  * 也是系统拖拽的落点：荣耀任意门 / 分屏 / 悬浮窗里把别的应用中的文字拖进来，会追加到输入框里（免鉴权的标准 Drag & Drop）。
@@ -115,8 +115,7 @@ fun CaptureComposer(
     focusRequester: FocusRequester? = null,
     images: List<String> = emptyList(),
     onRemoveImage: (String) -> Unit = {},
-    onPickImages: (() -> Unit)? = null,
-    onTakePhoto: (() -> Unit)? = null,
+    onCamera: (() -> Unit)? = null,
 ) {
     // 识别结果（日期 / 标签 / 重要 / 文件夹）显示在底部工具栏上，与保存时用的是同一份计划
     val plan = remember(text, override, folders) { CapturePlanner.plan(text, override, folders) }
@@ -203,7 +202,7 @@ fun CaptureComposer(
             }
         }
 
-        // 底部一行工具栏（对标滴答）：日期 / 标签 / 重要 / 拍照 / 相册 / 模板，右边是文件夹。
+        // 底部一行工具栏（对标滴答）：日期 / 标签 / 重要 / 相机，右边是文件夹。
         // 图标本身就是识别结果的显示位：识别到的内容（时间、标签、重要、文件夹）会以品牌色文字出现在图标旁；
         // 点图标可以辅助输入，识别到的内容仍然以输入框里的文字为准。
         val kind = plan?.kind
@@ -262,8 +261,8 @@ fun CaptureComposer(
                     },
                     active = important, activeColor = MaterialTheme.colorScheme.error, enabled = todoLike,
                 )
-                if (onTakePhoto != null) ToolIcon(R.drawable.ic_camera, "拍照", onTakePhoto)
-                if (onPickImages != null) ToolIcon(R.drawable.ic_image, "插入图片", onPickImages)
+                // 拍照 / 相册 / 识别文字合并成一个入口：点开全屏相机页，左下相册、中间快门、右下识别文字开关
+                if (onCamera != null) ToolIcon(R.drawable.ic_camera, "拍照、相册与文字识别", onCamera)
             }
             if (folderLike && folders.isNotEmpty()) {
                 Box {

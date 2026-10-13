@@ -1,13 +1,8 @@
 package com.carpe.ideashell.ui.capture
 
-import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.FileProvider
 import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
@@ -17,7 +12,6 @@ import com.carpe.ideashell.R
 import com.carpe.ideashell.data.capture.CaptureImages
 import com.carpe.ideashell.ui.components.KIND_CHOICES
 import com.carpe.ideashell.ui.components.kindIcon
-import java.io.File
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
@@ -129,26 +123,12 @@ fun QuickCaptureScreen(
         }
     }
 
-    // 相册：系统自带的照片选择器，不需要任何权限；拍照：交给系统相机，写到我们给的临时文件里
-    val pickLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(CaptureImages.MAX_COUNT),
-    ) { uris -> viewModel.addImages(context, uris) }
-    var cameraTarget by rememberSaveable { mutableStateOf<String?>(null) }
-    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val target = cameraTarget
-        cameraTarget = null
-        if (ok && target != null) viewModel.addImages(context, listOf(Uri.parse(target)))
+    // 相机、相册、文字识别合成一个入口：全屏相机页（左下相册 / 中间快门 / 右下识别文字），识别出的文字追加到输入框
+    val cameraLauncher = rememberLauncherForActivityResult(CameraCaptureContract()) { result ->
+        if (result != null) viewModel.applyCameraResult(result)
     }
-    val pickImages = {
-        pickLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-    }
-    val takePhoto = {
-        val dir = File(context.cacheDir, "camera").apply { mkdirs() }
-        dir.listFiles()?.forEach { it.delete() }
-        val file = File(dir, "shot_${System.currentTimeMillis()}.jpg")
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        cameraTarget = uri.toString()
-        cameraLauncher.launch(uri)
+    val openCamera = {
+        cameraLauncher.launch((CaptureImages.MAX_COUNT - viewModel.images.size).coerceAtLeast(0))
     }
 
     Box(
@@ -195,10 +175,10 @@ fun QuickCaptureScreen(
                             label = "quick-state",
                         ) { state ->
                             when (state) {
-                                QuickState.Composing -> ComposingContent(viewModel, readClipboard, onOpenApp, canSubmit, pickImages, takePhoto)
+                                QuickState.Composing -> ComposingContent(viewModel, readClipboard, onOpenApp, canSubmit, openCamera)
                                 // 保存成功后面板直接收起（只给一下震动和一句 Toast），不再停留一个带「撤销」的确认窗口；
                                 // 收起前仍画输入内容，避免面板先塌成一条空白
-                                is QuickState.Saved -> ComposingContent(viewModel, readClipboard, onOpenApp, canSubmit, pickImages, takePhoto)
+                                is QuickState.Saved -> ComposingContent(viewModel, readClipboard, onOpenApp, canSubmit, openCamera)
                             }
                         }
                     }
@@ -301,8 +281,7 @@ private fun ComposingContent(
     readClipboard: () -> String?,
     onOpenApp: () -> Unit,
     canSubmit: Boolean,
-    onPickImages: () -> Unit,
-    onTakePhoto: () -> Unit,
+    onOpenCamera: () -> Unit,
 ) {
     val connected by viewModel.connected.collectAsStateWithLifecycle()
     val folders by viewModel.folders.collectAsStateWithLifecycle()
@@ -358,8 +337,7 @@ private fun ComposingContent(
                 focusRequester = focus,
                 images = viewModel.images,
                 onRemoveImage = viewModel::removeImage,
-                onPickImages = onPickImages,
-                onTakePhoto = onTakePhoto,
+                onCamera = onOpenCamera,
             )
         }
 

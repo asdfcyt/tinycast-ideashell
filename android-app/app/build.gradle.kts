@@ -69,6 +69,12 @@ dependencies {
 
     implementation(libs.androidx.work.runtime.ktx)
 
+    // 自定义相机页（拍照 / 识别文字）
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)

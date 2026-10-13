@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- 快记面板的相机页（拍照 / 识别文字）；没有相机的设备仍可从相册选图 -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
     <!-- 设置页里的「后台同步」引导：请求加入电池优化白名单（荣耀 / MagicOS 上建议开启） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
@@ -76,6 +82,13 @@
                     android:scheme="ideashell" />
             </intent-filter>
         </activity>
+
+        <!-- 全屏相机页：快记面板工具栏上「拍照 / 插入图片」合并后的入口（相册、快门、识别文字） -->
+        <activity
+            android:name=".ui.capture.CameraOcrActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.Ideashell" />
 
         <!-- 系统分享菜单里的「闪念 · 摘录」；荣耀任意门把拖拽的文字也是按分享 Intent 投递的，一并接住 -->
         <activity-alias

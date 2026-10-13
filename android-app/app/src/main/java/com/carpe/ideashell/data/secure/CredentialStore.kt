@@ -16,9 +16,34 @@ class CredentialStore(private val store: SecureStore) {
     val ideashellConnected: StateFlow<Boolean> = _ideashellConnected.asStateFlow()
     val didaConnected: StateFlow<Boolean> = _didaConnected.asStateFlow()
 
+    private val _ocrConfigured = MutableStateFlow(false)
+
+    /** 是否已填写腾讯云文字识别的 SecretId / SecretKey（相机页的「识别文字」据此决定能不能开） */
+    val ocrConfigured: StateFlow<Boolean> = _ocrConfigured.asStateFlow()
+
     init {
         _ideashellConnected.value = !ideashellKey.isNullOrBlank()
         _didaConnected.value = !didaToken.isNullOrBlank()
+        refreshOcrConfigured()
+    }
+
+    var tencentSecretId: String?
+        get() = read(KEY_TENCENT_ID)
+        private set(value) = write(KEY_TENCENT_ID, value)
+
+    var tencentSecretKey: String?
+        get() = read(KEY_TENCENT_KEY)
+        private set(value) = write(KEY_TENCENT_KEY, value)
+
+    /** 保存腾讯云文字识别密钥；两项都留空表示清除 */
+    fun setTencentOcr(secretId: String?, secretKey: String?) {
+        tencentSecretId = secretId
+        tencentSecretKey = secretKey
+        refreshOcrConfigured()
+    }
+
+    private fun refreshOcrConfigured() {
+        _ocrConfigured.value = !tencentSecretId.isNullOrBlank() && !tencentSecretKey.isNullOrBlank()
     }
 
     var ideashellKey: String?
@@ -56,5 +81,7 @@ class CredentialStore(private val store: SecureStore) {
     private companion object {
         const val KEY_IDEASHELL = "ideashell_api_key"
         const val KEY_DIDA = "dida_api_token"
+        const val KEY_TENCENT_ID = "tencent_ocr_secret_id"
+        const val KEY_TENCENT_KEY = "tencent_ocr_secret_key"
     }
 }

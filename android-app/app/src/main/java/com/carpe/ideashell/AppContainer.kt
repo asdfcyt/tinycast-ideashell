@@ -16,6 +16,7 @@ import com.carpe.ideashell.data.ideashell.IdeashellApi
 import com.carpe.ideashell.data.mcp.McpClient
 import com.carpe.ideashell.data.mcp.McpEndpoints
 import com.carpe.ideashell.data.notes.NotesRepository
+import com.carpe.ideashell.data.ocr.TencentOcr
 import com.carpe.ideashell.data.project.ProjectService
 import com.carpe.ideashell.data.project.WorkspaceStore
 import com.carpe.ideashell.data.secure.CredentialStore
@@ -65,6 +66,9 @@ class AppContainer(context: Context) {
         .readTimeout(40, TimeUnit.SECONDS)
         .callTimeout(60, TimeUnit.SECONDS)
         .build()
+
+    /** 腾讯云文字识别：相机页拍照 / 选图后识别文字 */
+    val ocr = TencentOcr(http = http, credentials = credentials)
 
     val ideashell = McpClient(
         endpoint = McpEndpoints.IDEASHELL,

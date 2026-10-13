@@ -85,6 +85,7 @@ private sealed interface Dialog {
     data object Theme : Dialog
     data object FocusGoal : Dialog
     data object AddWidget : Dialog
+    data object Ocr : Dialog
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -95,6 +96,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
     val settings by container.settings.state.collectAsStateWithLifecycle()
     val ideashellConnected by container.credentials.ideashellConnected.collectAsStateWithLifecycle()
     val didaConnected by container.credentials.didaConnected.collectAsStateWithLifecycle()
+    val ocrConfigured by container.credentials.ocrConfigured.collectAsStateWithLifecycle()
 
     var dialog by remember { mutableStateOf<Dialog?>(null) }
     var batteryIgnored by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
@@ -166,6 +168,15 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
                     title = "Daily Note 文件夹",
                     summary = settings.dailyFolder,
                     onClick = { dialog = Dialog.DailyFolder },
+                )
+            }
+
+            Group("文字识别") {
+                SettingsItem(
+                    icon = Icons.Filled.Create,
+                    title = "腾讯云文字识别",
+                    summary = if (ocrConfigured) "已配置 · 记一条里点相机，开启「识别文字」后拍照录入笔记" else "未配置 · 填入腾讯云 SecretId / SecretKey 后，可拍照识别文字快速录入",
+                    onClick = { dialog = Dialog.Ocr },
                 )
             }
 
@@ -282,8 +293,62 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
             onDismiss = { dialog = null },
         )
 
+        Dialog.Ocr -> OcrKeyDialog(
+            initialId = container.credentials.tencentSecretId.orEmpty(),
+            initialKey = container.credentials.tencentSecretKey.orEmpty(),
+            onConfirm = { id, key -> container.credentials.setTencentOcr(id, key) },
+            onDismiss = { dialog = null },
+        )
+
         null -> Unit
     }
+}
+
+/** 腾讯云文字识别密钥：到腾讯云控制台「访问管理 → API 密钥管理」创建，并在「文字识别」控制台开通服务 */
+@Composable
+private fun OcrKeyDialog(
+    initialId: String,
+    initialKey: String,
+    onConfirm: (String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var id by remember { mutableStateOf(initialId) }
+    var key by remember { mutableStateOf(initialKey) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("腾讯云文字识别") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "在腾讯云控制台开通「文字识别」，并在「访问管理 → API 密钥管理」创建密钥。密钥只保存在本机（加密）。两项都留空并保存即可清除。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = id,
+                    onValueChange = { id = it },
+                    label = { Text("SecretId") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Next),
+                )
+                OutlinedTextField(
+                    value = key,
+                    onValueChange = { key = it },
+                    label = { Text("SecretKey") },
+                    singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Done),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                onConfirm(id, key)
+                onDismiss()
+            }) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 /** 可以放到桌面的小部件 */

@@ -20,7 +20,15 @@ object CaptureImages {
 
     /** 导入一张图片，返回存好的文件路径；读取 / 解码失败返回 null */
     fun import(context: Context, uri: Uri): String? = runCatching {
-        val source = ImageDecoder.createSource(context.contentResolver, uri)
+        import(context, ImageDecoder.createSource(context.contentResolver, uri))
+    }.getOrNull()
+
+    /** 导入应用自己拍出来的文件（相机页）：和 [import] 一样缩小压缩，EXIF 方向会被烘焙进像素里 */
+    fun import(context: Context, file: File): String? = runCatching {
+        import(context, ImageDecoder.createSource(file))
+    }.getOrNull()
+
+    private fun import(context: Context, source: ImageDecoder.Source): String {
         val bitmap = ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             val longest = maxOf(info.size.width, info.size.height)
@@ -40,8 +48,8 @@ object CaptureImages {
         bitmap.recycle()
         val file = File(dir(context), "img_${System.currentTimeMillis()}_${(0..9999).random()}.jpg")
         file.writeBytes(bytes)
-        file.absolutePath
-    }.getOrNull()
+        return file.absolutePath
+    }
 
     fun delete(paths: List<String>) {
         paths.forEach { runCatching { File(it).delete() } }
