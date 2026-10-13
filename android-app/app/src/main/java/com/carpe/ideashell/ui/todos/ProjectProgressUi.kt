@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,6 +46,7 @@ import com.carpe.ideashell.data.project.DeliveryState
 import com.carpe.ideashell.data.project.Project
 import com.carpe.ideashell.data.project.ProjectDelivery
 import com.carpe.ideashell.data.project.ProjectFocusStats
+import com.carpe.ideashell.data.project.ProjectMonthlyFocus
 import com.carpe.ideashell.data.project.ProjectPulse
 import com.carpe.ideashell.data.project.ProjectStats
 import com.carpe.ideashell.data.project.Trend
@@ -136,6 +138,7 @@ internal fun StatDetailSheet(
     kind: StatKind,
     project: Project,
     stats: ProjectStats,
+    monthlyFocus: ProjectMonthlyFocus?,
     onOpenNote: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -163,9 +166,9 @@ internal fun StatDetailSheet(
 
         StatKind.MONTHS -> DetailSheet(
             title = "近 12 个月",
-            subtitle = "每个月提及「${project.keyword}」的笔记数，点一个月可以展开那个月的笔记",
+            subtitle = "每个月提及「${project.keyword}」的笔记数和专注时长，点一个月可以展开那个月的笔记",
             onDismiss = onDismiss,
-        ) { MonthBreakdown(stats, today, onOpenNote, onDismiss) }
+        ) { MonthBreakdown(stats, monthlyFocus, today, onOpenNote, onDismiss) }
     }
 }
 
@@ -399,15 +402,37 @@ private fun tagLine(project: Project, list: List<DossierNote>): String {
 }
 
 @Composable
-private fun ColumnScope.MonthBreakdown(stats: ProjectStats, today: LocalDate, onOpenNote: (String) -> Unit, onDismiss: () -> Unit) {
+private fun ColumnScope.MonthBreakdown(
+    stats: ProjectStats,
+    monthlyFocus: ProjectMonthlyFocus?,
+    today: LocalDate,
+    onOpenNote: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
+    val focusColor = Color(0xFF3E8BFF)
     val (labels, counts) = remember(stats) { Dossier.monthlySeries(stats.mentions.mapNotNull { it.day }, today) }
     val max = (counts.maxOrNull() ?: 0).coerceAtLeast(1)
+    val mins = labels.map { monthlyFocus?.minutes?.get(it) ?: 0 }
+    val maxMin = (mins.maxOrNull() ?: 0).coerceAtLeast(1)
     var open by remember { mutableStateOf<String?>(null) }
+    SheetHint(
+        buildString {
+            append("12 个月共 ${counts.sum()} 篇")
+            append(
+                when {
+                    monthlyFocus == null -> "，专注时长统计中…"
+                    mins.sum() > 0 -> "，专注 ${compactMin(mins.sum())}"
+                    else -> "，没有专注记录"
+                },
+            )
+        },
+    )
     ListGroup {
         for (i in labels.indices.reversed()) {
             val label = labels[i]
             val n = counts[i]
+            val min = mins[i]
             val isOpen = open == label
             Row(
                 modifier = Modifier
@@ -423,28 +448,53 @@ private fun ColumnScope.MonthBreakdown(stats: ProjectStats, today: LocalDate, on
                     color = if (n > 0) scheme.onSurface else scheme.onSurfaceVariant,
                     modifier = Modifier.width(64.dp),
                 )
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .height(8.dp)
-                        .clip(CircleShape)
-                        .background(scheme.onSurface.copy(alpha = 0.08f)),
-                ) {
+                // 上面一条：提及的笔记数（橙）；下面一条：当月专注时长（蓝）
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Box(
                         Modifier
-                            .fillMaxWidth(n.toFloat() / max)
-                            .fillMaxHeight()
+                            .fillMaxWidth()
+                            .height(8.dp)
                             .clip(CircleShape)
-                            .background(Brand.Orange),
+                            .background(scheme.onSurface.copy(alpha = 0.08f)),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(n.toFloat() / max)
+                                .fillMaxHeight()
+                                .clip(CircleShape)
+                                .background(Brand.Orange),
+                        )
+                    }
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(CircleShape)
+                            .background(scheme.onSurface.copy(alpha = 0.08f)),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(min.toFloat() / maxMin)
+                                .fillMaxHeight()
+                                .clip(CircleShape)
+                                .background(focusColor),
+                        )
+                    }
+                }
+                Column(Modifier.width(76.dp), horizontalAlignment = Alignment.End) {
+                    Text(
+                        "$n 篇",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (n > 0) FontWeight.Bold else FontWeight.Normal,
+                        color = if (n > 0) scheme.onSurface else scheme.onSurfaceVariant,
+                    )
+                    Text(
+                        if (monthlyFocus == null) "…" else if (min > 0) compactMin(min) else "—",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (min > 0) FontWeight.Bold else FontWeight.Normal,
+                        color = if (min > 0) focusColor else scheme.onSurfaceVariant,
                     )
                 }
-                Text(
-                    "$n 篇",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = if (n > 0) FontWeight.Bold else FontWeight.Normal,
-                    color = if (n > 0) scheme.onSurface else scheme.onSurfaceVariant,
-                    modifier = Modifier.width(48.dp),
-                )
             }
             if (isOpen) {
                 val notes = stats.mentions.filter { m -> m.day?.let { "%04d-%02d".format(it.year, it.monthValue) } == label }

@@ -29,11 +29,34 @@ data class CapturePlan(
     /** 目标文件夹名（用户写的 @文件夹，或根据正文推断出的已有文件夹） */
     val folderName: String?,
     val folderInferred: Boolean,
+    /** 待办优先级（与滴答一致）：0 无 / 1 低 / 3 中 / 5 高；写在文字里的 `!高` `!中` `!低`（`!重要` 等同于高） */
+    val priority: Int = 0,
 )
 
 object CapturePlanner {
-    private val RE_IMPORTANT = Regex("[!！]重要")
-    private val RE_MARKS = Regex("\\s*[!！](?:重要|紧急)")
+    private val RE_HIGH = Regex("[!！](?:重要|高(?![\\p{L}\\p{N}]))")
+    private val RE_MID = Regex("[!！]中(?![\\p{L}\\p{N}])")
+    private val RE_LOW = Regex("[!！]低(?![\\p{L}\\p{N}])")
+    private val RE_MARKS = Regex("\\s*[!！](?:重要|紧急|[高中低](?![\\p{L}\\p{N}]))")
+
+    /** 文字里写的优先级标记；没有为 0，写了几个取最高的 */
+    fun priorityOf(content: String): Int = when {
+        RE_HIGH.containsMatchIn(content) -> 5
+        RE_MID.containsMatchIn(content) -> 3
+        RE_LOW.containsMatchIn(content) -> 1
+        else -> 0
+    }
+
+    /** 去掉文字里所有的优先级标记（`!重要` `!紧急` `!高` `!中` `!低`） */
+    fun stripPriority(content: String): String = content.replace(RE_MARKS, "").trimEnd()
+
+    fun priorityName(p: Int): String = when {
+        p >= 5 -> "高"
+        p >= 3 -> "中"
+        p >= 1 -> "低"
+        else -> "无"
+    }
+
     private val CLIPBOARD_WORDS = Regex("^(?:剪贴板|剪切板|clip|clipboard|paste)$", RegexOption.IGNORE_CASE)
 
     /** 正文是不是「剪贴板」之类的关键词（需要调用方换成剪贴板里的文字） */
@@ -72,13 +95,15 @@ object CapturePlanner {
         return when (kind) {
             CaptureKind.TODO -> {
                 val content = a.todo.content
-                val important = RE_IMPORTANT.containsMatchIn(content)
+                val priority = priorityOf(content)
+                val important = priority >= 5
                 val title = content.replace(RE_MARKS, "").trim().ifEmpty { content }
                 CapturePlan(
                     kind = kind, autoKind = a.recommended, isForced = isForced,
                     title = title, body = title,
                     todoDate = a.todo.date, todoTime = a.todo.time, important = important,
                     tags = a.tags, folderName = null, folderInferred = false,
+                    priority = priority,
                 )
             }
 

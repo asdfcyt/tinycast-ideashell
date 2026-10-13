@@ -169,7 +169,7 @@ class CaptureRepository(
             when (plan.kind) {
                 CaptureKind.TODO -> {
                     append("待办 · ").append(CapturePlanner.describeWhen(plan.todoDate, plan.todoTime))
-                    if (plan.important) append(" · 重要")
+                    if (plan.priority > 0) append(" · ").append(CapturePlanner.priorityName(plan.priority)).append("优先级")
                 }
                 CaptureKind.DAILY -> append("Daily Note")
                 CaptureKind.NOTE -> append("笔记")
@@ -191,6 +191,7 @@ class CaptureRepository(
             origin = origin,
             createdAt = now,
             readyAt = now + UNDO_WINDOW_MS,
+            priority = plan.priority,
         )
     }
 

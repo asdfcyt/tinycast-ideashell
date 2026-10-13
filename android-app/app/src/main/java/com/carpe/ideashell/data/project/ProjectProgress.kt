@@ -81,6 +81,13 @@ data class ProjectFocusStats(
     val activeDays: Set<LocalDate>,
 )
 
+/** 项目近 12 个月每个月的专注分钟，键是 `yyyy-MM`；没有专注的月份不在里面 */
+data class ProjectMonthlyFocus(
+    val keyword: String,
+    val at: Long,
+    val minutes: Map<String, Int>,
+)
+
 enum class Trend(val label: String, val arrow: String) {
     UP("加速", "↑"),
     FLAT("平稳", "→"),

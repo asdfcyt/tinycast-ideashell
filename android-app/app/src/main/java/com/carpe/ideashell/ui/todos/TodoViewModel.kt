@@ -20,6 +20,7 @@ import com.carpe.ideashell.data.dida.TodoData
 import com.carpe.ideashell.data.project.Project
 import com.carpe.ideashell.data.project.ProjectDelivery
 import com.carpe.ideashell.data.project.ProjectFocusStats
+import com.carpe.ideashell.data.project.ProjectMonthlyFocus
 import com.carpe.ideashell.data.project.ProjectStats
 import com.carpe.ideashell.data.project.ProjectStatus
 import com.carpe.ideashell.data.project.Workspace
@@ -80,6 +81,7 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
     val stats: StateFlow<Map<String, ProjectStats>> = container.projects.stats
     val delivery: StateFlow<Map<String, ProjectDelivery>> = container.projects.delivery
     val focusStats: StateFlow<Map<String, ProjectFocusStats>> = container.projects.focusStats
+    val monthlyFocus: StateFlow<Map<String, ProjectMonthlyFocus>> = container.projects.monthlyFocus
 
     /** 正在进行的专注（项目页的「专注一次」据此显示「专注中」） */
     val focusSession: StateFlow<com.carpe.ideashell.data.focus.FocusRun?> = container.focus.session
@@ -368,6 +370,18 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             try {
                 container.projects.refreshFocus(p, openIds + doneIds)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** 统计项目近 12 个月每月的专注时长（打开「近 12 个月」抽屉时调用；统计不出来就保持原样） */
+    fun loadMonthlyFocus(p: Project, taskIds: Set<String>) {
+        viewModelScope.launch {
+            try {
+                container.projects.refreshMonthlyFocus(p, taskIds)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

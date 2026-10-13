@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.size
@@ -146,10 +148,22 @@ fun CaptureComposer(
     }
 
     val inputStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, lineHeight = 24.sp)
+
+    // 优先级菜单不抢焦点（抢了键盘就收起来了），所以「点别处 / 继续输入就关掉」要自己处理
+    var priorityMenu by remember { mutableStateOf(false) }
+    LaunchedEffect(field.text) { priorityMenu = false }
     Column(
         modifier = modifier
             .fillMaxWidth()
             .animateContentSize()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.any { it.pressed && !it.previousPressed }) priorityMenu = false
+                    }
+                }
+            }
             .dragAndDropTarget(
                 shouldStartDragAndDrop = { event -> event.mimeTypes().any { it.startsWith("text/") } },
                 target = dropTarget,
@@ -212,7 +226,7 @@ fun CaptureComposer(
             null
         }
         val tagText = plan?.tags?.takeIf { it.isNotEmpty() }?.let { "#${it.first()}" + if (it.size > 1) " +${it.size - 1}" else "" }
-        val important = plan != null && plan.kind == CaptureKind.TODO && plan.important
+        val priority = if (plan != null && plan.kind == CaptureKind.TODO) plan.priority else 0
         var dateSheet by remember { mutableStateOf(false) }
         if (dateSheet) {
             val curDate = plan?.todoDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
@@ -249,16 +263,28 @@ fun CaptureComposer(
                     },
                     label = tagText, active = tagText != null,
                 )
-                ToolIcon(
-                    R.drawable.ic_flag, "重要",
-                    {
-                        setText(
-                            if (RE_IMPORTANT.containsMatchIn(text)) text.replace(RE_IMPORTANT, "").trimEnd()
-                            else if (text.isBlank()) "!重要" else text.trimEnd() + " !重要",
-                        )
-                    },
-                    active = important, activeColor = MaterialTheme.colorScheme.error, enabled = todoLike,
-                )
+                // 优先级：点开菜单选 无 / 低 / 中 / 高（与滴答一致），选择后以 `!高` `!中` `!低` 写进输入框，随时可手动改
+                Box {
+                    ToolIcon(
+                        R.drawable.ic_flag, "优先级",
+                        { priorityMenu = true },
+                        label = if (priority > 0) CapturePlanner.priorityName(priority) else null,
+                        active = priority > 0, activeColor = priorityColor(priority), enabled = todoLike,
+                    )
+                    AppMenu(expanded = priorityMenu, onDismissRequest = { priorityMenu = false }, keepKeyboard = true) {
+                        listOf("无" to 0, "低" to 1, "中" to 3, "高" to 5).forEach { (label, value) ->
+                            AppMenuItem(
+                                text = { Text(label) },
+                                selected = priority == value,
+                                onClick = {
+                                    priorityMenu = false
+                                    setText(withPriority(text, value))
+                                    focusRequester?.let { runCatching { it.requestFocus() } }
+                                },
+                            )
+                        }
+                    }
+                }
                 // 拍照 / 相册 / 识别文字合并成一个入口：点开全屏相机页，左下相册、中间快门、右下识别文字开关
                 if (onCamera != null) ToolIcon(R.drawable.ic_camera, "拍照、相册与文字识别", onCamera)
             }
@@ -309,7 +335,25 @@ fun CaptureComposer(
     }
 }
 
-private val RE_IMPORTANT = Regex("\\s*[!！]重要")
+/** 和滴答、任务列表里一致的优先级颜色：高红 / 中琥珀 / 低蓝 */
+private fun priorityColor(priority: Int): Color = when {
+    priority >= 5 -> Color(0xFFE5484D)
+    priority >= 3 -> Color(0xFFF5A524)
+    else -> Color(0xFF3E8BFF)
+}
+
+/** 把输入框里的优先级标记换成 [priority]（0 = 去掉标记） */
+private fun withPriority(text: String, priority: Int): String {
+    val cleaned = CapturePlanner.stripPriority(text)
+    val mark = when {
+        priority >= 5 -> "!高"
+        priority >= 3 -> "!中"
+        priority >= 1 -> "!低"
+        else -> return cleaned
+    }
+    return if (cleaned.isBlank()) mark else "$cleaned $mark"
+}
+
 private val RE_FOLDER_TOKEN = Regex("(^|\\s)@[^\\s#@]+")
 
 /** 面板右上角的圆角确认键（对标滴答）：以面板右上角为圆心的四分之一圆，可保存时是品牌色，否则是浅色 */

@@ -41,7 +41,12 @@ data class CaptureEntity(
     val updatedAt: Long = createdAt,
     /** 随笔记一起上传的图片（本地文件路径，换行分隔）；同步成功后文件会被删除 */
     @ColumnInfo(defaultValue = "") val images: String = "",
+    /** 待办优先级：0 无 / 1 低 / 3 中 / 5 高（旧记录只有 [important]，等同于高） */
+    @ColumnInfo(defaultValue = "0") val priority: Int = 0,
 )
+
+/** 实际写给滴答的优先级 */
+fun CaptureEntity.effectivePriority(): Int = if (priority > 0) priority else if (important) 5 else 0
 
 fun CaptureEntity.tagList(): List<String> = if (tags.isEmpty()) emptyList() else tags.split('\n')
 

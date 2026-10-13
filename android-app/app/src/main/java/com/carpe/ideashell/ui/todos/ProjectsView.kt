@@ -527,6 +527,12 @@ internal fun ProjectPage(
     val windows = if (stats == null) null else ProjectPulse.windowCounts(activeDays, today)
 
     LaunchedEffect(project.keyword, homeId, taskNotes.size) { viewModel.loadProjectPage(project) }
+
+    // 打开「近 12 个月」时，再去滴答取每个月的专注时长（比常驻的 90 天统计范围大，所以按需取）
+    val monthlyFocus by viewModel.monthlyFocus.collectAsStateWithLifecycle()
+    LaunchedEffect(sheet) {
+        if (sheet == PageSheet.MONTHS) viewModel.loadMonthlyFocus(project, (tasks + doneTasks).map { it.id }.toSet())
+    }
     LaunchedEffect(project.keyword) { if (stats == null) viewModel.refreshStats(project) }
     // 成果交付与专注统计：任务列表读到之后统计（成果的状态要对照滴答任务）
     val openKey = tasks.joinToString(",") { it.id }
@@ -890,6 +896,7 @@ internal fun ProjectPage(
                 },
                 project = project,
                 stats = stats,
+                monthlyFocus = monthlyFocus[project.keyword],
                 onOpenNote = onOpenNote,
                 onDismiss = { sheet = null },
             )

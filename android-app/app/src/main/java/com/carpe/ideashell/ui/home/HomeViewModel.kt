@@ -70,19 +70,45 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), container.todos.state.value.overview)
 
     /**
-     * 关注项目（搁置的不算）的进展：每个项目取相关任务的完成度（完成 ÷ 完成 + 未完成），再求平均。
-     * 只在滴答本地缓存里匹配，不额外请求；没有关注项目或没有相关任务为 null。
+     * 项目（搁置的不算）的进展，与项目页同一口径：每个项目取「交付进度」
+     * （以成果 = 任务笔记为单位，已交付记满分，进行中按行动步骤的勾选比例记分），再对各项目求平均；
+     * 项目还没有任务笔记时退回相关任务的完成率（完成 ÷ 完成 + 未完成，只在滴答本地缓存里匹配）。
+     * 没有项目或没有可算的数据为 null。
      */
-    val projectProgress: StateFlow<Float?> = combine(container.projects.workspace, overview) { workspace, ov ->
-        if (ov == null) return@combine null
+    val projectProgress: StateFlow<Float?> =
+        combine(container.projects.workspace, overview, container.projects.delivery) { workspace, ov, delivery ->
+            if (ov == null) return@combine null
+            val open = ov.overdue + ov.upcoming + ov.undated
+            val each = workspace.projects.filter { it.status != ProjectStatus.PAUSED }.mapNotNull { p ->
+                delivery[p.keyword]?.progress ?: run {
+                    val o = open.count { t -> p.matches(t.title, t.tags) }
+                    val d = ov.done.count { t -> p.matches(t.title, t.tags) }
+                    if (o + d == 0) null else d.toFloat() / (o + d)
+                }
+            }
+            if (each.isEmpty()) null else each.average().toFloat()
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private var deliveryAt = 0L
+
+    /** 任务列表读到 / 变化后，统计各项目的成果交付情况（只读，不归档；15 秒内不重复算） */
+    private suspend fun refreshDelivery(ov: DidaOverview) {
+        val now = System.currentTimeMillis()
+        if (now - deliveryAt < 15_000L) return
+        deliveryAt = now
         val open = ov.overdue + ov.upcoming + ov.undated
-        val each = workspace.projects.filter { it.status != ProjectStatus.PAUSED }.mapNotNull { p ->
-            val o = open.count { t -> p.matches(t.title, t.tags) }
-            val d = ov.done.count { t -> p.matches(t.title, t.tags) }
-            if (o + d == 0) null else d.toFloat() / (o + d)
+        for (p in container.projects.projects) {
+            if (p.status == ProjectStatus.PAUSED || container.projects.taskNotesOf(p).isEmpty()) continue
+            val openIds = open.filter { p.matches(it.title, it.tags) }.map { it.id }.toSet()
+            val doneIds = ov.done.filter { p.matches(it.title, it.tags) }.map { it.id }.toSet()
+            try {
+                container.projects.refreshDelivery(p, openIds, doneIds, archive = false)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
         }
-        if (each.isEmpty()) null else each.average().toFloat()
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    }
 
     /** 每日专注目标（分钟），在「设置」里改 */
     val focusGoalMin: StateFlow<Int> = container.settings.state.map { it.focusGoalMin }
@@ -130,6 +156,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         refreshFocus()
         refreshMemory()
         refreshHeat()
+        viewModelScope.launch {
+            overview.collect { ov -> if (ov != null) refreshDelivery(ov) }
+        }
     }
 
     /** 回到「今天」页时调用：一分钟内不重复读；读的时候边读边画 */

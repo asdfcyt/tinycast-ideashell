@@ -32,6 +32,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.PopupProperties
 import com.carpe.ideashell.ui.theme.Brand
 
 /*
@@ -51,6 +52,7 @@ fun AppMenu(
     expanded: Boolean,
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
+    keepKeyboard: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -58,6 +60,8 @@ fun AppMenu(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
         modifier = modifier.widthIn(min = 176.dp, max = 280.dp),
+        // 输入框正在输入时弹菜单：菜单不抢焦点，键盘就不会收起（代价是点菜单外不会自动关，由调用方负责）
+        properties = PopupProperties(focusable = !keepKeyboard),
         offset = DpOffset(0.dp, 6.dp),
         shape = RoundedCornerShape(20.dp),
         containerColor = scheme.surfaceContainerLowest,

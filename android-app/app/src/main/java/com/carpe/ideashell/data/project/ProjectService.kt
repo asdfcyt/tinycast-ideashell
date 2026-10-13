@@ -88,6 +88,11 @@ class ProjectService(
     /** 各项目的专注统计（项目页打开时统计，只留在内存里） */
     val focusStats: StateFlow<Map<String, ProjectFocusStats>> = _focusStats.asStateFlow()
 
+    private val _monthlyFocus = MutableStateFlow<Map<String, ProjectMonthlyFocus>>(emptyMap())
+
+    /** 各项目近 12 个月每月的专注时长（打开「近 12 个月」抽屉时统计，只留在内存里） */
+    val monthlyFocus: StateFlow<Map<String, ProjectMonthlyFocus>> = _monthlyFocus.asStateFlow()
+
     // ───────────── 项目列表 ─────────────
 
     val projects: List<Project> get() = store.current.projects
@@ -110,6 +115,7 @@ class ProjectService(
         _stats.update { it - keyword }
         _delivery.update { it - keyword }
         _focusStats.update { it - keyword }
+        _monthlyFocus.update { it - keyword }
     }
 
     private fun edit(keyword: String, change: (Project) -> Project) {
@@ -629,6 +635,57 @@ class ProjectService(
         )
         _focusStats.update { it + (p.keyword to stats) }
         return stats
+    }
+
+    /**
+     * 近 12 个月（含本月）每个月的专注分钟：归属规则与 [refreshFocus] 相同，
+     * 按自然月逐月向滴答取数（单次范围小，也不怕被接口限制），再并入本机留的项目专注记录。
+     * 滴答里取不到的月份按 0 算，不影响其它月份。
+     */
+    suspend fun refreshMonthlyFocus(p: Project, taskIds: Set<String>, today: LocalDate = LocalDate.now()): ProjectMonthlyFocus {
+        val zone = java.time.ZoneId.systemDefault()
+        val ids = taskIds + taskNotesOf(p).map { it.taskId }
+        val first = today.withDayOfMonth(1).minusMonths(11)
+        val tomorrow = today.plusDays(1)
+        val summaries = if (hasDida()) {
+            coroutineScope {
+                (0..11).map { i ->
+                    val s = first.plusMonths(i.toLong())
+                    val e = minOf(s.plusMonths(1), tomorrow)
+                    async { softly { daySummary.focusIn(s, e, today) } }
+                }.awaitAll()
+            }
+        } else {
+            emptyList()
+        }
+
+        val seen = HashSet<Long>()
+        val starts = ArrayList<Pair<Long, Long>>()
+        for (summary in summaries) {
+            if (summary == null) continue
+            for (s in summary.sessions) {
+                val title = s.title ?: s.taskId?.let { summary.titles[it] }
+                val mine = (s.taskId != null && s.taskId in ids) || (title != null && p.matches(title))
+                if (mine && seen.add(s.startMs)) starts += s.startMs to s.endMs
+            }
+        }
+        val fromMs = first.atStartOfDay(zone).toInstant().toEpochMilli()
+        for (l in store.current.focusLog) {
+            if (l.project != p.keyword || l.startMs < fromMs) continue
+            if (starts.any { kotlin.math.abs(it.first - l.startMs) < 90_000L }) continue
+            starts += l.startMs to l.endMs
+        }
+
+        val minutes = LinkedHashMap<String, Int>()
+        for ((start, end) in starts) {
+            val day = java.time.Instant.ofEpochMilli(start).atZone(zone).toLocalDate()
+            val key = "%04d-%02d".format(day.year, day.monthValue)
+            val m = Math.round((end - start) / 60000.0).toInt().coerceAtLeast(0)
+            minutes[key] = (minutes[key] ?: 0) + m
+        }
+        val result = ProjectMonthlyFocus(p.keyword, System.currentTimeMillis(), minutes)
+        _monthlyFocus.update { it + (p.keyword to result) }
+        return result
     }
 
     /**

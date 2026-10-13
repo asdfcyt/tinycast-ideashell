@@ -4,6 +4,7 @@ import com.carpe.ideashell.core.capture.truncate
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.data.db.CaptureDao
 import com.carpe.ideashell.data.db.CaptureEntity
+import com.carpe.ideashell.data.db.effectivePriority
 import com.carpe.ideashell.data.db.imageList
 import com.carpe.ideashell.data.db.tagList
 import com.carpe.ideashell.data.dida.DidaApi
@@ -112,11 +113,14 @@ class CaptureProcessor(
     /** 待办：连接了滴答就建在滴答（没有日期 = 收集箱里的无日期任务），否则建在闪念贝壳 */
     private suspend fun sendTodo(item: CaptureEntity): String {
         if (!credentials.didaToken.isNullOrBlank()) {
-            dida.createTask(item.body, item.todoDate, item.todoTime, priority = if (item.important) 5 else 0)
+            dida.createTask(item.body, item.todoDate, item.todoTime, priority = item.effectivePriority())
             runCatching { onTodoCreated() }
             return "已建到滴答清单"
         }
-        val content = if (item.important) "${item.body} !重要" else item.body
+        val content = when (item.effectivePriority()) {
+            5 -> "${item.body} !重要"
+            else -> item.body
+        }
         ideashell.createTodos(listOf(TodoDraft(content, item.todoDate, item.todoTime)))
         return "已建到闪念贝壳待办（未连接滴答清单）"
     }
