@@ -114,6 +114,7 @@ fun HomeScreen(
     onOpenTodos: () -> Unit,
     onOpenFocus: () -> Unit,
     onOpenNote: (String) -> Unit,
+    onOpenRevisit: () -> Unit,
     viewModel: HomeViewModel = viewModel(factory = HomeViewModel.Factory.instance),
 ) {
     val connected by viewModel.connected.collectAsStateWithLifecycle()
@@ -126,6 +127,7 @@ fun HomeScreen(
     val projectProgress by viewModel.projectProgress.collectAsStateWithLifecycle()
     val memory by viewModel.memory.collectAsStateWithLifecycle()
     val heat by viewModel.heat.collectAsStateWithLifecycle()
+    val revisitToday by viewModel.revisitToday.collectAsStateWithLifecycle()
     val walkNote = viewModel.walkNote
     var recentOpen by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
@@ -136,6 +138,7 @@ fun HomeScreen(
         viewModel.refreshFocus()
         viewModel.refreshMemory()
         viewModel.refreshHeat()
+        viewModel.refreshRevisit()
         onPauseOrDispose { }
     }
 
@@ -239,6 +242,18 @@ fun HomeScreen(
 
             if (failedCount > 0) {
                 item(key = "failed") { FailedBanner(failedCount, Modifier.padding(horizontal = 16.dp)) }
+            }
+
+            // 今日重温：有到期的才出现，没有就不占位置
+            if (revisitToday.remaining > 0) {
+                item(key = "revisit") {
+                    RevisitEntry(
+                        remaining = revisitToday.remaining,
+                        done = revisitToday.doneToday,
+                        onClick = onOpenRevisit,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
             }
 
             item(key = "dashboard") {
@@ -360,6 +375,46 @@ private fun Header(today: LocalDate, loaded: Boolean, remaining: Int, onOpenSear
             )
         }
         SearchButton(onOpenSearch)
+    }
+}
+
+// ───────────────────────── 今日重温 ─────────────────────────
+
+/** 「今日重温 N 条」：一条白色胶囊，点一下进入重温页 */
+@Composable
+private fun RevisitEntry(remaining: Int, done: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    RowPill(modifier = modifier, onClick = onClick) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).background(Brand.Orange),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(painterResource(R.drawable.ic_revisit), contentDescription = null, tint = Brand.Brown, modifier = Modifier.size(22.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text("今日重温 $remaining 条", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                Text(
+                    if (done > 0) "今天已重温 $done 条" else "每条几秒钟，先回忆，再自评",
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Box(
+                Modifier.height(36.dp).clip(CircleShape).background(scheme.inverseSurface).padding(horizontal = 16.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("开始", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold, color = scheme.inverseOnSurface)
+            }
+        }
     }
 }
 

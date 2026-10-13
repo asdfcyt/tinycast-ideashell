@@ -29,6 +29,16 @@ data class AppSettings(
     val ocrFrameMode: Boolean = false,
     /** 每晚 23:20 自动生成今日小结 */
     val autoDaySummary: Boolean = true,
+    /** 笔记重温：目标记忆率（百分比，80–95） */
+    val revisitRetention: Int = DEFAULT_REVISIT_RETENTION,
+    /** 笔记重温：每天最多出现几条 */
+    val revisitDailyLimit: Int = DEFAULT_REVISIT_LIMIT,
+    /** 笔记重温：每天固定时间提醒 */
+    val revisitReminder: Boolean = true,
+    /** 笔记重温：提醒时刻（当天 0 点起的分钟数） */
+    val revisitReminderMinutes: Int = DEFAULT_REVISIT_MINUTES,
+    /** 笔记重温：周六、周日不提醒（今天页的卡片仍然会出现） */
+    val revisitSkipWeekends: Boolean = false,
 ) {
     val defaultTags: List<String>
         get() = defaultTagsText.split(',', '，').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }
@@ -36,6 +46,9 @@ data class AppSettings(
     companion object {
         const val DEFAULT_DAILY_FOLDER = "Daily Notes"
         const val DEFAULT_FOCUS_GOAL_MIN = 120
+        const val DEFAULT_REVISIT_RETENTION = 90
+        const val DEFAULT_REVISIT_LIMIT = 5
+        const val DEFAULT_REVISIT_MINUTES = 20 * 60
     }
 }
 
@@ -66,6 +79,16 @@ class SettingsStore(context: Context) {
 
     fun setAutoDaySummary(enabled: Boolean) = update { it.copy(autoDaySummary = enabled) }
 
+    fun setRevisitRetention(percent: Int) = update { it.copy(revisitRetention = percent.coerceIn(80, 95)) }
+
+    fun setRevisitDailyLimit(count: Int) = update { it.copy(revisitDailyLimit = count.coerceIn(1, 50)) }
+
+    fun setRevisitReminder(enabled: Boolean) = update { it.copy(revisitReminder = enabled) }
+
+    fun setRevisitReminderMinutes(minutes: Int) = update { it.copy(revisitReminderMinutes = minutes.coerceIn(0, 24 * 60 - 1)) }
+
+    fun setRevisitSkipWeekends(skip: Boolean) = update { it.copy(revisitSkipWeekends = skip) }
+
     private fun update(transform: (AppSettings) -> AppSettings) {
         val next = transform(_state.value)
         prefs.edit()
@@ -77,6 +100,11 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_OCR_ENABLED, next.ocrEnabled)
             .putBoolean(KEY_OCR_FRAME, next.ocrFrameMode)
             .putBoolean(KEY_AUTO_SUMMARY, next.autoDaySummary)
+            .putInt(KEY_REVISIT_RETENTION, next.revisitRetention)
+            .putInt(KEY_REVISIT_LIMIT, next.revisitDailyLimit)
+            .putBoolean(KEY_REVISIT_REMINDER, next.revisitReminder)
+            .putInt(KEY_REVISIT_MINUTES, next.revisitReminderMinutes)
+            .putBoolean(KEY_REVISIT_SKIP_WEEKENDS, next.revisitSkipWeekends)
             .apply()
         _state.value = next
     }
@@ -91,6 +119,11 @@ class SettingsStore(context: Context) {
         ocrEnabled = prefs.getBoolean(KEY_OCR_ENABLED, false),
         ocrFrameMode = prefs.getBoolean(KEY_OCR_FRAME, false),
         autoDaySummary = prefs.getBoolean(KEY_AUTO_SUMMARY, true),
+        revisitRetention = prefs.getInt(KEY_REVISIT_RETENTION, AppSettings.DEFAULT_REVISIT_RETENTION).coerceIn(80, 95),
+        revisitDailyLimit = prefs.getInt(KEY_REVISIT_LIMIT, AppSettings.DEFAULT_REVISIT_LIMIT).coerceIn(1, 50),
+        revisitReminder = prefs.getBoolean(KEY_REVISIT_REMINDER, true),
+        revisitReminderMinutes = prefs.getInt(KEY_REVISIT_MINUTES, AppSettings.DEFAULT_REVISIT_MINUTES).coerceIn(0, 24 * 60 - 1),
+        revisitSkipWeekends = prefs.getBoolean(KEY_REVISIT_SKIP_WEEKENDS, false),
     )
 
     // ── 文件夹缓存 ──
@@ -143,6 +176,11 @@ class SettingsStore(context: Context) {
     }
 
     private companion object {
+        const val KEY_REVISIT_RETENTION = "revisit_retention"
+        const val KEY_REVISIT_LIMIT = "revisit_daily_limit"
+        const val KEY_REVISIT_REMINDER = "revisit_reminder"
+        const val KEY_REVISIT_MINUTES = "revisit_reminder_minutes"
+        const val KEY_REVISIT_SKIP_WEEKENDS = "revisit_skip_weekends"
         const val KEY_AUTO_SUMMARY = "auto_day_summary"
         const val KEY_AUTO_SUMMARY_DATE = "auto_summary_date"
         const val KEY_FOCUS_GOAL = "focus_goal_min"

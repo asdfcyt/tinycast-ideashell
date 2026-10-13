@@ -56,6 +56,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     var override by mutableStateOf<CaptureKind?>(null)
 
     val folders: StateFlow<List<FolderInfo>> = container.folders.folders
+
+    /** 今日重温：到期的笔记 / 摘录（已按每日上限截断），今天页顶部的卡片用它 */
+    val revisitToday: StateFlow<com.carpe.ideashell.data.revisit.RevisitToday> = container.revisit.today
+
+    fun refreshRevisit() = container.revisit.refreshDay()
     val connected: StateFlow<Boolean> = container.credentials.ideashellConnected
 
     val recent: StateFlow<List<CaptureEntity>> = container.captures.recent

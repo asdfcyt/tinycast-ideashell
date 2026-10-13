@@ -242,6 +242,9 @@ class DailyNoteService(
 /** Daily Note 里的一条：时间 `HH:mm` + 文字（多行合并成一行，换行变空格） */
 data class DailyEntry(val time: String, val text: String)
 
+/** Daily Note 全文拆开后的两部分：条目以外的内容（Markdown）+ 条目（按写入顺序） */
+data class DailySections(val other: String, val entries: List<DailyEntry>)
+
 /** 某一天的 Daily Note：笔记 id + 条目（按写入顺序） */
 data class DailyDay(val noteId: String, val entries: List<DailyEntry>)
 
@@ -285,6 +288,37 @@ object DailyFormat {
         }
         flush()
         return out
+    }
+
+    /** 全文拆成两部分：时间戳条目，以及条目以外的内容（今日简报的引用块之类），详情页分别渲染 */
+    fun sections(content: String): DailySections {
+        val entries = ArrayList<DailyEntry>()
+        val other = StringBuilder()
+        var time: String? = null
+        val text = StringBuilder()
+        fun flush() {
+            val t = time
+            if (t != null && text.isNotBlank()) entries += DailyEntry(t, text.toString().trim())
+            time = null
+            text.setLength(0)
+        }
+        for (line in content.lines()) {
+            val m = ENTRY_RE.find(line)
+            when {
+                m != null -> {
+                    flush()
+                    time = m.groupValues[1].substring(11)
+                    text.append(m.groupValues[2])
+                }
+                time != null && line.isNotBlank() && line.first().isWhitespace() -> text.append(' ').append(line.trim())
+                else -> {
+                    flush()
+                    other.append(line).append('\n')
+                }
+            }
+        }
+        flush()
+        return DailySections(other.toString().trim(), entries)
     }
 
     /** 把旧格式的条目统一整理为列表格式；其余内容原样保留 */

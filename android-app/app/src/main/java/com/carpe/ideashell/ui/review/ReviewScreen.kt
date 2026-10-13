@@ -90,6 +90,7 @@ fun ReviewScreen(
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     // 洞察卡（专注趋势 / 时间线 / 习惯 / 记录时刻……）在 ViewModel 里于后台线程算好，进页面直接用，不在组合时现算
     val insights by viewModel.insights.collectAsStateWithLifecycle()
+    val revisitKeys by viewModel.revisitKeys.collectAsStateWithLifecycle()
 
     val clipboard = LocalClipboardManager.current
     val snackbar = remember { SnackbarHostState() }
@@ -161,6 +162,11 @@ fun ReviewScreen(
                             isDayOpen = { viewModel.isDayOpen(it) },
                             onToggleDay = { viewModel.toggleDay(it) },
                             onRetry = viewModel::refresh,
+                            revisit = RevisitActions(
+                                keys = revisitKeys,
+                                onNote = viewModel::toggleNoteRevisit,
+                                onDaily = viewModel::toggleDailyRevisit,
+                            ),
                         )
                     }
                 }

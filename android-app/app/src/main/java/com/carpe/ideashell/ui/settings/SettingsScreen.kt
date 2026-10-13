@@ -53,6 +53,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -81,6 +82,7 @@ import com.carpe.ideashell.system.TodoWidgetProvider
 import com.carpe.ideashell.ui.glass.GlassBadge
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
+import kotlinx.coroutines.launch
 
 private sealed interface Dialog {
     data object Tags : Dialog
@@ -89,17 +91,20 @@ private sealed interface Dialog {
     data object FocusGoal : Dialog
     data object AddWidget : Dialog
     data object Ocr : Dialog
+    data object RevisitLimit : Dialog
+    data object RevisitRetention : Dialog
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onOpenConnection: () -> Unit) {
+fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as IdeashellApp).container
     val settings by container.settings.state.collectAsStateWithLifecycle()
     val ideashellConnected by container.credentials.ideashellConnected.collectAsStateWithLifecycle()
     val didaConnected by container.credentials.didaConnected.collectAsStateWithLifecycle()
     val ocrConfigured by container.credentials.ocrConfigured.collectAsStateWithLifecycle()
+    val revisitToday by container.revisit.today.collectAsStateWithLifecycle()
 
     var dialog by remember { mutableStateOf<Dialog?>(null) }
     var batteryIgnored by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
@@ -115,6 +120,44 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
             Toast.makeText(context, "没有通知权限，无法显示常驻通知", Toast.LENGTH_SHORT).show()
         }
     }
+    val scope = rememberCoroutineScope()
+    val revisitPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            container.settings.setRevisitReminder(true)
+        } else {
+            Toast.makeText(context, "没有通知权限，无法发出重温提醒", Toast.LENGTH_SHORT).show()
+        }
+    }
+    fun setRevisitReminder(enable: Boolean) {
+        if (enable && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            revisitPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            container.settings.setRevisitReminder(enable)
+        }
+    }
+    fun pickReminderTime() {
+        val minutes = settings.revisitReminderMinutes
+        android.app.TimePickerDialog(
+            context,
+            { _, hour, minute -> container.settings.setRevisitReminderMinutes(hour * 60 + minute) },
+            minutes / 60,
+            minutes % 60,
+            true,
+        ).show()
+    }
+    fun postponeRevisit() {
+        scope.launch {
+            val before = container.revisit.postponeAll(7)
+            Toast.makeText(
+                context,
+                if (before.isEmpty()) "现在没有到期的内容" else "已把到期的 ${before.size} 条推后 7 天",
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
     fun setPersistentNotification(enable: Boolean) {
         when {
             !enable -> container.settings.setPersistentNotification(false)
@@ -171,6 +214,67 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
                     title = "Daily Note 文件夹",
                     summary = settings.dailyFolder,
                     onClick = { dialog = Dialog.DailyFolder },
+                )
+            }
+
+            Group("重温") {
+                SettingsItem(
+                    icon = Icons.Filled.Refresh,
+                    title = "开始重温",
+                    summary = when {
+                        revisitToday.remaining > 0 -> "今天有 ${revisitToday.remaining} 条待重温 · 点击开始"
+                        revisitToday.total == 0 -> "还没有加入的内容 · 在笔记页点右上角的循环图标，或选中文字加入"
+                        revisitToday.doneToday > 0 -> "今天的重温完成了 · 共 ${revisitToday.total} 条在重温"
+                        else -> "今天没有待重温的 · 共 ${revisitToday.total} 条在重温"
+                    },
+                    onClick = onOpenRevisit,
+                )
+                SettingsItem(
+                    icon = Icons.Filled.Star,
+                    title = "每天最多重温",
+                    summary = "${settings.revisitDailyLimit} 条 · 超出的顺延到后面几天，不会一次性全抛出来",
+                    onClick = { dialog = Dialog.RevisitLimit },
+                )
+                SettingsItem(
+                    icon = Icons.Filled.Refresh,
+                    title = "目标记忆率",
+                    summary = "${settings.revisitRetention}% · 越高出现得越频繁（范围 80%–95%）",
+                    onClick = { dialog = Dialog.RevisitRetention },
+                )
+                SettingsItem(
+                    icon = Icons.Filled.Notifications,
+                    title = "每天提醒",
+                    summary = if (settings.revisitReminder) "每天 ${formatClock(settings.revisitReminderMinutes)} 一条通知「今天有 N 条待重温」" else "已关闭 · 「今天」页仍会显示今日重温",
+                    onClick = { setRevisitReminder(!settings.revisitReminder) },
+                    trailing = {
+                        Switch(checked = settings.revisitReminder, onCheckedChange = { setRevisitReminder(it) })
+                    },
+                )
+                if (settings.revisitReminder) {
+                    SettingsItem(
+                        icon = Icons.Filled.DateRange,
+                        title = "提醒时间",
+                        summary = formatClock(settings.revisitReminderMinutes),
+                        onClick = { pickReminderTime() },
+                    )
+                    SettingsItem(
+                        icon = Icons.Filled.Notifications,
+                        title = "周末不提醒",
+                        summary = "周六、周日不发通知",
+                        onClick = { container.settings.setRevisitSkipWeekends(!settings.revisitSkipWeekends) },
+                        trailing = {
+                            Switch(
+                                checked = settings.revisitSkipWeekends,
+                                onCheckedChange = { container.settings.setRevisitSkipWeekends(it) },
+                            )
+                        },
+                    )
+                }
+                SettingsItem(
+                    icon = Icons.Filled.Refresh,
+                    title = "全部推后 7 天",
+                    summary = "积压太多、一时看不过来时，把现在到期的都往后挪一周",
+                    onClick = { postponeRevisit() },
                 )
             }
 
@@ -303,6 +407,24 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
             onDismiss = { dialog = null },
         )
 
+        Dialog.RevisitLimit -> ChoiceDialog(
+            title = "每天最多重温",
+            options = (REVISIT_LIMIT_PRESETS + settings.revisitDailyLimit).distinct().sorted(),
+            current = settings.revisitDailyLimit,
+            label = { "$it 条" },
+            onSelect = { container.settings.setRevisitDailyLimit(it) },
+            onDismiss = { dialog = null },
+        )
+
+        Dialog.RevisitRetention -> ChoiceDialog(
+            title = "目标记忆率",
+            options = REVISIT_RETENTION_PRESETS,
+            current = settings.revisitRetention,
+            label = { "$it%" + if (it == 90) "（默认）" else "" },
+            onSelect = { container.settings.setRevisitRetention(it) },
+            onDismiss = { dialog = null },
+        )
+
         Dialog.AddWidget -> AddWidgetDialog(
             onPick = { widget -> requestPinWidget(context, widget) },
             onDismiss = { dialog = null },
@@ -392,6 +514,51 @@ private fun AddWidgetDialog(onPick: (PinnableWidget) -> Unit, onDismiss: () -> U
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+private val REVISIT_LIMIT_PRESETS = listOf(3, 5, 8, 10, 15, 20)
+private val REVISIT_RETENTION_PRESETS = listOf(80, 85, 90, 95)
+
+private fun formatClock(minutes: Int): String = "%02d:%02d".format(minutes / 60, minutes % 60)
+
+@Composable
+private fun <T> ChoiceDialog(
+    title: String,
+    options: List<T>,
+    current: T,
+    label: (T) -> String,
+    onSelect: (T) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                options.forEach { option ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = option == current,
+                                role = Role.RadioButton,
+                                onClick = {
+                                    onSelect(option)
+                                    onDismiss()
+                                },
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = option == current, onClick = null)
+                        Text(label(option), modifier = Modifier.padding(start = 12.dp))
                     }
                 }
             }

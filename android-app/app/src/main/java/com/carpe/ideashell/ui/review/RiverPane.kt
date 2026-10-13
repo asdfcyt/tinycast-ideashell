@@ -3,7 +3,9 @@ package com.carpe.ideashell.ui.review
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -21,6 +23,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
+import com.carpe.ideashell.R
+import com.carpe.ideashell.data.revisit.RevisitRepository
+import com.carpe.ideashell.ui.components.AppMenu
+import com.carpe.ideashell.ui.components.AppMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -107,6 +119,16 @@ private fun rowsOf(day: DayBucket): List<RiverRow> = buildList {
     compareBy<RiverRow> { it.clock.isNotEmpty() }.thenByDescending { it.clock },
 )
 
+/**
+ * 时间河里「加入重温」的接线：[keys] 是已在重温的条目；长按笔记 / 日记一条，弹出菜单加入或移出。
+ * [inRevisit] 是长按那一刻它是否已经加入。
+ */
+class RevisitActions(
+    val keys: Set<String>,
+    val onNote: (note: NoteInfo, inRevisit: Boolean) -> Unit,
+    val onDaily: (entry: DailyEntry, noteId: String?, date: LocalDate, inRevisit: Boolean) -> Unit,
+)
+
 fun LazyListScope.riverItems(
     state: Async<TimelineData>,
     onOpenNote: (String) -> Unit,
@@ -115,6 +137,7 @@ fun LazyListScope.riverItems(
     isDayOpen: (LocalDate) -> Boolean,
     onToggleDay: (LocalDate) -> Unit,
     onRetry: () -> Unit,
+    revisit: RevisitActions,
 ) {
     val data = state.data
     when {
@@ -137,7 +160,7 @@ fun LazyListScope.riverItems(
                 val today = LocalDate.now()
                 data.days.forEach { day ->
                     item(key = "rv-day-${day.date}") {
-                        DaySection(day, today, isDayOpen(day.date), { onToggleDay(day.date) }, onOpenNote, onOpenTodo, onToggleTodo, Modifier.animateItem())
+                        DaySection(day, today, isDayOpen(day.date), { onToggleDay(day.date) }, onOpenNote, onOpenTodo, onToggleTodo, revisit, Modifier.animateItem())
                     }
                 }
             }
@@ -157,6 +180,7 @@ private fun DaySection(
     onOpenNote: (String) -> Unit,
     onOpenTodo: (DidaTask) -> Unit,
     onToggleTodo: (DidaTask) -> Unit,
+    revisit: RevisitActions,
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -207,8 +231,8 @@ private fun DaySection(
                 val first = i == 0
                 val last = i == rows.lastIndex
                 when (row) {
-                    is RiverRow.Daily -> DailyLine(row, first, last, onOpenNote)
-                    is RiverRow.Note -> NoteLine(row.note, first, last, onOpenNote)
+                    is RiverRow.Daily -> DailyLine(row, day.date, first, last, onOpenNote, revisit)
+                    is RiverRow.Note -> NoteLine(row.note, first, last, onOpenNote, revisit)
                     is RiverRow.Todo -> TodoLine(row.task, row.clock, row.overdue, first, last, onOpenTodo, onToggleTodo)
                 }
             }
@@ -220,6 +244,7 @@ private fun DaySection(
  * 一行 = 时间（右对齐）+ 竖线上的节点 + 正文。竖线在每一行里各画一段，行与行之间连成一条；
  * 节点周围留出 3dp 的空隙，所以空心环里不会透出线。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TimelineRow(
     clock: String,
@@ -228,6 +253,8 @@ private fun TimelineRow(
     last: Boolean,
     onClick: (() -> Unit)?,
     onNodeClick: (() -> Unit)? = null,
+    /** 长按整行（笔记 / 日记：弹出「加入重温」菜单） */
+    onLongClick: (() -> Unit)? = null,
     /** 没有具体时间的待办：时间位置显示「全天」标签 */
     allDay: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
@@ -237,11 +264,24 @@ private fun TimelineRow(
     val line = scheme.onSurface.copy(alpha = 0.14f)
     val ink = scheme.onSurface
     val muted = scheme.onSurfaceVariant
+    val haptic = LocalHapticFeedback.current
     Box(Modifier.fillMaxWidth()) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(
+                when {
+                    onClick != null && onLongClick != null -> Modifier.combinedClickable(
+                        onClick = onClick,
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        },
+                    )
+                    onClick != null -> Modifier.clickable(onClick = onClick)
+                    else -> Modifier
+                },
+            )
             .drawBehind {
                 val x = RAIL_X.dp.toPx()
                 val nodeY = NODE_Y.dp.toPx()
@@ -333,37 +373,92 @@ private const val CLOCK_W = 36
 private const val RAIL_X = 9
 private const val NODE_Y = 19
 
-/** 日记一句：没有标题，整句就是内容；点一下打开那一天的 Daily Note 全文 */
+/** 日记一句：没有标题，整句就是内容；点一下打开那一天的 Daily Note 全文，长按可以加入重温 */
 @Composable
-private fun DailyLine(row: RiverRow.Daily, first: Boolean, last: Boolean, onOpenNote: (String) -> Unit) {
+private fun DailyLine(
+    row: RiverRow.Daily,
+    date: LocalDate,
+    first: Boolean,
+    last: Boolean,
+    onOpenNote: (String) -> Unit,
+    revisit: RevisitActions,
+) {
+    val inRevisit = RevisitRepository.snippetKey(row.noteId, row.entry.text) in revisit.keys
+    var menu by remember { mutableStateOf(false) }
     TimelineRow(
         clock = row.entry.time,
         kind = Kind.DAILY,
         first = first,
         last = last,
         onClick = row.noteId?.let { id -> { onOpenNote(id) } },
+        onLongClick = { menu = true },
     ) {
-        Text(
-            row.entry.text,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis,
+        Row(verticalAlignment = Alignment.Top) {
+            Text(
+                row.entry.text,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (inRevisit) RevisitMark()
+        }
+        RevisitMenu(menu, inRevisit, onDismiss = { menu = false }) {
+            revisit.onDaily(row.entry, row.noteId, date, inRevisit)
+        }
+    }
+}
+
+/** 已加入重温的小标记（时间河上一眼能看出哪些会回来） */
+@Composable
+private fun RevisitMark() {
+    Icon(
+        painterResource(R.drawable.ic_revisit),
+        contentDescription = "已加入重温",
+        tint = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 6.dp, top = 4.dp).size(14.dp),
+    )
+}
+
+@Composable
+private fun RevisitMenu(expanded: Boolean, inRevisit: Boolean, onDismiss: () -> Unit, onToggle: () -> Unit) {
+    AppMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        AppMenuItem(
+            text = { Text(if (inRevisit) "移出重温" else "加入重温") },
+            leadingIcon = { Icon(painterResource(R.drawable.ic_revisit), contentDescription = null) },
+            onClick = {
+                onDismiss()
+                onToggle()
+            },
         )
     }
 }
 
 @Composable
-private fun NoteLine(note: NoteInfo, first: Boolean, last: Boolean, onOpenNote: (String) -> Unit) {
+private fun NoteLine(note: NoteInfo, first: Boolean, last: Boolean, onOpenNote: (String) -> Unit, revisit: RevisitActions) {
     val scheme = MaterialTheme.colorScheme
+    val inRevisit = RevisitRepository.noteKey(note.id) in revisit.keys
+    var menu by remember { mutableStateOf(false) }
     TimelineRow(
         clock = note.localClock.orEmpty(),
         kind = Kind.NOTE,
         first = first,
         last = last,
         onClick = { onOpenNote(note.id) },
+        onLongClick = { menu = true },
     ) {
-        Text(note.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Row(verticalAlignment = Alignment.Top) {
+            Text(
+                note.title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (inRevisit) RevisitMark()
+        }
         if (!note.summary.isNullOrBlank()) {
             Text(
                 note.summary,
@@ -373,6 +468,7 @@ private fun NoteLine(note: NoteInfo, first: Boolean, last: Boolean, onOpenNote: 
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        RevisitMenu(menu, inRevisit, onDismiss = { menu = false }) { revisit.onNote(note, inRevisit) }
     }
 }
 

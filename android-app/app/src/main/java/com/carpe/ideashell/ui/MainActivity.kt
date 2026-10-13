@@ -54,6 +54,7 @@ import com.carpe.ideashell.ui.home.HomeScreen
 import com.carpe.ideashell.ui.review.NoteDetailScreen
 import com.carpe.ideashell.ui.review.ReviewScreen
 import com.carpe.ideashell.ui.review.ReviewViewModel
+import com.carpe.ideashell.ui.revisit.RevisitScreen
 import com.carpe.ideashell.ui.search.SearchScreen
 import com.carpe.ideashell.ui.search.SearchViewModel
 import com.carpe.ideashell.ui.settings.SettingsScreen
@@ -69,6 +70,7 @@ private const val PAGE_CONNECTION = 1
 private const val PAGE_NOTE = 2
 private const val PAGE_SEARCH = 3
 private const val PAGE_FOCUS = 4
+private const val PAGE_REVISIT = 5
 private const val TAB_HOME = 0
 private const val TAB_TODOS = 1
 private const val TAB_REVIEW = 2
@@ -88,11 +90,15 @@ class MainActivity : ComponentActivity() {
     /** 通知上的专注圆环 / 专注通知点进来：直接打开专注页；界面消费后清空 */
     private var requestedFocus by mutableStateOf(false)
 
+    /** 「今天有 N 条待重温」通知点进来：直接打开重温页；界面消费后清空 */
+    private var requestedRevisit by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as IdeashellApp).container
         requestedTab = readTab(intent)
         requestedFocus = intent?.getBooleanExtra(EXTRA_OPEN_FOCUS, false) == true
+        requestedRevisit = intent?.getBooleanExtra(EXTRA_OPEN_REVISIT, false) == true
 
         setContent {
             val settings by container.settings.state.collectAsStateWithLifecycle()
@@ -103,6 +109,8 @@ class MainActivity : ComponentActivity() {
                     onTabConsumed = { requestedTab = null },
                     requestedFocus = requestedFocus,
                     onFocusConsumed = { requestedFocus = false },
+                    requestedRevisit = requestedRevisit,
+                    onRevisitConsumed = { requestedRevisit = false },
                 )
             }
         }
@@ -113,6 +121,7 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         requestedTab = readTab(intent)
         requestedFocus = intent.getBooleanExtra(EXTRA_OPEN_FOCUS, false)
+        requestedRevisit = intent.getBooleanExtra(EXTRA_OPEN_REVISIT, false)
     }
 
     private fun readTab(intent: Intent?): Int? =
@@ -121,6 +130,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_TAB = "tab"
         const val EXTRA_OPEN_FOCUS = "open_focus"
+        const val EXTRA_OPEN_REVISIT = "open_revisit"
     }
 }
 
@@ -134,11 +144,19 @@ class MainActivity : ComponentActivity() {
  * 数据本来就在各自的 ViewModel 里，回来时先显示已有内容。只有进入 / 退出子页面才有横向滑入动画。
  */
 @Composable
-private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit, requestedFocus: Boolean, onFocusConsumed: () -> Unit) {
+private fun AppRoot(
+    requestedTab: Int?,
+    onTabConsumed: () -> Unit,
+    requestedFocus: Boolean,
+    onFocusConsumed: () -> Unit,
+    requestedRevisit: Boolean,
+    onRevisitConsumed: () -> Unit,
+) {
     var tab by rememberSaveable { mutableIntStateOf(requestedTab ?: TAB_HOME) }
     var connection by rememberSaveable { mutableStateOf(false) }
     var search by rememberSaveable { mutableStateOf(false) }
     var focus by rememberSaveable { mutableStateOf(requestedFocus) }
+    var revisit by rememberSaveable { mutableStateOf(requestedRevisit) }
     var noteId by rememberSaveable { mutableStateOf<String?>(null) }
     // 退出动画期间 noteId 已经是 null，但旧页面还要再画一会儿，所以留一份最后打开的 id
     val lastNoteId = remember { arrayOf<String?>(null) }
@@ -155,7 +173,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit, requestedFocu
             review.ensureLoaded()
         }
     }
-    val subpage = connection || search || focus || noteId != null
+    val subpage = connection || search || focus || revisit || noteId != null
     val stateHolder = rememberSaveableStateHolder()
 
     LaunchedEffect(requestedTab) {
@@ -164,6 +182,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit, requestedFocu
             connection = false
             search = false
             focus = false
+            revisit = false
             noteId = null
             onTabConsumed()
         }
@@ -172,10 +191,22 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit, requestedFocu
     LaunchedEffect(requestedFocus) {
         if (requestedFocus) {
             focus = true
+            revisit = false
             connection = false
             search = false
             noteId = null
             onFocusConsumed()
+        }
+    }
+
+    LaunchedEffect(requestedRevisit) {
+        if (requestedRevisit) {
+            revisit = true
+            focus = false
+            connection = false
+            search = false
+            noteId = null
+            onRevisitConsumed()
         }
     }
 
@@ -185,6 +216,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit, requestedFocu
             connection -> connection = false
             search -> search = false
             focus -> focus = false
+            revisit -> revisit = false
             else -> tab = TAB_HOME
         }
     }
@@ -203,6 +235,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit, requestedFocu
                     connection -> PAGE_CONNECTION
                     search -> PAGE_SEARCH
                     focus -> PAGE_FOCUS
+                    revisit -> PAGE_REVISIT
                     else -> PAGE_TABS
                 },
                 transitionSpec = {
@@ -219,6 +252,10 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit, requestedFocu
                     PAGE_FOCUS -> FocusScreen(
                         onBack = { focus = false },
                         onOpenConnection = { connection = true },
+                    )
+                    PAGE_REVISIT -> RevisitScreen(
+                        onBack = { revisit = false },
+                        onOpenNote = { noteId = it },
                     )
                     PAGE_SEARCH -> SearchScreen(
                         viewModel = searchVm,
@@ -244,6 +281,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit, requestedFocu
                             val project = searchVm.workspace.value.projects
                                 .firstOrNull { it.keyword.equals(tag, ignoreCase = true) }
                             noteId = null
+                            revisit = false
                             if (project != null) {
                                 search = false
                                 todo.openProject = project.keyword
@@ -275,13 +313,17 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit, requestedFocu
                                 onOpenFocus = { focus = true },
                             )
 
-                            TAB_SETTINGS -> SettingsScreen(onOpenConnection = { connection = true })
+                            TAB_SETTINGS -> SettingsScreen(
+                                onOpenConnection = { connection = true },
+                                onOpenRevisit = { revisit = true },
+                            )
                             else -> HomeScreen(
                                 onOpenSearch = { search = true },
                                 onOpenConnection = { connection = true },
                                 onOpenTodos = { tab = TAB_TODOS },
                                 onOpenFocus = { focus = true },
                                 onOpenNote = { noteId = it },
+                                onOpenRevisit = { revisit = true },
                             )
                         }
                     }

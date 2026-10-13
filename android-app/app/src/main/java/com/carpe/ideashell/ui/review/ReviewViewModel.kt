@@ -19,6 +19,10 @@ import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.dida.FocusSummary
 import com.carpe.ideashell.data.dida.HabitStat
+import com.carpe.ideashell.data.ideashell.DailyEntry
+import com.carpe.ideashell.data.ideashell.NoteInfo
+import com.carpe.ideashell.data.revisit.AddResult
+import com.carpe.ideashell.data.revisit.RevisitRepository
 import com.carpe.ideashell.data.dida.TodoData
 import com.carpe.ideashell.data.mcp.McpAuthException
 import com.carpe.ideashell.data.project.Workspace
@@ -151,6 +155,57 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
 
     private fun say(text: String) {
         _messages.trySend(text)
+    }
+
+    // ───────────── 加入重温（笔记 / 日记一条，长按菜单） ─────────────
+
+    /** 已在重温的条目 key：时间河据此在笔记 / 日记旁边显示小标记 */
+    val revisitKeys: StateFlow<Set<String>> = container.revisit.keys
+
+    init {
+        // 带 #重温 标签的笔记自动加入（时间线读到哪些就收哪些，已加入 / 点过「不再重温」的不会重复）
+        viewModelScope.launch {
+            _timeline.map { it.data?.days?.flatMap { d -> d.notes }.orEmpty() }
+                .distinctUntilChanged()
+                .collect { notes ->
+                    if (notes.isNotEmpty()) runCatching { container.revisit.autoAddTagged(notes) }
+                }
+        }
+    }
+
+    fun toggleNoteRevisit(note: NoteInfo, inRevisit: Boolean) {
+        viewModelScope.launch {
+            if (inRevisit) {
+                container.revisit.setArchived(RevisitRepository.noteKey(note.id), true)
+                say("已移出重温")
+            } else {
+                say(revisitAddedText(container.revisit.addNote(note)))
+            }
+        }
+    }
+
+    fun toggleDailyRevisit(entry: DailyEntry, noteId: String?, date: LocalDate, inRevisit: Boolean) {
+        viewModelScope.launch {
+            if (inRevisit) {
+                container.revisit.setArchived(RevisitRepository.snippetKey(noteId, entry.text), true)
+                say("已移出重温")
+            } else {
+                val clock = runCatching { java.time.LocalTime.parse(entry.time) }.getOrDefault(java.time.LocalTime.NOON)
+                val result = container.revisit.addSnippet(
+                    noteId = noteId,
+                    noteTitle = date.toString(),
+                    text = entry.text,
+                    sourceLabel = "Daily Note",
+                    recordedAt = RevisitRepository.millisOf(date.atTime(clock)),
+                )
+                say(revisitAddedText(result))
+            }
+        }
+    }
+
+    private fun revisitAddedText(result: AddResult): String = when (result) {
+        AddResult.ADDED, AddResult.RESTORED -> "已加入重温 · 明天开始出现"
+        AddResult.EXISTS -> "已经在重温里了"
     }
 
     /** 正在看详情的待办 id；任务在时间线里找不到了（例如刚删除）就自然收起 */

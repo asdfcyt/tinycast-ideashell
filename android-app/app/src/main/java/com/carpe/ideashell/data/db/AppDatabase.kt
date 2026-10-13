@@ -7,15 +7,44 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [CaptureEntity::class], version = 3, exportSchema = false)
+@Database(entities = [CaptureEntity::class, RevisitEntity::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun captureDao(): CaptureDao
+    abstract fun revisitDao(): RevisitDao
 
     companion object {
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "ideashell.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
+
+        /** v4：新增「重温项」表（笔记 / 摘录的 FSRS 间隔重温） */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `revisit_items` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`dedupeKey` TEXT NOT NULL, " +
+                        "`kind` TEXT NOT NULL, " +
+                        "`noteId` TEXT, " +
+                        "`title` TEXT NOT NULL, " +
+                        "`text` TEXT NOT NULL, " +
+                        "`sourceLabel` TEXT NOT NULL, " +
+                        "`recordedAt` INTEGER NOT NULL, " +
+                        "`addedAt` INTEGER NOT NULL, " +
+                        "`stability` REAL NOT NULL, " +
+                        "`difficulty` REAL NOT NULL, " +
+                        "`due` INTEGER NOT NULL, " +
+                        "`reps` INTEGER NOT NULL, " +
+                        "`lapses` INTEGER NOT NULL, " +
+                        "`lastRating` INTEGER NOT NULL, " +
+                        "`lastReviewAt` INTEGER NOT NULL, " +
+                        "`skippedUntil` INTEGER NOT NULL, " +
+                        "`archived` INTEGER NOT NULL)",
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_revisit_items_dedupeKey` ON `revisit_items` (`dedupeKey`)")
+            }
+        }
 
         /** v3：记录增加「待办优先级」列 */
         private val MIGRATION_2_3 = object : Migration(2, 3) {

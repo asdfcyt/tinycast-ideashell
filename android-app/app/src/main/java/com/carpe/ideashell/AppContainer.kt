@@ -19,6 +19,8 @@ import com.carpe.ideashell.data.notes.NotesRepository
 import com.carpe.ideashell.data.ocr.TencentOcr
 import com.carpe.ideashell.data.project.ProjectService
 import com.carpe.ideashell.data.project.WorkspaceStore
+import com.carpe.ideashell.data.revisit.RevisitRepository
+import com.carpe.ideashell.system.RevisitReminderScheduler
 import com.carpe.ideashell.data.secure.CredentialStore
 import com.carpe.ideashell.data.secure.SecureStore
 import com.carpe.ideashell.data.focus.FocusRepository
@@ -131,6 +133,14 @@ class AppContainer(context: Context) {
         todoSnapshot = { todos.state.value.overview },
     )
 
+    /** 笔记 / 日记片段的 FSRS 间隔重温（本机数据库） */
+    val revisit = RevisitRepository(
+        dao = database.revisitDao(),
+        settings = settings,
+        scope = appScope,
+        loadNote = { notes.note(it) },
+    )
+
     val captures = CaptureRepository(
         dao = database.captureDao(),
         folders = folders,
@@ -214,6 +224,13 @@ class AppContainer(context: Context) {
                     surfaces.updateAll()
                     widgets.updateFocus()
                 }
+        }
+        // 重温提醒：开关或时刻一变就重新安排（也保证每次进应用都对齐到下一个提醒时刻）
+        appScope.launch {
+            settings.state
+                .map { it.revisitReminder to it.revisitReminderMinutes }
+                .distinctUntilChanged()
+                .collect { (enabled, minutes) -> RevisitReminderScheduler.apply(appContext, enabled, minutes) }
         }
         appScope.launch {
             credentials.didaConnected.collect { connected ->
