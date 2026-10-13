@@ -25,6 +25,10 @@ data class AppSettings(
     val focusGoalMin: Int = DEFAULT_FOCUS_GOAL_MIN,
     /** 相机页上「识别文字」开关的上次状态 */
     val ocrEnabled: Boolean = false,
+    /** 识别页的选择方式：false = 划选识别，true = 选择框（先框出识别区域再识别） */
+    val ocrFrameMode: Boolean = false,
+    /** 每晚 23:20 自动生成今日小结 */
+    val autoDaySummary: Boolean = true,
 ) {
     val defaultTags: List<String>
         get() = defaultTagsText.split(',', '，').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }
@@ -58,6 +62,10 @@ class SettingsStore(context: Context) {
 
     fun setOcrEnabled(enabled: Boolean) = update { it.copy(ocrEnabled = enabled) }
 
+    fun setOcrFrameMode(frame: Boolean) = update { it.copy(ocrFrameMode = frame) }
+
+    fun setAutoDaySummary(enabled: Boolean) = update { it.copy(autoDaySummary = enabled) }
+
     private fun update(transform: (AppSettings) -> AppSettings) {
         val next = transform(_state.value)
         prefs.edit()
@@ -67,6 +75,8 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_PERSISTENT_NOTIFICATION, next.persistentNotification)
             .putInt(KEY_FOCUS_GOAL, next.focusGoalMin)
             .putBoolean(KEY_OCR_ENABLED, next.ocrEnabled)
+            .putBoolean(KEY_OCR_FRAME, next.ocrFrameMode)
+            .putBoolean(KEY_AUTO_SUMMARY, next.autoDaySummary)
             .apply()
         _state.value = next
     }
@@ -79,6 +89,8 @@ class SettingsStore(context: Context) {
         persistentNotification = prefs.getBoolean(KEY_PERSISTENT_NOTIFICATION, false),
         focusGoalMin = prefs.getInt(KEY_FOCUS_GOAL, AppSettings.DEFAULT_FOCUS_GOAL_MIN),
         ocrEnabled = prefs.getBoolean(KEY_OCR_ENABLED, false),
+        ocrFrameMode = prefs.getBoolean(KEY_OCR_FRAME, false),
+        autoDaySummary = prefs.getBoolean(KEY_AUTO_SUMMARY, true),
     )
 
     // ── 文件夹缓存 ──
@@ -122,9 +134,20 @@ class SettingsStore(context: Context) {
         prefs.edit().putInt("$KEY_DAILY_COUNT_PREFIX$date", count).apply()
     }
 
+    // ── 自动今日小结：最近一次自动生成的日期（yyyy-MM-dd），一天只自动生成一次 ──
+
+    fun lastAutoSummaryDate(): String? = prefs.getString(KEY_AUTO_SUMMARY_DATE, null)
+
+    fun setLastAutoSummaryDate(date: String) {
+        prefs.edit().putString(KEY_AUTO_SUMMARY_DATE, date).apply()
+    }
+
     private companion object {
+        const val KEY_AUTO_SUMMARY = "auto_day_summary"
+        const val KEY_AUTO_SUMMARY_DATE = "auto_summary_date"
         const val KEY_FOCUS_GOAL = "focus_goal_min"
         const val KEY_OCR_ENABLED = "ocr_enabled"
+        const val KEY_OCR_FRAME = "ocr_frame_mode"
         const val KEY_DAILY_COUNT_PREFIX = "daily_count_"
         const val KEY_TAGS = "default_tags"
         const val KEY_DAILY_FOLDER = "daily_folder"

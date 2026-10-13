@@ -45,7 +45,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -71,6 +70,10 @@ import com.carpe.ideashell.BuildConfig
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.R
 import com.carpe.ideashell.data.settings.ThemeMode
+import com.carpe.ideashell.ui.components.AppTextField
+import com.carpe.ideashell.ui.components.InputSheet
+import com.carpe.ideashell.ui.components.ListGroup
+import com.carpe.ideashell.ui.components.RowDivider
 import com.carpe.ideashell.system.QuickCaptureTileService
 import com.carpe.ideashell.system.FocusWidgetProvider
 import com.carpe.ideashell.system.RiverWidgetProvider
@@ -226,6 +229,18 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
                     },
                 )
                 SettingsItem(
+                    icon = Icons.Filled.Notifications,
+                    title = "每晚自动生成今日小结",
+                    summary = "每晚 23:20 把今天完成的任务和专注时长插到今天 Daily Note 最前面（需要连接滴答清单）",
+                    onClick = { container.settings.setAutoDaySummary(!settings.autoDaySummary) },
+                    trailing = {
+                        Switch(
+                            checked = settings.autoDaySummary,
+                            onCheckedChange = { container.settings.setAutoDaySummary(it) },
+                        )
+                    },
+                )
+                SettingsItem(
                     icon = Icons.Filled.Add,
                     title = "添加小部件",
                     summary = "待办、专注、记录（时间河）三种，选一个放到桌面。也可以长按桌面空白处 → 小组件 → 闪念",
@@ -314,41 +329,36 @@ private fun OcrKeyDialog(
 ) {
     var id by remember { mutableStateOf(initialId) }
     var key by remember { mutableStateOf(initialKey) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("腾讯云文字识别") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "在腾讯云控制台开通「文字识别」，并在「访问管理 → API 密钥管理」创建密钥。密钥只保存在本机（加密）。两项都留空并保存即可清除。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedTextField(
-                    value = id,
-                    onValueChange = { id = it },
-                    label = { Text("SecretId") },
-                    singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Next),
-                )
-                OutlinedTextField(
-                    value = key,
-                    onValueChange = { key = it },
-                    label = { Text("SecretKey") },
-                    singleLine = true,
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Done),
-                )
-            }
+    InputSheet(
+        title = "腾讯云文字识别",
+        hint = "在腾讯云控制台开通「文字识别」，并在「访问管理 → API 密钥管理」创建密钥。密钥只保存在本机（加密）。两项都留空并保存即可清除。",
+        onDismiss = onDismiss,
+        onConfirm = {
+            onConfirm(id, key)
+            onDismiss()
         },
-        confirmButton = {
-            TextButton(onClick = {
-                onConfirm(id, key)
-                onDismiss()
-            }) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
+    ) {
+        ListGroup {
+            AppTextField(
+                value = id,
+                onValueChange = { id = it },
+                label = "SecretId",
+                placeholder = "AKID…",
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Next),
+            )
+            RowDivider()
+            AppTextField(
+                value = key,
+                onValueChange = { key = it },
+                label = "SecretKey",
+                placeholder = "点这里输入",
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Done),
+            )
+        }
+    }
 }
 
 /** 可以放到桌面的小部件 */
@@ -474,26 +484,25 @@ private fun TextInputDialog(
     onDismiss: () -> Unit,
 ) {
     var value by remember { mutableStateOf(initial) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            OutlinedTextField(
+    InputSheet(
+        title = title,
+        onDismiss = onDismiss,
+        onConfirm = {
+            onConfirm(value)
+            onDismiss()
+        },
+    ) {
+        ListGroup {
+            AppTextField(
                 value = value,
                 onValueChange = { value = it },
-                label = { Text(label) },
+                label = null,
+                placeholder = "点这里输入",
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Done),
             )
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                onConfirm(value)
-                onDismiss()
-            }) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
+        }
+    }
 }
 
 @Composable

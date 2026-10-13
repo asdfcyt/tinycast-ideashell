@@ -24,7 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.carpe.ideashell.ui.components.AppTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -119,14 +119,17 @@ private fun TargetCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(target.label, style = MaterialTheme.typography.titleMedium)
 
-            OutlinedTextField(
+            AppTextField(
                 value = section.input,
                 onValueChange = onInputChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(if (section.saved) "$credentialName（已保存，留空则沿用）" else credentialName) },
-                supportingText = { Text(hint) },
+                label = if (section.saved) "$credentialName（已保存，留空则沿用）" else credentialName,
+                placeholder = "粘贴$credentialName",
+                supportingText = hint,
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default,
+                // 外面已经是一张白色块，不再额外缩进
+                horizontalPadding = 0.dp,
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

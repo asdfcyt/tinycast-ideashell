@@ -62,11 +62,16 @@ class TodoSurfaces(
     }
 
     private fun snapshot(overview: DidaOverview): Snapshot {
-        val todayStr = LocalDate.now().toString()
+        val today = LocalDate.now()
+        val todayStr = today.toString()
+        val zone = java.time.ZoneId.systemDefault()
         return Snapshot(
             overdue = overview.overdue.sortedWith(order),
             today = overview.upcoming.filter { it.date == todayStr }.sortedWith(order),
-            done = overview.done.size,
+            // overview.done 是最近几天完成的；这里只数今天完成的（没有完成时刻的按计划日期），和「今天」页同一口径
+            done = overview.done.count { t ->
+                t.completedAt?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate() == today } ?: (t.date == todayStr)
+            },
         )
     }
 

@@ -14,7 +14,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.carpe.ideashell.ui.components.AppTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.dp
 import com.carpe.ideashell.core.template.Template
 import com.carpe.ideashell.core.template.Templates
 import com.carpe.ideashell.ui.components.ConfirmDialog
+import com.carpe.ideashell.ui.components.ListGroup
+import com.carpe.ideashell.ui.components.RowDivider
 import com.carpe.ideashell.ui.glass.GlassSurface
 
 private sealed interface Step {
@@ -149,15 +151,18 @@ private fun FillStep(
     if (extra.isNotEmpty()) {
         Text(extra.joinToString(" · "), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
-    template.fields.forEachIndexed { i, f ->
-        OutlinedTextField(
-            value = values[f.name].orEmpty(),
-            onValueChange = { v -> values = values + (f.name to v) },
-            label = { Text(f.name) },
-            singleLine = !f.multiline,
-            minLines = if (f.multiline) 2 else 1,
-            modifier = Modifier.fillMaxWidth(),
-        )
+    ListGroup {
+        template.fields.forEachIndexed { i, f ->
+            if (i > 0) RowDivider()
+            AppTextField(
+                value = values[f.name].orEmpty(),
+                onValueChange = { v -> values = values + (f.name to v) },
+                label = f.name,
+                placeholder = "点这里输入",
+                singleLine = !f.multiline,
+                minLines = if (f.multiline) 3 else 1,
+            )
+        }
     }
     Button(onClick = { onSubmit(values) }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("保存") }
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -187,35 +192,40 @@ private fun EditStep(template: Template?, onBack: () -> Unit, onSave: (Template)
 
     TextButton(onClick = onBack) { Text("‹ 返回") }
     Text(if (template == null) "新建模板" else "编辑模板", style = MaterialTheme.typography.titleLarge)
-    OutlinedTextField(
-        value = name,
-        onValueChange = { name = it },
-        label = { Text("模板名") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    OutlinedTextField(
-        value = fields,
-        onValueChange = { fields = it },
-        label = { Text("字段（每行一个）") },
-        supportingText = { Text("字段名末尾加 + 表示多行输入框，如「想法+」") },
-        minLines = 4,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    OutlinedTextField(
-        value = tags,
-        onValueChange = { tags = it },
-        label = { Text("标签（空格分隔，可选）") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
-    OutlinedTextField(
-        value = folder,
-        onValueChange = { folder = it },
-        label = { Text("存入文件夹（可选）") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-    )
+    ListGroup {
+        AppTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = "模板名",
+            placeholder = "例如：读书笔记",
+            singleLine = true,
+        )
+        RowDivider()
+        AppTextField(
+            value = fields,
+            onValueChange = { fields = it },
+            label = "字段（每行一个）",
+            placeholder = "每行一个字段名",
+            supportingText = "字段名末尾加 + 表示多行输入框，如「想法+」",
+            minLines = 4,
+        )
+        RowDivider()
+        AppTextField(
+            value = tags,
+            onValueChange = { tags = it },
+            label = "标签（可选）",
+            placeholder = "空格分隔，如 读书 灵感",
+            singleLine = true,
+        )
+        RowDivider()
+        AppTextField(
+            value = folder,
+            onValueChange = { folder = it },
+            label = "文件夹（可选）",
+            placeholder = "文件夹名",
+            singleLine = true,
+        )
+    }
     Button(
         onClick = { built?.let(onSave) },
         enabled = built != null,

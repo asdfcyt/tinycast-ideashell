@@ -490,7 +490,7 @@ internal fun ProjectPage(
     ) {
         // 顶栏：返回 · 项目名 · 状态 · ⋯
         item(key = "top") {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp)) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
                 Text(
                     project.keyword,

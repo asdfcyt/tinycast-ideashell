@@ -25,6 +25,8 @@ class TodoRefreshWorker(context: Context, params: WorkerParameters) : CoroutineW
         container.widgets.updateFocus()
         // 顺手对账专注：到点没记的补记、没传成功的补传
         runCatching { container.focus.settle() }
+        // 23:20 的今日小结如果被系统推迟了，这里补上（一天只会生成一次）
+        runCatching { DaySummaryAuto.runIfDue(container) }
         return Result.success()
     }
 }

@@ -41,6 +41,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import com.carpe.ideashell.R
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.carpe.ideashell.IdeashellApp
@@ -103,11 +105,8 @@ fun NoteDetailScreen(
             ) {
                 RoundAction(Icons.AutoMirrored.Filled.ArrowBack, "返回", onBack)
                 Spacer(Modifier.weight(1f))
+                RoundAction(Icons.Filled.Refresh, "刷新") { attempt++ }
                 if (note != null) {
-                    PillAction("复制") {
-                        clipboard.setText(AnnotatedString(noteAsMarkdown(note)))
-                        message = "已复制全文"
-                    }
                     RoundAction(Icons.Filled.Share, "分享") {
                         val send = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
@@ -117,9 +116,8 @@ fun NoteDetailScreen(
                         context.startActivity(Intent.createChooser(send, "分享笔记"))
                     }
                     // 跳到闪念贝壳 App 里的这条笔记（没装 / 打不开时退回网页版）
-                    PillAction("闪念贝壳") { openIdeaShellNote(context, noteId) }
+                    RoundAction(painterResource(R.drawable.ic_open_in_new), "在闪念贝壳中打开") { openIdeaShellNote(context, noteId) }
                 }
-                RoundAction(Icons.Filled.Refresh, "刷新") { attempt++ }
             }
 
             Column(
@@ -204,19 +202,12 @@ private fun NoteBody(note: NoteDetail, onOpenTag: (String) -> Unit) {
 }
 
 @Composable
-private fun PillAction(text: String, onClick: () -> Unit) {
-    GlassSurface(modifier = Modifier.height(44.dp), shape = CircleShape, onClick = onClick) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.align(Alignment.Center).padding(horizontal = 14.dp),
-        )
-    }
+private fun RoundAction(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
+    RoundAction(androidx.compose.ui.graphics.vector.rememberVectorPainter(icon), description, onClick)
 }
 
 @Composable
-private fun RoundAction(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, onClick: () -> Unit) {
+private fun RoundAction(icon: androidx.compose.ui.graphics.painter.Painter, description: String, onClick: () -> Unit) {
     GlassSurface(modifier = Modifier.size(44.dp), shape = CircleShape, onClick = onClick) {
         Icon(
             icon,

@@ -51,6 +51,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -76,8 +78,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -98,6 +103,7 @@ import com.carpe.ideashell.ui.theme.Brand
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -459,11 +465,16 @@ private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.awa
 @Composable
 private fun RecognizeStage(viewModel: CameraOcrViewModel, onConfirm: () -> Unit, onClose: () -> Unit) {
     val path = viewModel.imagePath ?: return
-    val bitmap by produceState<ImageBitmap?>(null, path) {
+    val version = viewModel.imageVersion
+    val bitmap by produceState<ImageBitmap?>(null, path, version) {
         value = withContext(Dispatchers.IO) { runCatching { BitmapFactory.decodeFile(path)?.asImageBitmap() }.getOrNull() }
     }
     val lines = viewModel.lines
     val selected = viewModel.selected
+    val cropping = viewModel.cropping
+    val busy = viewModel.recognizing || viewModel.importing
+    // 选择框（占整张图的比例）：换图 / 旋转后重置
+    var crop by remember(path, version) { mutableStateOf(Rect(0.1f, 0.1f, 0.9f, 0.9f)) }
 
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
         Row(
@@ -474,29 +485,71 @@ private fun RecognizeStage(viewModel: CameraOcrViewModel, onConfirm: () -> Unit,
                 Icon(Icons.Filled.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
             }
             Text(
-                text = if (lines.isEmpty()) "识别文字" else "已选 ${selected.size} / ${lines.size} 行 · 点选或划选文字",
+                text = when {
+                    cropping -> "拖动边框，框住要识别的文字"
+                    lines.isEmpty() -> "识别文字"
+                    selected.isEmpty() -> "点选或划选要保留的文字"
+                    else -> "已选 ${selected.size} / ${lines.size} 行"
+                },
                 color = Color.White,
                 style = MaterialTheme.typography.titleSmall,
                 maxLines = 1,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.weight(1f),
             )
-            Spacer(Modifier.width(48.dp))
+            // 选择方式（对标图 2 右上角的下拉）：划选识别 = 整图识别后划选文字；选择框 = 先框出识别区域，点「识别」只识别框里的
+            var modeMenu by remember { mutableStateOf(false) }
+            Box {
+                Text(
+                    "${if (viewModel.frameMode) "选择框" else "划选识别"} ▾",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable(role = Role.Button) { modeMenu = true }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+                DropdownMenu(expanded = modeMenu, onDismissRequest = { modeMenu = false }) {
+                    listOf("划选识别" to false, "选择框" to true).forEach { (label, frame) ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    label,
+                                    color = if (frame == viewModel.frameMode) Brand.OrangeDeep else MaterialTheme.colorScheme.onSurface,
+                                )
+                            },
+                            onClick = {
+                                viewModel.chooseFrameMode(frame)
+                                modeMenu = false
+                            },
+                        )
+                    }
+                }
+            }
         }
 
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             bitmap?.let { bmp ->
-                PhotoWithBoxes(
-                    bitmap = bmp,
-                    lines = lines,
-                    selected = selected,
-                    enabled = !viewModel.recognizing,
-                    onTap = viewModel::toggle,
-                    onSwipe = viewModel::select,
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
-                )
+                if (cropping) {
+                    CropFrameView(
+                        bitmap = bmp,
+                        crop = crop,
+                        onCropChange = { crop = it },
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                    )
+                } else {
+                    PhotoWithBoxes(
+                        bitmap = bmp,
+                        lines = lines,
+                        selected = selected,
+                        enabled = !viewModel.recognizing,
+                        onTap = viewModel::toggle,
+                        onSwipe = viewModel::select,
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                    )
+                }
             }
-            if (viewModel.recognizing) {
+            if (viewModel.recognizing || viewModel.importing) {
                 Column(
                     modifier = Modifier
                         .clip(RoundedCornerShape(16.dp))
@@ -506,34 +559,50 @@ private fun RecognizeStage(viewModel: CameraOcrViewModel, onConfirm: () -> Unit,
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     CircularProgressIndicator(color = Color.White, strokeWidth = 3.dp, modifier = Modifier.size(32.dp))
-                    Text("识别中…", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                    Text(if (viewModel.recognizing) "识别中…" else "处理中…", color = Color.White, style = MaterialTheme.typography.bodyMedium)
                 }
             }
-            viewModel.error?.let { message ->
-                Column(
-                    modifier = Modifier
-                        .padding(24.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color.Black.copy(alpha = 0.7f))
-                        .padding(horizontal = 20.dp, vertical = 16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(message, color = Color.White, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
-                    OutlinedButton(onClick = viewModel::recognize) { Text("重试", color = Color.White) }
+            if (!cropping) {
+                viewModel.error?.let { message ->
+                    Column(
+                        modifier = Modifier
+                            .padding(24.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.Black.copy(alpha = 0.7f))
+                            .padding(horizontal = 20.dp, vertical = 16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(message, color = Color.White, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
+                        OutlinedButton(onClick = viewModel::recognize) { Text("重试", color = Color.White) }
+                    }
                 }
             }
         }
 
-        if (lines.isNotEmpty()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Pill("保留原图", active = viewModel.keepImage) { viewModel.keepImage = !viewModel.keepImage }
+        // 右下角的工具：旋转（识别前后都能用，转完会重新识别）；识别后还有保留图片 / 全选 / 重选
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (!cropping && lines.isNotEmpty()) {
+                Pill("保留图片", active = viewModel.keepImage) { viewModel.keepImage = !viewModel.keepImage }
                 Pill("全选", active = false, onClick = viewModel::selectAll)
                 Pill("重选", active = false, onClick = viewModel::clearSelection)
+            }
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.White.copy(alpha = if (busy) 0.1f else 0.2f))
+                    .clickable(enabled = !busy, role = Role.Button, onClick = viewModel::rotate)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                val tint = Color.White.copy(alpha = if (busy) 0.4f else 1f)
+                Icon(painterResource(R.drawable.ic_rotate), contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+                Text("旋转", color = tint, fontSize = 13.sp)
             }
         }
 
@@ -546,8 +615,10 @@ private fun RecognizeStage(viewModel: CameraOcrViewModel, onConfirm: () -> Unit,
                 Text("重拍", color = Color.White, style = MaterialTheme.typography.titleMedium)
             }
             Button(
-                onClick = onConfirm,
-                enabled = !viewModel.recognizing && selected.isNotEmpty(),
+                onClick = {
+                    if (cropping) viewModel.recognizeCropped(crop.left, crop.top, crop.right, crop.bottom) else onConfirm()
+                },
+                enabled = if (cropping) !busy else !busy && selected.isNotEmpty(),
                 modifier = Modifier.width(140.dp).height(46.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Brand.OrangeDeep,
@@ -555,7 +626,7 @@ private fun RecognizeStage(viewModel: CameraOcrViewModel, onConfirm: () -> Unit,
                     disabledContainerColor = Color.White.copy(alpha = 0.16f),
                     disabledContentColor = Color.White.copy(alpha = 0.4f),
                 ),
-            ) { Text("确定", style = MaterialTheme.typography.titleMedium) }
+            ) { Text(if (cropping) "识别" else "确定", style = MaterialTheme.typography.titleMedium) }
             Spacer(Modifier.width(88.dp))
         }
     }
@@ -575,8 +646,132 @@ private fun Pill(label: String, active: Boolean, onClick: () -> Unit) {
     )
 }
 
+/** 从 [from] 到 [to] 的线段上，每隔 [step] 取一点，落在（外扩 [pad] 的）文字框里的行 */
+private fun indicesAlong(rects: List<Rect>, from: Offset, to: Offset, step: Float, pad: Float): List<Int> {
+    val total = (to - from).getDistance()
+    val n = max(1, (total / step).toInt())
+    val found = LinkedHashSet<Int>()
+    for (k in 0..n) {
+        val p = from + (to - from) * (k.toFloat() / n)
+        rects.forEachIndexed { i, r -> if (r.inflate(pad).contains(p)) found += i }
+    }
+    return found.toList()
+}
+
 /**
- * 图片 + 文字框：框随图片等比缩放；点一下切换某一行，手指划过的矩形范围内的行都会被选中。
+ * 选择框（对标图 2）：图片上叠一个绿色的识别区域，四角和四边中点有把手；
+ * 拖把手改变大小，拖框内部整体移动，框外变暗。[crop] 是框占整张图的比例（0..1）。
+ */
+@Composable
+private fun CropFrameView(
+    bitmap: ImageBitmap,
+    crop: Rect,
+    onCropChange: (Rect) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+        val maxW = with(density) { maxWidth.toPx() }
+        val maxH = with(density) { maxHeight.toPx() }
+        val scale = min(maxW / bitmap.width, maxH / bitmap.height)
+        val w = bitmap.width * scale
+        val h = bitmap.height * scale
+        val widthDp = with(density) { w.toDp() }
+        val heightDp = with(density) { h.toDp() }
+
+        val latestCrop = rememberUpdatedState(crop)
+        val latestChange = rememberUpdatedState(onCropChange)
+        val frameGreen = Color(0xFF00E676)
+        val stroke = with(density) { 2.dp.toPx() }
+        val bracket = with(density) { 4.dp.toPx() }
+        val bracketLen = with(density) { 20.dp.toPx() }
+
+        Box(
+            modifier = Modifier
+                .size(widthDp, heightDp)
+                .pointerInput(w, h) {
+                    val grab = 28.dp.toPx()
+                    val minSize = 56.dp.toPx()
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val c = latestCrop.value
+                        var box = Rect(c.left * w, c.top * h, c.right * w, c.bottom * h)
+                        val p = down.position
+                        val withinX = p.x in (box.left - grab)..(box.right + grab)
+                        val withinY = p.y in (box.top - grab)..(box.bottom + grab)
+                        val nearL = withinY && abs(p.x - box.left) <= grab
+                        val nearR = withinY && abs(p.x - box.right) <= grab
+                        val nearT = withinX && abs(p.y - box.top) <= grab
+                        val nearB = withinX && abs(p.y - box.bottom) <= grab
+                        // 同时靠近左右（框很窄）时取更近的一边
+                        val dragLeft = nearL && (!nearR || abs(p.x - box.left) <= abs(p.x - box.right))
+                        val dragRight = nearR && !dragLeft
+                        val dragTop = nearT && (!nearB || abs(p.y - box.top) <= abs(p.y - box.bottom))
+                        val dragBottom = nearB && !dragTop
+                        val resizing = dragLeft || dragRight || dragTop || dragBottom
+                        if (!resizing && !box.contains(p)) return@awaitEachGesture
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            // 必须先取位移再 consume：已消费的 change，positionChange() 返回 0
+                            val d = change.positionChange()
+                            change.consume()
+                            box = if (resizing) {
+                                Rect(
+                                    left = if (dragLeft) (box.left + d.x).coerceIn(0f, box.right - minSize) else box.left,
+                                    top = if (dragTop) (box.top + d.y).coerceIn(0f, box.bottom - minSize) else box.top,
+                                    right = if (dragRight) (box.right + d.x).coerceIn(box.left + minSize, w) else box.right,
+                                    bottom = if (dragBottom) (box.bottom + d.y).coerceIn(box.top + minSize, h) else box.bottom,
+                                )
+                            } else {
+                                val nl = (box.left + d.x).coerceIn(0f, w - box.width)
+                                val nt = (box.top + d.y).coerceIn(0f, h - box.height)
+                                Rect(nl, nt, nl + box.width, nt + box.height)
+                            }
+                            latestChange.value(Rect(box.left / w, box.top / h, box.right / w, box.bottom / h))
+                        }
+                    }
+                },
+        ) {
+            Image(bitmap, contentDescription = "待识别的图片", contentScale = ContentScale.FillBounds, modifier = Modifier.fillMaxSize())
+            Canvas(Modifier.fillMaxSize()) {
+                val l = crop.left * size.width
+                val t = crop.top * size.height
+                val r = crop.right * size.width
+                val b = crop.bottom * size.height
+                val dim = Color.Black.copy(alpha = 0.5f)
+                // 框外变暗
+                drawRect(dim, topLeft = Offset(0f, 0f), size = Size(size.width, t))
+                drawRect(dim, topLeft = Offset(0f, b), size = Size(size.width, size.height - b))
+                drawRect(dim, topLeft = Offset(0f, t), size = Size(l, b - t))
+                drawRect(dim, topLeft = Offset(r, t), size = Size(size.width - r, b - t))
+                drawRect(frameGreen, topLeft = Offset(l, t), size = Size(r - l, b - t), style = Stroke(stroke))
+                // 四角的粗括号
+                fun corner(x: Float, y: Float, dx: Float, dy: Float) {
+                    drawLine(frameGreen, Offset(x - dx * bracket / 2, y), Offset(x + dx * bracketLen, y), bracket)
+                    drawLine(frameGreen, Offset(x, y - dy * bracket / 2), Offset(x, y + dy * bracketLen), bracket)
+                }
+                corner(l, t, 1f, 1f)
+                corner(r, t, -1f, 1f)
+                corner(l, b, 1f, -1f)
+                corner(r, b, -1f, -1f)
+                // 四边中点的短把手
+                val mid = bracketLen
+                val cx = (l + r) / 2
+                val cy = (t + b) / 2
+                drawLine(frameGreen, Offset(cx - mid / 2, t), Offset(cx + mid / 2, t), bracket)
+                drawLine(frameGreen, Offset(cx - mid / 2, b), Offset(cx + mid / 2, b), bracket)
+                drawLine(frameGreen, Offset(l, cy - mid / 2), Offset(l, cy + mid / 2), bracket)
+                drawLine(frameGreen, Offset(r, cy - mid / 2), Offset(r, cy + mid / 2), bracket)
+            }
+        }
+    }
+}
+
+/**
+ * 图片 + 文字框：框随图片等比缩放；点一下切换某一行，手指划过的文字会被选中并留下一道划痕。
  * 选中的行填橙色，没选的只描一圈绿边（对标图 2）。
  */
 @Composable
@@ -601,7 +796,7 @@ private fun PhotoWithBoxes(
             lines.map { Rect(it.left * scale, it.top * scale, it.right * scale, it.bottom * scale) }
         }
         val hitSlop = with(density) { 6.dp.toPx() }
-        var dragRect by remember { mutableStateOf<Rect?>(null) }
+        var trail by remember { mutableStateOf<List<Offset>>(emptyList()) }
         val latestTap = rememberUpdatedState(onTap)
         val latestSwipe = rememberUpdatedState(onSwipe)
         val orange = Brand.Orange
@@ -615,10 +810,13 @@ private fun PhotoWithBoxes(
                 .pointerInput(rects, enabled) {
                     if (!enabled) return@pointerInput
                     val slop = viewConfiguration.touchSlop
+                    val step = 6.dp.toPx()
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val start = down.position
+                        var last = start
                         var dragging = false
+                        val points = mutableListOf(start)
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -629,18 +827,18 @@ private fun PhotoWithBoxes(
                                 }
                                 break
                             }
-                            if (!dragging && (change.position - start).getDistance() > slop) dragging = true
+                            val pos = change.position
+                            if (!dragging && (pos - start).getDistance() > slop) dragging = true
                             if (dragging) {
                                 change.consume()
-                                val area = Rect(
-                                    min(start.x, change.position.x), min(start.y, change.position.y),
-                                    max(start.x, change.position.x), max(start.y, change.position.y),
-                                )
-                                dragRect = area
-                                latestSwipe.value(rects.indices.filter { rects[it].overlaps(area) })
+                                points += pos
+                                trail = points.toList()
+                                val hits = indicesAlong(rects, last, pos, step, hitSlop / 2)
+                                if (hits.isNotEmpty()) latestSwipe.value(hits)
+                                last = pos
                             }
                         }
-                        dragRect = null
+                        trail = emptyList()
                     }
                 },
         ) {
@@ -662,9 +860,16 @@ private fun PhotoWithBoxes(
                         drawPath(path, green.copy(alpha = 0.9f), style = Stroke(strokeThin))
                     }
                 }
-                dragRect?.let { r ->
-                    drawRect(Color.White.copy(alpha = 0.14f), topLeft = Offset(r.left, r.top), size = Size(r.width, r.height))
-                    drawRect(Color.White.copy(alpha = 0.8f), topLeft = Offset(r.left, r.top), size = Size(r.width, r.height), style = Stroke(strokeThin))
+                if (trail.size > 1) {
+                    val trailPath = Path().apply {
+                        moveTo(trail.first().x, trail.first().y)
+                        trail.drop(1).forEach { lineTo(it.x, it.y) }
+                    }
+                    drawPath(
+                        trailPath,
+                        Color.White.copy(alpha = 0.55f),
+                        style = Stroke(strokeThick * 5, cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    )
                 }
             }
         }

@@ -24,6 +24,8 @@ import com.carpe.ideashell.data.secure.SecureStore
 import com.carpe.ideashell.data.focus.FocusRepository
 import com.carpe.ideashell.system.ExtraWidgets
 import com.carpe.ideashell.system.FocusNotifier
+import com.carpe.ideashell.system.DaySummaryAuto
+import com.carpe.ideashell.system.DaySummaryScheduler
 import com.carpe.ideashell.system.TodoRefreshScheduler
 import com.carpe.ideashell.system.TodoSurfaces
 import com.carpe.ideashell.data.settings.SettingsStore
@@ -209,7 +211,15 @@ class AppContainer(context: Context) {
         }
         appScope.launch {
             credentials.didaConnected.collect { connected ->
-                if (connected) TodoRefreshScheduler.schedule(appContext) else TodoRefreshScheduler.cancel(appContext)
+                if (connected) {
+                    TodoRefreshScheduler.schedule(appContext)
+                    DaySummaryScheduler.schedule(appContext)
+                    // 进应用时已经过了 23:20 且今天还没生成：补一次
+                    appScope.launch { runCatching { DaySummaryAuto.runIfDue(this@AppContainer) } }
+                } else {
+                    TodoRefreshScheduler.cancel(appContext)
+                    DaySummaryScheduler.cancel(appContext)
+                }
                 surfaces.updateAll()
                 widgets.updateAll()
             }
