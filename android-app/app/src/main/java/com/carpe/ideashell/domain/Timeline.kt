@@ -42,9 +42,6 @@ data class TimelineData(
 }
 
 object Timeline {
-    /** Daily Note 的标题：形如 2026-10-12（可带星期） */
-    private val DAILY_TITLE = Regex("^\\s*\\d{4}-\\d{2}-\\d{2}.{0,6}$")
-
     /**
      * 把笔记、待办和 Daily Note 条目按天分组（新的在前）。
      * 待办归属哪一天：未完成按计划日期；已完成按完成时间（今天做完的事算在今天），没有完成时间再用计划日期。
@@ -63,10 +60,11 @@ object Timeline {
             val day = taskDay(t, zone) ?: return@mapNotNull null
             if (day.isBefore(range.start) || !day.isBefore(range.endExclusive)) null else day to t
         }
-        // Daily Note 那篇笔记本身不再作为「笔记」出现：它的每一条已经拆成日记行，再列一次就重复了
-        val dailyIds = daily.values.map { it.noteId }.toSet()
+        // Daily Note 那篇笔记成功拆成日记行之后，不再作为「笔记」出现（再列一次就重复了）。
+        // 没拆成的（读取失败、重试后仍断网，或一条都没识别出来）照旧显示成一条笔记，点进去还能看全文，不会凭空消失
+        val dailyIds = daily.values.filter { it.entries.isNotEmpty() }.map { it.noteId }.toSet()
         val noteDays = notes
-            .filterNot { it.id in dailyIds || DAILY_TITLE.matches(it.title) }
+            .filterNot { it.id in dailyIds }
             .mapNotNull { n -> n.localDate?.let { it to n } }
         val dailyDays = daily.filter { (d, v) ->
             v.entries.isNotEmpty() && !d.isBefore(range.start) && d.isBefore(range.endExclusive)

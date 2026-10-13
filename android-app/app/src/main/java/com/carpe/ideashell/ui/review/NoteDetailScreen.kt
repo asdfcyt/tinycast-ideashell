@@ -366,7 +366,7 @@ private fun DailyBody(note: NoteDetail, revisitKeys: Set<String>, onToggleEntry:
                         fontWeight = androidx.compose.ui.text.font.FontWeight.Black,
                         color = scheme.primary,
                     )
-                    MarkdownText(entry.text)
+                    MarkdownText(if (entry.struck) "~~${entry.text}~~" else entry.text)
                 }
                 Box(
                     modifier = Modifier

@@ -1,6 +1,7 @@
 package com.carpe.ideashell.data.ideashell
 
 import com.carpe.ideashell.core.parse.FolderInfo
+import com.carpe.ideashell.data.mcp.retrying
 import com.carpe.ideashell.data.settings.SettingsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -110,7 +111,7 @@ class DailyNoteService(
             async {
                 gate.withPermit {
                     val n = try {
-                        DailyFormat.entries(api.noteDetail(e.value).content).size
+                        readEntries(e.value).size
                     } catch (c: CancellationException) {
                         throw c
                     } catch (_: Exception) {
@@ -158,7 +159,7 @@ class DailyNoteService(
                 }
                 gate.withPermit {
                     try {
-                        val day = DailyDay(e.value, DailyFormat.entries(api.noteDetail(e.value).content))
+                        val day = DailyDay(e.value, readEntries(e.value))
                         if (e.key.isBefore(today)) synchronized(pastDays) { pastDays[e.key] = System.currentTimeMillis() to day }
                         e.key to day
                     } catch (c: CancellationException) {
@@ -171,6 +172,13 @@ class DailyNoteService(
             }
         }.awaitAll().filterNotNull().toMap()
     }
+
+    /**
+     * 读一篇 Daily Note 并拆成条目。和笔记详情页用同一个全文解析（多个 memo 都算、去掉 memo 标题行），
+     * 所以时间河里和点进去看到的拆分一致；断网等暂时性失败会自动重试几次。
+     */
+    private suspend fun readEntries(noteId: String): List<DailyEntry> =
+        DailyFormat.entries(retrying { api.noteFull(noteId) }.content)
 
     /** Daily Note 文件夹里的全部笔记，按标题里的日期倒序；文件夹不存在时为空 */
     suspend fun list(): List<NoteBrief> {
@@ -239,8 +247,11 @@ class DailyNoteService(
     }
 }
 
-/** Daily Note 里的一条：时间 `HH:mm` + 文字（多行合并成一行，换行变空格） */
-data class DailyEntry(val time: String, val text: String)
+/**
+ * Daily Note 里的一条：时间 `HH:mm` + 文字（多行合并成一行，换行变空格）。
+ * [struck] 表示这一条整条加了删除线（`~~…~~`）：[text] 里已经去掉了 `~~`，显示时按删除线画。
+ */
+data class DailyEntry(val time: String, val text: String, val struck: Boolean = false)
 
 /** Daily Note 全文拆开后的两部分：条目以外的内容（Markdown）+ 条目（按写入顺序） */
 data class DailySections(val other: String, val entries: List<DailyEntry>)
@@ -250,10 +261,45 @@ data class DailyDay(val noteId: String, val entries: List<DailyEntry>)
 
 /** Daily Note 的排版（纯函数） */
 object DailyFormat {
-    /** 时间戳行："**2026-10-08 11:37:40** xxx" / "2026-10-08 11:37 xxx" / "- **2026-10-08 11:37** xxx" */
+    /** 时间戳行："**2026-10-08 11:37:40** xxx" / "2026-10-08 11:37 xxx" / "- **2026-10-08 11:37** xxx"。只用来整理（改写）旧格式，所以保持严格 */
     private val ENTRY_RE = Regex(
         "^\\s*(?:[-*+]\\s+)?(?:\\*\\*)?([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2})(?::[0-9]{2})?(?:\\*\\*)?[ \\t]*(.*)\$",
     )
+
+    /**
+     * 读取用的宽松版本：在严格版的基础上容忍时间戳前后的删除线 / 加粗 / 中括号
+     * （`- ~~**2026-10-08 11:37** 内容~~`、`- **~~2026-10-08 11:37~~** 内容`、`[2026-10-08 11:37] 内容`），
+     * 日期和时间之间可以是空格或 `T`，时间后面可以跟冒号。
+     * 分组：1 时间戳前的符号，2 时间 HH:mm，3 时间戳后紧跟的符号，4 正文。
+     */
+    private val ENTRY_LOOSE_RE = Regex(
+        "^\\s*(?:[-*+]\\s+)?((?:[*_~\\[(（]\\s*)*)[0-9]{4}-[0-9]{2}-[0-9]{2}[ T]([0-9]{2}:[0-9]{2})(?::[0-9]{2})?([*_~\\])）]*)[ \\t:：]*(.*)\$",
+    )
+    private val RE_NUMBERED = Regex("^\\d+[.、)]\\s")
+
+    private class Head(val time: String, val rest: String, val struck: Boolean)
+
+    private fun head(line: String): Head? {
+        val m = ENTRY_LOOSE_RE.find(line) ?: return null
+        val g = m.groupValues
+        val rest = g[4]
+        val struck = "~~" in g[1] || "~~" in g[3] || isWholeStruck(rest)
+        return Head(g[2], rest, struck)
+    }
+
+    /** 正文整句被一对 `~~` 包住（中间没有别的 `~~`） */
+    private fun isWholeStruck(rest: String): Boolean {
+        val t = rest.trim()
+        return t.length > 4 && t.startsWith("~~") && t.endsWith("~~") && !t.substring(2, t.length - 2).contains("~~")
+    }
+
+    /** 紧跟在条目后面的、不缩进也不是列表 / 标题 / 引用的文字行，算同一条的后续行（在别处编辑过的多行条目） */
+    private fun continues(line: String): Boolean {
+        if (line.isBlank()) return false
+        val c = line.first()
+        if (c.isWhitespace()) return true
+        return c !in "#>-*+|" && !RE_NUMBERED.containsMatchIn(line)
+    }
 
     /** 生成一条列表条目：`- **时间** 内容`，多行内容用缩进保持在同一条目内 */
     fun formatEntry(text: String, stamp: String): String {
@@ -263,61 +309,49 @@ object DailyFormat {
         return (listOf("- **$stamp** $first") + rest).joinToString("\n")
     }
 
-    /** 解析出全部条目：时间戳行开头，后面缩进的行算同一条；引用块（今日简报之类）和其他文字跳过 */
-    fun entries(content: String): List<DailyEntry> {
+    /** 逐行扫描：时间戳行开头，后面的续行算同一条；条目以外的行交给 [onOther] */
+    private fun scan(content: String, onOther: (String) -> Unit): List<DailyEntry> {
         val out = ArrayList<DailyEntry>()
         var time: String? = null
+        var struck = false
         val text = StringBuilder()
         fun flush() {
             val t = time
-            if (t != null && text.isNotBlank()) out += DailyEntry(t, text.toString().trim())
+            if (t != null) {
+                val body = if (struck) text.toString().replace("~~", "") else text.toString()
+                if (body.isNotBlank()) out += DailyEntry(t, body.trim(), struck)
+            }
             time = null
+            struck = false
             text.setLength(0)
         }
         for (line in content.lines()) {
-            val m = ENTRY_RE.find(line)
+            val h = head(line)
             when {
-                m != null -> {
+                h != null -> {
                     flush()
-                    time = m.groupValues[1].substring(11)
-                    text.append(m.groupValues[2])
+                    time = h.time
+                    struck = h.struck
+                    text.append(h.rest)
                 }
-                time != null && line.isNotBlank() && line.first().isWhitespace() -> text.append(' ').append(line.trim())
-                else -> flush()
+                time != null && continues(line) -> text.append(' ').append(line.trim())
+                else -> {
+                    flush()
+                    onOther(line)
+                }
             }
         }
         flush()
         return out
     }
 
+    /** 解析出全部条目：引用块（今日简报之类）和其他文字跳过 */
+    fun entries(content: String): List<DailyEntry> = scan(content) {}
+
     /** 全文拆成两部分：时间戳条目，以及条目以外的内容（今日简报的引用块之类），详情页分别渲染 */
     fun sections(content: String): DailySections {
-        val entries = ArrayList<DailyEntry>()
         val other = StringBuilder()
-        var time: String? = null
-        val text = StringBuilder()
-        fun flush() {
-            val t = time
-            if (t != null && text.isNotBlank()) entries += DailyEntry(t, text.toString().trim())
-            time = null
-            text.setLength(0)
-        }
-        for (line in content.lines()) {
-            val m = ENTRY_RE.find(line)
-            when {
-                m != null -> {
-                    flush()
-                    time = m.groupValues[1].substring(11)
-                    text.append(m.groupValues[2])
-                }
-                time != null && line.isNotBlank() && line.first().isWhitespace() -> text.append(' ').append(line.trim())
-                else -> {
-                    flush()
-                    other.append(line).append('\n')
-                }
-            }
-        }
-        flush()
+        val entries = scan(content) { other.append(it).append('\n') }
         return DailySections(other.toString().trim(), entries)
     }
 
