@@ -2,6 +2,7 @@ package com.carpe.ideashell.data.capture
 
 import com.carpe.ideashell.core.capture.CapturePlan
 import com.carpe.ideashell.core.capture.CapturePlanner
+import com.carpe.ideashell.core.capture.CaptureSchedule
 import com.carpe.ideashell.core.capture.ClipBuilder
 import com.carpe.ideashell.core.capture.ClipInput
 import com.carpe.ideashell.core.parse.CaptureKind
@@ -42,6 +43,8 @@ class CaptureRepository(
         origin: String,
         /** 随笔记一起上传的本地图片文件；有图片时一律存为笔记（自动识别，忽略待办 / 日记），文字可以为空 */
         images: List<String> = emptyList(),
+        /** 在日期时间面板里选定的时间（不在文字里） */
+        schedule: CaptureSchedule? = null,
     ): SubmitReceipt? {
         if (images.isNotEmpty()) {
             // 带图片：一律存为笔记（待办和 Daily Note 都装不下图片）；文字可以为空
@@ -63,7 +66,7 @@ class CaptureRepository(
                 ),
             )
         }
-        val plan = CapturePlanner.plan(input, override, folders.folders.value) ?: return null
+        val plan = CapturePlanner.plan(input, override, folders.folders.value, schedule = schedule) ?: return null
         return enqueue(entityOf(plan, origin))
     }
 

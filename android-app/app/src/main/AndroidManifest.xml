@@ -187,6 +187,12 @@
                 android:value="honorcard" />
         </receiver>
 
+        <!-- 记录时间河小部件里可滑动的列表 -->
+        <service
+            android:name=".system.RiverWidgetService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+
         <!-- 小部件 / 通知上的按钮（完成、内联回复快记、刷新），只给本应用自己的 PendingIntent 用 -->
         <receiver
             android:name=".system.TodoActionReceiver"

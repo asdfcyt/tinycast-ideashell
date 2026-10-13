@@ -44,7 +44,7 @@ private data class RiverCache(val items: List<RiverItem>, val updatedAt: Long)
 /**
  * 另外两个桌面小部件：
  * - 专注：环 + 一键开始 / 暂停 / 结束，专注中圆心是系统倒计时（不需要每秒刷新）；
- * - 记录时间河：最近几天的笔记、日记、完成的待办排成一条线。时间河要联网读，所以读到后存一份本地缓存，小部件只读缓存。
+ * - 记录时间河：今天的笔记、日记、完成的待办排成一条线。时间河要联网读，所以读到后存一份本地缓存，小部件只读缓存。
  */
 class ExtraWidgets(
     private val context: Context,
@@ -135,6 +135,11 @@ class ExtraWidgets(
                 rv.setOnClickPendingIntent(R.id.f_btn_sub, action(FocusNotifier.ACTION_SKIP_BREAK, 37))
             } else {
                 rv.setViewVisibility(R.id.f_btn_sub, View.GONE)
+                // 开始前可以用 − / + 选时长
+                rv.setViewVisibility(R.id.f_btn_minus, View.VISIBLE)
+                rv.setViewVisibility(R.id.f_btn_plus, View.VISIBLE)
+                rv.setOnClickPendingIntent(R.id.f_btn_minus, action(FocusNotifier.ACTION_MINUTES_DOWN, 38))
+                rv.setOnClickPendingIntent(R.id.f_btn_plus, action(FocusNotifier.ACTION_MINUTES_UP, 39))
             }
         }
         return rv
@@ -199,14 +204,16 @@ class ExtraWidgets(
         val ids = onlyIds ?: riverIds(manager)
         if (ids.isEmpty()) return
         val connected = !credentials.ideashellKey.isNullOrBlank()
-        val items = if (connected) loadCache()?.items else null
+        val items = if (connected) loadCache()?.items?.filter { it.epochDay == LocalDate.now().toEpochDay() } else null
         for (id in ids) runCatching { manager.updateAppWidget(id, buildRiver(manager, id, connected, items)) }
+        // 列表的内容在服务里读缓存，缓存变了要通知它重读
+        runCatching { manager.notifyAppWidgetViewDataChanged(ids, R.id.river_list) }
     }
 
     private fun riverIds(manager: AppWidgetManager = AppWidgetManager.getInstance(context)): IntArray =
         manager.getAppWidgetIds(ComponentName(context, RiverWidgetProvider::class.java))
 
-    /** 读最近 3 天的记录存成缓存并重绘；没放小部件、没连接闪念贝壳时什么也不做。失败抛异常，由调用方决定怎么处理 */
+    /** 读今天的记录存成缓存并重绘；没放小部件、没连接闪念贝壳时什么也不做。失败抛异常，由调用方决定怎么处理 */
     suspend fun refreshRiver() {
         if (riverIds().isEmpty() || credentials.ideashellKey.isNullOrBlank()) return
         val data = notes.timeline(TimeRanges.lastDays(RIVER_DAYS))
@@ -254,19 +261,22 @@ class ExtraWidgets(
 
     private fun buildRiver(manager: AppWidgetManager, widgetId: Int, connected: Boolean, items: List<RiverItem>?): RemoteViews {
         val rv = RemoteViews(context.packageName, R.layout.widget_river)
-        val maxHeightDp = manager.getAppWidgetOptions(widgetId).getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 180)
-        // 头部约 56dp，每行 38dp
-        val maxRows = ((maxHeightDp - 56 - 24) / 38).coerceIn(1, 8)
         val open = openApp(tab = 2)
         rv.setOnClickPendingIntent(R.id.river_title, open)
         rv.setOnClickPendingIntent(R.id.river_summary, open)
         rv.setOnClickPendingIntent(R.id.river_empty, open)
         rv.setOnClickPendingIntent(R.id.river_add, quickAdd())
-        rv.removeAllViews(R.id.river_rows)
+        // 记录列表是可以上下滑动的集合视图：行由 RiverWidgetService 提供，点任意一行打开应用的回顾页
+        val adapter = Intent(context, RiverWidgetService::class.java).apply {
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            data = android.net.Uri.parse(toUri(Intent.URI_INTENT_SCHEME))
+        }
+        rv.setRemoteAdapter(R.id.river_list, adapter)
+        rv.setPendingIntentTemplate(R.id.river_list, open)
 
         fun empty(summary: String, text: String) {
             rv.setTextViewText(R.id.river_summary, summary)
-            rv.setViewVisibility(R.id.river_rows, View.GONE)
+            rv.setViewVisibility(R.id.river_list, View.GONE)
             rv.setViewVisibility(R.id.river_empty, View.VISIBLE)
             rv.setTextViewText(R.id.river_empty, text)
         }
@@ -274,20 +284,23 @@ class ExtraWidgets(
         when {
             !connected -> empty("未连接闪念贝壳", "点这里打开应用，连接闪念贝壳")
             items == null -> empty("加载中…", "正在同步记录…")
-            items.isEmpty() -> empty("最近 $RIVER_DAYS 天", "最近几天还没有记录，点右上角 + 记一条")
+            items.isEmpty() -> empty("今天", "今天还没有记录，点右上角 + 记一条")
             else -> {
                 val today = LocalDate.now().toEpochDay()
                 val todayCount = items.count { it.epochDay == today }
-                rv.setTextViewText(R.id.river_summary, if (todayCount > 0) "今天 $todayCount 条" else "最近 $RIVER_DAYS 天")
+                rv.setTextViewText(R.id.river_summary, "今天 $todayCount 条")
                 rv.setViewVisibility(R.id.river_empty, View.GONE)
-                rv.setViewVisibility(R.id.river_rows, View.VISIBLE)
-                items.take(maxRows).forEach { rv.addView(R.id.river_rows, buildRiverRow(it, today, open)) }
+                rv.setViewVisibility(R.id.river_list, View.VISIBLE)
             }
         }
         return rv
     }
 
-    private fun buildRiverRow(item: RiverItem, today: Long, open: PendingIntent): RemoteViews {
+    /** 小部件列表要显示的记录（读本地缓存） */
+    fun riverItems(): List<RiverItem> = loadCache()?.items.orEmpty().filter { it.epochDay == LocalDate.now().toEpochDay() }
+
+    /** 列表里的一行；点击由列表的模板（打开回顾页）处理 */
+    fun buildRiverRow(item: RiverItem, today: Long = LocalDate.now().toEpochDay()): RemoteViews {
         val row = RemoteViews(context.packageName, R.layout.widget_river_row)
         val time = when (today - item.epochDay) {
             0L -> item.clock
@@ -305,8 +318,7 @@ class ExtraWidgets(
                 else -> R.drawable.river_node_note
             },
         )
-        row.setOnClickPendingIntent(R.id.rr_text, open)
-        row.setOnClickPendingIntent(R.id.rr_time, open)
+        row.setOnClickFillInIntent(R.id.rr_row, Intent())
         return row
     }
 
@@ -346,8 +358,8 @@ class ExtraWidgets(
     )
 
     private companion object {
-        const val RIVER_DAYS = 3
-        const val RIVER_MAX_ITEMS = 12
+        const val RIVER_DAYS = 1
+        const val RIVER_MAX_ITEMS = 80
 
         /** 圆环轨道：中性灰半透明，深浅底都看得出来 */
         const val RING_TRACK = 0x47888888
@@ -391,5 +403,44 @@ class RiverWidgetProvider : android.appwidget.AppWidgetProvider() {
 
     override fun onEnabled(context: Context) {
         TodoRefreshScheduler.schedule(context)
+    }
+}
+
+/** 记录时间河小部件里的列表：每一行都是缓存里的一条记录，可以上下滑动看更多 */
+class RiverWidgetService : android.widget.RemoteViewsService() {
+    override fun onGetViewFactory(intent: Intent): android.widget.RemoteViewsService.RemoteViewsFactory = Factory(applicationContext)
+
+    private class Factory(private val context: Context) : android.widget.RemoteViewsService.RemoteViewsFactory {
+        private var items: List<RiverItem> = emptyList()
+
+        private val widgets: ExtraWidgets
+            get() = (context.applicationContext as com.carpe.ideashell.IdeashellApp).container.widgets
+
+        override fun onCreate() {
+            items = widgets.riverItems()
+        }
+
+        override fun onDataSetChanged() {
+            items = widgets.riverItems()
+        }
+
+        override fun onDestroy() {
+            items = emptyList()
+        }
+
+        override fun getCount(): Int = items.size
+
+        override fun getViewAt(position: Int): RemoteViews {
+            val item = items.getOrNull(position) ?: return RemoteViews(context.packageName, R.layout.widget_river_row)
+            return widgets.buildRiverRow(item)
+        }
+
+        override fun getLoadingView(): RemoteViews? = null
+
+        override fun getViewTypeCount(): Int = 1
+
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        override fun hasStableIds(): Boolean = false
     }
 }

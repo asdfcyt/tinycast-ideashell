@@ -107,8 +107,8 @@ fun QuickCaptureScreen(
     val folders by viewModel.folders.collectAsStateWithLifecycle()
     // 按当前输入会保存成哪种类型：上方圆形图标据此高亮（自动识别成什么就亮哪个）
     val hasImages = viewModel.images.isNotEmpty()
-    val resolvedKind = remember(viewModel.text, viewModel.override, folders, hasImages) {
-        resolveKind(viewModel.text, viewModel.override, folders, hasImages)
+    val resolvedKind = remember(viewModel.text, viewModel.override, folders, hasImages, viewModel.schedule) {
+        resolveKind(viewModel.text, viewModel.override, folders, hasImages, viewModel.schedule)
     }
     val canSubmit = viewModel.clip != null || resolvedKind != null
     val composing = connected && viewModel.state == QuickState.Composing
@@ -331,6 +331,8 @@ private fun ComposingContent(
                 text = viewModel.text,
                 onTextChange = { viewModel.text = it },
                 override = viewModel.override,
+                schedule = viewModel.schedule,
+                onScheduleChange = { viewModel.schedule = it },
                 folders = folders,
                 canSubmit = canSubmit,
                 onSubmit = { viewModel.submit(readClipboard) },

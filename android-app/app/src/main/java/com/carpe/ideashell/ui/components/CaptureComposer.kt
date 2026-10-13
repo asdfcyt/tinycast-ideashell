@@ -69,6 +69,7 @@ import androidx.compose.ui.unit.sp
 import com.carpe.ideashell.R
 import com.carpe.ideashell.ui.theme.Brand
 import com.carpe.ideashell.core.capture.CapturePlanner
+import com.carpe.ideashell.core.capture.CaptureSchedule
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.core.parse.FolderInfo
 import kotlinx.coroutines.Dispatchers
@@ -86,9 +87,15 @@ internal val KIND_CHOICES: List<Pair<CaptureKind?, String>> = listOf(
  * 按当前输入会保存成哪种类型（上方圆形图标据此高亮：自动识别成什么就亮哪个）；没有内容时为 null。
  * 带图片时一律按笔记存（待办装不下图片，Daily Note 也不能带图），规则与保存时一致。
  */
-fun resolveKind(text: String, override: CaptureKind?, folders: List<FolderInfo>, hasImages: Boolean): CaptureKind? {
+fun resolveKind(
+    text: String,
+    override: CaptureKind?,
+    folders: List<FolderInfo>,
+    hasImages: Boolean,
+    schedule: CaptureSchedule? = null,
+): CaptureKind? {
     if (hasImages) return CaptureKind.NOTE
-    return CapturePlanner.plan(text, override, folders)?.kind
+    return CapturePlanner.plan(text, override, folders, schedule = schedule)?.kind
 }
 
 /**
@@ -108,6 +115,9 @@ fun CaptureComposer(
     override: CaptureKind?,
     folders: List<FolderInfo>,
     canSubmit: Boolean,
+    /** 在日期时间面板里选定的时间：不写进输入框，由调用方保存，提交时一并带上 */
+    schedule: CaptureSchedule? = null,
+    onScheduleChange: (CaptureSchedule?) -> Unit = {},
     onSubmit: () -> Unit,
     modifier: Modifier = Modifier,
     placeholder: String = "准备做什么？",
@@ -118,7 +128,7 @@ fun CaptureComposer(
     onCamera: (() -> Unit)? = null,
 ) {
     // 识别结果（日期 / 标签 / 重要 / 文件夹）显示在底部工具栏上，与保存时用的是同一份计划
-    val plan = remember(text, override, folders) { CapturePlanner.plan(text, override, folders) }
+    val plan = remember(text, override, folders, schedule) { CapturePlanner.plan(text, override, folders, schedule = schedule) }
     val context = LocalContext.current
     val latestText = rememberUpdatedState(text)
     val latestOnChange = rememberUpdatedState(onTextChange)
@@ -243,7 +253,9 @@ fun CaptureComposer(
                 initialTime = curTime,
                 onConfirm = { d, t ->
                     dateSheet = false
-                    setText(applyDateTime(text, d, t))
+                    // 选的时间不往输入框里写，只记在 schedule 里（工具栏上的日期会显示）；文字里原有的日期时间词去掉，免得重复
+                    onScheduleChange(if (d == null) null else CaptureSchedule(d, t))
+                    setText(stripDateTime(text))
                     focusRequester?.let { runCatching { it.requestFocus() } }
                 },
                 onDismiss = { dateSheet = false },
@@ -460,13 +472,9 @@ private fun ImageThumb(path: String, onRemove: () -> Unit) {
  * 把选好的日期 / 时间写回输入框：先去掉原来识别到的日期和时间，再在最前面写入标准格式（yyyy-MM-dd HH:mm），
  * 并加上「待办」前缀确保一定存成待办。选「没有日期」时只去掉日期，保留原来的待办前缀。
  */
-internal fun applyDateTime(text: String, date: java.time.LocalDate?, time: java.time.LocalTime?): String {
+internal fun stripDateTime(text: String): String {
     val a = com.carpe.ideashell.core.parse.CaptureParser.analyze(text)
     val base = if (a.text.isBlank()) "" else com.carpe.ideashell.core.parse.TodoParser.parse(a.text).content
-    if (date == null) {
-        val keepTodo = a.forced == CaptureKind.TODO
-        return (if (keepTodo) "待办 " else "") + base
-    }
-    val stamp = date.toString() + (time?.let { " %02d:%02d".format(it.hour, it.minute) } ?: "")
-    return "待办 $stamp $base".trimEnd()
+    val keepTodo = a.forced == CaptureKind.TODO
+    return ((if (keepTodo) "待办 " else "") + base).trimEnd()
 }

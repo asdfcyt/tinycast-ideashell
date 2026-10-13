@@ -271,6 +271,10 @@ class FocusNotifier(private val context: Context) {
         const val ACTION_SKIP_BREAK = "com.carpe.ideashell.action.FOCUS_SKIP_BREAK"
         const val ACTION_START_BREAK = "com.carpe.ideashell.action.FOCUS_START_BREAK"
 
+        /** 桌面小部件上开始前的时长 − / + */
+        const val ACTION_MINUTES_DOWN = "com.carpe.ideashell.action.FOCUS_MINUTES_DOWN"
+        const val ACTION_MINUTES_UP = "com.carpe.ideashell.action.FOCUS_MINUTES_UP"
+
         private const val RUNNING_CHANNEL = "focus_running"
         private const val DONE_CHANNEL = "focus_done"
         private const val QUIET_DONE_CHANNEL = "focus_record"

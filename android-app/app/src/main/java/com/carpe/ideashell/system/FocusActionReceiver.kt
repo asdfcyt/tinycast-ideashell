@@ -22,6 +22,10 @@ class FocusActionReceiver : BroadcastReceiver() {
                 container.focus.start(null, null, "", container.focus.lastMinutes(k), k)
                 container.focus.notifier.cancelDone()
             }
+            FocusNotifier.ACTION_MINUTES_DOWN, FocusNotifier.ACTION_MINUTES_UP -> {
+                container.focus.stepMinutes(com.carpe.ideashell.data.focus.FocusKind.FOCUS, intent.action == FocusNotifier.ACTION_MINUTES_UP)
+                container.widgets.updateFocus()
+            }
             FocusNotifier.ACTION_SKIP_BREAK -> {
                 container.focus.skipBreak()
                 container.focus.notifier.cancelDone()

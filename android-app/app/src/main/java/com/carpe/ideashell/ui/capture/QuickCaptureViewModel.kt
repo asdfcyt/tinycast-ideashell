@@ -15,6 +15,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.carpe.ideashell.AppContainer
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.core.capture.CapturePlanner
+import com.carpe.ideashell.core.capture.CaptureSchedule
 import com.carpe.ideashell.core.capture.ClipInput
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.core.parse.FolderInfo
@@ -39,6 +40,9 @@ sealed interface QuickState {
 class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
     var text by mutableStateOf("")
     var override by mutableStateOf<CaptureKind?>(null)
+
+    /** 在日期时间面板里选定的时间：不写进输入框，保存时直接带上 */
+    var schedule by mutableStateOf<CaptureSchedule?>(null)
 
     /** 分享 / 选中文字带来的内容；为 null 表示普通的「记一条」 */
     var clip by mutableStateOf<ClipInput?>(null)
@@ -117,6 +121,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         CaptureImages.delete(images.toList())
         images.clear()
         text = ""
+        schedule = null
         error = null
         state = QuickState.Composing
         configure(clip, preset, origin)
@@ -191,7 +196,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
                     return@launch
                 }
                 val kind = override ?: if (resolved.fromClipboard) CaptureKind.NOTE else null
-                container.captures.submitText(resolved.input, kind, origin)
+                container.captures.submitText(resolved.input, kind, origin, schedule = schedule)
             }
             if (receipt == null) {
                 error = "没有可保存的内容"

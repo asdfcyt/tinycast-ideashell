@@ -46,12 +46,18 @@
             android:src="@drawable/ic_widget_add" />
     </LinearLayout>
 
-    <LinearLayout
-        android:id="@+id/river_rows"
+    <!-- 记录列表：可以上下滑动，行由 RiverWidgetService 提供 -->
+    <ListView
+        android:id="@+id/river_list"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:paddingTop="6dp" />
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:divider="@null"
+        android:dividerHeight="0dp"
+        android:listSelector="@android:color/transparent"
+        android:paddingTop="6dp"
+        android:scrollbars="none" />
 
     <TextView
         android:id="@+id/river_empty"

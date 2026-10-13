@@ -33,6 +33,9 @@ data class CapturePlan(
     val priority: Int = 0,
 )
 
+/** 在日期时间面板里选定的日期和时间（时间可为空 = 全天） */
+data class CaptureSchedule(val date: LocalDate, val time: java.time.LocalTime?)
+
 object CapturePlanner {
     private val RE_HIGH = Regex("[!！](?:重要|高(?![\\p{L}\\p{N}]))")
     private val RE_MID = Regex("[!！]中(?![\\p{L}\\p{N}])")
@@ -85,12 +88,14 @@ object CapturePlanner {
         override: CaptureKind?,
         folders: List<FolderInfo>,
         now: LocalDateTime = LocalDateTime.now(),
+        /** 在日期时间面板里选定的时间：不写进输入框，保存时直接用它，并按待办保存（优先于文字里写的日期时间） */
+        schedule: CaptureSchedule? = null,
     ): CapturePlan? {
         val a: CaptureAnalysis = CaptureParser.analyze(input, now)
         if (a.body.isBlank()) return null
 
-        val kind = a.forced ?: override ?: a.recommended
-        val isForced = a.forced != null || override != null
+        val kind = a.forced ?: override ?: if (schedule != null) CaptureKind.TODO else a.recommended
+        val isForced = a.forced != null || override != null || schedule != null
 
         return when (kind) {
             CaptureKind.TODO -> {
@@ -101,7 +106,9 @@ object CapturePlanner {
                 CapturePlan(
                     kind = kind, autoKind = a.recommended, isForced = isForced,
                     title = title, body = title,
-                    todoDate = a.todo.date, todoTime = a.todo.time, important = important,
+                    todoDate = schedule?.date?.toString() ?: a.todo.date,
+                    todoTime = if (schedule != null) schedule.time?.let { "%02d:%02d".format(it.hour, it.minute) } else a.todo.time,
+                    important = important,
                     tags = a.tags, folderName = null, folderInferred = false,
                     priority = priority,
                 )

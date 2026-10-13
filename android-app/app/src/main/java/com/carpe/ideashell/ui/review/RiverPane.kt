@@ -2,6 +2,7 @@ package com.carpe.ideashell.ui.review
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -74,7 +75,17 @@ private sealed interface RiverRow {
         override val clock: String get() = note.localClock.orEmpty()
     }
 
-    class Todo(val task: DidaTask, override val clock: String) : RiverRow
+    class Todo(val task: DidaTask, override val clock: String, val overdue: Boolean) : RiverRow
+}
+
+/** 没做完、计划时刻已经过了：过去的日子里没做完的，或今天里时间已过的（全天的待办要到第二天才算） */
+private fun isOverdue(t: DidaTask, day: LocalDate, now: java.time.LocalDateTime = java.time.LocalDateTime.now()): Boolean {
+    if (t.done) return false
+    val today = now.toLocalDate()
+    if (day.isBefore(today)) return true
+    if (day != today) return false
+    val time = t.time ?: return false
+    return runCatching { java.time.LocalTime.parse(time).isBefore(now.toLocalTime()) }.getOrDefault(false)
 }
 
 /** 待办的时间：做完的用完成时刻，没做完的用计划时刻 */
@@ -90,7 +101,7 @@ private fun todoClock(t: DidaTask): String {
 private fun rowsOf(day: DayBucket): List<RiverRow> = buildList {
     day.daily.forEach { add(RiverRow.Daily(it, day.dailyNoteId)) }
     day.notes.forEach { add(RiverRow.Note(it)) }
-    day.todos.forEach { add(RiverRow.Todo(it, todoClock(it))) }
+    day.todos.forEach { add(RiverRow.Todo(it, todoClock(it), isOverdue(it, day.date))) }
 }.sortedWith(
     // 全天（没有具体时间）的待办排在当天最上面，其余按时间从晚到早
     compareBy<RiverRow> { it.clock.isNotEmpty() }.thenByDescending { it.clock },
@@ -135,7 +146,7 @@ fun LazyListScope.riverItems(
 }
 
 /** 节点的类型 */
-private enum class Kind { DAILY, NOTE, TODO, TODO_DONE }
+private enum class Kind { DAILY, NOTE, TODO, TODO_DONE, TODO_OVERDUE }
 
 @Composable
 private fun DaySection(
@@ -198,7 +209,7 @@ private fun DaySection(
                 when (row) {
                     is RiverRow.Daily -> DailyLine(row, first, last, onOpenNote)
                     is RiverRow.Note -> NoteLine(row.note, first, last, onOpenNote)
-                    is RiverRow.Todo -> TodoLine(row.task, row.clock, first, last, onOpenTodo, onToggleTodo)
+                    is RiverRow.Todo -> TodoLine(row.task, row.clock, row.overdue, first, last, onOpenTodo, onToggleTodo)
                 }
             }
         }
@@ -217,9 +228,12 @@ private fun TimelineRow(
     last: Boolean,
     onClick: (() -> Unit)?,
     onNodeClick: (() -> Unit)? = null,
+    /** 没有具体时间的待办：时间位置显示「全天」标签 */
+    allDay: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val overdueColor = scheme.error
     val line = scheme.onSurface.copy(alpha = 0.14f)
     val ink = scheme.onSurface
     val muted = scheme.onSurfaceVariant
@@ -250,8 +264,8 @@ private fun TimelineRow(
                         drawPath(tri, ink, style = androidx.compose.ui.graphics.drawscope.Fill)
                         drawPath(tri, ink, style = Stroke(1.5.dp.toPx(), join = StrokeJoin.Round))
                     }
-                    Kind.TODO -> drawRoundRect(
-                        ink,
+                    Kind.TODO, Kind.TODO_OVERDUE -> drawRoundRect(
+                        if (kind == Kind.TODO_OVERDUE) overdueColor else ink,
                         topLeft = Offset(x - 4.75.dp.toPx(), nodeY - 4.75.dp.toPx()),
                         size = Size(9.5.dp.toPx(), 9.5.dp.toPx()),
                         cornerRadius = CornerRadius(2.dp.toPx()),
@@ -269,15 +283,31 @@ private fun TimelineRow(
     ) {
         // 竖线靠左，和日期「13」里的「1」对齐；时间放在节点右边、正文左边
         Spacer(Modifier.width(CLOCK_X.dp))
-        Text(
-            clock,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Black,
-            color = scheme.primary,
-            textAlign = TextAlign.Start,
-            maxLines = 1,
-            modifier = Modifier.width(CLOCK_W.dp).padding(top = 3.dp),
-        )
+        if (allDay) {
+            Box(Modifier.width(CLOCK_W.dp).padding(top = 3.dp)) {
+                Text(
+                    "全天",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Black,
+                    color = if (kind == Kind.TODO_OVERDUE) overdueColor else scheme.primary,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background((if (kind == Kind.TODO_OVERDUE) overdueColor else scheme.primary).copy(alpha = 0.12f))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                )
+            }
+        } else {
+            Text(
+                clock,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Black,
+                color = if (kind == Kind.TODO_OVERDUE) overdueColor else scheme.primary,
+                textAlign = TextAlign.Start,
+                maxLines = 1,
+                modifier = Modifier.width(CLOCK_W.dp).padding(top = 3.dp),
+            )
+        }
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f), content = content)
     }
@@ -350,18 +380,21 @@ private fun NoteLine(note: NoteInfo, first: Boolean, last: Boolean, onOpenNote: 
 private fun TodoLine(
     task: DidaTask,
     clock: String,
+    overdue: Boolean,
     first: Boolean,
     last: Boolean,
     onOpenTodo: (DidaTask) -> Unit,
     onToggleTodo: (DidaTask) -> Unit,
 ) {
+    val error = MaterialTheme.colorScheme.error
     TimelineRow(
         clock = clock,
-        kind = if (task.done) Kind.TODO_DONE else Kind.TODO,
+        kind = if (task.done) Kind.TODO_DONE else if (overdue) Kind.TODO_OVERDUE else Kind.TODO,
         first = first,
         last = last,
         onClick = { onOpenTodo(task) },
         onNodeClick = { onToggleTodo(task) },
+        allDay = clock.isEmpty(),
     ) {
         Text(
             TodoMeta.cleanTitle(task.title),
@@ -372,5 +405,8 @@ private fun TodoLine(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+        if (overdue) {
+            Text("已逾期", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = error)
+        }
     }
 }
