@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -25,7 +26,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.carpe.ideashell.ui.theme.Brand
+
+/** 抽屉里的主按钮配色：品牌橙填充 + 深棕字（和底部的「+」、导航选中项同一种橙），不用 colorScheme.primary——那是给文字 / 链接用的加深橙褐 */
+@Composable
+fun brandButtonColors() = ButtonDefaults.buttonColors(
+    containerColor = Brand.Orange,
+    contentColor = Brand.Brown,
+    disabledContainerColor = Brand.Orange.copy(alpha = 0.35f),
+    disabledContentColor = Brand.Brown.copy(alpha = 0.45f),
+)
 
 /**
  * 输入用的抽屉（和任务详情同一套样式）：底部弹出，标题 + 说明 + 白色圆角的输入行，下面一个主按钮和「取消」。
@@ -66,8 +78,9 @@ fun InputSheet(
             Button(
                 onClick = onConfirm,
                 enabled = confirmEnabled,
+                colors = brandButtonColors(),
                 modifier = Modifier.fillMaxWidth().height(52.dp),
-            ) { Text(confirmLabel) }
+            ) { Text(confirmLabel, fontWeight = FontWeight.Bold) }
         }
     }
 }
@@ -102,6 +115,7 @@ fun TextPromptDialog(
                 // 抽屉标题已经说明了这是什么，输入行里不再重复名称（[label] 仅保留给调用方，不显示）
                 label = null,
                 placeholder = "点这里输入",
+                autoFocus = true,
                 singleLine = singleLine,
                 minLines = if (singleLine) 1 else maxOf(minLines, 3),
             )
@@ -145,6 +159,7 @@ fun FormDialog(
                     onValueChange = { v -> values.value = values.value.toMutableList().also { it[i] = v } },
                     label = if (f.required) "${f.label} *" else f.label,
                     placeholder = f.placeholder ?: "点这里输入",
+                    autoFocus = i == 0,
                     singleLine = !f.multiline,
                     minLines = if (f.multiline) 3 else 1,
                 )

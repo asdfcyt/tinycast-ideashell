@@ -20,8 +20,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DateRangePicker
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import com.carpe.ideashell.ui.components.AppMenu
+import com.carpe.ideashell.ui.components.AppMenuDivider
+import com.carpe.ideashell.ui.components.AppMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -270,24 +271,27 @@ private fun RangeMenu(
             Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, maxLines = 1)
             Icon(Icons.Filled.ArrowDropDown, contentDescription = "选择范围")
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        AppMenu(expanded = open, onDismissRequest = { open = false }) {
             RangePreset.entries.forEach { p ->
-                DropdownMenuItem(
-                    text = { Text(p.label, fontWeight = if (p == selected) FontWeight.Bold else FontWeight.Normal) },
+                AppMenuItem(
+                    text = { Text(p.label) },
+                    selected = p == selected,
                     onClick = { open = false; onPreset(p) },
                 )
             }
-            DropdownMenuItem(
+            AppMenuItem(
                 text = { Text(if (selected == null) "自定义（$customLabel）" else "自定义…") },
+                selected = selected == null,
                 onClick = { open = false; onCustom() },
             )
-            HorizontalDivider(Modifier.padding(vertical = 4.dp))
-            DropdownMenuItem(
+            AppMenuDivider()
+            // 下面两项是操作，不是「选范围」，用分隔线隔开
+            AppMenuItem(
                 text = { Text(if (summaryBusy) "正在汇总今天…" else "生成今日小结") },
                 enabled = !summaryBusy,
                 onClick = { open = false; onDaySummary() },
             )
-            DropdownMenuItem(
+            AppMenuItem(
                 text = { Text("复制为日报 / 周报") },
                 enabled = canCopy,
                 onClick = { open = false; onCopyReport() },

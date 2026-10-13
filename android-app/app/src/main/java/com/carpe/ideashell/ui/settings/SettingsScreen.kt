@@ -344,6 +344,7 @@ private fun OcrKeyDialog(
                 onValueChange = { id = it },
                 label = "SecretId",
                 placeholder = "AKID…",
+                autoFocus = true,
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Next),
             )
@@ -498,6 +499,7 @@ private fun TextInputDialog(
                 onValueChange = { value = it },
                 label = null,
                 placeholder = "点这里输入",
+                autoFocus = true,
                 singleLine = true,
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Done),
             )

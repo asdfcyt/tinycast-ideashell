@@ -14,6 +14,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
@@ -44,8 +50,20 @@ fun AppTextField(
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     horizontalPadding: Dp = 18.dp,
+    /** 一出现就获得焦点并弹出输入法（抽屉里的第一个输入框用） */
+    autoFocus: Boolean = false,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    if (autoFocus) {
+        LaunchedEffect(Unit) {
+            // 等抽屉的弹出动画开始、窗口挂上之后再要焦点，否则可能要不到
+            delay(150)
+            runCatching { focusRequester.requestFocus() }
+            keyboard?.show()
+        }
+    }
     val valueStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface)
     val labelStyle = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium, color = scheme.onSurface)
 
@@ -53,7 +71,7 @@ fun AppTextField(
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = fieldModifier,
+            modifier = if (autoFocus) fieldModifier.focusRequester(focusRequester) else fieldModifier,
             textStyle = valueStyle,
             singleLine = singleLine,
             minLines = if (singleLine) 1 else minLines,

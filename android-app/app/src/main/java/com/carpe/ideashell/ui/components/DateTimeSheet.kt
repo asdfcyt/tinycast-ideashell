@@ -328,12 +328,12 @@ fun DateTimeSheet(
                     modifier = Modifier
                         .height(48.dp)
                         .clip(CircleShape)
-                        .background(scheme.primary)
+                        .background(com.carpe.ideashell.ui.theme.Brand.Orange)
                         .clickable(role = Role.Button) { onConfirm(if (hasDate) date else null, if (hasDate) time else null) }
                         .padding(horizontal = 28.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("保存", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = scheme.onPrimary)
+                    Text("保存", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = com.carpe.ideashell.ui.theme.Brand.Brown)
                 }
             }
             Spacer(Modifier.height(4.dp))

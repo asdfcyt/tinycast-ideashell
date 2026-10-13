@@ -22,8 +22,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import com.carpe.ideashell.ui.components.AppMenu
+import com.carpe.ideashell.ui.components.AppMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -554,29 +554,17 @@ internal fun ViewMenuButton(
     val icon: ImageVector = ImageVector.vectorResource(R.drawable.ic_filter)
     Box(modifier) {
         CircleIconButton(icon, "视图与筛选", onClick = { open = true })
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        AppMenu(expanded = open, onDismissRequest = { open = false }) {
             TodoView.entries.forEach { v ->
-                MenuRow(v.label, selected = v == view) {
-                    open = false
-                    onSelectView(v)
-                }
+                AppMenuItem(
+                    text = { Text(v.label) },
+                    selected = v == view,
+                    onClick = {
+                        open = false
+                        onSelectView(v)
+                    },
+                )
             }
         }
     }
-}
-
-@Composable
-private fun MenuRow(text: String, selected: Boolean, onClick: () -> Unit) {
-    DropdownMenuItem(
-        text = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(text, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
-            }
-        },
-        leadingIcon = {
-            if (selected) Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp))
-            else Spacer(Modifier.size(20.dp))
-        },
-        onClick = onClick,
-    )
 }

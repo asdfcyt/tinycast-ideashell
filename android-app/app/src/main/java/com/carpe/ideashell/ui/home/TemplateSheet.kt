@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import com.carpe.ideashell.ui.components.AppTextField
+import com.carpe.ideashell.ui.components.brandButtonColors
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -164,7 +165,11 @@ private fun FillStep(
             )
         }
     }
-    Button(onClick = { onSubmit(values) }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("保存") }
+    Button(
+        onClick = { onSubmit(values) },
+        colors = brandButtonColors(),
+        modifier = Modifier.fillMaxWidth().height(52.dp),
+    ) { Text("保存") }
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         TextButton(onClick = onEdit) { Text(if (template.builtin) "改成自定义模板" else "编辑模板") }
         if (!template.builtin) {
@@ -229,6 +234,7 @@ private fun EditStep(template: Template?, onBack: () -> Unit, onSave: (Template)
     Button(
         onClick = { built?.let(onSave) },
         enabled = built != null,
+        colors = brandButtonColors(),
         modifier = Modifier.fillMaxWidth().height(52.dp),
     ) { Text("保存模板") }
 }

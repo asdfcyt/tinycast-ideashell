@@ -51,8 +51,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import com.carpe.ideashell.ui.components.AppMenu
+import com.carpe.ideashell.ui.components.AppMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -509,15 +509,11 @@ private fun RecognizeStage(viewModel: CameraOcrViewModel, onConfirm: () -> Unit,
                         .clickable(role = Role.Button) { modeMenu = true }
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                 )
-                DropdownMenu(expanded = modeMenu, onDismissRequest = { modeMenu = false }) {
+                AppMenu(expanded = modeMenu, onDismissRequest = { modeMenu = false }) {
                     listOf("划选识别" to false, "选择框" to true).forEach { (label, frame) ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    label,
-                                    color = if (frame == viewModel.frameMode) Brand.OrangeDeep else MaterialTheme.colorScheme.onSurface,
-                                )
-                            },
+                        AppMenuItem(
+                            text = { Text(label) },
+                            selected = frame == viewModel.frameMode,
                             onClick = {
                                 viewModel.chooseFrameMode(frame)
                                 modeMenu = false

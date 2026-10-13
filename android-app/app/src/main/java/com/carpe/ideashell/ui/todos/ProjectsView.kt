@@ -30,8 +30,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import com.carpe.ideashell.ui.components.AppMenu
+import com.carpe.ideashell.ui.components.AppMenuDivider
+import com.carpe.ideashell.ui.components.AppMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -492,6 +493,9 @@ internal fun ProjectPage(
         item(key = "top") {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp)) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回") }
+                // 项目名 + 状态占满中间；「⋯」固定贴右边。
+                // 注意：不能让项目名和一个空白 Box 一起分权重——项目名用不完自己那份时，剩下的空间没人认领，「⋯」就会停在中间
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     project.keyword,
                     style = MaterialTheme.typography.headlineSmall,
@@ -513,50 +517,49 @@ internal fun ProjectPage(
                         Text(project.status.label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                         Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "改状态", modifier = Modifier.size(16.dp))
                     }
-                    DropdownMenu(expanded = statusOpen, onDismissRequest = { statusOpen = false }) {
+                    AppMenu(expanded = statusOpen, onDismissRequest = { statusOpen = false }) {
                         ProjectStatus.entries.forEach { st ->
-                            DropdownMenuItem(
-                                text = { Text(st.label, fontWeight = if (st == project.status) FontWeight.Bold else FontWeight.Normal) },
+                            AppMenuItem(
+                                text = { Text(st.label) },
+                                selected = st == project.status,
                                 onClick = { statusOpen = false; viewModel.setStatus(project.keyword, st) },
                             )
                         }
                     }
                 }
-                Box(Modifier.weight(1f))
+                }
                 var moreOpen by remember { mutableStateOf(false) }
                 Box {
                     CircleIconButton(Icons.Filled.MoreVert, "更多", onClick = { moreOpen = true })
-                    DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("多久没提及就提醒", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant) },
-                            enabled = false,
+                    AppMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
+                        AppMenuItem(
+                            text = { Text("多久没提及就提醒") },
+                            header = true,
                             onClick = {},
                         )
                         STALE_CHOICES.forEach { d ->
-                            DropdownMenuItem(
-                                text = { Text("$d 天", fontWeight = if (d == project.staleDays) FontWeight.Bold else FontWeight.Normal) },
-                                leadingIcon = {
-                                    if (d == project.staleDays) Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp))
-                                    else Spacer(Modifier.size(20.dp))
-                                },
+                            AppMenuItem(
+                                text = { Text("$d 天") },
+                                selected = d == project.staleDays,
                                 onClick = { moreOpen = false; viewModel.setStale(project.keyword, d) },
                             )
                         }
-                        HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                        DropdownMenuItem(
+                        AppMenuDivider()
+                        AppMenuItem(
                             text = { Text("额外标签：" + project.tags.joinToString(" ") { "#$it" }.ifEmpty { "无" }) },
                             onClick = { moreOpen = false; dialog = PageDialog.TAGS },
                         )
                         if (stats != null && stats.brief.isNotBlank()) {
-                            DropdownMenuItem(
+                            AppMenuItem(
                                 text = { Text("复制简报") },
                                 onClick = { moreOpen = false; clipboard.setText(AnnotatedString(stats.brief)) },
                             )
                         }
-                        DropdownMenuItem(text = { Text("重新统计") }, onClick = { moreOpen = false; viewModel.refreshStats(project) })
-                        HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                        DropdownMenuItem(
-                            text = { Text("移除项目", color = scheme.error) },
+                        AppMenuItem(text = { Text("重新统计") }, onClick = { moreOpen = false; viewModel.refreshStats(project) })
+                        AppMenuDivider()
+                        AppMenuItem(
+                            text = { Text("移除项目") },
+                            destructive = true,
                             onClick = { moreOpen = false; dialog = PageDialog.REMOVE },
                         )
                     }

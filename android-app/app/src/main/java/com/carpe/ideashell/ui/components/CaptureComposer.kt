@@ -20,8 +20,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.style.TextOverflow
@@ -284,17 +282,19 @@ fun CaptureComposer(
                         )
                         Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
-                    DropdownMenu(expanded = folderMenu, onDismissRequest = { folderMenu = false }) {
-                        DropdownMenuItem(
+                    AppMenu(expanded = folderMenu, onDismissRequest = { folderMenu = false }) {
+                        AppMenuItem(
                             text = { Text("自动判断") },
+                            selected = plan?.folderName == null,
                             onClick = {
                                 folderMenu = false
                                 setText(text.replace(RE_FOLDER_TOKEN, "").trim())
                             },
                         )
                         folders.forEach { f ->
-                            DropdownMenuItem(
+                            AppMenuItem(
                                 text = { Text(f.name) },
+                                selected = plan?.folderName == f.name,
                                 onClick = {
                                     folderMenu = false
                                     val cleaned = text.replace(RE_FOLDER_TOKEN, "").trimEnd()

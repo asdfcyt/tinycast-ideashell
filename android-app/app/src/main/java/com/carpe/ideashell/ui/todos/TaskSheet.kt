@@ -18,8 +18,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import com.carpe.ideashell.ui.components.AppMenu
+import com.carpe.ideashell.ui.components.AppMenuDivider
+import com.carpe.ideashell.ui.components.AppMenuItem
 import androidx.compose.material3.Switch
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -47,7 +48,9 @@ import com.carpe.ideashell.data.project.Project
 import com.carpe.ideashell.data.project.TaskNoteRef
 import com.carpe.ideashell.data.project.didaTaskUrl
 import com.carpe.ideashell.system.openInApp
+import androidx.compose.ui.text.font.FontWeight
 import com.carpe.ideashell.ui.components.ConfirmDialog
+import com.carpe.ideashell.ui.components.brandButtonColors
 import com.carpe.ideashell.ui.components.FormDialog
 import com.carpe.ideashell.ui.components.FormField
 import com.carpe.ideashell.ui.components.ListGroup
@@ -138,33 +141,40 @@ internal fun TaskSheet(
                             "后天" to today.plusDays(2),
                             "下周一" to nextMonday,
                         ).forEach { (label, date) ->
-                            DropdownMenuItem(
+                            AppMenuItem(
                                 text = { Text(label) },
+                                selected = task.date == date.toString(),
                                 onClick = { close(); actions.onReschedule(date.toString(), task.time) },
                             )
                         }
-                        DropdownMenuItem(text = { Text("选择日期…") }, onClick = { close(); pickDate = true })
+                        AppMenuItem(text = { Text("选择日期…") }, onClick = { close(); pickDate = true })
                     }
                     RowDivider()
                     MenuPropertyRow("时间", task.time ?: "全天") { close ->
-                        DropdownMenuItem(
+                        AppMenuItem(
                             text = { Text("全天") },
+                            selected = task.time == null,
                             onClick = { close(); if (task.time != null) actions.onReschedule(baseDate, null) },
                         )
-                        DropdownMenuItem(text = { Text("设置时间…") }, onClick = { close(); pickTime = true })
+                        AppMenuItem(text = { Text("设置时间…") }, onClick = { close(); pickTime = true })
                     }
                     RowDivider()
                     MenuPropertyRow("优先级", priorityName(task.priority)) { close ->
                         listOf("无" to 0, "低" to 1, "中" to 3, "高" to 5).forEach { (label, value) ->
-                            DropdownMenuItem(text = { Text(label) }, onClick = { close(); actions.onPriority(value) })
+                            AppMenuItem(
+                                text = { Text(label) },
+                                selected = task.priority == value,
+                                onClick = { close(); actions.onPriority(value) },
+                            )
                         }
                     }
                     if (projects.isNotEmpty()) {
                         RowDivider()
                         MenuPropertyRow("项目", currentProject?.keyword ?: "未归入") { close ->
                             projects.forEach { p ->
-                                DropdownMenuItem(
+                                AppMenuItem(
                                     text = { Text(p.keyword) },
+                                    selected = currentProject?.keyword == p.keyword,
                                     onClick = { close(); if (currentProject?.keyword != p.keyword) actions.onAssignProject(p.keyword) },
                                 )
                             }
@@ -193,8 +203,12 @@ internal fun TaskSheet(
             }
 
             // 操作：一个主按钮，其余收进文字按钮和「更多」菜单
-            Button(onClick = actions.onComplete, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                Text(if (task.done) "恢复为未完成" else "完成")
+            Button(
+                onClick = actions.onComplete,
+                colors = brandButtonColors(),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text(if (task.done) "恢复为未完成" else "完成", fontWeight = FontWeight.Bold)
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (!task.done) {
@@ -204,17 +218,19 @@ internal fun TaskSheet(
                 var more by remember { mutableStateOf(false) }
                 Box {
                     TextButton(onClick = { more = true }) { Text("更多") }
-                    DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
-                        DropdownMenuItem(text = { Text("改标题") }, onClick = { more = false; dialog = SheetDialog.RENAME })
-                        DropdownMenuItem(
+                    AppMenu(expanded = more, onDismissRequest = { more = false }) {
+                        AppMenuItem(text = { Text("改标题") }, onClick = { more = false; dialog = SheetDialog.RENAME })
+                        AppMenuItem(
                             text = { Text("用滴答清单打开") },
                             onClick = {
                                 more = false
                                 openInApp(context, didaTaskUrl(task.projectId, task.id), "滴答清单")
                             },
                         )
-                        DropdownMenuItem(
-                            text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                        AppMenuDivider()
+                        AppMenuItem(
+                            text = { Text("删除") },
+                            destructive = true,
                             onClick = { more = false; dialog = SheetDialog.DELETE },
                         )
                     }

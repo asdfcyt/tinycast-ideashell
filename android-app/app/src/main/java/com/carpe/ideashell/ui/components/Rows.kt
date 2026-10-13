@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -324,7 +323,7 @@ fun PropertyRow(
     }
 }
 
-/** 点一下弹出菜单的 [PropertyRow]；[menu] 里用 [androidx.compose.material3.DropdownMenuItem]，调用 dismiss 关闭菜单 */
+/** 点一下弹出菜单的 [PropertyRow]；[menu] 里用 [AppMenuItem]，调用 dismiss 关闭菜单 */
 @Composable
 fun MenuPropertyRow(
     label: String,
@@ -336,7 +335,7 @@ fun MenuPropertyRow(
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
         PropertyRow(label, value, valueColor = valueColor, onClick = { open = true })
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        AppMenu(expanded = open, onDismissRequest = { open = false }) {
             menu { open = false }
         }
     }

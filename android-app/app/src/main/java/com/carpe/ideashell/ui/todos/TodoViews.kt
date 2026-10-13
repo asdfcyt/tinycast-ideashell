@@ -9,8 +9,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import com.carpe.ideashell.ui.components.AppMenu
+import com.carpe.ideashell.ui.components.AppMenuItem
 import com.carpe.ideashell.ui.components.PillChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -97,14 +97,14 @@ internal fun QuickDateMenu(today: LocalDate, onPick: (LocalDate) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         TextButton(onClick = { open = true }) { Text("定日期") }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        AppMenu(expanded = open, onDismissRequest = { open = false }) {
             listOf(
                 "今天" to today,
                 "明天" to today.plusDays(1),
                 "周末" to today.with(TemporalAdjusters.nextOrSame(DayOfWeek.SATURDAY)),
                 "下周一" to today.with(TemporalAdjusters.next(DayOfWeek.MONDAY)),
             ).forEach { (label, date) ->
-                DropdownMenuItem(text = { Text(label) }, onClick = { open = false; onPick(date) })
+                AppMenuItem(text = { Text(label) }, onClick = { open = false; onPick(date) })
             }
         }
     }

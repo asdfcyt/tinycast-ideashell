@@ -35,8 +35,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import com.carpe.ideashell.ui.components.AppMenu
+import com.carpe.ideashell.ui.components.AppMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -934,8 +934,8 @@ private fun RecentMenu(onClearDone: () -> Unit) {
         IconButton(onClick = { menu = true }) {
             Icon(Icons.Filled.MoreVert, contentDescription = "更多", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DropdownMenuItem(text = { Text("清除已完成的记录") }, onClick = { menu = false; onClearDone() })
+        AppMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            AppMenuItem(text = { Text("清除已完成的记录") }, destructive = true, onClick = { menu = false; onClearDone() })
         }
     }
 }
