@@ -20,6 +20,7 @@ import com.carpe.ideashell.data.ocr.TencentOcr
 import com.carpe.ideashell.data.project.ProjectService
 import com.carpe.ideashell.data.project.WorkspaceStore
 import com.carpe.ideashell.data.revisit.RevisitRepository
+import com.carpe.ideashell.system.RevisitNotifier
 import com.carpe.ideashell.system.RevisitReminderScheduler
 import com.carpe.ideashell.data.secure.CredentialStore
 import com.carpe.ideashell.data.secure.SecureStore
@@ -139,6 +140,7 @@ class AppContainer(context: Context) {
         settings = settings,
         scope = appScope,
         loadNote = { notes.note(it) },
+        ideashell = ideashellApi,
     )
 
     val captures = CaptureRepository(
@@ -231,6 +233,13 @@ class AppContainer(context: Context) {
                 .map { it.revisitReminder to it.revisitReminderMinutes }
                 .distinctUntilChanged()
                 .collect { (enabled, minutes) -> RevisitReminderScheduler.apply(appContext, enabled, minutes) }
+        }
+        // 今天的重温都做完了，就把「今天有 N 条待重温」的提醒收掉
+        appScope.launch {
+            revisit.today
+                .map { it.total > 0 && it.remaining == 0 }
+                .distinctUntilChanged()
+                .collect { finished -> if (finished) RevisitNotifier.cancel(appContext) }
         }
         appScope.launch {
             credentials.didaConnected.collect { connected ->

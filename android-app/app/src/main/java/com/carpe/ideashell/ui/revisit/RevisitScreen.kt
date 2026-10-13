@@ -72,6 +72,7 @@ import com.carpe.ideashell.ui.components.AppMenuDivider
 import com.carpe.ideashell.ui.components.AppMenuItem
 import com.carpe.ideashell.ui.components.CircleIconButton
 import com.carpe.ideashell.ui.components.MarkdownText
+import com.carpe.ideashell.ui.components.TextPromptDialog
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
 import com.carpe.ideashell.ui.theme.Brand
 import java.time.LocalDate
@@ -92,6 +93,8 @@ fun RevisitScreen(
     val today by viewModel.today.collectAsStateWithLifecycle()
     val current = today.queue.firstOrNull()
     val snackbar = remember { SnackbarHostState() }
+    var composing by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
 
     LifecycleResumeEffect(Unit) {
         viewModel.refresh()
@@ -142,6 +145,13 @@ fun RevisitScreen(
             }
 
             if (current != null) {
+                ThoughtBar(
+                    item = current,
+                    busy = viewModel.thoughtBusy,
+                    onAdd = { composing = true },
+                    onOpenTopic = { id -> onOpenNote(id) },
+                    modifier = Modifier.padding(top = 10.dp),
+                )
                 RatingBar(
                     enabled = !viewModel.busy,
                     daysOf = { viewModel.previewDays(current, it) },
@@ -156,6 +166,77 @@ fun RevisitScreen(
             snackbar,
             Modifier.align(Alignment.BottomCenter).padding(bottom = LocalBottomBarPadding.current),
         )
+    }
+
+    if (composing && current != null) {
+        TextPromptDialog(
+            title = "记一笔",
+            label = "想法",
+            hint = thoughtHint(current),
+            minLines = 4,
+            onDismiss = { composing = false; draft = "" },
+            onConfirm = { text ->
+                composing = false
+                draft = ""
+                viewModel.addThought(current, text) {
+                    draft = text
+                    composing = true
+                }
+            },
+            initial = draft,
+        )
+    }
+}
+
+/** 抽屉里的说明：这一笔会记到哪里 */
+private fun thoughtHint(item: RevisitEntity): String = when {
+    item.topicNoteId != null -> "会追加到之前为这一条建的专题笔记里。"
+    item.kind == RevisitKind.SNIPPET.name && item.sourceLabel == RevisitRepository.DAILY_LABEL ->
+        "这一句来自 Daily Note：会以它为底新建一篇专题笔记（引用原文），之后的想法都记在那一篇里。"
+    else -> "会追加到原笔记的「想法」小节里。"
+}
+
+/** 评分上面的一行：左边「记一笔」，已经有专题笔记时右边是它的入口 */
+@Composable
+private fun ThoughtBar(
+    item: RevisitEntity,
+    busy: Boolean,
+    onAdd: () -> Unit,
+    onOpenTopic: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(
+            modifier = Modifier
+                .height(40.dp)
+                .clip(CircleShape)
+                .background(scheme.surfaceContainerLowest)
+                .clickable(enabled = !busy, role = Role.Button, onClick = onAdd)
+                .padding(horizontal = 16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                if (busy) "正在保存…" else "＋ 记一笔",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        item.topicNoteId?.let { topic ->
+            Box(
+                modifier = Modifier
+                    .height(40.dp)
+                    .clip(CircleShape)
+                    .background(Brand.Orange.copy(alpha = 0.22f))
+                    .clickable(role = Role.Button) { onOpenTopic(topic) }
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("专题笔记 ›", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Brand.OrangeDeep, maxLines = 1)
+            }
+        }
     }
 }
 

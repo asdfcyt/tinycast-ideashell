@@ -14,6 +14,8 @@ import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.core.revisit.Fsrs
 import com.carpe.ideashell.data.db.RevisitEntity
 import com.carpe.ideashell.data.revisit.RevisitToday
+import com.carpe.ideashell.data.revisit.ThoughtResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -35,6 +37,10 @@ class RevisitViewModel(container: AppContainer) : ViewModel() {
 
     /** 上一步操作之前的状态；不为空时标题栏出现「撤销」 */
     var undoItems by mutableStateOf<List<RevisitEntity>>(emptyList())
+        private set
+
+    /** 「记一笔」正在保存（要联网读写笔记，可能要几秒）：期间不能再点 */
+    var thoughtBusy by mutableStateOf(false)
         private set
 
     private val _messages = Channel<String>(Channel.BUFFERED)
@@ -59,6 +65,34 @@ class RevisitViewModel(container: AppContainer) : ViewModel() {
         undoItems = listOfNotNull(repo.get(item.id))
         repo.archive(item.id)
         _messages.trySend("已不再重温这一条")
+    }
+
+    /**
+     * 重温时记一笔新想法：Daily Note 里的一句会以它为底新建专题笔记，其他笔记追加到原笔记里（详见 [com.carpe.ideashell.data.revisit.RevisitRepository.addThought]）。
+     * 失败时提示原因并回调 [onFailed]，由界面把输入还给用户。
+     */
+    fun addThought(item: RevisitEntity, text: String, onFailed: () -> Unit) {
+        if (thoughtBusy) return
+        thoughtBusy = true
+        viewModelScope.launch {
+            try {
+                val result = repo.addThought(item.id, text)
+                _messages.trySend(
+                    when (result) {
+                        is ThoughtResult.TopicCreated -> "已以这一条为底新建专题笔记「${result.title}」"
+                        is ThoughtResult.TopicAppended -> "已追加到专题笔记"
+                        is ThoughtResult.AppendedToSource -> "已记到原笔记的「想法」里"
+                    },
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _messages.trySend("没能保存：${e.message ?: "网络异常"}（写的内容还在）")
+                onFailed()
+            } finally {
+                thoughtBusy = false
+            }
+        }
     }
 
     /** 积压时的出口：把现在到期的全部推后 7 天 */

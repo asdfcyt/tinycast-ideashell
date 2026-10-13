@@ -4,10 +4,15 @@ import com.carpe.ideashell.core.revisit.Fsrs
 import com.carpe.ideashell.data.db.RevisitDao
 import com.carpe.ideashell.data.db.RevisitEntity
 import com.carpe.ideashell.data.db.RevisitKind
+import com.carpe.ideashell.core.notes.NoteSections
+import com.carpe.ideashell.core.notes.RevisitTopic
+import com.carpe.ideashell.data.ideashell.IdeashellApi
 import com.carpe.ideashell.data.ideashell.NoteDetail
 import com.carpe.ideashell.data.ideashell.NoteInfo
 import com.carpe.ideashell.data.ideashell.NoteTime
 import com.carpe.ideashell.data.settings.AppSettings
+import com.carpe.ideashell.data.mcp.McpToolException
+import com.carpe.ideashell.data.mcp.McpRpcException
 import com.carpe.ideashell.data.settings.SettingsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +48,20 @@ data class RevisitToday(
 
 enum class AddResult { ADDED, EXISTS, RESTORED }
 
+/** 在重温页「记一笔」的去向：[noteId] 是写入（或新建）的那篇笔记，界面据此提示并可以点开 */
+sealed interface ThoughtResult {
+    val noteId: String
+
+    /** 追加进了原笔记的「想法」小节 */
+    data class AppendedToSource(override val noteId: String) : ThoughtResult
+
+    /** 以 Daily Note 里的这一句为底，新建了一篇专题笔记 */
+    data class TopicCreated(override val noteId: String, val title: String) : ThoughtResult
+
+    /** 追加进了之前建好的专题笔记 */
+    data class TopicAppended(override val noteId: String) : ThoughtResult
+}
+
 /**
  * 笔记 / 日记片段的 FSRS 间隔重温。数据在本机数据库（重温项表），不依赖网络；
  * 只有「加入整篇笔记」时会去读一次笔记全文做快照，读不到就退回摘要。
@@ -53,6 +72,8 @@ class RevisitRepository(
     scope: CoroutineScope,
     /** 读笔记全文（做快照用） */
     private val loadNote: suspend (String) -> NoteDetail,
+    /** 「记一笔」要读写 / 新建笔记 */
+    private val ideashell: IdeashellApi,
 ) {
     private val day = MutableStateFlow(LocalDate.now())
 
@@ -70,6 +91,7 @@ class RevisitRepository(
         .stateIn(scope, SharingStarted.Eagerly, RevisitToday())
 
     private val addLock = Mutex()
+    private val thoughtLock = Mutex()
 
     /** 回到前台 / 跨天后调用：让「今天」的数据按新的日期重算 */
     fun refreshDay() {
@@ -163,6 +185,69 @@ class RevisitRepository(
     suspend fun restore(id: Long) {
         dao.get(id)?.let { revive(it) }
     }
+
+    // ───────────────────────── 记一笔 ─────────────────────────
+
+    /**
+     * 重温时写下一条新想法。去向由这一条的来源决定：
+     * - Daily Note 里的一句：以这一句为底新建一篇「专题」笔记（引用原文 + 想法），之后的想法都追加到这篇里；
+     * - 其他笔记（或其中的摘录）：追加到原笔记的「想法」小节；原笔记读不到正文（纯语音 / 附件）时同样新建专题笔记。
+     * 失败抛异常（断网等），由调用方提示并保留输入。
+     */
+    suspend fun addThought(id: Long, text: String): ThoughtResult = thoughtLock.withLock {
+        val thought = text.trim()
+        require(thought.isNotEmpty()) { "内容不能为空" }
+        val item = dao.get(id) ?: error("这一条已经不在重温里了")
+        val stamp = NoteSections.minuteStamp()
+
+        item.topicNoteId?.let { topic ->
+            try {
+                appendThought(topic, thought, stamp)
+                return@withLock ThoughtResult.TopicAppended(topic)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: McpToolException) {
+                // 专题笔记被删了：往下重新建一篇
+            } catch (e: McpRpcException) {
+            }
+        }
+
+        val source = item.noteId
+        if (!isDailySnippet(item) && source != null) {
+            val updated = appendThought(source, thought, stamp)
+            if (updated != null) {
+                if (item.kind == RevisitKind.NOTE.name) dao.update(item.copy(text = updated.take(MAX_TEXT)))
+                return@withLock ThoughtResult.AppendedToSource(source)
+            }
+        }
+
+        val sourceLabel = "${item.sourceLabel} · ${dateOf(item.recordedAt)}"
+        val title = RevisitTopic.title(item.text.ifBlank { item.title })
+        val created = ideashell.createNote(
+            title = title,
+            body = RevisitTopic.body(sourceLabel, item.text.ifBlank { item.title }, thought, stamp),
+            tags = (settings.current.defaultTags + RevisitTopic.TAG).distinct(),
+        )
+        val topicId = noteIdOf(created)
+        dao.update((dao.get(id) ?: item).copy(topicNoteId = topicId))
+        ThoughtResult.TopicCreated(topicId, title)
+    }
+
+    /** 追加到 [noteId] 的「想法」小节，返回新的全文；笔记没有正文（纯语音 / 附件）时不改它，返回 null */
+    private suspend fun appendThought(noteId: String, thought: String, stamp: String): String? {
+        val detail = ideashell.noteDetail(noteId)
+        if (detail.content.isBlank()) return null
+        val updated = RevisitTopic.appendThought(detail.content, thought, stamp)
+        ideashell.updateNoteBody(noteId, updated)
+        return updated
+    }
+
+    private fun isDailySnippet(item: RevisitEntity): Boolean =
+        item.kind == RevisitKind.SNIPPET.name && item.sourceLabel == DAILY_LABEL
+
+    private fun noteIdOf(created: String): String =
+        (RE_NOTE_ID_JSON.find(created) ?: RE_NOTE_ID_TEXT.find(created) ?: RE_NOTE_ID_HEX.find(created))?.groupValues?.get(1)
+            ?: error("没有从创建结果里取到笔记 id：${created.take(100)}")
 
     // ───────────────────────── 重温 ─────────────────────────
 
@@ -283,6 +368,12 @@ class RevisitRepository(
 
     companion object {
         const val TAG = "重温"
+
+        /** 摘录的出处：Daily Note 里的一句 */
+        const val DAILY_LABEL = "Daily Note"
+        private val RE_NOTE_ID_JSON = Regex("\"note_id\"\\s*:\\s*\"([^\"]+)\"")
+        private val RE_NOTE_ID_TEXT = Regex("note_id[:\\s]+([0-9a-f]{16,})", RegexOption.IGNORE_CASE)
+        private val RE_NOTE_ID_HEX = Regex("([a-f0-9]{32})", RegexOption.IGNORE_CASE)
         private const val MAX_TEXT = 6000
         private const val DAY_MS = 24L * 60 * 60 * 1000
 
