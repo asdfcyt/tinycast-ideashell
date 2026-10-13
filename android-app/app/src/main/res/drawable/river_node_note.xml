@@ -9,6 +9,6 @@
     <item
         android:drawable="@drawable/river_triangle_orange"
         android:gravity="center"
-        android:width="12dp"
-        android:height="12dp" />
+        android:width="9dp"
+        android:height="9dp" />
 </layer-list>

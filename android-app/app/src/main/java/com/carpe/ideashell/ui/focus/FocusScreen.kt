@@ -130,6 +130,9 @@ fun FocusScreen(
     val connected by viewModel.connected.collectAsStateWithLifecycle()
     val goal by viewModel.goalMin.collectAsStateWithLifecycle()
     val tasks by viewModel.tasks.collectAsStateWithLifecycle()
+    val pendingBreak by viewModel.pendingBreak.collectAsStateWithLifecycle()
+    val cycle by viewModel.cycle.collectAsStateWithLifecycle()
+    val idleKind = pendingBreak ?: FocusKind.FOCUS
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
 
@@ -187,9 +190,10 @@ fun FocusScreen(
                 TimerCard(
                     run = live,
                     now = now,
-                    kind = viewModel.kind,
+                    kind = idleKind,
+                    cycle = cycle,
                     minutes = viewModel.minutes,
-                    onKind = viewModel::selectKind,
+                    onSkipBreak = viewModel::skipBreak,
                     onMinutes = { viewModel.minutes = it },
                     onStart = {
                         if (Build.VERSION.SDK_INT >= 33 &&
@@ -203,7 +207,7 @@ fun FocusScreen(
                 )
 
                 // 休息不绑定任务
-                if (if (live != null) !live.kind.isBreak else !viewModel.kind.isBreak) {
+                if (if (live != null) !live.kind.isBreak else !idleKind.isBreak) {
                     TaskRow(
                         run = live,
                         task = viewModel.task,
@@ -280,13 +284,6 @@ fun FocusScreen(
 
 // ───────────────────────── 计时环 ─────────────────────────
 
-/** 每种倒计时下面的快捷时长 */
-private fun presetsOf(kind: FocusKind): List<Int> = when (kind) {
-    FocusKind.FOCUS -> FocusRepository.CHOICES
-    FocusKind.SHORT_BREAK -> listOf(3, 5, 10, 15)
-    FocusKind.LONG_BREAK -> listOf(10, 15, 20, 30)
-}
-
 /**
  * 计时圆盘：
  * - 没开始：一整圈对应「最大时长」（专注 120 分钟、休息 60 分钟），拖动圆环上的把手或直接点圆环就能选时长，
@@ -298,8 +295,9 @@ private fun TimerCard(
     run: FocusRun?,
     now: Long,
     kind: FocusKind,
+    cycle: Int,
     minutes: Int,
-    onKind: (FocusKind) -> Unit,
+    onSkipBreak: () -> Unit,
     onMinutes: (Int) -> Unit,
     onStart: () -> Unit,
 ) {
@@ -332,7 +330,7 @@ private fun TimerCard(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (run == null) {
-                KindTabs(kind, onKind)
+                CycleHeader(kind, cycle, onSkipBreak)
             } else {
                 Text(
                     run.kind.label,
@@ -458,13 +456,7 @@ private fun TimerCard(
                 }
             }
 
-            if (run == null) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    presetsOf(kind).forEach { m ->
-                        DurationChip(m, selected = m == minutes, modifier = Modifier.weight(1f), onClick = { onMinutes(m) })
-                    }
-                }
-            } else {
+            if (run != null) {
                 Text(
                     "共 ${run.plannedMin} 分钟 · 已${if (run.kind.isBreak) "休息" else "专注"} ${spoken(run.elapsedMs(now))}",
                     fontSize = 13.sp,
@@ -507,33 +499,44 @@ private fun StartPill(onClick: () -> Unit) {
     }
 }
 
-/** 专注 / 短休息 / 长休息 */
+/**
+ * 番茄钟进度：一轮 4 个番茄（实心 = 已完成）。番茄走完后这里变成「休息一下」，并给一个「跳过休息」。
+ * 休息只会在番茄走完后出现，平时只有专注。
+ */
 @Composable
-private fun KindTabs(selected: FocusKind, onSelect: (FocusKind) -> Unit) {
+private fun CycleHeader(kind: FocusKind, cycle: Int, onSkipBreak: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    Row(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(scheme.onSurface.copy(alpha = 0.07f))
-            .padding(3.dp),
-    ) {
-        FocusKind.entries.forEach { k ->
-            val on = k == selected
-            Box(
-                modifier = Modifier
-                    .height(34.dp)
-                    .clip(CircleShape)
-                    .background(if (on) Brand.Orange else Color.Transparent)
-                    .clickable(role = Role.Tab, onClick = { onSelect(k) })
-                    .padding(horizontal = 18.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    k.label,
-                    fontSize = 14.sp,
-                    fontWeight = if (on) FontWeight.ExtraBold else FontWeight.SemiBold,
-                    color = if (on) Brand.Brown else scheme.onSurfaceVariant,
+    val total = FocusRepository.CYCLE_LENGTH
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (kind.isBreak) {
+            Text(
+                if (kind == FocusKind.LONG_BREAK) "完成 $total 个番茄 · 长休息" else "第 $cycle 个番茄完成 · 短休息",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color(0xFF4FAE8B),
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+            for (i in 0 until total) {
+                Box(
+                    Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(if (i < cycle) (if (kind.isBreak) Color(0xFF4FAE8B) else Brand.Orange) else scheme.onSurface.copy(alpha = 0.12f)),
                 )
+            }
+            if (!kind.isBreak) {
+                Text(
+                    if (cycle == 0) "  开始第 1 个番茄" else "  第 ${cycle + 1} 个番茄",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (kind.isBreak) {
+            TextButton(onClick = onSkipBreak) {
+                Text("跳过休息，直接专注", fontSize = 13.sp, color = scheme.onSurfaceVariant)
             }
         }
     }
@@ -545,26 +548,6 @@ private val BigNumber = TextStyle(
     // 等宽数字：倒计时每秒变化，字宽不跳
     fontFeatureSettings = "tnum",
 )
-
-@Composable
-private fun DurationChip(minutes: Int, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Box(
-        modifier = modifier
-            .height(44.dp)
-            .clip(CircleShape)
-            .background(if (selected) Brand.Orange else scheme.surfaceContainerHigh)
-            .clickable(role = Role.RadioButton, onClickLabel = "$minutes 分钟", onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            minutes.toString(),
-            fontSize = 16.sp,
-            fontWeight = FontWeight.ExtraBold,
-            color = if (selected) Brand.Brown else scheme.onSurface,
-        )
-    }
-}
 
 // ───────────────────────── 专注什么 ─────────────────────────
 

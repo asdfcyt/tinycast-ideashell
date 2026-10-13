@@ -12,7 +12,6 @@ import android.os.Build
 import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
 import com.carpe.ideashell.R
 import com.carpe.ideashell.data.focus.FocusRun
@@ -67,7 +66,14 @@ class FocusNotifier(private val context: Context) {
     }
 
     /** 结束后的提醒：到点完成会响铃，提前结束只是静默记一笔 */
-    fun showDone(title: String, minutes: Int, completed: Boolean, synced: Boolean) {
+    fun showDone(
+        title: String,
+        minutes: Int,
+        completed: Boolean,
+        synced: Boolean,
+        nextBreak: com.carpe.ideashell.data.focus.FocusKind? = null,
+        nextBreakMin: Int = 0,
+    ) {
         if (!canNotify()) return
         val nm = context.getSystemService(NotificationManager::class.java)
         ensureChannels(nm)
@@ -87,7 +93,17 @@ class FocusNotifier(private val context: Context) {
             .setOnlyAlertOnce(false)
             .setWhen(System.currentTimeMillis())
             .setShowWhen(true)
+        // 番茄走完：直接在通知上开始休息（短休息；每 4 个番茄一次长休息），或者不休息
+        if (nextBreak != null) {
+            builder.addAction(0, "开始${nextBreak.label} $nextBreakMin 分钟", action(ACTION_START_BREAK, 35))
+            builder.addAction(0, "跳过休息", action(ACTION_SKIP_BREAK, 36))
+        }
         if (NotificationManagerCompat.from(context).areNotificationsEnabled()) nm.notify(DONE_ID, builder.build())
+    }
+
+    /** 点了通知上的休息按钮后，把「专注完成」那条收掉 */
+    fun cancelDone() {
+        context.getSystemService(NotificationManager::class.java).cancel(DONE_ID)
     }
 
     // ───────────────────────── 常驻通知 ─────────────────────────
@@ -123,26 +139,22 @@ class FocusNotifier(private val context: Context) {
                 .setWhen(run.endAtMs)
                 .addAction(0, "暂停", action(ACTION_PAUSE, 21))
         }
-        // 「记录」：直接在通知里输入一句话，追加到当前任务的任务笔记（并同步成滴答评论）；休息和没绑任务的自由专注没有这个按钮
-        if (!isBreak && !run.taskId.isNullOrBlank()) builder.addAction(recordAction(run))
+        // 「记录」：弹出输入面板写一句话，追加到当前任务的任务笔记（并同步成滴答评论）；休息和没绑任务的自由专注没有这个按钮
+        if (!isBreak && !run.taskId.isNullOrBlank()) builder.addAction(recordAction())
         builder.addAction(0, if (isBreak) "跳过" else "结束", action(ACTION_FINISH, 23))
         if (NotificationManagerCompat.from(context).areNotificationsEnabled()) nm.notify(RUNNING_ID, builder.build())
     }
 
-    private fun recordAction(run: FocusRun): NotificationCompat.Action {
-        val remote = RemoteInput.Builder(KEY_RECORD_TEXT)
-            .setLabel("记录到「${run.title.ifBlank { "当前任务" }}」")
-            .build()
-        // RemoteInput 要往 PendingIntent 里回填文字，必须是可变的
-        val pi = PendingIntent.getBroadcast(
+    /** 「记录」：普通按钮，点开一个小输入面板（见 FocusRecordActivity）。有明确的文字，不依赖系统怎么渲染「回复」图标 */
+    private fun recordAction(): NotificationCompat.Action {
+        val pi = PendingIntent.getActivity(
             context, 26,
-            Intent(context, FocusActionReceiver::class.java).setAction(ACTION_RECORD),
-            PendingIntent.FLAG_UPDATE_CURRENT or if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0,
+            Intent(context, com.carpe.ideashell.ui.focus.FocusRecordActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        return NotificationCompat.Action.Builder(0, "记录", pi)
-            .addRemoteInput(remote)
-            .setAllowGeneratedReplies(false)
-            .build()
+        return NotificationCompat.Action.Builder(0, "记录", pi).build()
     }
 
     /** 休息走完的提醒 */
@@ -255,9 +267,8 @@ class FocusNotifier(private val context: Context) {
         const val ACTION_FINISH = "com.carpe.ideashell.action.FOCUS_FINISH"
         const val ACTION_START = "com.carpe.ideashell.action.FOCUS_START"
         const val ACTION_TICK = "com.carpe.ideashell.action.FOCUS_TICK"
+        const val ACTION_SKIP_BREAK = "com.carpe.ideashell.action.FOCUS_SKIP_BREAK"
         const val ACTION_START_BREAK = "com.carpe.ideashell.action.FOCUS_START_BREAK"
-        const val ACTION_RECORD = "com.carpe.ideashell.action.FOCUS_RECORD"
-        const val KEY_RECORD_TEXT = "focus_record_text"
 
         private const val RUNNING_CHANNEL = "focus_running"
         private const val DONE_CHANNEL = "focus_done"

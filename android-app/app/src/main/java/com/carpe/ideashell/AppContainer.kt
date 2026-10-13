@@ -195,7 +195,8 @@ class AppContainer(context: Context) {
                 settings.state.map { it.persistentNotification to it.focusGoalMin }.distinctUntilChanged(),
                 daySummary.todayFocus,
                 focus.session,
-            ) { _, _, _, _ -> }
+                focus.pendingBreak,
+            ) { _, _, _, _, _ -> }
                 .debounce(300)
                 .collect {
                     surfaces.updateAll()

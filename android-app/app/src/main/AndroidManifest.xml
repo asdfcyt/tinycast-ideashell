@@ -179,6 +179,16 @@
             android:name=".system.TodoActionReceiver"
             android:exported="false" />
 
+        <!-- 专注通知上的「记录」：把专注中的想法记到当前任务的任务笔记 -->
+        <activity
+            android:name=".ui.focus.FocusRecordActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Ideashell.Translucent"
+            android:windowSoftInputMode="adjustResize|stateVisible" />
+
         <!-- 专注通知上的按钮（暂停 / 继续 / 结束）与到点闹钟 -->
         <receiver
             android:name=".system.FocusActionReceiver"

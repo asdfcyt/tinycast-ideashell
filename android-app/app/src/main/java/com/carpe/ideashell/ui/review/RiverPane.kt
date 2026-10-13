@@ -236,15 +236,16 @@ private fun TimelineRow(
                 when (kind) {
                     Kind.DAILY -> drawCircle(Brand.Orange, 6.dp.toPx(), Offset(x, nodeY))
                     Kind.NOTE -> {
-                        val r = 7.dp.toPx()
+                        // 和方块一样大（外沿约 11dp），实心；圆角靠描边的圆形拐角
+                        val r = 4.8.dp.toPx()
                         val tri = Path().apply {
-                            moveTo(x, nodeY - r * 0.92f)
-                            lineTo(x + r, nodeY + r * 0.72f)
-                            lineTo(x - r, nodeY + r * 0.72f)
+                            moveTo(x, nodeY - r)
+                            lineTo(x + r, nodeY + r * 0.8f)
+                            lineTo(x - r, nodeY + r * 0.8f)
                             close()
                         }
                         drawPath(tri, ink, style = androidx.compose.ui.graphics.drawscope.Fill)
-                        drawPath(tri, ink, style = Stroke(2.dp.toPx(), join = StrokeJoin.Round))
+                        drawPath(tri, ink, style = Stroke(1.5.dp.toPx(), join = StrokeJoin.Round))
                     }
                     Kind.TODO -> drawRoundRect(
                         ink,

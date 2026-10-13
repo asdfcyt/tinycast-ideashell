@@ -103,6 +103,17 @@ class FocusRepository(
     private val _summary = MutableStateFlow<FocusSummary?>(null)
     val summary: StateFlow<FocusSummary?> = _summary.asStateFlow()
 
+    /**
+     * 番茄钟的节奏：专注 25 分钟 → 短休息 5 分钟；每完成 [CYCLE_LENGTH] 个番茄 → 长休息 15 分钟，然后重新计数。
+     * 只有倒计时**自然走完**的专注才算一个番茄（中途结束的作废）；休息是在番茄走完后才出现的，所以这里记着「接下来该休息什么」。
+     */
+    private val _pendingBreak = MutableStateFlow(loadPendingBreak())
+    val pendingBreak: StateFlow<FocusKind?> = _pendingBreak.asStateFlow()
+
+    /** 当前这一轮已经完成的番茄数（0 until [CYCLE_LENGTH]；跨天自动清零） */
+    private val _cycle = MutableStateFlow(loadCycle())
+    val cycle: StateFlow<Int> = _cycle.asStateFlow()
+
     /** 最近一次成功写入滴答的时刻：今天页据此跳过缓存重新读专注 */
     private val _recordedAt = MutableStateFlow(0L)
     val recordedAt: StateFlow<Long> = _recordedAt.asStateFlow()
@@ -122,6 +133,8 @@ class FocusRepository(
     /** 开始一次专注；已经有一次在进行时返回 false */
     fun start(taskId: String?, projectId: String?, title: String, minutes: Int, kind: FocusKind = FocusKind.FOCUS): Boolean {
         if (_session.value != null) return false
+        // 没休息就直接开始下一个专注 = 跳过休息；跳过的是长休息，这一轮也就结束了
+        if (!kind.isBreak) skipBreak() else clearPendingBreak()
         val m = minutes.coerceIn(kind.minMin, if (kind.isBreak) kind.maxMin else MAX_MINUTES)
         prefs.edit().putInt(keyOf(kind), m).apply()
         val isBreak = kind.isBreak
@@ -163,12 +176,17 @@ class FocusRepository(
             val now = System.currentTimeMillis()
             val elapsed = s.elapsedMs(now)
             val completed = s.isDue(now)
-            setSession(null)
             if (s.kind.isBreak) {
-                // 休息不记录，只在自然走完时提醒一下
+                // 休息不记录；长休息过完这一轮结束。只在自然走完时提醒一下
+                clearPendingBreak()
+                if (s.kind == FocusKind.LONG_BREAK) saveCycle(0)
+                setSession(null)
                 if (completed) notifier.showBreakDone(s.kind, s.plannedMin)
                 return@withLock FocusResult.None
             }
+            // 番茄走完了才算数；先更新「接下来休息什么」，再结束会话（通知 / 小部件跟着会话刷新时就能看到）
+            if (completed) onPomodoroCompleted()
+            setSession(null)
             if (elapsed < MIN_RECORD_MS) return@withLock FocusResult.TooShort
             val record = PendingFocus(s.startMs, s.startMs + elapsed, s.taskId, s.title)
             _pending.value = _pending.value + record
@@ -176,7 +194,8 @@ class FocusRepository(
             flushLocked()
             val minutes = Math.round(elapsed / 60_000.0).toInt().coerceAtLeast(1)
             val synced = record !in _pending.value
-            notifier.showDone(s.title, minutes, completed, synced)
+            val next = if (completed) _pendingBreak.value else null
+            notifier.showDone(s.title, minutes, completed, synced, next, next?.let { lastMinutes(it) } ?: 0)
             FocusResult.Recorded(minutes, synced)
         }
         if (outcome is FocusResult.Recorded) refresh()
@@ -203,6 +222,42 @@ class FocusRepository(
         val s = _session.value ?: return
         notifier.scheduleTick(s)
     }
+
+    /** 一个番茄走完：计数 +1，该短休息还是长休息 */
+    private fun onPomodoroCompleted() {
+        val n = _cycle.value + 1
+        if (n >= CYCLE_LENGTH) {
+            saveCycle(CYCLE_LENGTH)
+            setPendingBreak(FocusKind.LONG_BREAK)
+        } else {
+            saveCycle(n)
+            setPendingBreak(FocusKind.SHORT_BREAK)
+        }
+    }
+
+    /** 不休息了：回到专注。跳过的是长休息，这一轮就从头开始 */
+    fun skipBreak() {
+        if (_pendingBreak.value == FocusKind.LONG_BREAK) saveCycle(0)
+        clearPendingBreak()
+    }
+
+    private fun clearPendingBreak() = setPendingBreak(null)
+
+    private fun setPendingBreak(k: FocusKind?) {
+        _pendingBreak.value = k
+        prefs.edit().apply { if (k == null) remove(KEY_BREAK) else putString(KEY_BREAK, k.name) }.apply()
+    }
+
+    private fun saveCycle(n: Int) {
+        _cycle.value = n
+        prefs.edit().putInt(KEY_CYCLE, n).putString(KEY_CYCLE_DAY, LocalDate.now().toString()).apply()
+    }
+
+    private fun loadPendingBreak(): FocusKind? = prefs.getString(KEY_BREAK, null)
+        ?.let { n -> FocusKind.entries.firstOrNull { it.name == n && it.isBreak } }
+
+    private fun loadCycle(): Int =
+        if (prefs.getString(KEY_CYCLE_DAY, null) == LocalDate.now().toString()) prefs.getInt(KEY_CYCLE, 0).coerceIn(0, CYCLE_LENGTH) else 0
 
     /** 记录内容已写入后刷新常驻通知（顺便把「输入中」的转圈停掉）；[hint] 会临时显示在通知正文里，下一次心跳恢复 */
     fun refreshNotification(hint: String?) {
@@ -284,5 +339,11 @@ class FocusRepository(
         private const val KEY_SESSION = "session"
         private const val KEY_PENDING = "pending"
         private const val KEY_LAST_MIN = "last_minutes"
+        private const val KEY_BREAK = "pending_break"
+        private const val KEY_CYCLE = "cycle"
+        private const val KEY_CYCLE_DAY = "cycle_day"
+
+        /** 每完成这么多个番茄，安排一次长休息 */
+        const val CYCLE_LENGTH = 4
     }
 }

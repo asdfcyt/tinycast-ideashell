@@ -92,7 +92,12 @@ class ExtraWidgets(
             rv.setChronometer(R.id.f_ring_timer, SystemClock.elapsedRealtime() + remain, null, !run.paused)
             rv.setTextViewText(R.id.f_title, if (run.paused) "${run.kind.label}已暂停" else "${run.kind.label}中")
             val what = if (run.kind.isBreak) "放松一下" else run.title.takeIf { it.isNotBlank() }?.let(TodoMeta::cleanTitle) ?: "自由专注"
-            rv.setTextViewText(R.id.f_sub, "$what · 共 ${run.plannedMin} 分钟")
+            rv.setTextViewText(R.id.f_sub, what)
+            rv.setViewVisibility(R.id.f_sub2, View.VISIBLE)
+            rv.setTextViewText(
+                R.id.f_sub2,
+                if (run.paused) "共 ${run.plannedMin} 分钟 · 已暂停" else "共 ${run.plannedMin} 分钟 · ${clockOf(run.endAtMs)} 结束",
+            )
             rv.setTextViewText(R.id.f_btn_main, if (run.paused) "继续" else "暂停")
             rv.setOnClickPendingIntent(
                 R.id.f_btn_main,
@@ -111,21 +116,33 @@ class ExtraWidgets(
             rv.setTextViewText(R.id.f_title, "今天专注")
             rv.setTextViewText(
                 R.id.f_sub,
-                if (credentials.didaToken.isNullOrBlank()) "未连接滴答清单" else "目标 ${compact(goal)} · ${((min ?: 0) * 100 / goal).coerceAtMost(100)}%",
+                if (credentials.didaToken.isNullOrBlank()) "未连接滴答清单" else "已专注 ${min?.let(::compact) ?: "–"} / 目标 ${compact(goal)}",
             )
+            rv.setViewVisibility(R.id.f_sub2, View.VISIBLE)
+            rv.setTextViewText(R.id.f_sub2, "完成 ${((min ?: 0) * 100 / goal).coerceAtMost(100)}%")
             rv.setTextViewText(R.id.f_btn_main, "开始 ${focus.lastMinutes} 分钟")
             rv.setOnClickPendingIntent(R.id.f_btn_main, action(FocusNotifier.ACTION_START, 31))
-            // 旁边一个「休息」：直接开一次短休息
-            rv.setViewVisibility(R.id.f_btn_sub, View.VISIBLE)
-            rv.setTextViewText(R.id.f_btn_sub, "休息 ${focus.lastMinutes(FocusKind.SHORT_BREAK)}′")
-            rv.setOnClickPendingIntent(R.id.f_btn_sub, action(FocusNotifier.ACTION_START_BREAK, 34))
+            // 番茄刚走完：主按钮变成「开始休息」，旁边可以跳过；平时只有「开始」
+            val next = focus.pendingBreak.value
+            if (next != null) {
+                rv.setTextViewText(R.id.f_title, "${next.label}一下")
+                rv.setTextViewText(R.id.f_sub, "番茄完成 ${focus.cycle.value} / ${FocusRepository.CYCLE_LENGTH}")
+                rv.setTextViewText(R.id.f_sub2, "休息好了再开始下一个")
+                rv.setTextViewText(R.id.f_btn_main, "${next.label} ${focus.lastMinutes(next)} 分钟")
+                rv.setOnClickPendingIntent(R.id.f_btn_main, action(FocusNotifier.ACTION_START_BREAK, 34))
+                rv.setViewVisibility(R.id.f_btn_sub, View.VISIBLE)
+                rv.setTextViewText(R.id.f_btn_sub, "跳过")
+                rv.setOnClickPendingIntent(R.id.f_btn_sub, action(FocusNotifier.ACTION_SKIP_BREAK, 37))
+            } else {
+                rv.setViewVisibility(R.id.f_btn_sub, View.GONE)
+            }
         }
         return rv
     }
 
     /** 和专注页圆盘同一个样子：粗圆环 + 圈内 60 根刻度（走过的刻度深一点） */
     private fun ring(progress: Float): Bitmap {
-        val size = (88 * context.resources.displayMetrics.density).toInt()
+        val size = (160 * context.resources.displayMetrics.density).toInt()
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val p = progress.coerceIn(0f, 1f)
@@ -165,6 +182,9 @@ class ExtraWidgets(
         min % 60 == 0 -> "${min / 60}h"
         else -> String.format(Locale.ROOT, "%.1fh", min / 60.0)
     }
+
+    private fun clockOf(ms: Long): String =
+        java.time.format.DateTimeFormatter.ofPattern("HH:mm").format(Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()))
 
     private fun compact(min: Int): String = when {
         min < 60 -> "${min}m"

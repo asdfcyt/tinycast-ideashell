@@ -6,6 +6,16 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.ImeAction
+import com.carpe.ideashell.core.parse.TodoParser
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -75,6 +85,16 @@ fun DateTimeSheet(
     var time by remember { mutableStateOf(initialTime) }
     var month by remember { mutableStateOf(YearMonth.from(initialDate ?: today)) }
     var pickTime by remember { mutableStateOf(false) }
+    // 日历默认只显示两周（本周 + 下周），点右上角可展开整月
+    var expanded by remember { mutableStateOf(false) }
+    var weekStart by remember { mutableStateOf((initialDate ?: today).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))) }
+    var editing by remember { mutableStateOf(false) }
+    val goto = { d: LocalDate ->
+        hasDate = true
+        date = d
+        month = YearMonth.from(d)
+        weekStart = d.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    }
 
     // 每天有几个未完成任务（读待办的本地缓存，不发请求）
     val counts = remember {
@@ -100,22 +120,66 @@ fun DateTimeSheet(
         ) {
             Text("日期", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 4.dp))
 
-            // 当前选择
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                    .padding(horizontal = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Icon(painterResource(R.drawable.ic_calendar), contentDescription = null, modifier = Modifier.size(22.dp))
-                Text(
-                    if (hasDate) date.toString() + (time?.let { " " + "%02d:%02d".format(it.hour, it.minute) } ?: "") else "没有日期",
-                    style = MaterialTheme.typography.titleMedium,
-                )
+            // 当前选择：自动识别出来的日期时间，点一下可以手动输入（「2026-10-14 15:00」「明天 下午3点」「10月20日」都行）
+            if (editing) {
+                var input by remember { mutableStateOf(if (hasDate) date.toString() + (time?.let { " %02d:%02d".format(it.hour, it.minute) } ?: "") else "") }
+                val focus = remember { FocusRequester() }
+                LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+                val commit = {
+                    val parsed = TodoParser.parse(input.trim())
+                    parsed.date?.let { d ->
+                        goto(LocalDate.parse(d))
+                        time = parsed.time?.let { LocalTime.parse(it) }
+                    }
+                    editing = false
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                        .padding(horizontal = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(painterResource(R.drawable.ic_calendar), contentDescription = null, modifier = Modifier.size(20.dp))
+                    BasicTextField(
+                        value = input,
+                        onValueChange = { input = it.replace("\n", "") },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.titleMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { commit() }),
+                        modifier = Modifier.weight(1f).focusRequester(focus),
+                    )
+                    Text(
+                        "确定",
+                        modifier = Modifier.clickable(role = Role.Button) { commit() }.padding(6.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                        .clickable(role = Role.Button, onClickLabel = "手动输入日期") { editing = true }
+                        .padding(horizontal = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(painterResource(R.drawable.ic_calendar), contentDescription = null, modifier = Modifier.size(20.dp))
+                    Text(
+                        if (hasDate) date.toString() + (time?.let { " " + "%02d:%02d".format(it.hour, it.minute) } ?: "") else "没有日期",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
             }
 
             // 常用日期
@@ -141,9 +205,7 @@ fun DateTimeSheet(
                         trailing = q.trailing,
                         selected = hasDate && date == q.date,
                     ) {
-                        hasDate = true
-                        date = q.date
-                        month = YearMonth.from(q.date)
+                        goto(q.date)
                     }
                 }
                 OptionRow(
@@ -157,34 +219,50 @@ fun DateTimeSheet(
                 }
             }
 
-            // 月历
+            // 日历：默认两周，紧凑；右上角「展开」看整月
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
                     .background(scheme.onSurface.copy(alpha = 0.05f))
-                    .padding(vertical = 8.dp),
+                    .padding(bottom = 6.dp),
             ) {
+                val shownMonth = if (expanded) month else YearMonth.from(weekStart.plusDays(3))
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = { month = month.minusMonths(1) }) { Text("‹", fontSize = 22.sp) }
+                    TextButton(
+                        onClick = { if (expanded) month = month.minusMonths(1) else weekStart = weekStart.minusWeeks(1) },
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                    ) { Text("‹", fontSize = 20.sp) }
                     Text(
-                        "${month.year}年${month.monthValue}月",
+                        "${shownMonth.year}年${shownMonth.monthValue}月",
                         modifier = Modifier.weight(1f),
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.titleSmall,
                     )
-                    TextButton(onClick = { month = month.plusMonths(1) }) { Text("›", fontSize = 22.sp) }
+                    TextButton(
+                        onClick = { if (expanded) month = month.plusMonths(1) else weekStart = weekStart.plusWeeks(1) },
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                    ) { Text("›", fontSize = 20.sp) }
+                    TextButton(
+                        onClick = {
+                            expanded = !expanded
+                            if (expanded) month = YearMonth.from(weekStart.plusDays(3))
+                            else weekStart = (if (YearMonth.from(date) == month && hasDate) date else month.atDay(1))
+                                .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp),
+                    ) { Text(if (expanded) "收起" else "展开", fontSize = 13.sp) }
                 }
                 Row(Modifier.fillMaxWidth()) {
                     listOf("一", "二", "三", "四", "五", "六", "日").forEach {
                         Text(
                             it,
-                            modifier = Modifier.weight(1f).padding(vertical = 4.dp),
+                            modifier = Modifier.weight(1f),
                             textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelSmall,
                             color = scheme.onSurfaceVariant,
                         )
                     }
@@ -192,25 +270,31 @@ fun DateTimeSheet(
                 if (hasDate) {
                     val n = counts[date.toString()] ?: 0
                     Text(
-                        "${date.monthValue}月${date.dayOfMonth}日 (${weekday(date).trim('(', ')')}) · ${n}个任务",
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        "${date.monthValue}月${date.dayOfMonth}日 ${weekday(date)} · ${n}个任务",
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                         textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.labelSmall,
                         color = scheme.onSurfaceVariant,
                     )
                 }
-                val first = month.atDay(1)
-                val offset = first.dayOfWeek.value - 1
-                val rows = (offset + month.lengthOfMonth() + 6) / 7
-                for (r in 0 until rows) {
+                // 每一行 7 天；两周模式 = 2 行，展开 = 整月（含前后补位）
+                val rows: List<LocalDate> = if (expanded) {
+                    val first = month.atDay(1)
+                    val start = first.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                    val n = ((first.dayOfWeek.value - 1) + month.lengthOfMonth() + 6) / 7
+                    List(n) { start.plusWeeks(it.toLong()) }
+                } else {
+                    listOf(weekStart, weekStart.plusWeeks(1))
+                }
+                rows.forEach { rowStart ->
                     Row(Modifier.fillMaxWidth()) {
                         for (c in 0 until 7) {
-                            val dayIndex = r * 7 + c - offset + 1
-                            Box(Modifier.weight(1f).height(46.dp), contentAlignment = Alignment.Center) {
-                                if (dayIndex in 1..month.lengthOfMonth()) {
-                                    val d = month.atDay(dayIndex)
+                            val d = rowStart.plusDays(c.toLong())
+                            Box(Modifier.weight(1f).height(38.dp), contentAlignment = Alignment.Center) {
+                                // 展开时，不属于当月的日期留空，只显示当月
+                                if (!expanded || YearMonth.from(d) == month) {
                                     DayCell(
-                                        day = dayIndex,
+                                        day = d.dayOfMonth,
                                         selected = hasDate && d == date,
                                         isToday = d == today,
                                         past = d.isBefore(today),
@@ -331,7 +415,7 @@ private fun DayCell(day: Int, selected: Boolean, isToday: Boolean, past: Boolean
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
-                .size(36.dp)
+                .size(30.dp)
                 .clip(CircleShape)
                 .background(if (selected) scheme.primary else Color.Transparent)
                 .clickable(role = Role.Button, onClick = onClick),
@@ -339,7 +423,7 @@ private fun DayCell(day: Int, selected: Boolean, isToday: Boolean, past: Boolean
         ) {
             Text(
                 "$day",
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = if (selected || isToday) FontWeight.Bold else FontWeight.Normal,
                 color = when {
                     selected -> scheme.onPrimary
@@ -352,7 +436,7 @@ private fun DayCell(day: Int, selected: Boolean, isToday: Boolean, past: Boolean
         Box(
             Modifier
                 .padding(top = 1.dp)
-                .size(4.dp)
+                .size(3.dp)
                 .clip(CircleShape)
                 .background(if (hasTasks && !selected) scheme.onSurfaceVariant else Color.Transparent),
         )

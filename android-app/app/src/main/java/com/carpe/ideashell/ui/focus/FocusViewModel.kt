@@ -45,9 +45,13 @@ class FocusViewModel(private val container: AppContainer) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), container.todos.state.value.overview?.let(::candidates).orEmpty())
 
     /** 开始前选的时长（分钟）、绑定的任务；开始后它们就存进 [session]，这里只管下一次 */
-    var kind by mutableStateOf(FocusKind.FOCUS)
-        private set
-    var minutes by mutableIntStateOf(focus.lastMinutes)
+    /** 番茄走完后接下来该休息什么（短休息 / 每 4 个番茄一次长休息）；null = 现在是专注 */
+    val pendingBreak = focus.pendingBreak
+
+    /** 这一轮已完成的番茄数（满 4 个就是长休息） */
+    val cycle = focus.cycle
+
+    var minutes by mutableIntStateOf((focus.pendingBreak.value ?: FocusKind.FOCUS).let { focus.lastMinutes(it) })
     var task by mutableStateOf<DidaTask?>(null)
 
     /** 正在新建任务（选择器里的「添加」按钮据此显示「添加中」） */
@@ -60,6 +64,8 @@ class FocusViewModel(private val container: AppContainer) : ViewModel() {
     init {
         container.todos.refresh()
         reload()
+        // 专注 ↔ 休息切换时，圆盘的时长换成这一种上次选的
+        viewModelScope.launch { focus.pendingBreak.collect { k -> minutes = focus.lastMinutes(k ?: FocusKind.FOCUS) } }
     }
 
     /** 进入页面 / 回到前台：对账（到点没记的补记、没传成功的补传）并读回滴答里的专注 */
@@ -70,12 +76,8 @@ class FocusViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** 切换 专注 / 短休息 / 长休息：时长换成这一种上次选的 */
-    fun selectKind(k: FocusKind) {
-        if (k == kind) return
-        kind = k
-        minutes = focus.lastMinutes(k)
-    }
+    /** 不休息了，直接回到专注 */
+    fun skipBreak() = focus.skipBreak()
 
     var refreshing by mutableStateOf(false)
         private set
@@ -103,7 +105,7 @@ class FocusViewModel(private val container: AppContainer) : ViewModel() {
 
     fun start() {
         val t = task
-        if (!focus.start(t?.id, t?.projectId, t?.title.orEmpty(), minutes, kind)) {
+        if (!focus.start(t?.id, t?.projectId, t?.title.orEmpty(), minutes, focus.pendingBreak.value ?: FocusKind.FOCUS)) {
             _messages.trySend("已经有一个专注在进行")
         }
     }

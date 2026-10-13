@@ -9,18 +9,21 @@
     android:orientation="horizontal"
     android:padding="16dp">
 
+    <!-- 环占满整个高度（宽度跟着方形位图走）：小部件拉高时环跟着变大，不再上下留白 -->
     <FrameLayout
         android:id="@+id/f_ring_box"
-        android:layout_width="88dp"
-        android:layout_height="88dp"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
         android:layout_marginEnd="16dp">
 
         <ImageView
             android:id="@+id/f_ring"
-            android:layout_width="88dp"
-            android:layout_height="88dp"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:adjustViewBounds="true"
             android:contentDescription="@null"
-            android:importantForAccessibility="no" />
+            android:importantForAccessibility="no"
+            android:scaleType="fitCenter" />
 
         <TextView
             android:id="@+id/f_ring_text"
@@ -30,7 +33,7 @@
             android:includeFontPadding="false"
             android:maxLines="1"
             android:textColor="@color/widget_text"
-            android:textSize="22sp"
+            android:textSize="24sp"
             android:textStyle="bold" />
 
         <Chronometer
@@ -41,15 +44,16 @@
             android:includeFontPadding="false"
             android:maxLines="1"
             android:textColor="@color/widget_text"
-            android:textSize="18sp"
+            android:textSize="20sp"
             android:textStyle="bold"
             android:visibility="gone" />
     </FrameLayout>
 
     <LinearLayout
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
         android:layout_weight="1"
+        android:gravity="center_vertical"
         android:orientation="vertical">
 
         <TextView
@@ -71,16 +75,26 @@
             android:textColor="@color/widget_text_secondary"
             android:textSize="12.5sp" />
 
+        <TextView
+            android:id="@+id/f_sub2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/widget_text_secondary"
+            android:textSize="12.5sp" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="14dp"
             android:orientation="horizontal">
 
             <TextView
                 android:id="@+id/f_btn_main"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
+                android:layout_height="44dp"
                 android:layout_weight="1.4"
                 android:background="@drawable/widget_pill_orange"
                 android:gravity="center"
@@ -92,7 +106,7 @@
             <TextView
                 android:id="@+id/f_btn_sub"
                 android:layout_width="0dp"
-                android:layout_height="40dp"
+                android:layout_height="44dp"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
                 android:background="@drawable/widget_pill_soft"
