@@ -130,6 +130,7 @@ fun FocusScreen(
     val connected by viewModel.connected.collectAsStateWithLifecycle()
     val goal by viewModel.goalMin.collectAsStateWithLifecycle()
     val tasks by viewModel.tasks.collectAsStateWithLifecycle()
+    val projects by viewModel.projects.collectAsStateWithLifecycle()
     val pendingBreak by viewModel.pendingBreak.collectAsStateWithLifecycle()
     val cycle by viewModel.cycle.collectAsStateWithLifecycle()
     val idleKind = pendingBreak ?: FocusKind.FOCUS
@@ -211,6 +212,7 @@ fun FocusScreen(
                     TaskRow(
                         run = live,
                         task = viewModel.task,
+                        project = viewModel.project,
                         onClick = { pickTask = true },
                     )
                 }
@@ -258,11 +260,14 @@ fun FocusScreen(
     if (pickTask) {
         TaskPicker(
             tasks = tasks,
-            selected = viewModel.task?.id,
+            projects = projects,
+            selected = if (live != null) live.taskId else viewModel.task?.id,
+            selectedProject = if (live != null) live.project else viewModel.project,
+            projectOf = viewModel::projectOf,
             adding = viewModel.adding,
             onAdd = { title -> viewModel.addTask(title) { pickTask = false } },
-            onSelect = {
-                viewModel.task = it
+            onSelect = { t, p ->
+                viewModel.choose(t, p)
                 pickTask = false
             },
             onDismiss = { pickTask = false },
@@ -552,19 +557,21 @@ private val BigNumber = TextStyle(
 // ───────────────────────── 专注什么 ─────────────────────────
 
 @Composable
-private fun TaskRow(run: FocusRun?, task: DidaTask?, onClick: () -> Unit) {
+private fun TaskRow(run: FocusRun?, task: DidaTask?, project: String?, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    val locked = run != null
+    // 专注进行中也可以补选 / 更换关联的任务和项目
+    val shownProject = if (run != null) run.project else project
     val title = when {
-        locked -> run?.title?.takeIf { it.isNotBlank() }?.let(TodoMeta::cleanTitle) ?: "自由专注（不关联任务）"
+        run != null -> run.title.takeIf { it.isNotBlank() }?.let(TodoMeta::cleanTitle) ?: "自由专注（不关联任务）"
         task != null -> TodoMeta.cleanTitle(task.title)
+        project != null -> "项目「$project」"
         else -> "自由专注（不关联任务）"
     }
-    val bound = if (locked) (!run?.taskId.isNullOrBlank() || !run?.project.isNullOrBlank()) else task != null
+    val bound = if (run != null) (!run.taskId.isNullOrBlank() || !run.project.isNullOrBlank()) else (task != null || project != null)
     GlassSurface(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
-        onClick = if (locked) null else onClick,
+        onClick = onClick,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 18.dp, vertical = 12.dp),
@@ -580,8 +587,12 @@ private fun TaskRow(run: FocusRun?, task: DidaTask?, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                     color = if (bound) scheme.onSurface else scheme.onSurfaceVariant,
                 )
+                // 任务属于某个项目时，标出来：这次专注会计入项目的专注统计和「里程碑与进展」
+                if (shownProject != null && !title.startsWith("项目「")) {
+                    Text("项目 · $shownProject", fontSize = 12.sp, color = scheme.primary, maxLines = 1)
+                }
             }
-            if (!locked) Text("更换", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = scheme.primary)
+            Text(if (bound) "更换" else "选择", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = scheme.primary)
         }
     }
 }
@@ -590,10 +601,13 @@ private fun TaskRow(run: FocusRun?, task: DidaTask?, onClick: () -> Unit) {
 @Composable
 private fun TaskPicker(
     tasks: List<DidaTask>,
+    projects: List<ProjectChoice>,
     selected: String?,
+    selectedProject: String?,
+    projectOf: (DidaTask) -> String?,
     adding: Boolean,
     onAdd: (String) -> Unit,
-    onSelect: (DidaTask?) -> Unit,
+    onSelect: (DidaTask?, String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -613,9 +627,9 @@ private fun TaskPicker(
         ) {
             item(key = "add") { AddTaskRow(adding, onAdd) }
             item(key = "none") {
-                PickerRow("自由专注", "不关联任务", selected == null) { onSelect(null) }
+                PickerRow("自由专注", "不关联任务", selected == null && selectedProject == null) { onSelect(null, null) }
             }
-            if (tasks.isEmpty()) {
+            if (tasks.isEmpty() && projects.isEmpty()) {
                 item(key = "empty") {
                     Text(
                         "滴答里今天没有待办。可以在上面直接新建一个，或先不关联任务直接开始。",
@@ -626,7 +640,32 @@ private fun TaskPicker(
                 }
             }
             items(tasks, key = { it.id }) { t ->
-                PickerRow(TodoMeta.cleanTitle(t.title), whenText(t), selected == t.id) { onSelect(t) }
+                val p = projectOf(t)
+                PickerRow(
+                    TodoMeta.cleanTitle(t.title),
+                    whenText(t) + (p?.let { " · 项目 $it" } ?: ""),
+                    selected == t.id,
+                ) { onSelect(t, null) }
+            }
+            // 项目：可以直接为项目专注，也可以挑它名下的任务（任务属于项目，专注会计入项目统计和「里程碑与进展」）
+            projects.forEach { pc ->
+                item(key = "project-${pc.keyword}") {
+                    Text(
+                        "项目 · ${pc.keyword}",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 2.dp),
+                    )
+                }
+                item(key = "project-self-${pc.keyword}") {
+                    PickerRow("为项目「${pc.keyword}」专注", "不选具体任务", selected == null && selectedProject == pc.keyword) {
+                        onSelect(null, pc.keyword)
+                    }
+                }
+                items(pc.tasks, key = { "project-${pc.keyword}-${it.id}" }) { t ->
+                    PickerRow(TodoMeta.cleanTitle(t.title), whenText(t), selected == t.id) { onSelect(t, pc.keyword) }
+                }
             }
         }
     }
@@ -713,6 +752,7 @@ private fun whenText(t: DidaTask): String {
     return when {
         t.date == null -> "无日期"
         t.date < today -> "逾期 · " + t.date.drop(5).replaceFirst('-', '/')
+        t.date > today -> t.date.drop(5).replaceFirst('-', '/') + (t.time?.let { " $it" } ?: "")
         else -> "今天" + (t.time?.let { " $it" } ?: "")
     }
 }

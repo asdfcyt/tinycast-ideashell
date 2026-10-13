@@ -204,7 +204,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
                 SettingsItem(
                     icon = Icons.Filled.Create,
                     title = "其他入口",
-                    summary = "任何 App 里点「分享 → 闪念」；选中文字后点菜单里的「记到闪念」；长按桌面图标可直达「记一条」「记待办」",
+                    summary = "任何 App 里点「分享 → 拾忆」；选中文字后点菜单里的「记到拾忆」；长按桌面图标可直达「记一条」「记待办」",
                     onClick = null,
                 )
             }
@@ -243,7 +243,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
                 SettingsItem(
                     icon = Icons.Filled.Add,
                     title = "添加小部件",
-                    summary = "待办、专注、记录（时间河）三种，选一个放到桌面。也可以长按桌面空白处 → 小组件 → 闪念",
+                    summary = "待办、专注、记录（时间河）三种，选一个放到桌面。也可以长按桌面空白处 → 小组件 → 拾忆",
                     onClick = { dialog = Dialog.AddWidget },
                 )
             }
@@ -258,7 +258,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
                 SettingsItem(
                     icon = Icons.Filled.Info,
                     title = "应用启动管理",
-                    summary = "打开系统的应用信息页。在「应用启动管理」里把「闪念」改为手动管理，打开「自启动」「关联启动」「后台活动」；再到多任务界面锁定「闪念」卡片。不同系统版本入口略有差异。",
+                    summary = "打开系统的应用信息页。在「应用启动管理」里把「拾忆」改为手动管理，打开「自启动」「关联启动」「后台活动」；再到多任务界面锁定「拾忆」卡片。不同系统版本入口略有差异。",
                     onClick = { openAppDetails(context) },
                 )
             }
@@ -266,7 +266,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit) {
             Group("关于") {
                 SettingsItem(
                     icon = Icons.Filled.Info,
-                    title = "闪念",
+                    title = "拾忆",
                     summary = "版本 ${BuildConfig.VERSION_NAME} · 记录自动同步到闪念贝壳与滴答清单",
                     onClick = null,
                 )
@@ -544,7 +544,7 @@ private fun requestAddTile(context: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
     val manager = context.getSystemService(StatusBarManager::class.java)
     if (manager == null) {
-        toast(context, "当前系统不支持一键添加，请在通知栏编辑里手动添加「闪念」磁贴")
+        toast(context, "当前系统不支持一键添加，请在通知栏编辑里手动添加「拾忆」磁贴")
         return
     }
     manager.requestAddTileService(
@@ -557,7 +557,7 @@ private fun requestAddTile(context: Context) {
             StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED -> "已添加到快速设置"
             StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED -> "磁贴已经在快速设置里了"
             StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED -> null
-            else -> "系统没有响应，请在通知栏编辑里手动添加「闪念」磁贴"
+            else -> "系统没有响应，请在通知栏编辑里手动添加「拾忆」磁贴"
         }
         if (message != null) toast(context, message)
     }
@@ -598,6 +598,6 @@ private fun requestPinWidget(context: Context, widget: PinnableWidget) {
     if (manager.isRequestPinAppWidgetSupported) {
         manager.requestPinAppWidget(ComponentName(context, widget.provider), null, null)
     } else {
-        Toast.makeText(context, "请长按桌面空白处 → 小组件 → 闪念 → ${widget.title}", Toast.LENGTH_LONG).show()
+        Toast.makeText(context, "请长按桌面空白处 → 小组件 → 拾忆 → ${widget.title}", Toast.LENGTH_LONG).show()
     }
 }

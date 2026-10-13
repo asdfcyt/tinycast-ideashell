@@ -4,15 +4,33 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 闪念贝壳图标：圆环 + 右上角星光（安全区在中间 66dp 内）；背景是品牌橙 -->
+    <!-- 拾忆图标：一条竖向时间轴，上面是圆（日记）、方（待办）、三角（笔记）三种节点，右边是各自的内容行。
+         最新的一条（顶部）最亮，越往下越淡；全部在中间 66dp 安全区内；背景是品牌橙 -->
+    <!-- 轴线 -->
+    <path
+        android:fillColor="#80F7F2EA"
+        android:pathData="M33,40.500 H37 V48 H33 Z M33,60 H37 V68.500 H33 Z" />
+    <!-- 节点：圆（最亮） -->
     <path
         android:fillColor="#FFF7F2EA"
+        android:pathData="M35,27.500 A6.500,6.500 0 1 1 35,40.500 A6.500,6.500 0 1 1 35,27.500 Z" />
+    <!-- 节点：空心圆角方块 -->
+    <path
+        android:fillColor="#E6F7F2EA"
         android:fillType="evenOdd"
-        android:pathData="M50,35 A19,19 0 1 1 50,73 A19,19 0 1 1 50,35 Z M50,46 A8,8 0 1 0 50,62 A8,8 0 1 0 50,46 Z" />
+        android:pathData="M32,48 H38 A3,3 0 0 1 41,51 V57 A3,3 0 0 1 38,60 H32 A3,3 0 0 1 29,57 V51 A3,3 0 0 1 32,48 Z M33,51 H37 A1,1 0 0 1 38,52 V56 A1,1 0 0 1 37,57 H33 A1,1 0 0 1 32,56 V52 A1,1 0 0 1 33,51 Z" />
+    <!-- 节点：三角 -->
+    <path
+        android:fillColor="#BFF7F2EA"
+        android:pathData="M35,68.500 L41,79 L29,79 Z" />
+    <!-- 内容行：由长到短，由亮到淡 -->
     <path
         android:fillColor="#FFF7F2EA"
-        android:pathData="M69,25 C69.6,31 72.4,33.8 78.400,34.400 C72.400,35 69.600,37.800 69,43.800 C68.400,37.800 65.600,35 59.600,34.400 C65.600,33.800 68.400,31 69,25 Z" />
+        android:pathData="M50,31 H77 A3,3 0 0 1 77,37 H50 A3,3 0 0 1 50,31 Z" />
     <path
-        android:fillColor="#FFF7F2EA"
-        android:pathData="M79,45 C79.300,48 80.700,49.400 83.700,49.700 C80.700,50 79.300,51.400 79,54.400 C78.700,51.400 77.300,50 74.300,49.700 C77.300,49.400 78.700,48 79,45 Z" />
+        android:fillColor="#E6F7F2EA"
+        android:pathData="M50,51 H69 A3,3 0 0 1 69,57 H50 A3,3 0 0 1 50,51 Z" />
+    <path
+        android:fillColor="#BFF7F2EA"
+        android:pathData="M50,71 H61 A3,3 0 0 1 61,77 H50 A3,3 0 0 1 50,71 Z" />
 </vector>

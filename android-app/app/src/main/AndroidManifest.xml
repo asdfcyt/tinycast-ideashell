@@ -71,7 +71,7 @@
             <!--
                 荣耀任意门 / 其他应用的 deeplink 入口：
                 ideashell://capture?text=正文&title=标题&url=链接&source=来源&kind=todo|note|daily（都可省略，text 至少要有）
-                任意门的「文字」类服务就是用这种 deeplink 拉起应用；图片走分享 Intent（见下面的「闪念 · 图片」）。
+                任意门的「文字」类服务就是用这种 deeplink 拉起应用；图片走分享 Intent（见下面的「拾忆 · 图片」）。
             -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -90,7 +90,7 @@
             android:screenOrientation="portrait"
             android:theme="@style/Theme.Ideashell" />
 
-        <!-- 系统分享菜单里的「闪念 · 摘录」；荣耀任意门把拖拽的文字也是按分享 Intent 投递的，一并接住 -->
+        <!-- 系统分享菜单里的「拾忆 · 摘录」；荣耀任意门把拖拽的文字也是按分享 Intent 投递的，一并接住 -->
         <activity-alias
             android:name=".ShareToIdeashell"
             android:exported="true"
@@ -108,7 +108,7 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- 系统分享菜单里的「闪念 · 图片」：相册 / 截图 / 其他应用分享图片过来，保存成带图片的笔记（或 Daily Note） -->
+        <!-- 系统分享菜单里的「拾忆 · 图片」：相册 / 截图 / 其他应用分享图片过来，保存成带图片的笔记（或 Daily Note） -->
         <activity-alias
             android:name=".ShareImageToIdeashell"
             android:exported="true"
@@ -126,7 +126,7 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- 选中文字弹出菜单里的「记到闪念」 -->
+        <!-- 选中文字弹出菜单里的「记到拾忆」 -->
         <activity-alias
             android:name=".ProcessTextToIdeashell"
             android:exported="true"

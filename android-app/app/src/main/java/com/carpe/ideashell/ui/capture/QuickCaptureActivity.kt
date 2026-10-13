@@ -23,7 +23,7 @@ import com.carpe.ideashell.ui.theme.isDark
 /**
  * 轻量输入面板，一个 Activity 服务所有入口：
  * - 快速设置磁贴 / 桌面快捷方式 / 通知上的「＋」：[ACTION_QUICK_CAPTURE]（可带 [EXTRA_KIND] 预设类型）
- * - 系统分享菜单：ACTION_SEND / ACTION_SEND_MULTIPLE（文字 / 链接 / 图片；图片走「闪念 · 图片」入口，存成带图片的笔记）
+ * - 系统分享菜单：ACTION_SEND / ACTION_SEND_MULTIPLE（文字 / 链接 / 图片；图片走「拾忆 · 图片」入口，存成带图片的笔记）
  * - 选中文字菜单：ACTION_PROCESS_TEXT
  * - 荣耀任意门：拖拽文字后系统以「分享」的方式（ACTION_SEND + EXTRA_TEXT）或 deeplink 拉起本页，
  *   所以与分享共用同一条路径；deeplink 形如 `ideashell://capture?text=正文&title=标题&url=链接&source=来源&kind=todo`

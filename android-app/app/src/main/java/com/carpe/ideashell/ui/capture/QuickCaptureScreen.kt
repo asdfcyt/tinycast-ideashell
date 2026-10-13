@@ -303,7 +303,7 @@ private fun ComposingContent(
     ) {
         if (clip != null) {
             Text(
-                text = "${clip.kindTag}到闪念",
+                text = "${clip.kindTag}到拾忆",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,

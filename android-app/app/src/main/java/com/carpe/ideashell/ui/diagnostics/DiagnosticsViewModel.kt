@@ -82,7 +82,7 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
 
     /** 把检查结果整理成可复制的文本（不含任何凭证） */
     fun buildReport(): String = buildString {
-        appendLine("闪念 Android · M0 连通性诊断")
+        appendLine("拾忆 Android · M0 连通性诊断")
         appendLine("设备：${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}（API ${Build.VERSION.SDK_INT}）")
         for (target in McpTarget.entries) {
             appendLine()

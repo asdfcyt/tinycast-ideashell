@@ -163,6 +163,13 @@ class FocusRepository(
         return true
     }
 
+    /** 专注进行中补关联任务 / 项目（休息时不关联）；结束时按这里的最终选择记录 */
+    fun attach(taskId: String?, projectId: String?, title: String, project: String?) {
+        val s = _session.value ?: return
+        if (s.kind.isBreak) return
+        setSession(s.copy(taskId = taskId, projectId = projectId, title = title, project = project))
+    }
+
     fun pause() {
         val s = _session.value ?: return
         if (s.paused) return

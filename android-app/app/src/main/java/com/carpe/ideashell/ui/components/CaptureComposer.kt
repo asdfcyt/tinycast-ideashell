@@ -149,9 +149,13 @@ fun CaptureComposer(
 
     val inputStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, lineHeight = 24.sp)
 
-    // 优先级菜单不抢焦点（抢了键盘就收起来了），所以「点别处 / 继续输入就关掉」要自己处理
+    // 优先级 / 文件夹菜单不抢焦点（抢了键盘就收起来了），所以「点别处 / 继续输入就关掉」要自己处理
     var priorityMenu by remember { mutableStateOf(false) }
-    LaunchedEffect(field.text) { priorityMenu = false }
+    var folderMenu by remember { mutableStateOf(false) }
+    LaunchedEffect(field.text) {
+        priorityMenu = false
+        folderMenu = false
+    }
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -160,7 +164,10 @@ fun CaptureComposer(
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.changes.any { it.pressed && !it.previousPressed }) priorityMenu = false
+                        if (event.changes.any { it.pressed && !it.previousPressed }) {
+                            priorityMenu = false
+                            folderMenu = false
+                        }
                     }
                 }
             }
@@ -242,7 +249,6 @@ fun CaptureComposer(
                 onDismiss = { dateSheet = false },
             )
         }
-        var folderMenu by remember { mutableStateOf(false) }
 
         Row(
             modifier = Modifier.padding(start = 4.dp, end = 8.dp, top = 2.dp),
@@ -308,7 +314,7 @@ fun CaptureComposer(
                         )
                         Icon(Icons.Filled.ArrowDropDown, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
-                    AppMenu(expanded = folderMenu, onDismissRequest = { folderMenu = false }) {
+                    AppMenu(expanded = folderMenu, onDismissRequest = { folderMenu = false }, keepKeyboard = true) {
                         AppMenuItem(
                             text = { Text("自动判断") },
                             selected = plan?.folderName == null,

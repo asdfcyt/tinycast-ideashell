@@ -16,16 +16,21 @@ import com.carpe.ideashell.data.dida.DidaOverview
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.focus.FocusKind
 import com.carpe.ideashell.data.focus.FocusResult
+import com.carpe.ideashell.data.project.ProjectStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+
+/** 选择器里的一个项目：关键词 + 它名下（不在「今天」列表里的）未完成任务 */
+data class ProjectChoice(val keyword: String, val tasks: List<DidaTask>)
 
 class FocusViewModel(private val container: AppContainer) : ViewModel() {
     private val focus = container.focus
@@ -44,6 +49,27 @@ class FocusViewModel(private val container: AppContainer) : ViewModel() {
         .map { data -> data.overview?.let(::candidates).orEmpty() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), container.todos.state.value.overview?.let(::candidates).orEmpty())
 
+    /**
+     * 可以关联的项目：每个关注中（没搁置）的项目，连同它名下还没完成的任务（不论哪天，已在上面「今天」列表里的不重复出现）。
+     * 没有任务的项目也在，可以直接为项目专注。
+     */
+    val projects: StateFlow<List<ProjectChoice>> =
+        combine(container.todos.state, container.projects.workspace) { state, workspace ->
+            val ov = state.overview
+            val shown = ov?.let(::candidates).orEmpty().map { it.id }.toSet()
+            val open = ov?.let { it.overdue + it.upcoming + it.undated }.orEmpty()
+            workspace.projects.filter { it.status != ProjectStatus.PAUSED }.map { p ->
+                ProjectChoice(
+                    keyword = p.keyword,
+                    tasks = open.filter { t -> t.id !in shown && p.matches(t.title, t.tags) }.sortedBy { it.date ?: "9999" },
+                )
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 任务属于哪个项目（关注中的）；不属于任何项目为 null */
+    fun projectOf(t: DidaTask): String? =
+        container.projects.projects.firstOrNull { it.status != ProjectStatus.PAUSED && it.matches(t.title, t.tags) }?.keyword
+
     /** 开始前选的时长（分钟）、绑定的任务；开始后它们就存进 [session]，这里只管下一次 */
     /** 番茄走完后接下来该休息什么（短休息 / 每 4 个番茄一次长休息）；null = 现在是专注 */
     val pendingBreak = focus.pendingBreak
@@ -53,6 +79,9 @@ class FocusViewModel(private val container: AppContainer) : ViewModel() {
 
     var minutes by mutableIntStateOf((focus.pendingBreak.value ?: FocusKind.FOCUS).let { focus.lastMinutes(it) })
     var task by mutableStateOf<DidaTask?>(null)
+
+    /** 关联的项目关键词：选了属于某个项目的任务会自动带上；也可以只选项目、不选任务 */
+    var project by mutableStateOf<String?>(null)
 
     /** 正在新建任务（选择器里的「添加」按钮据此显示「添加中」） */
     var adding by mutableStateOf(false)
@@ -105,10 +134,24 @@ class FocusViewModel(private val container: AppContainer) : ViewModel() {
 
     fun start() {
         val t = task
-        if (!focus.start(t?.id, t?.projectId, t?.title.orEmpty(), minutes, focus.pendingBreak.value ?: FocusKind.FOCUS)) {
+        if (!focus.start(t?.id, t?.projectId, titleOf(t, project), minutes, focus.pendingBreak.value ?: FocusKind.FOCUS, project)) {
             _messages.trySend("已经有一个专注在进行")
         }
     }
+
+    /** 选择器里选了「任务 / 项目」：还没开始就记下来，已经在专注就直接关联到这次专注（休息时不关联） */
+    fun choose(t: DidaTask?, projectKeyword: String?) {
+        val p = projectKeyword ?: t?.let(::projectOf)
+        if (session.value != null) {
+            focus.attach(t?.id, t?.projectId, titleOf(t, p), p)
+        } else {
+            task = t
+            project = p
+        }
+    }
+
+    private fun titleOf(t: DidaTask?, p: String?): String =
+        t?.title?.takeIf { it.isNotBlank() } ?: p?.let { "项目「$it」" }.orEmpty()
 
     fun pauseOrResume() {
         val s = session.value ?: return
@@ -144,7 +187,7 @@ class FocusViewModel(private val container: AppContainer) : ViewModel() {
                 container.todos.refreshNow()
                 val found = created ?: container.todos.state.value.overview?.let(::candidates).orEmpty().firstOrNull { it.title == t }
                 if (found != null) {
-                    task = found
+                    choose(found, null)
                     onAdded()
                 } else {
                     _messages.trySend("任务已创建，但没能自动选中，请在列表里选")

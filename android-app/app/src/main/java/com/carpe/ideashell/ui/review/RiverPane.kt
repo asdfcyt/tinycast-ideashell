@@ -91,7 +91,10 @@ private fun rowsOf(day: DayBucket): List<RiverRow> = buildList {
     day.daily.forEach { add(RiverRow.Daily(it, day.dailyNoteId)) }
     day.notes.forEach { add(RiverRow.Note(it)) }
     day.todos.forEach { add(RiverRow.Todo(it, todoClock(it))) }
-}.sortedByDescending { it.clock }
+}.sortedWith(
+    // 全天（没有具体时间）的待办排在当天最上面，其余按时间从晚到早
+    compareBy<RiverRow> { it.clock.isNotEmpty() }.thenByDescending { it.clock },
+)
 
 fun LazyListScope.riverItems(
     state: Async<TimelineData>,
@@ -264,24 +267,26 @@ private fun TimelineRow(
             }
             .padding(vertical = 8.dp),
     ) {
+        // 竖线靠左，和日期「13」里的「1」对齐；时间放在节点右边、正文左边
+        Spacer(Modifier.width(CLOCK_X.dp))
         Text(
             clock,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Black,
             color = scheme.primary,
-            textAlign = TextAlign.End,
+            textAlign = TextAlign.Start,
             maxLines = 1,
             modifier = Modifier.width(CLOCK_W.dp).padding(top = 3.dp),
         )
-        Spacer(Modifier.width(26.dp))
+        Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f), content = content)
     }
-    // 节点本身只有 12dp，点按区域放大到 36dp
+    // 节点本身只有 12dp，点按区域放大到 24 × 36dp（再往右就是时间了）
     if (onNodeClick != null) {
         Box(
             Modifier
-                .offset(x = (RAIL_X - 18).dp, y = (NODE_Y - 18).dp)
-                .size(36.dp)
+                .offset(x = 0.dp, y = (NODE_Y - 18).dp)
+                .size(width = CLOCK_X.dp - 2.dp, height = 36.dp)
                 .clip(CircleShape)
                 .clickable(onClick = onNodeClick),
         )
@@ -289,9 +294,13 @@ private fun TimelineRow(
     }
 }
 
-/** 时间列宽 42dp；竖线在 50dp（节点 12dp 宽，左右各留 12dp 空隙）；节点中心距行顶 19dp，对齐第一行文字的中线 */
-private const val CLOCK_W = 42
-private const val RAIL_X = 50
+/**
+ * 竖线在 9dp（日期头「13」里「1」的中线）；节点 12dp 宽，往右留出空隙后是时间（36dp 宽，从 26dp 起），再是正文；
+ * 节点中心距行顶 19dp，对齐第一行文字的中线
+ */
+private const val CLOCK_X = 26
+private const val CLOCK_W = 36
+private const val RAIL_X = 9
 private const val NODE_Y = 19
 
 /** 日记一句：没有标题，整句就是内容；点一下打开那一天的 Daily Note 全文 */
