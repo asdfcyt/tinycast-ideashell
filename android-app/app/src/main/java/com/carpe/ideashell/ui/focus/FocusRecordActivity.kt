@@ -64,24 +64,32 @@ class FocusRecordActivity : ComponentActivity() {
         val container = (application as IdeashellApp).container
         val run = container.focus.session.value
         val taskId = run?.taskId
-        if (run == null || run.kind.isBreak || taskId.isNullOrBlank()) {
-            Toast.makeText(this, "当前没有绑定任务的专注", Toast.LENGTH_SHORT).show()
+        val project = run?.project
+        if (run == null || run.kind.isBreak || (taskId.isNullOrBlank() && project.isNullOrBlank())) {
+            Toast.makeText(this, "当前没有绑定任务或项目的专注", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
         val taskTitle = TodoMeta.cleanTitle(run.title).ifBlank { run.title }
+        val target = if (taskId.isNullOrBlank()) "记录到项目" else "记录到任务"
+        val saved = when {
+            taskId.isNullOrBlank() -> "已记录到「$project」的里程碑与进展"
+            project.isNullOrBlank() -> "已记录到任务笔记"
+            else -> "已记录到任务笔记和「$project」的里程碑"
+        }
 
         setContent {
             val settings by container.settings.state.collectAsStateWithLifecycle()
             IdeashellTheme(settings.themeMode) {
                 ApplyEdgeToEdge(isDark(settings.themeMode))
                 RecordPanel(
+                    heading = target,
                     taskTitle = taskTitle,
                     onClose = { finish() },
                     onSubmit = { text ->
                         container.appScope.launch {
                             try {
-                                val synced = container.projects.recordForTask(taskId, text)
+                                val synced = container.projects.recordFocus(taskId, project, text)
                                 val brief = text.take(24) + (if (text.length > 24) "…" else "")
                                 container.focus.refreshNotification("已记录：" + brief + (if (synced) "" else "（滴答评论未同步）"))
                             } catch (e: CancellationException) {
@@ -90,7 +98,7 @@ class FocusRecordActivity : ComponentActivity() {
                                 container.focus.notifier.showRecordResult("记录失败", "${e.message ?: "未知错误"}\n\n你写的内容：$text")
                             }
                         }
-                        Toast.makeText(this, "已记录到任务笔记", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, saved, Toast.LENGTH_SHORT).show()
                         finish()
                     },
                 )
@@ -106,7 +114,7 @@ class FocusRecordActivity : ComponentActivity() {
 }
 
 @Composable
-private fun RecordPanel(taskTitle: String, onClose: () -> Unit, onSubmit: (String) -> Unit) {
+private fun RecordPanel(heading: String, taskTitle: String, onClose: () -> Unit, onSubmit: (String) -> Unit) {
     val scheme = MaterialTheme.colorScheme
     var text by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
@@ -133,7 +141,7 @@ private fun RecordPanel(taskTitle: String, onClose: () -> Unit, onSubmit: (Strin
                 .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("记录到任务", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurfaceVariant)
+            Text(heading, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurfaceVariant)
             Text(taskTitle, style = MaterialTheme.typography.titleMedium, maxLines = 1)
             BasicTextField(
                 value = text,

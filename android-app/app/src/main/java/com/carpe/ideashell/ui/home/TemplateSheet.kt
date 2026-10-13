@@ -141,10 +141,19 @@ private fun FillStep(
     var values by remember(template.name) { mutableStateOf(emptyMap<String, String>()) }
     var confirmDelete by remember { mutableStateOf(false) }
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         TextButton(onClick = onBack) { Text("‹ 选择模板") }
+        Text(
+            template.name,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+        )
+        TextButton(onClick = onEdit) { Text(if (template.builtin) "改成自定义" else "编辑") }
+        if (!template.builtin) {
+            TextButton(onClick = { confirmDelete = true }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+        }
     }
-    Text(template.name, style = MaterialTheme.typography.titleLarge)
     val extra = buildList {
         if (template.tags.isNotEmpty()) add(template.tags.joinToString(" ") { "#$it" })
         template.folderName?.let { add("📁$it") }
@@ -161,21 +170,16 @@ private fun FillStep(
                 label = f.name,
                 placeholder = "点这里输入",
                 singleLine = !f.multiline,
-                minLines = if (f.multiline) 3 else 1,
+                minLines = if (f.multiline) 2 else 1,
+                compact = true,
             )
         }
     }
     Button(
         onClick = { onSubmit(values) },
         colors = brandButtonColors(),
-        modifier = Modifier.fillMaxWidth().height(52.dp),
+        modifier = Modifier.fillMaxWidth().height(48.dp),
     ) { Text("保存") }
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        TextButton(onClick = onEdit) { Text(if (template.builtin) "改成自定义模板" else "编辑模板") }
-        if (!template.builtin) {
-            TextButton(onClick = { confirmDelete = true }) { Text("删除", color = MaterialTheme.colorScheme.error) }
-        }
-    }
     if (confirmDelete) {
         ConfirmDialog(
             title = "删除模板「${template.name}」？",

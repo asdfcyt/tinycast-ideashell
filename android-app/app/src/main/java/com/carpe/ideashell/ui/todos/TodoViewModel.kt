@@ -18,6 +18,8 @@ import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.dida.Habit
 import com.carpe.ideashell.data.dida.TodoData
 import com.carpe.ideashell.data.project.Project
+import com.carpe.ideashell.data.project.ProjectDelivery
+import com.carpe.ideashell.data.project.ProjectFocusStats
 import com.carpe.ideashell.data.project.ProjectStats
 import com.carpe.ideashell.data.project.ProjectStatus
 import com.carpe.ideashell.data.project.Workspace
@@ -76,6 +78,12 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
     val connected: StateFlow<Boolean> = container.credentials.didaConnected
     val workspace: StateFlow<Workspace> = container.projects.workspace
     val stats: StateFlow<Map<String, ProjectStats>> = container.projects.stats
+    val delivery: StateFlow<Map<String, ProjectDelivery>> = container.projects.delivery
+    val focusStats: StateFlow<Map<String, ProjectFocusStats>> = container.projects.focusStats
+
+    /** 正在进行的专注（项目页的「专注一次」据此显示「专注中」） */
+    val focusSession: StateFlow<com.carpe.ideashell.data.focus.FocusRun?> = container.focus.session
+    val lastFocusMinutes: Int get() = container.focus.lastMinutes
 
     var showDone by mutableStateOf(false)
     var showAllUndated by mutableStateOf(false)
@@ -102,6 +110,7 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             val r = if (task.done) container.todos.undoComplete(task) else container.todos.complete(task)
             r.onFailure { fail(if (task.done) "撤销失败" else "完成失败", it) }
+            if (task.done) r.onSuccess { container.appScope.launch { runCatching { container.projects.afterUndo(task) } } }
             loadPast(day, force = true)
         }
     }
@@ -180,7 +189,9 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
 
     fun undoComplete(task: DidaTask) {
         viewModelScope.launch {
-            container.todos.undoComplete(task).onFailure { fail("撤销失败", it) }
+            container.todos.undoComplete(task)
+                .onSuccess { container.appScope.launch { runCatching { container.projects.afterUndo(task) } } }
+                .onFailure { fail("撤销失败", it) }
         }
     }
 
@@ -314,6 +325,21 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
                     // 单个项目统计失败不影响其它
                 }
             }
+            // 成果交付进度（项目卡片上的环用它）：只读，不归档；任务列表还没读到时先不算
+            val ov = container.todos.state.value.overview
+            if (ov != null || !connected.value) {
+                for (p in container.projects.projects) {
+                    if (p.status == ProjectStatus.PAUSED || container.projects.taskNotesOf(p).isEmpty()) continue
+                    val open = ov?.let { o -> (o.overdue + o.upcoming + o.undated).filter { p.matches(it.title, it.tags) }.map { it.id }.toSet() }.orEmpty()
+                    val done = ov?.done.orEmpty().filter { p.matches(it.title, it.tags) }.map { it.id }.toSet()
+                    try {
+                        container.projects.refreshDelivery(p, open, done, archive = false)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                    }
+                }
+            }
         }
     }
 
@@ -327,6 +353,42 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
                 fail("统计失败", e)
             }
         }
+    }
+
+    /** 统计项目的成果交付与专注（打开项目页时调用；统计不出来就保留上一次的结果，不打扰） */
+    fun loadProjectProgress(p: Project, openIds: Set<String>, doneIds: Set<String>) {
+        viewModelScope.launch {
+            try {
+                container.projects.refreshDelivery(p, openIds, doneIds)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+        viewModelScope.launch {
+            try {
+                container.projects.refreshFocus(p, openIds + doneIds)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /**
+     * 从项目页开始一次专注：[task] 可以不选（直接为项目专注）。已经有专注在进行时返回 false。
+     * 记录的内容会写进项目主页的「里程碑与进展」。
+     */
+    fun startProjectFocus(p: Project, task: DidaTask?, minutes: Int): Boolean {
+        val ok = container.focus.start(
+            taskId = task?.id,
+            projectId = task?.projectId,
+            title = task?.title.orEmpty().ifBlank { "项目「${p.keyword}」" },
+            minutes = minutes,
+            project = p.keyword,
+        )
+        if (!ok) message("已经有一个专注在进行，先到专注页结束它")
+        return ok
     }
 
     /** 项目「记一条」：保存为带项目标签的笔记；同名习惯自动打卡 */

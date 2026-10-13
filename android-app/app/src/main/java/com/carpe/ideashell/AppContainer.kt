@@ -157,6 +157,12 @@ class AppContainer(context: Context) {
         daySummary = daySummary,
         hasDida = { !credentials.didaToken.isNullOrBlank() },
         notifier = FocusNotifier(context.applicationContext),
+        onProjectFocus = { project, startMs, endMs, taskId, title ->
+            workspace.update { w ->
+                val entry = com.carpe.ideashell.data.project.ProjectFocusLog(project, startMs, endMs, taskId, title)
+                w.copy(focusLog = (w.focusLog + entry).takeLast(500))
+            }
+        },
     )
 
     /** 专注小部件 + 记录时间河小部件 */

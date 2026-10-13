@@ -62,6 +62,18 @@ data class TaskNoteRef(
     val deliverable: String,
     val project: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
+    /** 任务完成后，笔记里的进展已经移到项目主页的「里程碑与进展」：不再出现在项目页的任务笔记列表里，但仍算已交付的成果 */
+    val archived: Boolean = false,
+)
+
+/** 从某个项目发起的一次专注（本机留一份：没有绑定任务的专注滴答里按任务才查得到，统计项目专注时要靠它） */
+@Serializable
+data class ProjectFocusLog(
+    val project: String,
+    val startMs: Long,
+    val endMs: Long,
+    val taskId: String? = null,
+    val title: String = "",
 )
 
 /** 本机记住今天已打过卡的习惯（接口返回解析不出来时的兜底） */
@@ -78,6 +90,7 @@ data class Workspace(
     val homes: Map<String, String> = emptyMap(),
     val templates: List<Template> = emptyList(),
     val habitDone: HabitDone = HabitDone(),
+    val focusLog: List<ProjectFocusLog> = emptyList(),
 )
 
 /** 单个 JSON 文件持久化的 [Workspace]；读取同步（文件很小），写入放后台线程 */

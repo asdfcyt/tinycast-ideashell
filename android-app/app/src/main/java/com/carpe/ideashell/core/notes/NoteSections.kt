@@ -118,6 +118,25 @@ object NoteSections {
         "项目关键词：${(listOf(keyword) + tags).joinToString("、")}",
     ).joinToString("\n\n")
 
+    private val STAMP_LINE = Regex("^(\\d{4}-\\d{2}-\\d{2}(?: \\d{2}:\\d{2})?)[\\s：:]*(.*)$", RegexOption.DOT_MATCHES_ALL)
+    private val TAG_PREFIX = Regex("^〔[^〕]*〕\\s*")
+
+    /** 一行里程碑 / 进展：拆成（时间戳, 正文）；没有时间戳返回 null 时间戳 */
+    fun splitStamp(line: String): Pair<String?, String> {
+        val t = line.trim().removePrefix("-").removePrefix("*").trim()
+        val m = STAMP_LINE.find(t) ?: return null to t
+        return m.groupValues[1] to m.groupValues[2].trim()
+    }
+
+    /** 去重用的键：去掉列表符号、时间戳和开头的〔来源〕标记，只比较正文本身 */
+    fun milestoneKey(line: String): String = TAG_PREFIX.replace(splitStamp(line).second, "").trim()
+
+    /** 任务笔记「进展记录」里的每一条（去掉列表符号和占位行） */
+    fun progressLines(content: String): List<String> =
+        sectionBody(content, "进展记录").orEmpty().lines()
+            .map { it.trim().removePrefix("-").removePrefix("*").trim() }
+            .filter { it.isNotEmpty() && !isPlaceholderLine(it) }
+
     /** 里程碑文字：有任务笔记就写交付成果并带链接，否则写任务标题 */
     fun milestoneText(title: String, deliverable: String?, noteLink: String?): String =
         if (deliverable != null) "完成：$deliverable${if (noteLink != null) "（[任务笔记]($noteLink)）" else ""}" else "完成：$title"

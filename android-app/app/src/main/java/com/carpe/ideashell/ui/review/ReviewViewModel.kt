@@ -196,7 +196,11 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
     /** 点节点：没做完就完成，做完了就恢复 */
     fun toggleTodo(task: DidaTask) {
         if (task.done) {
-            todoOp(task, "撤销失败", { it.copy(done = false, completedAt = null) }) { container.todos.undoComplete(task) }
+            todoOp(
+                task, "撤销失败",
+                { it.copy(done = false, completedAt = null) },
+                onOk = { container.appScope.launch { runCatching { container.projects.afterUndo(task) } } },
+            ) { container.todos.undoComplete(task) }
         } else {
             todoOp(
                 task, "完成失败",

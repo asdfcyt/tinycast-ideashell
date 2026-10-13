@@ -52,6 +52,8 @@ fun AppTextField(
     horizontalPadding: Dp = 18.dp,
     /** 一出现就获得焦点并弹出输入法（抽屉里的第一个输入框用） */
     autoFocus: Boolean = false,
+    /** 紧凑模式：名称始终在左、输入在右并顶部对齐，行高和内边距都更小（模板录入页用） */
+    compact: Boolean = false,
 ) {
     val scheme = MaterialTheme.colorScheme
     val focusRequester = remember { FocusRequester() }
@@ -91,10 +93,18 @@ fun AppTextField(
         )
     }
 
-    val stacked = label != null && (!singleLine || label.length > 8)
+    val stacked = label != null && !compact && (!singleLine || label.length > 8)
     Column(modifier.fillMaxWidth().padding(horizontal = horizontalPadding)) {
         when {
             label == null -> input(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(vertical = 16.dp))
+            compact -> Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(label, style = labelStyle, modifier = Modifier.width(72.dp))
+                input(Modifier.weight(1f))
+            }
             stacked -> Column(Modifier.padding(vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(label, style = labelStyle)
                 input(Modifier.fillMaxWidth())

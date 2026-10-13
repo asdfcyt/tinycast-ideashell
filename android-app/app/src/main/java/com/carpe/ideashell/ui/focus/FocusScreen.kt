@@ -560,7 +560,7 @@ private fun TaskRow(run: FocusRun?, task: DidaTask?, onClick: () -> Unit) {
         task != null -> TodoMeta.cleanTitle(task.title)
         else -> "自由专注（不关联任务）"
     }
-    val bound = if (locked) !run?.taskId.isNullOrBlank() else task != null
+    val bound = if (locked) (!run?.taskId.isNullOrBlank() || !run?.project.isNullOrBlank()) else task != null
     GlassSurface(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),

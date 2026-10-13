@@ -139,8 +139,9 @@ class FocusNotifier(private val context: Context) {
                 .setWhen(run.endAtMs)
                 .addAction(0, "暂停", action(ACTION_PAUSE, 21))
         }
-        // 「记录」：弹出输入面板写一句话，追加到当前任务的任务笔记（并同步成滴答评论）；休息和没绑任务的自由专注没有这个按钮
-        if (!isBreak && !run.taskId.isNullOrBlank()) builder.addAction(recordAction())
+        // 「记录」：弹出输入面板写一句话，追加到当前任务的任务笔记（并同步成滴答评论）、或项目主页的「里程碑与进展」；
+        // 休息和既没绑任务、也不是从项目发起的自由专注没有这个按钮
+        if (!isBreak && (!run.taskId.isNullOrBlank() || !run.project.isNullOrBlank())) builder.addAction(recordAction())
         builder.addAction(0, if (isBreak) "跳过" else "结束", action(ACTION_FINISH, 23))
         if (NotificationManagerCompat.from(context).areNotificationsEnabled()) nm.notify(RUNNING_ID, builder.build())
     }

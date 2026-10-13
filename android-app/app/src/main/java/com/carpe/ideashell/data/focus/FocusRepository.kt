@@ -47,6 +47,8 @@ data class FocusRun(
     val pausedAtMs: Long? = null,
     val pausedTotalMs: Long = 0L,
     val kind: FocusKind = FocusKind.FOCUS,
+    /** 从项目页发起的专注：项目关键词。专注中的「记录」会写进这个项目的「里程碑与进展」 */
+    val project: String? = null,
 ) {
     val paused: Boolean get() = pausedAtMs != null
     val plannedMs: Long get() = plannedMin * 60_000L
@@ -88,6 +90,8 @@ class FocusRepository(
     private val daySummary: DaySummaryService,
     private val hasDida: () -> Boolean,
     val notifier: FocusNotifier,
+    /** 从项目页发起的专注记录成功落盘时回调：（项目, 开始, 结束, 任务 id, 标题） */
+    private val onProjectFocus: (String, Long, Long, String?, String) -> Unit = { _, _, _, _, _ -> },
 ) {
     private val prefs = context.applicationContext.getSharedPreferences("focus", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
@@ -131,7 +135,14 @@ class FocusRepository(
     // ───────────── 计时控制 ─────────────
 
     /** 开始一次专注；已经有一次在进行时返回 false */
-    fun start(taskId: String?, projectId: String?, title: String, minutes: Int, kind: FocusKind = FocusKind.FOCUS): Boolean {
+    fun start(
+        taskId: String?,
+        projectId: String?,
+        title: String,
+        minutes: Int,
+        kind: FocusKind = FocusKind.FOCUS,
+        project: String? = null,
+    ): Boolean {
         if (_session.value != null) return false
         // 没休息就直接开始下一个专注 = 跳过休息；跳过的是长休息，这一轮也就结束了
         if (!kind.isBreak) skipBreak() else clearPendingBreak()
@@ -146,6 +157,7 @@ class FocusRepository(
                 startMs = System.currentTimeMillis(),
                 plannedMin = m,
                 kind = kind,
+                project = if (isBreak) null else project,
             ),
         )
         return true
@@ -189,6 +201,7 @@ class FocusRepository(
             setSession(null)
             if (elapsed < MIN_RECORD_MS) return@withLock FocusResult.TooShort
             val record = PendingFocus(s.startMs, s.startMs + elapsed, s.taskId, s.title)
+            s.project?.let { onProjectFocus(it, record.startMs, record.endMs, s.taskId, if (s.taskId.isNullOrBlank()) "" else s.title) }
             _pending.value = _pending.value + record
             savePending()
             flushLocked()

@@ -64,10 +64,15 @@ import androidx.compose.ui.unit.sp
 import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.core.template.Templates
 import com.carpe.ideashell.data.dida.DidaTask
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.carpe.ideashell.data.project.Project
+import com.carpe.ideashell.data.project.ProjectDelivery
+import com.carpe.ideashell.data.project.ProjectFocusStats
+import com.carpe.ideashell.data.project.ProjectPulse
 import com.carpe.ideashell.data.project.ProjectStats
 import com.carpe.ideashell.data.project.ProjectStatus
 import com.carpe.ideashell.data.project.TaskNoteEntry
+import com.carpe.ideashell.data.project.Trend
 import com.carpe.ideashell.domain.Dossier
 import com.carpe.ideashell.ui.components.CircleIconButton
 import com.carpe.ideashell.ui.components.ConfirmDialog
@@ -99,7 +104,10 @@ private fun relatedDone(p: Project, ctx: TodoCtx?): List<DidaTask> =
 
 // ───────────────────────── 项目的一句话概况 ─────────────────────────
 
-/** 一个项目在列表 / 卡片 / 主页上要用到的几个数：完成度（最近完成 ÷ 最近完成 + 未完成）、距上次提及的天数、是否该记一条了 */
+/**
+ * 一个项目在列表 / 卡片 / 主页上要用到的几个数：进度、距上次提及的天数、是否该记一条了。
+ * 进度优先用「交付进度」（以成果为单位），没有成果才退回任务完成率（最近完成 ÷ 最近完成 + 未完成）。
+ */
 internal class ProjectBrief(
     val project: Project,
     val stats: ProjectStats?,
@@ -107,8 +115,9 @@ internal class ProjectBrief(
     val done: Int,
     val gap: Int?,
     val stale: Boolean,
+    val delivery: ProjectDelivery? = null,
 ) {
-    val progress: Float? get() = if (open + done == 0) null else done.toFloat() / (open + done)
+    val progress: Float? get() = delivery?.progress ?: if (open + done == 0) null else done.toFloat() / (open + done)
 
     /** 环里写的字：有任务写百分比，没有就写项目名的第一个字 */
     fun ringText(percentSign: Boolean): String =
@@ -121,6 +130,7 @@ internal fun briefsOf(
     stats: Map<String, ProjectStats>,
     ctx: TodoCtx?,
     today: LocalDate,
+    delivery: Map<String, ProjectDelivery> = emptyMap(),
 ): List<ProjectBrief> = projects.map { p ->
     val s = stats[p.keyword]
     val gap = s?.lastDay?.let { Dossier.daysBetween(it, today) }
@@ -131,6 +141,7 @@ internal fun briefsOf(
         done = relatedDone(p, ctx).size,
         gap = gap,
         stale = p.status != ProjectStatus.PAUSED && gap != null && gap >= p.staleDays,
+        delivery = delivery[p.keyword],
     )
 }.sortedWith(
     compareByDescending<ProjectBrief> { it.stale }
@@ -167,7 +178,7 @@ internal fun ProgressRing(
 
 /** 近 12 个月每月提及数的小柱图 */
 @Composable
-private fun MonthBars(series: List<Int>, width: Dp, height: Dp, modifier: Modifier = Modifier) {
+internal fun MonthBars(series: List<Int>, width: Dp, height: Dp, modifier: Modifier = Modifier) {
     val on = Brand.Orange
     val off = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
     Canvas(modifier.size(width, height)) {
@@ -404,6 +415,9 @@ internal fun AddProjectDialog(onDismiss: () -> Unit, onConfirm: (keyword: String
 
 private enum class PageDialog { NEXT, LOG, TAGS, REMOVE }
 
+/** 项目页上从底部弹出的详情 / 发起抽屉 */
+private enum class PageSheet { RECENT, DAYS30, MONTHS, PROGRESS, FOCUS_DETAIL, FOCUS_START }
+
 @Composable
 private fun ProjectTaskRow(t: DidaTask, ctx: TodoCtx, done: Boolean) {
     TaskRow(
@@ -419,14 +433,14 @@ private fun ProjectTaskRow(t: DidaTask, ctx: TodoCtx, done: Boolean) {
 }
 
 @Composable
-private fun HeroButton(text: String, filled: Boolean, onClick: () -> Unit) {
+private fun HeroButton(text: String, filled: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .height(36.dp)
             .clip(CircleShape)
             .background(if (filled) Brand.Brown else Color.White.copy(alpha = 0.38f))
             .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp),
+            .padding(horizontal = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -439,13 +453,20 @@ private fun HeroButton(text: String, filled: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun StatTile(value: String, label: String, modifier: Modifier = Modifier, extra: (@Composable () -> Unit)? = null) {
+private fun StatTile(
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    extra: (@Composable () -> Unit)? = null,
+) {
     val scheme = MaterialTheme.colorScheme
     Column(
         modifier = modifier
             .height(60.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(scheme.surfaceContainerLowest)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
@@ -454,9 +475,23 @@ private fun StatTile(value: String, label: String, modifier: Modifier = Modifier
     }
 }
 
+/** 主卡上的一行进展：成果 / 步骤 / 势头 */
+private fun pulseLine(delivery: ProjectDelivery?, done: Int, total: Int, trend: Trend?): String = buildList {
+    when {
+        delivery != null && delivery.counted > 0 -> {
+            add("成果 ${delivery.delivered}/${delivery.counted}")
+            if (delivery.stepsTotal > 0) add("步骤 ${delivery.stepsDone}/${delivery.stepsTotal}")
+        }
+        total > 0 -> add("任务 $done/$total")
+        else -> add("还没有成果")
+    }
+    add(if (trend == null) "势头 …" else "势头 ${trend.arrow}${trend.label}")
+}.joinToString(" · ") + "  ›"
+
 /**
  * 项目主页（防弹笔记法的「项目主控台」）：
- * 首屏是一张橙色主卡——完成度环、下一步、「记一条」；其下是三格数据、相关任务（可直接勾选）、要交付的成果、项目主页笔记。
+ * 首屏是一张橙色主卡——交付进度环（以成果为单位）、下一步、「记一条」「写下一步」「专注一次」；
+ * 其下是三格数据（点开看对应的笔记）、专注统计、相关任务（可直接勾选）、任务笔记、项目主页笔记。
  * 状态在标题旁的小菜单里改，提醒天数、标签、简报、移除都收进右上角「⋯」。
  */
 @Composable
@@ -464,16 +499,21 @@ internal fun ProjectPage(
     project: Project,
     viewModel: TodoViewModel,
     stats: ProjectStats?,
+    delivery: ProjectDelivery?,
+    focusStats: ProjectFocusStats?,
     ctx: TodoCtx?,
     homeId: String?,
     taskNotes: List<TaskNoteEntry>,
     onBack: () -> Unit,
     onOpenNote: (String) -> Unit,
+    onOpenFocus: () -> Unit,
     onProgress: (task: DidaTask?, noteId: String, text: String) -> Unit,
 ) {
     var dialog by remember { mutableStateOf<PageDialog?>(null) }
+    var sheet by remember { mutableStateOf<PageSheet?>(null) }
     var progressFor by remember { mutableStateOf<TaskNoteEntry?>(null) }
     var homeEdit by remember { mutableStateOf<HomeEditTarget?>(null) }
+    val running by viewModel.focusSession.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
     val scheme = MaterialTheme.colorScheme
     val today = LocalDate.now()
@@ -481,9 +521,20 @@ internal fun ProjectPage(
     val doneTasks = relatedDone(project, ctx)
     val gap = stats?.lastDay?.let { Dossier.daysBetween(it, today) }
     val total = tasks.size + doneTasks.size
+    val progressView = progressViewOf(delivery, doneTasks.size, total)
+    val activeDays = remember(stats, focusStats) { ProjectPulse.activeDays(stats, focusStats) }
+    val trend = if (stats == null) null else ProjectPulse.trend(activeDays, today)
+    val windows = if (stats == null) null else ProjectPulse.windowCounts(activeDays, today)
 
     LaunchedEffect(project.keyword, homeId, taskNotes.size) { viewModel.loadProjectPage(project) }
     LaunchedEffect(project.keyword) { if (stats == null) viewModel.refreshStats(project) }
+    // 成果交付与专注统计：任务列表读到之后统计（成果的状态要对照滴答任务）
+    val openKey = tasks.joinToString(",") { it.id }
+    val doneKey = doneTasks.joinToString(",") { it.id }
+    val connected by viewModel.connected.collectAsStateWithLifecycle()
+    LaunchedEffect(project.keyword, ctx != null, connected, openKey, doneKey, taskNotes.size) {
+        if (ctx != null || !connected) viewModel.loadProjectProgress(project, tasks.map { it.id }.toSet(), doneTasks.map { it.id }.toSet())
+    }
 
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = LocalBottomBarPadding.current + 8.dp),
@@ -577,8 +628,12 @@ internal fun ProjectPage(
                     .padding(horizontal = 16.dp, vertical = 14.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    val progress = if (total == 0) null else doneTasks.size.toFloat() / total
-                    ProgressRing(progress, 64.dp, 7.dp, arc = Brand.Brown, track = Brand.Brown.copy(alpha = 0.18f)) {
+                    val progress = progressView.progress
+                    ProgressRing(
+                        progress, 64.dp, 7.dp,
+                        modifier = Modifier.clip(CircleShape).clickable { sheet = PageSheet.PROGRESS },
+                        arc = Brand.Brown, track = Brand.Brown.copy(alpha = 0.18f),
+                    ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 if (progress == null) "—" else "${(progress * 100).roundToInt()}%",
@@ -586,7 +641,7 @@ internal fun ProjectPage(
                                 fontWeight = FontWeight.ExtraBold,
                                 color = Brand.Brown,
                             )
-                            if (total > 0) Text("${doneTasks.size}/$total", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Brand.Brown)
+                            progressView.caption?.let { Text(it, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Brand.Brown) }
                         }
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -601,15 +656,36 @@ internal fun ProjectPage(
                         )
                     }
                 }
-                Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    HeroButton("记一条", filled = true) { dialog = PageDialog.LOG }
-                    HeroButton(if (project.next.isBlank()) "写下一步" else "修改", filled = false) { dialog = PageDialog.NEXT }
+                // 进展一行话：成果 / 步骤 / 势头；点开看是怎么算出来的
+                Text(
+                    pulseLine(delivery, doneTasks.size, total, trend),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Brand.Brown.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .padding(top = 10.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { sheet = PageSheet.PROGRESS },
+                )
+                Row(Modifier.padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HeroButton("记一条", filled = true, modifier = Modifier.weight(1f)) { dialog = PageDialog.LOG }
+                    HeroButton(if (project.next.isBlank()) "写下一步" else "修改", filled = false, modifier = Modifier.weight(1f)) {
+                        dialog = PageDialog.NEXT
+                    }
+                    HeroButton(
+                        if (running != null) "专注中" else "专注一次",
+                        filled = false,
+                        modifier = Modifier.weight(1f),
+                    ) { if (running != null) onOpenFocus() else sheet = PageSheet.FOCUS_START }
                 }
             }
         }
 
-        // 三格数据：最近提及 / 近 30 天 / 近 12 月（完整的提及笔记在下面「提及的笔记」）
+        // 三格数据：最近提及 / 近 30 天 / 近 12 月；点开看对应的笔记
         item(key = "stats") {
+            val ready = stats != null
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatTile(
                     value = when {
@@ -619,16 +695,19 @@ internal fun ProjectPage(
                     },
                     label = "最近提及",
                     modifier = Modifier.weight(1f),
+                    onClick = if (ready) ({ sheet = PageSheet.RECENT }) else null,
                 )
                 StatTile(
                     value = if (stats == null) "…" else "${stats.count30} 条",
                     label = "近 30 天",
                     modifier = Modifier.weight(1f),
+                    onClick = if (ready) ({ sheet = PageSheet.DAYS30 }) else null,
                 )
                 StatTile(
                     value = "",
                     label = "近 12 月",
                     modifier = Modifier.weight(1.3f),
+                    onClick = if (ready) ({ sheet = PageSheet.MONTHS }) else null,
                     extra = {
                         val series = stats?.series.orEmpty()
                         if (series.isNotEmpty()) MonthBars(series, 80.dp, 22.dp) else Text("…", style = MaterialTheme.typography.titleMedium)
@@ -636,6 +715,9 @@ internal fun ProjectPage(
                 )
             }
         }
+
+        // 专注统计：这个项目投入了多少专注时间
+        item(key = "focus") { FocusCard(focusStats) { sheet = PageSheet.FOCUS_DETAIL } }
 
         // 项目主页笔记拆成的组件（上半）：目标、交付成果；笔记还没建时是创建入口
         homeCreateEntry(homeId, viewModel.pageBusy) { viewModel.createHome(project) }
@@ -669,9 +751,6 @@ internal fun ProjectPage(
                 if (showDone && ctx != null) doneTasks.forEach { t -> ProjectTaskRow(t, ctx, done = true) }
             }
         }
-
-        // 提及的笔记：原来「档案」里的内容——凡是写到这个项目关键词 / 标签的笔记，按时间倒序
-        mentionItems(stats, onOpenNote)
 
         // 任务笔记（每个成果一条笔记）
         item(key = "notes") {
@@ -799,79 +878,49 @@ internal fun ProjectPage(
             },
         )
     }
-}
 
-/** 项目页「提及的笔记」：一行概况 + 直接提及的笔记（先 5 条，可展开全部）+ 折叠的「可能相关」 */
-private fun LazyListScope.mentionItems(stats: ProjectStats?, onOpenNote: (String) -> Unit) {
-    if (stats == null || (stats.mentions.isEmpty() && stats.related.isEmpty())) {
-        item(key = "mentions") {
-            val scheme = MaterialTheme.colorScheme
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                GroupLabel("提及的笔记")
-                Text(
-                    if (stats == null) "正在统计…" else "还没有笔记写到这个项目。用上面的「记一条」写第一条。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 8.dp),
-                )
-            }
-        }
-        return
-    }
-
-    item(key = "mentions") {
-        val scheme = MaterialTheme.colorScheme
-        var showAll by remember(stats.keyword) { mutableStateOf(false) }
-        val shown = if (showAll) stats.mentions else stats.mentions.take(MENTION_PREVIEW)
-        val overview = buildList {
-            stats.firstDay?.let { add("${it} 起") }
-            add("累计 ${stats.total} 篇")
-            if (stats.topTags.isNotEmpty()) add(stats.topTags.take(3).joinToString(" ") { "#${it.first}" })
-        }.joinToString(" · ")
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            GroupLabel("提及的笔记", count = stats.mentions.size)
-            Text(
-                overview,
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 8.dp),
+    // 详情 / 发起抽屉
+    when (sheet) {
+        PageSheet.RECENT, PageSheet.DAYS30, PageSheet.MONTHS -> if (stats != null) {
+            StatDetailSheet(
+                kind = when (sheet) {
+                    PageSheet.DAYS30 -> StatKind.DAYS30
+                    PageSheet.MONTHS -> StatKind.MONTHS
+                    else -> StatKind.RECENT
+                },
+                project = project,
+                stats = stats,
+                onOpenNote = onOpenNote,
+                onDismiss = { sheet = null },
             )
-            if (stats.mentions.isNotEmpty()) {
-                ListGroup {
-                    DividedRows(shown) { n ->
-                        NoteRow(
-                            n.note,
-                            onClick = { onOpenNote(n.note.id) },
-                            snippet = (if (n.viaSpeaker && n.mentions == 0) "有其发言　" else "") + n.snippet,
-                        )
-                    }
-                }
-                if (stats.mentions.size > MENTION_PREVIEW) {
-                    TextButton(onClick = { showAll = !showAll }) {
-                        Text(if (showAll) "收起" else "展开全部 ${stats.mentions.size} 篇 ›")
-                    }
-                }
-            }
         }
-    }
 
-    if (stats.related.isNotEmpty()) {
-        item(key = "mentions-related") {
-            var open by remember(stats.keyword) { mutableStateOf(false) }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                GroupLabel(
-                    "可能相关 · 语义相近",
-                    count = stats.related.size,
-                    trailing = { TextButton(onClick = { open = !open }) { Text(if (open) "收起" else "展开 ›") } },
-                )
-                if (open) {
-                    ListGroup {
-                        DividedRows(stats.related) { n -> NoteRow(n.note, onClick = { onOpenNote(n.note.id) }) }
-                    }
+        PageSheet.PROGRESS -> ProgressSheet(
+            project = project,
+            view = progressView,
+            delivery = delivery,
+            trend = trend,
+            windows = windows,
+            gap = gap,
+            focus = focusStats,
+            onDismiss = { sheet = null },
+        )
+
+        PageSheet.FOCUS_DETAIL -> if (focusStats != null) FocusDetailSheet(project, focusStats) { sheet = null }
+
+        PageSheet.FOCUS_START -> FocusStartSheet(
+            project = project,
+            tasks = tasks,
+            defaultMinutes = viewModel.lastFocusMinutes,
+            onStart = { task, minutes ->
+                if (viewModel.startProjectFocus(project, task, minutes)) {
+                    sheet = null
+                    onOpenFocus()
                 }
-            }
-        }
+            },
+            onDismiss = { sheet = null },
+        )
+
+        null -> Unit
     }
 }
-
-private const val MENTION_PREVIEW = 5

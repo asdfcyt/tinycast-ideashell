@@ -272,6 +272,7 @@ private fun AppRoot(requestedTab: Int?, onTabConsumed: () -> Unit, requestedFocu
                                 onOpenSearch = { search = true },
                                 onOpenConnection = { connection = true },
                                 onOpenNote = { noteId = it },
+                                onOpenFocus = { focus = true },
                             )
 
                             TAB_SETTINGS -> SettingsScreen(onOpenConnection = { connection = true })

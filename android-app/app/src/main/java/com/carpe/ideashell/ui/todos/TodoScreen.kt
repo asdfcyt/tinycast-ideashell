@@ -189,12 +189,15 @@ fun TodoScreen(
     onOpenConnection: () -> Unit,
     onOpenSearch: () -> Unit = {},
     onOpenNote: (String) -> Unit = {},
+    onOpenFocus: () -> Unit = {},
     viewModel: TodoViewModel = viewModel(factory = TodoViewModel.Factory),
 ) {
     val data by viewModel.data.collectAsStateWithLifecycle()
     val connected by viewModel.connected.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val stats by viewModel.stats.collectAsStateWithLifecycle()
+    val delivery by viewModel.delivery.collectAsStateWithLifecycle()
+    val focusStats by viewModel.focusStats.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -266,7 +269,7 @@ fun TodoScreen(
         }
     }
 
-    val briefs = remember(workspace, stats, ctx, today) { briefsOf(workspace.projects, stats, ctx, today) }
+    val briefs = remember(workspace, stats, ctx, today, delivery) { briefsOf(workspace.projects, stats, ctx, today, delivery) }
 
     // 完整的项目 / 习惯页按返回键，回到任务页
     BackHandler(enabled = view != TodoView.LIST && viewModel.openProject == null) { viewModel.view = TodoView.LIST }
@@ -289,17 +292,20 @@ fun TodoScreen(
                     project = openedProject,
                     viewModel = viewModel,
                     stats = stats[openedProject.keyword],
+                    delivery = delivery[openedProject.keyword],
+                    focusStats = focusStats[openedProject.keyword],
                     ctx = ctx,
                     homeId = workspace.homes[openedProject.keyword],
                     taskNotes = remember(workspace, openedProject) {
                         val terms = openedProject.terms.map { it.lowercase() }
                         workspace.taskNotes.entries
-                            .filter { (_, r) -> r.project != null && r.project.lowercase() in terms }
+                            .filter { (_, r) -> !r.archived && r.project != null && r.project.lowercase() in terms }
                             .map { TaskNoteEntry(it.key, it.value) }
                             .sortedByDescending { it.ref.createdAt }
                     },
                     onBack = { viewModel.openProject = null },
                     onOpenNote = onOpenNote,
+                    onOpenFocus = onOpenFocus,
                     onProgress = { task, noteId, text -> viewModel.addProgress(task, noteId, text) },
                 )
             }

@@ -78,6 +78,16 @@ class ProjectService(
     private val _stats = MutableStateFlow<Map<String, ProjectStats>>(emptyMap())
     val stats: StateFlow<Map<String, ProjectStats>> = _stats.asStateFlow()
 
+    private val _delivery = MutableStateFlow<Map<String, ProjectDelivery>>(emptyMap())
+
+    /** 各项目的成果交付情况（项目页打开时统计，只留在内存里） */
+    val delivery: StateFlow<Map<String, ProjectDelivery>> = _delivery.asStateFlow()
+
+    private val _focusStats = MutableStateFlow<Map<String, ProjectFocusStats>>(emptyMap())
+
+    /** 各项目的专注统计（项目页打开时统计，只留在内存里） */
+    val focusStats: StateFlow<Map<String, ProjectFocusStats>> = _focusStats.asStateFlow()
+
     // ───────────── 项目列表 ─────────────
 
     val projects: List<Project> get() = store.current.projects
@@ -98,6 +108,8 @@ class ProjectService(
             )
         }
         _stats.update { it - keyword }
+        _delivery.update { it - keyword }
+        _focusStats.update { it - keyword }
     }
 
     private fun edit(keyword: String, change: (Project) -> Project) {
@@ -142,7 +154,7 @@ class ProjectService(
             at = System.currentTimeMillis(),
             lastDay = days.firstOrNull(),
             lastTitle = direct.firstOrNull()?.note?.title.orEmpty(),
-            count30 = days.count { Dossier.daysBetween(it, today) <= 30 },
+            count30 = days.count { Dossier.daysBetween(it, today) < 30 },
             total = days.size,
             series = Dossier.monthlySeries(days, today).second,
             brief = datas.firstOrNull()?.brief.orEmpty(),
@@ -255,15 +267,20 @@ class ProjectService(
     suspend fun afterComplete(task: DidaTask, review: String): String {
         val ref = taskNote(task.id)
         val project = projectOf(task)
+        val text = review.trim()
         if (project != null) {
-            softly {
-                recordMilestone(
-                    project.keyword,
-                    NoteSections.milestoneText(TodoMeta.cleanTitle(task.title), ref?.deliverable, ref?.let { noteUrl(it.noteId) }),
-                )
+            if (ref != null) {
+                // 有任务笔记：把笔记里的进展（和这次的复盘）移到「里程碑与进展」，再记一行「完成」，笔记随之归档
+                softly { archiveTaskNote(project.keyword, TaskNoteEntry(taskKeyOf(task.id), ref), text) }
+            } else {
+                softly {
+                    recordMilestone(
+                        project.keyword,
+                        NoteSections.milestoneText(TodoMeta.cleanTitle(task.title), null, null),
+                    )
+                }
             }
         }
-        val text = review.trim()
         if (text.isEmpty()) return "已完成"
         val synced = softly { comment(task.projectId, task.id, "复盘：$text") } == true
         val suffix = if (synced) "（已同步到滴答评论）" else ""
@@ -411,6 +428,209 @@ class ProjectService(
         editNote(homeId, "里程碑与进展") { old -> "$old${if (old.isNotEmpty()) "\n" else ""}- ${NoteSections.minuteStamp()} $text" }
     }
 
+    /** 往「里程碑与进展」追加若干行，正文已经有的（忽略时间戳和〔来源〕）不重复写 */
+    private suspend fun appendMilestones(homeId: String, lines: List<String>) {
+        if (lines.isEmpty()) return
+        editNote(homeId, "里程碑与进展") { old ->
+            val have = old.lines().map(NoteSections::milestoneKey).toHashSet()
+            val fresh = lines.filter { have.add(NoteSections.milestoneKey(it)) }
+            if (fresh.isEmpty()) old else "$old${if (old.isNotEmpty()) "\n" else ""}${fresh.joinToString("\n")}"
+        }
+    }
+
+    private val archiveLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * 任务完成：把任务笔记「进展记录」里的每一条（和这次的复盘）移到项目主页「里程碑与进展」，再记一行「完成」，
+     * 然后给笔记打上已归档标记（它不再出现在项目页的任务笔记列表里，但仍算已交付的成果）。
+     * 项目还没有主页笔记时什么都不做（笔记保持原样）；读写失败抛异常，下次打开项目页会再试。
+     */
+    private suspend fun archiveTaskNote(keyword: String, entry: TaskNoteEntry, review: String): Boolean = archiveLock.withLock {
+        val ref = store.current.taskNotes[entry.taskKey] ?: return@withLock false
+        if (ref.archived) return@withLock false
+        val homeId = resolveHome(keyword) ?: return@withLock false
+        val tag = "〔${ref.deliverable}〕"
+        val detail = ideashell.noteDetail(ref.noteId)
+        val lines = mutableListOf<String>()
+        for (line in NoteSections.progressLines(detail.content)) {
+            val (stamp, body) = NoteSections.splitStamp(line)
+            lines += "- ${stamp ?: NoteSections.minuteStamp()} ${tag}$body"
+        }
+        val now = NoteSections.minuteStamp()
+        if (review.isNotBlank()) lines += "- $now ${tag}复盘：${review.trim().replace(Regex("\\s*\\n\\s*"), " ")}"
+        lines += "- $now ${NoteSections.milestoneText("", ref.deliverable, noteUrl(ref.noteId))}"
+        appendMilestones(homeId, lines)
+        store.update { w -> w.copy(taskNotes = w.taskNotes + (entry.taskKey to ref.copy(archived = true))) }
+        true
+    }
+
+    /**
+     * 撤销完成（任务恢复为未完成）：任务笔记重新回到项目页的任务笔记列表，
+     * 并把完成时写进「里程碑与进展」的「完成：…」一行和复盘一行删掉（别的进展记录保留）。
+     * 失败不影响任务本身，下次完成时会重新写入。
+     */
+    suspend fun afterUndo(task: DidaTask) {
+        val key = taskKeyOf(task.id)
+        val ref = store.current.taskNotes[key]
+        if (ref != null && ref.archived) store.update { w -> w.copy(taskNotes = w.taskNotes + (key to ref.copy(archived = false))) }
+        val project = projectOf(task) ?: return
+        val homeId = softly { resolveHome(project.keyword) } ?: return
+        val title = TodoMeta.cleanTitle(task.title)
+        // 完成那一行有两种写法：有任务笔记写成果名（带笔记链接），没有就写任务标题
+        val doneKeys = buildSet {
+            add(NoteSections.milestoneKey(NoteSections.milestoneText(title, null, null)))
+            if (ref != null) add(NoteSections.milestoneKey(NoteSections.milestoneText(title, ref.deliverable, noteUrl(ref.noteId))))
+        }
+        val reviewPrefix = ref?.let { "〔${it.deliverable}〕复盘：" }
+        softly {
+            editNote(homeId, "里程碑与进展") { old ->
+                old.lines().filterNot { line ->
+                    val body = NoteSections.splitStamp(line).second
+                    NoteSections.milestoneKey(line) in doneKeys || (reviewPrefix != null && body.startsWith(reviewPrefix))
+                }.joinToString("\n")
+            }
+        }
+    }
+
+    /**
+     * 专注通知上的「记录」：绑定了任务就记到任务笔记（并同步滴答评论）；
+     * 从项目页发起的专注，还会记一行到项目主页的「里程碑与进展」（项目还没有主页笔记就先建一个）。
+     * @return 任务评论是否同步到了滴答（没有绑定任务时为 true）
+     */
+    suspend fun recordFocus(taskId: String?, project: String?, text: String): Boolean {
+        val line = text.trim()
+        var synced = true
+        var failure: Exception? = null
+        if (!taskId.isNullOrBlank()) {
+            try {
+                synced = recordForTask(taskId, line)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failure = e
+            }
+        }
+        val p = project?.let { k -> projects.firstOrNull { it.keyword == k } }
+        if (p != null) {
+            try {
+                val label = if (taskId.isNullOrBlank()) "专注" else taskNote(taskId)?.deliverable ?: "专注"
+                recordLock.withLock {
+                    val homeId = resolveHome(p.keyword) ?: createHome(p)
+                    appendMilestones(homeId, listOf("- ${NoteSections.minuteStamp()} 〔$label〕${line.replace(Regex("\\s*\\n\\s*"), " ")}"))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (failure == null) failure = e
+            }
+        }
+        failure?.let { throw it }
+        return synced
+    }
+
+    // ───────────── 项目进展：成果交付 ─────────────
+
+    /**
+     * 统计项目的成果交付情况（见 [ProjectDelivery]）。[openIds] / [doneIds] 是滴答缓存里已知的未完成 / 近期已完成任务 id，
+     * 其余成果的任务再去滴答查一次状态；查不到的记为「状态未知」，不计入。
+     * 顺带把已经完成、但进展还没移到「里程碑与进展」的任务笔记归档（比如在滴答里直接完成的任务）。
+     */
+    suspend fun refreshDelivery(p: Project, openIds: Set<String>, doneIds: Set<String>, archive: Boolean = true): ProjectDelivery {
+        val entries = taskNotesOf(p).take(20)
+        val items = coroutineScope {
+            entries.map { e ->
+                async {
+                    val state = when {
+                        e.ref.archived || e.taskId in doneIds -> DeliveryState.DONE
+                        e.taskId in openIds -> DeliveryState.ACTIVE
+                        hasDida() -> softly { dida.fetchTask(e.taskId) }?.let { if (it.done) DeliveryState.DONE else DeliveryState.ACTIVE }
+                            ?: DeliveryState.UNKNOWN
+                        else -> DeliveryState.UNKNOWN
+                    }
+                    val steps = if (state == DeliveryState.ACTIVE) {
+                        softly { ideashell.noteDetail(e.ref.noteId) }?.let { NoteSections.stepProgress(it.content) }
+                    } else {
+                        null
+                    }
+                    DeliveryItem(e.ref.deliverable, e.ref.noteId, state, steps?.first ?: 0, steps?.second ?: 0)
+                }
+            }.awaitAll()
+        }
+        if (archive) {
+            entries.forEachIndexed { i, e ->
+                if (items[i].state == DeliveryState.DONE && !e.ref.archived) softly { archiveTaskNote(p.keyword, e, "") }
+            }
+        }
+        val d = ProjectDelivery(p.keyword, System.currentTimeMillis(), items)
+        _delivery.update { it + (p.keyword to d) }
+        return d
+    }
+
+    // ───────────── 项目进展：专注 ─────────────
+
+    /**
+     * 统计项目的专注：滴答里近 [FOCUS_DAYS] 天的专注中，任务属于该项目的（[taskIds]、任务笔记对应的任务，或任务标题含项目关键词 / 标签），
+     * 再加上从项目页发起的专注（本机留的记录；和滴答里同一次的按开始时间去重）。
+     */
+    suspend fun refreshFocus(p: Project, taskIds: Set<String>, today: LocalDate = LocalDate.now()): ProjectFocusStats {
+        val zone = java.time.ZoneId.systemDefault()
+        val from = today.minusDays(FOCUS_DAYS - 1L)
+        val ids = taskIds + taskNotesOf(p).map { it.taskId }
+        val summary = if (hasDida()) softly { daySummary.focusIn(from, today.plusDays(1), today) } else null
+        val titles = summary?.titles.orEmpty()
+
+        class Item(val start: Long, val end: Long, val title: String)
+
+        val items = ArrayList<Item>()
+        for (s in summary?.sessions.orEmpty()) {
+            val title = s.title ?: s.taskId?.let { titles[it] }
+            val mine = (s.taskId != null && s.taskId in ids) || (title != null && p.matches(title))
+            if (mine) items += Item(s.startMs, s.endMs, TodoMeta.cleanTitle(title.orEmpty()).ifBlank { "（未命名任务）" })
+        }
+        val fromMs = from.atStartOfDay(zone).toInstant().toEpochMilli()
+        for (l in store.current.focusLog) {
+            if (l.project != p.keyword || l.startMs < fromMs) continue
+            if (items.any { kotlin.math.abs(it.start - l.startMs) < 90_000L }) continue
+            items += Item(l.startMs, l.endMs, TodoMeta.cleanTitle(l.title).ifBlank { "（项目专注）" })
+        }
+
+        var todayMin = 0
+        var weekMin = 0
+        var monthMin = 0
+        var totalMin = 0
+        val daily = IntArray(14)
+        val active = HashSet<LocalDate>()
+        val byTask = LinkedHashMap<String, Int>()
+        for (i in items) {
+            val day = java.time.Instant.ofEpochMilli(i.start).atZone(zone).toLocalDate()
+            val m = Math.round((i.end - i.start) / 60000.0).toInt().coerceAtLeast(0)
+            val ago = Dossier.daysBetween(day, today)
+            totalMin += m
+            if (ago <= 29) monthMin += m
+            if (ago <= 6) weekMin += m
+            if (ago <= 0) todayMin += m
+            if (ago in 0..13) daily[13 - ago] += m
+            active += day
+            byTask[i.title] = (byTask[i.title] ?: 0) + m
+        }
+        val stats = ProjectFocusStats(
+            keyword = p.keyword,
+            at = System.currentTimeMillis(),
+            todayMin = todayMin,
+            weekMin = weekMin,
+            monthMin = monthMin,
+            totalMin = totalMin,
+            windowDays = FOCUS_DAYS,
+            count = items.size,
+            daily14 = daily.toList(),
+            byTask = byTask.entries.sortedByDescending { it.value }.map { it.key to it.value },
+            sessions = items.sortedByDescending { it.start }.take(12).map { ProjectFocusSession(it.start, it.end, it.title) },
+            activeDays = active,
+        )
+        _focusStats.update { it + (p.keyword to stats) }
+        return stats
+    }
+
     /**
      * 项目主页自动汇总：每个成果的状态、步骤进度、近 7 天专注，以及项目的下一步，写进主页笔记的两个小节。
      * 全部是精确读取（任务状态 / `- [x]` 计数 / 专注记录），没有任何猜测。
@@ -481,6 +701,8 @@ class ProjectService(
     }
 
     private companion object {
+        /** 项目专注统计往回看多少天 */
+        const val FOCUS_DAYS = 90
         val RE_TASK_NOTE_LINK = Regex("任务笔记[：:]\\s*https?://[^\\s/]+/boards/([a-f0-9]+)", RegexOption.IGNORE_CASE)
         val RE_NOTE_ID_JSON = Regex("\"note_id\"\\s*:\\s*\"([^\"]+)\"")
         val RE_NOTE_ID_TEXT = Regex("note_id[:\\s]+([0-9a-f]{16,})", RegexOption.IGNORE_CASE)
