@@ -43,6 +43,8 @@ data class CaptureEntity(
     @ColumnInfo(defaultValue = "") val images: String = "",
     /** 待办优先级：0 无 / 1 低 / 3 中 / 5 高（旧记录只有 [important]，等同于高） */
     @ColumnInfo(defaultValue = "0") val priority: Int = 0,
+    /** 待办的重复规则（滴答 repeatFlag，如 `RRULE:FREQ=DAILY;INTERVAL=1`）；不重复为 null */
+    val repeatRule: String? = null,
 )
 
 /** 实际写给滴答的优先级 */

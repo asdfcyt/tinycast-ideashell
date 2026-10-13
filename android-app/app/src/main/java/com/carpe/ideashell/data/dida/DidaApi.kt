@@ -23,18 +23,35 @@ class DidaApi(private val mcp: McpClient) {
      * 新建任务。没有日期 = 无日期任务（进滴答收集箱）；
      * 有具体时间：准点提醒；只有日期：当天 9:00 提醒。
      * @param priority 0 无 / 1 低 / 3 中 / 5 高
+     * @param repeatFlag 重复规则（RFC 5545 RRULE，如 `RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO`）；需要有日期才生效。
+     *   滴答开放接口的任务对象里就有 `repeatFlag` 字段，`create_task` / `update_task` 的 task 参数沿用同一个模型
      */
-    suspend fun createTask(title: String, date: String?, time: String?, priority: Int = 0): DidaTask? {
+    suspend fun createTask(title: String, date: String?, time: String?, priority: Int = 0, repeatFlag: String? = null): DidaTask? {
         val zone = ZoneId.systemDefault()
+        val repeat = repeatFlag?.takeIf { it.isNotBlank() && date != null }
         val text = mcp.callText(
             "create_task",
             buildJsonObject {
-                put("task", taskObject(title, date, time, priority, zone))
+                put("task", taskObject(title, date, time, priority, zone, repeat))
                 put("client_timezone", zone.id)
             },
         )
         // 返回里通常带着新任务（含 id）；解析不出来返回 null，由调用方自己去列表里找
-        return runCatching { DidaParser.extractTasks(text, zone).firstOrNull { it.title == title } }.getOrNull()
+        val created = runCatching { DidaParser.extractTasks(text, zone).firstOrNull { it.title == title } }.getOrNull()
+        // 返回的任务里没有重复规则（创建时被忽略了）：用 update_task 补一次；失败不影响任务本身
+        if (repeat != null && date != null && created != null && created.repeatFlag.isNullOrBlank()) {
+            runCatching {
+                update(created) {
+                    val due = dueString(date, time, zone)
+                    put("startDate", due)
+                    put("dueDate", due)
+                    put("isAllDay", time == null)
+                    put("timeZone", zone.id)
+                    put("repeatFlag", repeat)
+                }
+            }.onFailure { if (it is CancellationException) throw it }
+        }
+        return created
     }
 
     /** 完成任务 */
@@ -361,11 +378,12 @@ class DidaApi(private val mcp: McpClient) {
         Result.failure(e)
     }
 
-    private fun taskObject(title: String, date: String?, time: String?, priority: Int, zone: ZoneId): JsonObject =
+    private fun taskObject(title: String, date: String?, time: String?, priority: Int, zone: ZoneId, repeatFlag: String? = null): JsonObject =
         buildJsonObject {
             put("title", title)
             if (priority > 0) put("priority", priority)
             if (date != null) {
+                if (repeatFlag != null) put("repeatFlag", repeatFlag)
                 val due = dueString(date, time, zone)
                 put("startDate", due)
                 put("dueDate", due)

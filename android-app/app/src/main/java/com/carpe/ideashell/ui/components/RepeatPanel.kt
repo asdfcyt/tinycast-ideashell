@@ -1,0 +1,208 @@
+package com.carpe.ideashell.ui.components
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.carpe.ideashell.core.parse.RepeatPreset
+import com.carpe.ideashell.core.parse.RepeatRule
+import java.time.DayOfWeek
+import java.time.LocalDate
+
+/**
+ * 日期面板里「重复」展开后的选项（对标滴答）：不重复 / 每天 / 每个工作日 / 每周 / 每月 / 每年 / 自定义。
+ * 每周、每月的具体星期、几号跟着当前选的日期走；自定义可以设「每 N 天 / 周 / 月 / 年」，每周还能多选星期。
+ *
+ * @param preset 当前选中的常用选项；[custom] 非空表示正在用自定义规则；两者都为空 = 不重复
+ */
+@Composable
+internal fun RepeatPanel(
+    date: LocalDate,
+    preset: RepeatPreset?,
+    custom: RepeatRule?,
+    onPreset: (RepeatPreset?) -> Unit,
+    onCustom: (RepeatRule) -> Unit,
+) {
+    var customOpen by remember { mutableStateOf(custom != null) }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        ChoiceRow("不重复", "", selected = preset == null && custom == null) {
+            customOpen = false
+            onPreset(null)
+        }
+        RepeatPreset.entries.forEach { p ->
+            ChoiceRow(p.label, p.hint(date), selected = custom == null && preset == p) {
+                customOpen = false
+                onPreset(p)
+            }
+        }
+        ChoiceRow("自定义", custom?.resolved(date)?.label().orEmpty(), selected = custom != null) {
+            customOpen = true
+            if (custom == null) onCustom(preset?.rule(date) ?: RepeatRule(RepeatRule.Freq.DAILY))
+        }
+        if (customOpen && custom != null) CustomEditor(date, custom, onCustom)
+    }
+}
+
+@Composable
+private fun CustomEditor(date: LocalDate, rule: RepeatRule, onChange: (RepeatRule) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(scheme.onSurface.copy(alpha = 0.05f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("每", style = MaterialTheme.typography.titleSmall)
+            Stepper(rule.interval) { onChange(rule.copy(interval = it.coerceIn(1, 99))) }
+            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                RepeatRule.Freq.entries.forEach { f ->
+                    Chip(
+                        label = f.unit.removePrefix("个"),
+                        selected = rule.freq == f,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        onChange(
+                            when (f) {
+                                RepeatRule.Freq.WEEKLY -> rule.copy(freq = f, weekdays = rule.weekdays.ifEmpty { setOf(date.dayOfWeek) }, monthDay = null)
+                                RepeatRule.Freq.MONTHLY -> rule.copy(freq = f, weekdays = emptySet(), monthDay = date.dayOfMonth)
+                                else -> rule.copy(freq = f, weekdays = emptySet(), monthDay = null)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        when (rule.freq) {
+            RepeatRule.Freq.WEEKLY -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                WEEK_ORDER.forEach { d ->
+                    val on = d in rule.weekdays
+                    Chip(RepeatRule.weekdayName(d).removePrefix("周"), selected = on, modifier = Modifier.weight(1f)) {
+                        // 至少留一天，全部取消没有意义
+                        val next = if (on) rule.weekdays - d else rule.weekdays + d
+                        if (next.isNotEmpty()) onChange(rule.copy(weekdays = next))
+                    }
+                }
+            }
+
+            RepeatRule.Freq.MONTHLY -> Text(
+                "每月 ${rule.monthDay ?: date.dayOfMonth} 日（跟随所选日期）",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+
+            else -> Unit
+        }
+    }
+}
+
+@Composable
+private fun Stepper(value: Int, onChange: (Int) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier.clip(CircleShape).background(scheme.onSurface.copy(alpha = 0.08f)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "−",
+            modifier = Modifier.clickable(role = Role.Button) { onChange(value - 1) }.padding(horizontal = 12.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            "$value",
+            modifier = Modifier.width(26.dp),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            "+",
+            modifier = Modifier.clickable(role = Role.Button) { onChange(value + 1) }.padding(horizontal = 12.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.titleMedium,
+        )
+    }
+}
+
+@Composable
+private fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier = modifier
+            .height(34.dp)
+            .clip(CircleShape)
+            .background(if (selected) scheme.primary else scheme.onSurface.copy(alpha = 0.08f))
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            color = if (selected) scheme.onPrimary else scheme.onSurface,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun ChoiceRow(label: String, hint: String, selected: Boolean, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) scheme.primary.copy(alpha = 0.16f) else scheme.onSurface.copy(alpha = 0.05f))
+            .clickable(role = Role.RadioButton, onClick = onClick)
+            .height(46.dp)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+        )
+        Text(
+            hint,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = scheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        if (selected) Icon(Icons.Filled.Check, contentDescription = "已选", tint = scheme.primary, modifier = Modifier.size(20.dp))
+    }
+}
+
+private val WEEK_ORDER = listOf(
+    DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY,
+    DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY,
+)
