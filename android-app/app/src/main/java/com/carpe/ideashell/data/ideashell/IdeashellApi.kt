@@ -129,10 +129,9 @@ class IdeashellApi(private val mcp: McpClient) {
         val memosIdx = text.indexOf("## Memos")
         if (memosIdx != -1) {
             val memosText = text.substring(memosIdx + "## Memos".length).trim()
-            RE_MEMO.find(memosText)?.let { m ->
-                // note_search / note_detail 会在 memo 开头重复一行 summary，去掉
-                content = m.groupValues[1].replace(RE_SUMMARY_LINE, "").trim()
-            }
+            // note_search / note_detail 会在 memo 开头重复一行 summary，去掉；没有 memo 标题行时整段都算正文，
+            // 不能当成空（追加时会拿它覆盖整篇笔记）
+            content = (RE_MEMO.find(memosText)?.groupValues?.get(1) ?: memosText).replace(RE_SUMMARY_LINE, "").trim()
         }
         return NoteContent(id = noteId, title = title, content = content)
     }

@@ -31,6 +31,8 @@ data class DidaTask(
     val done: Boolean = false,
     val completedAt: Long? = null,
     val createdAt: Long? = null,
+    /** 重复规则（RRULE，例如 `RRULE:FREQ=DAILY;INTERVAL=1`）；不重复为 null */
+    val repeatFlag: String? = null,
 )
 
 @Serializable
@@ -137,6 +139,7 @@ object DidaParser {
                     done = status == 2 || (status == null && o.str("completedTime") != null),
                     completedAt = parseMs(o.str("completedTime")),
                     createdAt = parseMs(o.str("createdTime")),
+                    repeatFlag = o.str("repeatFlag")?.takeIf { it.isNotBlank() },
                 ),
             )
         }

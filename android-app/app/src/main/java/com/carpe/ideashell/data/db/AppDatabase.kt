@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [CaptureEntity::class, RevisitEntity::class], version = 4, exportSchema = false)
+@Database(entities = [CaptureEntity::class, RevisitEntity::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun captureDao(): CaptureDao
     abstract fun revisitDao(): RevisitDao
@@ -15,8 +15,19 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "ideashell.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
+
+        /**
+         * v5：重温项增加「专题笔记」列（重温页记一笔时，由 Daily Note 的一句话新建的笔记）；
+         * 记录增加「重复规则」列（待办的滴答 repeatFlag）
+         */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE revisit_items ADD COLUMN topicNoteId TEXT")
+                db.execSQL("ALTER TABLE captures ADD COLUMN repeatRule TEXT")
+            }
+        }
 
         /** v4：新增「重温项」表（笔记 / 摘录的 FSRS 间隔重温） */
         private val MIGRATION_3_4 = object : Migration(3, 4) {

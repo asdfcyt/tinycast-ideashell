@@ -276,9 +276,9 @@ class FocusNotifier(private val context: Context) {
         private const val RUNNING_CHANNEL = "focus_running"
         private const val DONE_CHANNEL = "focus_done"
         private const val QUIET_DONE_CHANNEL = "focus_record"
-        private const val RUNNING_ID = 2002
-        private const val DONE_ID = 2003
-        private const val RECORD_ID = 2004
+        private const val RUNNING_ID = NotificationIds.FOCUS_RUNNING
+        private const val DONE_ID = NotificationIds.FOCUS_DONE
+        private const val RECORD_ID = NotificationIds.FOCUS_RECORD
         private const val ACCENT = 0xFFE0703F.toInt()
     }
 }

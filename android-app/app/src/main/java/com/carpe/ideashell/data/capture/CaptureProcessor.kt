@@ -2,6 +2,7 @@ package com.carpe.ideashell.data.capture
 
 import com.carpe.ideashell.core.capture.truncate
 import com.carpe.ideashell.core.parse.CaptureKind
+import com.carpe.ideashell.core.parse.RepeatRule
 import com.carpe.ideashell.data.db.CaptureDao
 import com.carpe.ideashell.data.db.CaptureEntity
 import com.carpe.ideashell.data.db.effectivePriority
@@ -113,16 +114,19 @@ class CaptureProcessor(
     /** 待办：连接了滴答就建在滴答（没有日期 = 收集箱里的无日期任务），否则建在闪念贝壳 */
     private suspend fun sendTodo(item: CaptureEntity): String {
         if (!credentials.didaToken.isNullOrBlank()) {
-            dida.createTask(item.body, item.todoDate, item.todoTime, priority = item.effectivePriority())
+            val repeat = item.repeatRule?.takeIf { it.isNotBlank() && item.todoDate != null }
+            dida.createTask(item.body, item.todoDate, item.todoTime, priority = item.effectivePriority(), repeatFlag = repeat)
             runCatching { onTodoCreated() }
-            return "已建到滴答清单"
+            val label = repeat?.let { RepeatRule.parse(it)?.label() }
+            return "已建到滴答清单" + if (label != null) " · 重复：$label" else ""
         }
         val content = when (item.effectivePriority()) {
             5 -> "${item.body} !重要"
             else -> item.body
         }
         ideashell.createTodos(listOf(TodoDraft(content, item.todoDate, item.todoTime)))
-        return "已建到闪念贝壳待办（未连接滴答清单）"
+        val repeatNote = if (item.repeatRule.isNullOrBlank()) "" else "，重复规则没有生效"
+        return "已建到闪念贝壳待办（未连接滴答清单$repeatNote）"
     }
 
     private suspend fun sendDaily(item: CaptureEntity): String {

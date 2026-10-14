@@ -398,6 +398,7 @@ private fun DailyLine(
                 row.entry.text,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.SemiBold,
+                textDecoration = if (row.entry.struck) androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),

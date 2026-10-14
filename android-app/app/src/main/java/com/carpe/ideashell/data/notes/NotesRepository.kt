@@ -11,6 +11,7 @@ import com.carpe.ideashell.data.ideashell.NoteDetail
 import com.carpe.ideashell.data.ideashell.NoteInfo
 import com.carpe.ideashell.data.ideashell.NotesInRange
 import com.carpe.ideashell.data.ideashell.Speaker
+import com.carpe.ideashell.data.mcp.retrying
 import com.carpe.ideashell.domain.Dossier
 import com.carpe.ideashell.domain.DossierData
 import com.carpe.ideashell.domain.DossierTodo
@@ -150,7 +151,7 @@ class NotesRepository(
     /** 笔记全文；[force] 跳过缓存 */
     suspend fun note(id: String, force: Boolean = false): NoteDetail {
         if (!force) synchronized(detailCache) { detailCache[id] }?.let { return it }
-        val detail = ideashell.noteFull(id)
+        val detail = retrying { ideashell.noteFull(id) }
         synchronized(detailCache) { detailCache[id] = detail }
         return detail
     }

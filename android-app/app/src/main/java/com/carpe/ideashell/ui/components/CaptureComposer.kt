@@ -238,7 +238,7 @@ fun CaptureComposer(
         val todoLike = kind == null || kind == CaptureKind.TODO
         val folderLike = kind == null || kind == CaptureKind.NOTE
         val dateText = if (plan != null && plan.kind == CaptureKind.TODO && plan.todoDate != null) {
-            CapturePlanner.describeWhen(plan.todoDate, plan.todoTime)
+            CapturePlanner.describeWhen(plan.todoDate, plan.todoTime) + (plan.repeat?.let { " · ${it.label()}" } ?: "")
         } else {
             null
         }
@@ -251,10 +251,11 @@ fun CaptureComposer(
             DateTimeSheet(
                 initialDate = curDate,
                 initialTime = curTime,
-                onConfirm = { d, t ->
+                initialRepeat = plan?.repeat,
+                onConfirm = { d, t, r ->
                     dateSheet = false
                     // 选的时间不往输入框里写，只记在 schedule 里（工具栏上的日期会显示）；文字里原有的日期时间词去掉，免得重复
-                    onScheduleChange(if (d == null) null else CaptureSchedule(d, t))
+                    onScheduleChange(if (d == null) null else CaptureSchedule(d, t, r))
                     setText(stripDateTime(text))
                     focusRequester?.let { runCatching { it.requestFocus() } }
                 },

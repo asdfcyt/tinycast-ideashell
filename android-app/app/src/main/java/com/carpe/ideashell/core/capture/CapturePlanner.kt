@@ -4,6 +4,7 @@ import com.carpe.ideashell.core.parse.CaptureAnalysis
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.core.parse.CaptureParser
 import com.carpe.ideashell.core.parse.FolderInfo
+import com.carpe.ideashell.core.parse.RepeatRule
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.TextStyle
@@ -31,10 +32,12 @@ data class CapturePlan(
     val folderInferred: Boolean,
     /** 待办优先级（与滴答一致）：0 无 / 1 低 / 3 中 / 5 高；写在文字里的 `!高` `!中` `!低`（`!重要` 等同于高） */
     val priority: Int = 0,
+    /** 待办的重复规则（在日期时间面板里选的）；不重复为 null */
+    val repeat: RepeatRule? = null,
 )
 
-/** 在日期时间面板里选定的日期和时间（时间可为空 = 全天） */
-data class CaptureSchedule(val date: LocalDate, val time: java.time.LocalTime?)
+/** 在日期时间面板里选定的日期和时间（时间可为空 = 全天），以及可选的重复规则 */
+data class CaptureSchedule(val date: LocalDate, val time: java.time.LocalTime?, val repeat: RepeatRule? = null)
 
 object CapturePlanner {
     private val RE_HIGH = Regex("[!！](?:重要|高(?![\\p{L}\\p{N}]))")
@@ -111,6 +114,7 @@ object CapturePlanner {
                     important = important,
                     tags = a.tags, folderName = null, folderInferred = false,
                     priority = priority,
+                    repeat = schedule?.repeat?.resolved(schedule.date),
                 )
             }
 

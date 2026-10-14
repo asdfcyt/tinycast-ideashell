@@ -15,6 +15,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
+import com.carpe.ideashell.core.parse.RepeatPreset
+import com.carpe.ideashell.core.parse.RepeatRule
 import com.carpe.ideashell.core.parse.TodoParser
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -67,16 +69,20 @@ import java.util.Locale
  * 顶部是当前选择；下面几个常用日期一点即选；再下面是整月日历（有待办的日子下面有一个点，
  * 选中某天时一行小字写着那天有几个任务）；最后是「添加时间」。点「保存」才生效。
  *
+ * 时间下面是「重复」（每天 / 每个工作日 / 每周 / 每月 / 每年 / 自定义，需要先有日期）。
+ *
  * @param initialDate 当前日期；null = 没有日期
- * @param onConfirm 保存：日期为 null 表示没有日期（此时时间一定是 null）
+ * @param initialRepeat 当前的重复规则；null = 不重复
+ * @param onConfirm 保存：日期为 null 表示没有日期（此时时间、重复一定是 null）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DateTimeSheet(
     initialDate: LocalDate?,
     initialTime: LocalTime?,
-    onConfirm: (LocalDate?, LocalTime?) -> Unit,
+    onConfirm: (LocalDate?, LocalTime?, RepeatRule?) -> Unit,
     onDismiss: () -> Unit,
+    initialRepeat: RepeatRule? = null,
 ) {
     val context = LocalContext.current
     val today = remember { LocalDate.now() }
@@ -85,6 +91,12 @@ fun DateTimeSheet(
     var time by remember { mutableStateOf(initialTime) }
     var month by remember { mutableStateOf(YearMonth.from(initialDate ?: today)) }
     var pickTime by remember { mutableStateOf(false) }
+    // 重复：选了常用选项（跟着日期走）就是 preset，否则是自定义规则 custom；两个都空 = 不重复
+    val initialPreset = remember { initialRepeat?.let { r -> RepeatPreset.of(r, initialDate ?: today) } }
+    var preset by remember { mutableStateOf(initialPreset) }
+    var custom by remember { mutableStateOf(if (initialPreset == null) initialRepeat else null) }
+    var repeatOpen by remember { mutableStateOf(false) }
+    val repeat: RepeatRule? = if (hasDate) (custom ?: preset?.rule(date))?.resolved(date) else null
     // 日历默认只显示两周（本周 + 下周），点右上角可展开整月
     var expanded by remember { mutableStateOf(false) }
     var weekStart by remember { mutableStateOf((initialDate ?: today).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))) }
@@ -216,6 +228,7 @@ fun DateTimeSheet(
                 ) {
                     hasDate = false
                     time = null
+                    repeatOpen = false
                 }
             }
 
@@ -321,6 +334,34 @@ fun DateTimeSheet(
                     muted = time == null,
                     onTrailingClick = { time = null },
                 ) { pickTime = true }
+                OptionRow(
+                    icon = R.drawable.ic_dt_repeat,
+                    label = repeat?.label() ?: "重复",
+                    trailing = if (repeat != null) "清除" else "",
+                    selected = false,
+                    enabled = hasDate,
+                    muted = repeat == null,
+                    onTrailingClick = {
+                        preset = null
+                        custom = null
+                        repeatOpen = false
+                    },
+                ) { repeatOpen = !repeatOpen }
+                if (repeatOpen && hasDate) {
+                    RepeatPanel(
+                        date = date,
+                        preset = preset,
+                        custom = custom,
+                        onPreset = { p ->
+                            preset = p
+                            custom = null
+                        },
+                        onCustom = { r ->
+                            custom = r
+                            preset = null
+                        },
+                    )
+                }
             }
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -329,7 +370,7 @@ fun DateTimeSheet(
                         .height(48.dp)
                         .clip(CircleShape)
                         .background(com.carpe.ideashell.ui.theme.Brand.Orange)
-                        .clickable(role = Role.Button) { onConfirm(if (hasDate) date else null, if (hasDate) time else null) }
+                        .clickable(role = Role.Button) { onConfirm(if (hasDate) date else null, if (hasDate) time else null, repeat) }
                         .padding(horizontal = 28.dp),
                     contentAlignment = Alignment.Center,
                 ) {

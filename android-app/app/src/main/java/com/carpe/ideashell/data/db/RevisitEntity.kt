@@ -44,6 +44,8 @@ data class RevisitEntity(
     /** 「今天跳过」：这之前不再出现（毫秒），不影响记忆曲线 */
     val skippedUntil: Long,
     val archived: Boolean,
+    /** 在重温页「记一笔」时，由 Daily Note 里的这一句新建出来的专题笔记；之后的想法都追加到它里面 */
+    val topicNoteId: String? = null,
 )
 
 val RevisitEntity.isNew: Boolean get() = reps == 0
