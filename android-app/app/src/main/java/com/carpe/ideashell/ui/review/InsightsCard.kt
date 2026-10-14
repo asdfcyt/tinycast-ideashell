@@ -64,6 +64,7 @@ import com.carpe.ideashell.domain.RhythmInsight
 import com.carpe.ideashell.domain.StreakInsight
 import com.carpe.ideashell.domain.TodoInsight
 import com.carpe.ideashell.domain.TopicInsight
+import com.carpe.ideashell.data.revisit.RevisitStats
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.theme.Brand
 import java.util.Locale
@@ -75,21 +76,22 @@ import kotlin.math.roundToInt
  * 每张卡只有三层：标签 + 右上角标、一行结论、撑满剩余空间的图——图占满，所以不会有大片空白。
  *
  * 卡的顺序（没有数据撑起来的那张直接不出现；只剩一张时不做分页）：
- *   时间分配（环形，按项目拆专注时长）→ 专注趋势（每日柱 + 日均虚线）→ 专注时间线（每天一行，橙块 = 一次专注）
- *   → 最佳专注时段（24 小时柱）→ 记录时刻（24 小时柱）→ 连续记录（每日记录量柱）
+ *   时间分配（环形，按项目拆专注时长）→ 间隔复习（今天进度 + 记忆阶段分布）→ 专注趋势（每日柱 + 日均虚线）
+ *   → 专注时间线（每天一行，橙块 = 一次专注；底色带 = 最佳专注时段）→ 记录时刻（24 小时柱）→ 连续记录（每日记录量柱）
  *   → 项目（谁记得最多、谁久没记）→ 习惯（打卡完成率）→ 待办（按时 / 延期 / 未完成）→ 话题（高频标签）。
  * 结论里的关键数字用橙色荧光笔标出（文字里用 «» 包起来）。
  */
 fun LazyListScope.insightsItem(
     flow: ProjectFlow,
     insights: Insights?,
+    revisit: RevisitStats,
     rangeLabel: String,
     onOpenProject: (String) -> Unit,
 ) {
     val hasRing = flow.slices.any { flow.weightOf(it) > 0 || it.stale }
     val ins = insights ?: Insights.Empty
-    if (!hasRing && ins.isEmpty) return
-    item(key = "insights") { InsightsPager(flow, ins, hasRing, rangeLabel, onOpenProject) }
+    if (!hasRing && ins.isEmpty && revisit.total == 0) return
+    item(key = "insights") { InsightsPager(flow, ins, revisit, hasRing, rangeLabel, onOpenProject) }
 }
 
 private const val CARD_HEIGHT = 188
@@ -111,18 +113,20 @@ private fun averageText(min: Int): String =
 private fun InsightsPager(
     flow: ProjectFlow,
     insights: Insights,
+    revisit: RevisitStats,
     hasRing: Boolean,
     rangeLabel: String,
     onOpenProject: (String) -> Unit,
 ) {
     val pages = buildList<@Composable () -> Unit> {
         if (hasRing) add { AllocationCard(flow, rangeLabel, onOpenProject) }
+        if (revisit.total > 0) add { RevisitStatsCard(revisit) }
         insights.focus?.let { f ->
             if (f.hasTrend) {
                 add { FocusTrendCard(f) }
+                // 专注时间线和最佳专注时段合成一张卡：时间线上用色带标出最佳时段
                 add { FocusTimelineCard(f) }
             }
-            if (f.bestStart != null) add { BestFocusCard(f, rangeLabel) }
         }
         insights.rhythm?.let { add { RhythmCard(it, rangeLabel) } }
         insights.streak?.let { add { StreakCard(it) } }
@@ -354,7 +358,28 @@ private fun StaleRow(s: ProjectSlice, onOpenProject: (String) -> Unit) {
     )
 }
 
-// ───────────────────────── 专注：趋势 / 时间线 / 最佳时段 ─────────────────────────
+// ───────────────────────── 间隔复习 ─────────────────────────
+
+/** 间隔复习：今天的进度 + 重温库里的内容处在记忆的哪个阶段（刚加入 / 巩固中 / 已记牢） */
+@Composable
+private fun RevisitStatsCard(r: RevisitStats) {
+    val scheme = MaterialTheme.colorScheme
+    val headline = when {
+        r.remaining > 0 -> "今天还剩 «${r.remaining} 条»待重温"
+        r.doneToday > 0 -> "今天重温了 «${r.doneToday} 条»，完成"
+        else -> "今天没有待重温的"
+    } + (r.recallRate?.let { "，记得率 $it%" } ?: "")
+    val peak = maxOf(r.fresh, r.learning, r.mature, 1)
+    InsightCard("间隔复习", "共 ${r.total} 条", marked(headline)) {
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
+            BarRow("刚加入", r.fresh, peak, scheme.onSurface.copy(alpha = 0.28f), trailing = "${r.fresh} 条")
+            BarRow("巩固中", r.learning, peak, Brand.Orange, trailing = "${r.learning} 条")
+            BarRow("已记牢", r.mature, peak, scheme.onSurface, trailing = "${r.mature} 条")
+        }
+    }
+}
+
+// ───────────────────────── 专注：趋势 / 时间线（含最佳时段） ─────────────────────────
 
 @Composable
 private fun FocusTrendCard(f: FocusInsight) {
@@ -377,28 +402,18 @@ private fun FocusTrendCard(f: FocusInsight) {
     }
 }
 
+/** 专注时间线 + 最佳专注时段：每天一行的时间线，最佳时段用一条橙色底带从上到下标出来 */
 @Composable
 private fun FocusTimelineCard(f: FocusInsight) {
+    val start = f.bestStart
     val period = periodOf(f.hours)
     val headline = when {
+        start != null -> "«$start–${start + 2} 点»最容易专注，占 ${f.bestShare}%"
         period == null -> "专注分散在一天里"
         period.second >= 50 -> "«${period.first}»是主战场，占 ${period.second}%"
         else -> "«${period.first}»专注最多，占 ${period.second}%"
     }
-    InsightCard("专注时间线", "近 ${f.lines.size} 天", marked(headline)) { FocusTimeline(f.lines) }
-}
-
-@Composable
-private fun BestFocusCard(f: FocusInsight, rangeLabel: String) {
-    val start = f.bestStart ?: return
-    val scheme = MaterialTheme.colorScheme
-    InsightCard(
-        label = "最佳专注时段",
-        meta = rangeLabel,
-        headline = marked("«$start–${start + 2} 点»最容易专注，占 ${f.bestShare}%"),
-    ) {
-        HourBars(f.hours, start..(start + 1), scheme.onSurface.copy(alpha = 0.2f))
-    }
+    InsightCard("专注时间线", "近 ${f.lines.size} 天", marked(headline)) { FocusTimeline(f.lines, start) }
 }
 
 /** 凌晨 / 上午 / 下午 / 晚上里专注最多的一段和它的占比 */
@@ -613,49 +628,58 @@ private fun BarChart(
 
 // ───────────────────────── 专注时间线 ─────────────────────────
 
-/** 每天一行：灰色轨道是 0–24 点，橙块是当天的每一次专注 */
+/** 每天一行：灰色轨道是 0–24 点，橙块是当天的每一次专注；[bestStart] 不为空时，那 2 小时画一条淡橙色底带 */
 @Composable
-private fun FocusTimeline(lines: List<FocusLine>) {
+private fun FocusTimeline(lines: List<FocusLine>, bestStart: Int?) {
     val scheme = MaterialTheme.colorScheme
     val track = scheme.onSurface.copy(alpha = 0.07f)
     val grid = scheme.onSurface.copy(alpha = 0.16f)
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.weight(1f).fillMaxWidth()) {
-            lines.forEach { line ->
-                Row(
-                    Modifier.weight(1f).fillMaxWidth().padding(vertical = 1.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // 行高只有 11dp 上下：字去掉上下留白、不换行，并允许超出行高显示，免得被截成半个字
-                    Text(
-                        TimeRanges.weekdayName(line.date).takeLast(1),
-                        style = TextStyle(
-                            fontSize = 10.sp,
-                            lineHeight = 10.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = scheme.onSurfaceVariant,
-                            platformStyle = PlatformTextStyle(includeFontPadding = false),
-                            lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.Both),
-                        ),
-                        softWrap = false,
-                        maxLines = 1,
-                        modifier = Modifier.width(18.dp).wrapContentHeight(align = Alignment.CenterVertically, unbounded = true),
-                    )
-                    Canvas(Modifier.weight(1f).fillMaxHeight()) {
-                        val h = size.height.coerceAtMost(10.dp.toPx())
-                        val top = (size.height - h) / 2
-                        val r = CornerRadius(h / 2)
-                        drawRoundRect(track, Offset(0f, top), Size(size.width, h), r)
-                        // 每 2 小时一条竖线，和底下的数字对齐：一眼看出一块橙色落在哪两个整点之间
-                        for (g in 2..22 step 2) {
-                            val gx = size.width * g / 24f
-                            drawLine(grid, Offset(gx, top), Offset(gx, top + h), strokeWidth = 1.dp.toPx())
-                        }
-                        for (b in line.blocks) {
-                            val x = size.width * b.start / 24f
-                            // 位置按开始时刻精确画；太短的专注至少给 4dp，免得看不见（不再撑成一整个圆点盖住前后的整点）
-                            val w = (size.width * (b.endInclusive - b.start) / 24f).coerceAtLeast(4.dp.toPx())
-                            drawRoundRect(Brand.Orange, Offset(x.coerceAtMost(size.width - w), top), Size(w, h), CornerRadius(minOf(h / 2, w / 2)))
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            if (bestStart != null) {
+                val band = Brand.Orange.copy(alpha = 0.2f)
+                Canvas(Modifier.fillMaxSize().padding(start = 18.dp)) {
+                    val x = size.width * bestStart / 24f
+                    drawRoundRect(band, Offset(x, 0f), Size(size.width * 2 / 24f, size.height), CornerRadius(4.dp.toPx()))
+                }
+            }
+            Column(Modifier.fillMaxSize()) {
+                lines.forEach { line ->
+                    Row(
+                        Modifier.weight(1f).fillMaxWidth().padding(vertical = 1.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        // 行高只有 11dp 上下：字去掉上下留白、不换行，并允许超出行高显示，免得被截成半个字
+                        Text(
+                            TimeRanges.weekdayName(line.date).takeLast(1),
+                            style = TextStyle(
+                                fontSize = 10.sp,
+                                lineHeight = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = scheme.onSurfaceVariant,
+                                platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.Both),
+                            ),
+                            softWrap = false,
+                            maxLines = 1,
+                            modifier = Modifier.width(18.dp).wrapContentHeight(align = Alignment.CenterVertically, unbounded = true),
+                        )
+                        Canvas(Modifier.weight(1f).fillMaxHeight()) {
+                            val h = size.height.coerceAtMost(10.dp.toPx())
+                            val top = (size.height - h) / 2
+                            val r = CornerRadius(h / 2)
+                            drawRoundRect(track, Offset(0f, top), Size(size.width, h), r)
+                            // 每 2 小时一条竖线，和底下的数字对齐：一眼看出一块橙色落在哪两个整点之间
+                            for (g in 2..22 step 2) {
+                                val gx = size.width * g / 24f
+                                drawLine(grid, Offset(gx, top), Offset(gx, top + h), strokeWidth = 1.dp.toPx())
+                            }
+                            for (b in line.blocks) {
+                                val x = size.width * b.start / 24f
+                                // 位置按开始时刻精确画；太短的专注至少给 4dp，免得看不见（不再撑成一整个圆点盖住前后的整点）
+                                val w = (size.width * (b.endInclusive - b.start) / 24f).coerceAtLeast(4.dp.toPx())
+                                drawRoundRect(Brand.Orange, Offset(x.coerceAtMost(size.width - w), top), Size(w, h), CornerRadius(minOf(h / 2, w / 2)))
+                            }
                         }
                     }
                 }

@@ -32,8 +32,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
@@ -49,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -128,35 +131,48 @@ fun RevisitScreen(
             )
             Segments(done = today.doneToday, total = today.doneToday + today.remaining)
 
-            AnimatedContent(
-                targetState = current,
-                contentKey = { it?.id },
+            Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(top = 14.dp),
-                transitionSpec = {
-                    (slideInHorizontally(tween(260)) { it / 5 } + fadeIn(tween(220))) togetherWith
-                        (slideOutHorizontally(tween(200)) { -it / 5 } + fadeOut(tween(140)))
-                },
-                label = "revisit-card",
-            ) { item ->
-                if (item != null) RevisitCard(item) else EmptyState(today, onBack)
+            ) {
+                AnimatedContent(
+                    targetState = current,
+                    contentKey = { it?.id },
+                    modifier = Modifier.fillMaxSize(),
+                    transitionSpec = {
+                        (slideInHorizontally(tween(260)) { it / 5 } + fadeIn(tween(220))) togetherWith
+                            (slideOutHorizontally(tween(200)) { -it / 5 } + fadeOut(tween(140)))
+                    },
+                    label = "revisit-card",
+                ) { item ->
+                    if (item != null) RevisitCard(item) else EmptyState(today, onBack)
+                }
+                if (current != null) {
+                    // 卡片右下角的「记一笔」：图标按钮，不占一整行；已有专题笔记时，入口放在左下角
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+                        verticalAlignment = Alignment.Bottom,
+                    ) {
+                        current.topicNoteId?.let { topic ->
+                            TopicChip(onClick = { onOpenNote(topic) })
+                        }
+                        Spacer(Modifier.weight(1f))
+                        ThoughtFab(busy = viewModel.thoughtBusy, onClick = { composing = true })
+                    }
+                }
             }
 
             if (current != null) {
-                ThoughtBar(
-                    item = current,
-                    busy = viewModel.thoughtBusy,
-                    onAdd = { composing = true },
-                    onOpenTopic = { id -> onOpenNote(id) },
-                    modifier = Modifier.padding(top = 10.dp),
-                )
                 RatingBar(
                     enabled = !viewModel.busy,
                     daysOf = { viewModel.previewDays(current, it) },
                     onRate = { viewModel.rate(current, it) },
-                    modifier = Modifier.padding(top = 14.dp, bottom = LocalBottomBarPadding.current),
+                    modifier = Modifier.padding(top = 12.dp, bottom = LocalBottomBarPadding.current),
                 )
             } else {
                 Spacer(Modifier.height(LocalBottomBarPadding.current))
@@ -196,47 +212,39 @@ private fun thoughtHint(item: RevisitEntity): String = when {
     else -> "会追加到原笔记的「想法」小节里。"
 }
 
-/** 评分上面的一行：左边「记一笔」，已经有专题笔记时右边是它的入口 */
+/** 卡片右下角的「记一笔」：橙色圆形图标按钮；保存中显示转圈并暂停点击 */
 @Composable
-private fun ThoughtBar(
-    item: RevisitEntity,
-    busy: Boolean,
-    onAdd: () -> Unit,
-    onOpenTopic: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val scheme = MaterialTheme.colorScheme
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(
-            modifier = Modifier
-                .height(40.dp)
-                .clip(CircleShape)
-                .background(scheme.surfaceContainerLowest)
-                .clickable(enabled = !busy, role = Role.Button, onClick = onAdd)
-                .padding(horizontal = 16.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                if (busy) "正在保存…" else "＋ 记一笔",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-            )
+private fun ThoughtFab(busy: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(52.dp)
+            .shadow(6.dp, CircleShape, clip = false)
+            .clip(CircleShape)
+            .background(Brand.Orange)
+            .clickable(enabled = !busy, role = Role.Button, onClickLabel = "记一笔", onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (busy) {
+            CircularProgressIndicator(Modifier.size(22.dp), color = Brand.Brown, strokeWidth = 2.5.dp)
+        } else {
+            Icon(Icons.Filled.Add, contentDescription = "记一笔", tint = Brand.Brown, modifier = Modifier.size(26.dp))
         }
-        Spacer(Modifier.weight(1f))
-        item.topicNoteId?.let { topic ->
-            Box(
-                modifier = Modifier
-                    .height(40.dp)
-                    .clip(CircleShape)
-                    .background(Brand.Orange.copy(alpha = 0.22f))
-                    .clickable(role = Role.Button) { onOpenTopic(topic) }
-                    .padding(horizontal = 14.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("专题笔记 ›", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Brand.OrangeDeep, maxLines = 1)
-            }
-        }
+    }
+}
+
+/** 已经有专题笔记时的入口，在卡片左下角 */
+@Composable
+private fun TopicChip(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(40.dp)
+            .clip(CircleShape)
+            .background(Brand.Orange.copy(alpha = 0.22f))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("专题笔记 ›", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Brand.OrangeDeep, maxLines = 1)
     }
 }
 
@@ -264,20 +272,23 @@ private fun TopBar(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         CircleIconButton(Icons.AutoMirrored.Filled.ArrowBack, "返回", onBack)
-        Column(Modifier.weight(1f).padding(start = 6.dp)) {
-            Text("重温", style = MaterialTheme.typography.headlineSmall)
+        Column(Modifier.weight(1f).padding(start = 4.dp)) {
+            Text("重温", style = MaterialTheme.typography.headlineSmall, maxLines = 1)
             val total = today.doneToday + today.remaining
             if (current != null) {
+                // 进度写短一点：出现「撤销」按钮时，标题栏也不会挤
                 Text(
-                    "第 ${today.doneToday + 1} 条 / 共 $total 条",
+                    "第 ${today.doneToday + 1} / $total 条",
                     fontSize = 12.sp,
                     lineHeight = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
                 )
             }
         }
-        if (canUndo) PillAction("撤销", onUndo)
+        if (canUndo) UndoButton(onUndo)
         if (current != null) PillAction("今天跳过", onSkip)
         Box {
             CircleIconButton(Icons.Filled.MoreVert, "更多", { menu = true })
@@ -295,6 +306,21 @@ private fun TopBar(
     }
 }
 
+/** 撤销：只放一个图标，不再占一个文字胶囊的宽度 */
+@Composable
+private fun UndoButton(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+            .clickable(role = Role.Button, onClickLabel = "撤销", onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(painterResource(R.drawable.ic_undo), contentDescription = "撤销", modifier = Modifier.size(20.dp))
+    }
+}
+
 @Composable
 private fun PillAction(text: String, onClick: () -> Unit) {
     Box(
@@ -303,10 +329,10 @@ private fun PillAction(text: String, onClick: () -> Unit) {
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surfaceContainerLowest)
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
     }
 }
 
@@ -344,7 +370,7 @@ private fun Segments(done: Int, total: Int) {
 
 // ───────────────────────── 卡片 ─────────────────────────
 
-/** 阅读用的大字号：卡片里的正文比普通详情页大一档，更像在读一张便签 */
+/** 阅读用的字号：比普通详情页略大一点，但不到「大字」的程度，一屏能放下更多 */
 @Composable
 private fun BigReading(content: @Composable () -> Unit) {
     val t = MaterialTheme.typography
@@ -352,13 +378,13 @@ private fun BigReading(content: @Composable () -> Unit) {
         colorScheme = MaterialTheme.colorScheme,
         shapes = MaterialTheme.shapes,
         typography = t.copy(
-            headlineSmall = t.headlineSmall.copy(fontSize = 22.sp, lineHeight = 30.sp),
-            titleLarge = t.titleLarge.copy(fontSize = 21.sp, lineHeight = 29.sp),
-            titleMedium = t.titleMedium.copy(fontSize = 19.sp, lineHeight = 27.sp),
-            titleSmall = t.titleSmall.copy(fontSize = 18.sp, lineHeight = 26.sp),
-            bodyLarge = t.bodyLarge.copy(fontSize = 19.sp, lineHeight = 30.sp),
-            bodyMedium = t.bodyMedium.copy(fontSize = 17.sp, lineHeight = 27.sp),
-            bodySmall = t.bodySmall.copy(fontSize = 15.sp, lineHeight = 22.sp),
+            headlineSmall = t.headlineSmall.copy(fontSize = 19.sp, lineHeight = 27.sp),
+            titleLarge = t.titleLarge.copy(fontSize = 18.sp, lineHeight = 26.sp),
+            titleMedium = t.titleMedium.copy(fontSize = 16.sp, lineHeight = 24.sp),
+            titleSmall = t.titleSmall.copy(fontSize = 15.sp, lineHeight = 22.sp),
+            bodyLarge = t.bodyLarge.copy(fontSize = 16.sp, lineHeight = 26.sp),
+            bodyMedium = t.bodyMedium.copy(fontSize = 15.sp, lineHeight = 24.sp),
+            bodySmall = t.bodySmall.copy(fontSize = 13.sp, lineHeight = 19.sp),
         ),
         content = content,
     )
@@ -377,7 +403,8 @@ private fun RevisitCard(item: RevisitEntity) {
             .clip(RoundedCornerShape(28.dp))
             .background(scheme.surfaceContainerLowest)
             .verticalScroll(rememberScrollState())
-            .padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 20.dp),
+            // 底部多留一块给右下角的「记一笔」，长内容滚到底也不会被它挡住
+            .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 84.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
@@ -397,7 +424,7 @@ private fun RevisitCard(item: RevisitEntity) {
             if (isNote) {
                 Text(
                     item.title,
-                    style = MaterialTheme.typography.headlineSmall.copy(fontSize = 24.sp, lineHeight = 32.sp),
+                    style = MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
             } else if (item.title.isNotBlank()) {
@@ -450,7 +477,7 @@ private fun RevisitCard(item: RevisitEntity) {
     }
 }
 
-private val COLLAPSED_HEIGHT = 176.dp
+private val COLLAPSED_HEIGHT = 160.dp
 
 private fun recordedText(ms: Long): String {
     val date = RevisitRepository.dateOf(ms)

@@ -102,7 +102,7 @@ import java.util.Locale
  * 「今天」页（设计系统「环」· 漫步）。信息很少，每一块只说一件事：
  * - 仪表卡：三层细环（专注 / 待办 / 项目进展）+ 近半年的记录热力图（Daily Note 每天的条数）；
  * - 随机漫步：从 5 年笔记里随机翻出一条旧的，「换一条」再翻（参考 flomo）；
- * - 每日回顾：往年今日 / 1 周前 / 1 个月前……当天写过的笔记，横向滑动；
+ * - 每日回顾：1 周前 / 1 个月前 / 1 年前的今天写过的笔记，横向滑动；
  * - 下一件：只留最近要做的一件待办，其余去「待办」页。
  * 输入统一由右下角的「+」完成（见 MainActivity），这里不再放输入框。
  */
@@ -729,7 +729,7 @@ private fun WalkCard(note: NoteInfo, canShuffle: Boolean, onShuffle: () -> Unit,
 
 private val WALK_HEIGHT = 112.dp
 
-/** 往年今日 / 1 周前 / 1 个月前……当天写过的笔记，横向滑动的小卡 */
+/** 1 周前 / 1 个月前 / 1 年前的今天写过的笔记，横向滑动的小卡 */
 @Composable
 private fun ReviewRow(list: List<ReviewItem>, onOpenNote: (String) -> Unit) {
     val scheme = MaterialTheme.colorScheme

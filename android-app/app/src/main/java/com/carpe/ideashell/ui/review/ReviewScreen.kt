@@ -91,6 +91,7 @@ fun ReviewScreen(
     // 洞察卡（专注趋势 / 时间线 / 习惯 / 记录时刻……）在 ViewModel 里于后台线程算好，进页面直接用，不在组合时现算
     val insights by viewModel.insights.collectAsStateWithLifecycle()
     val revisitKeys by viewModel.revisitKeys.collectAsStateWithLifecycle()
+    val revisitStats by viewModel.revisitStats.collectAsStateWithLifecycle()
 
     val clipboard = LocalClipboardManager.current
     val snackbar = remember { SnackbarHostState() }
@@ -153,7 +154,7 @@ fun ReviewScreen(
                     if (!connected) {
                         item(key = "connect") { ConnectIdeashellCard(onOpenConnection) }
                     } else {
-                        insightsItem(flow, insights, viewModel.preset?.label ?: viewModel.range.label, onOpenProject)
+                        insightsItem(flow, insights, revisitStats, viewModel.preset?.label ?: viewModel.range.label, onOpenProject)
                         riverItems(
                             state = timeline,
                             onOpenNote = onOpenNote,

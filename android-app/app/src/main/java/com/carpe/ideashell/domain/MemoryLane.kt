@@ -28,13 +28,10 @@ object MemoryLane {
 
     /** `plusMonths` 在目标月没有该日（如 31 号）时顺延到当月最后一天，正好是我们要的行为 */
     private val OFFSETS: List<Offset> = buildList {
+        // 每日回顾只看三个节点：一周前、一个月前、一年前
         add(Offset("1 周前的今天") { it.minusDays(7) })
-        add(Offset("2 周前的今天") { it.minusDays(14) })
         add(Offset("1 个月前的今天") { it.minusMonths(1) })
-        add(Offset("2 个月前的今天") { it.minusMonths(2) })
-        add(Offset("3 个月前的今天") { it.minusMonths(3) })
-        add(Offset("6 个月前的今天") { it.minusMonths(6) })
-        for (i in 1..LOOKBACK_YEARS) add(Offset("$i 年前的今天") { it.minusYears(i.toLong()) })
+        add(Offset("1 年前的今天") { it.minusYears(1) })
     }
 
     private val RE_DATE_TITLE = Regex("^\\d{4}-\\d{2}-\\d{2}")

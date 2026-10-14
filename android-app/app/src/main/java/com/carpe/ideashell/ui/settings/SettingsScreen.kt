@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -30,6 +31,8 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.DateRange
@@ -54,6 +57,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -72,6 +76,7 @@ import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.R
 import com.carpe.ideashell.data.settings.ThemeMode
 import com.carpe.ideashell.ui.components.AppTextField
+import com.carpe.ideashell.ui.components.CircleIconButton
 import com.carpe.ideashell.ui.components.InputSheet
 import com.carpe.ideashell.ui.components.ListGroup
 import com.carpe.ideashell.ui.components.RowDivider
@@ -83,6 +88,12 @@ import com.carpe.ideashell.ui.glass.GlassBadge
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
 import kotlinx.coroutines.launch
+
+private const val SEC_RECORD = "record"
+private const val SEC_REVISIT = "revisit"
+private const val SEC_TODO = "todo"
+private const val SEC_QUICK = "quick"
+private const val SEC_BACKGROUND = "background"
 
 private sealed interface Dialog {
     data object Tags : Dialog
@@ -170,6 +181,9 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
         }
     }
 
+    var section by rememberSaveable { mutableStateOf<String?>(null) }
+    BackHandler(enabled = section != null) { section = null }
+
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets.statusBars,
@@ -181,199 +195,257 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                 .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = LocalBottomBarPadding.current + 8.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            Text(
-                "设置",
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(start = 4.dp, top = 16.dp),
-            )
-
-            Group("连接") {
-                SettingsItem(
-                    icon = Icons.Filled.Lock,
-                    title = "闪念贝壳",
-                    summary = if (ideashellConnected) "已连接 · 点击可更换或检查连接" else "未连接 · 填入 API Key",
-                    onClick = onOpenConnection,
+            val sectionTitle = when (section) {
+                SEC_RECORD -> "记录"
+                SEC_REVISIT -> "重温"
+                SEC_TODO -> "待办"
+                SEC_QUICK -> "快速入口"
+                SEC_BACKGROUND -> "后台同步"
+                else -> null
+            }
+            if (sectionTitle == null) {
+                Text(
+                    "设置",
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(start = 4.dp, top = 16.dp),
                 )
-                SettingsItem(
-                    icon = Icons.Filled.Refresh,
-                    title = "滴答清单",
-                    summary = if (didaConnected) "已连接 · 待办直接建到滴答" else "未连接 · 待办会先建到闪念贝壳",
-                    onClick = onOpenConnection,
-                )
+            } else {
+                SubPageHeader(sectionTitle, onBack = { section = null })
             }
 
-            Group("记录") {
-                SettingsItem(
-                    icon = Icons.Filled.Star,
-                    title = "默认标签",
-                    summary = settings.defaultTagsText.ifEmpty { "无（创建笔记时自动附加，逗号分隔）" },
-                    onClick = { dialog = Dialog.Tags },
-                )
-                SettingsItem(
-                    icon = Icons.Filled.DateRange,
-                    title = "Daily Note 文件夹",
-                    summary = settings.dailyFolder,
-                    onClick = { dialog = Dialog.DailyFolder },
-                )
-            }
+            when (section) {
+                null -> {
+                    Group("连接") {
+                        SettingsItem(
+                            icon = Icons.Filled.Lock,
+                            title = "闪念贝壳",
+                            summary = if (ideashellConnected) "已连接 · 点击可更换或检查连接" else "未连接 · 填入 API Key",
+                            onClick = onOpenConnection,
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Refresh,
+                            title = "滴答清单",
+                            summary = if (didaConnected) "已连接 · 待办直接建到滴答" else "未连接 · 待办会先建到闪念贝壳",
+                            onClick = onOpenConnection,
+                        )
+                    }
 
-            Group("重温") {
-                SettingsItem(
-                    icon = Icons.Filled.Refresh,
-                    title = "开始重温",
-                    summary = when {
-                        revisitToday.remaining > 0 -> "今天有 ${revisitToday.remaining} 条待重温 · 点击开始"
-                        revisitToday.total == 0 -> "还没有加入的内容 · 在笔记页点右上角的循环图标，或选中文字加入"
-                        revisitToday.doneToday > 0 -> "今天的重温完成了 · 共 ${revisitToday.total} 条在重温"
-                        else -> "今天没有待重温的 · 共 ${revisitToday.total} 条在重温"
-                    },
-                    onClick = onOpenRevisit,
-                )
-                SettingsItem(
-                    icon = Icons.Filled.Star,
-                    title = "每天最多重温",
-                    summary = "${settings.revisitDailyLimit} 条 · 超出的顺延到后面几天，不会一次性全抛出来",
-                    onClick = { dialog = Dialog.RevisitLimit },
-                )
-                SettingsItem(
-                    icon = Icons.Filled.Refresh,
-                    title = "目标记忆率",
-                    summary = "${settings.revisitRetention}% · 越高出现得越频繁（范围 80%–95%）",
-                    onClick = { dialog = Dialog.RevisitRetention },
-                )
-                SettingsItem(
-                    icon = Icons.Filled.Notifications,
-                    title = "每天提醒",
-                    summary = if (settings.revisitReminder) "每天 ${formatClock(settings.revisitReminderMinutes)} 一条通知「今天有 N 条待重温」" else "已关闭 · 「今天」页仍会显示今日重温",
-                    onClick = { setRevisitReminder(!settings.revisitReminder) },
-                    trailing = {
-                        Switch(checked = settings.revisitReminder, onCheckedChange = { setRevisitReminder(it) })
-                    },
-                )
-                if (settings.revisitReminder) {
+                    Group("功能") {
+                        SettingsItem(
+                            icon = Icons.Filled.Star,
+                            title = "记录",
+                            summary = "${settings.defaultTagsText.ifEmpty { "无默认标签" }} · ${settings.dailyFolder}",
+                            onClick = { section = SEC_RECORD },
+                            trailing = { Chevron() },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Refresh,
+                            title = "重温",
+                            summary = when {
+                                revisitToday.remaining > 0 -> "今天有 ${revisitToday.remaining} 条待重温"
+                                revisitToday.total == 0 -> "还没有加入的内容"
+                                revisitToday.doneToday > 0 -> "今天已完成 · 共 ${revisitToday.total} 条"
+                                else -> "今天没有待重温的 · 共 ${revisitToday.total} 条"
+                            } + if (settings.revisitReminder) " · 每天 ${formatClock(settings.revisitReminderMinutes)} 提醒" else "",
+                            onClick = { section = SEC_REVISIT },
+                            trailing = { Chevron() },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.DateRange,
+                            title = "待办",
+                            summary = "专注目标 ${formatGoal(settings.focusGoalMin)} · 常驻通知${if (settings.persistentNotification) "已开" else "已关"}",
+                            onClick = { section = SEC_TODO },
+                            trailing = { Chevron() },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "腾讯云文字识别",
+                            summary = if (ocrConfigured) "已配置 · 记一条里点相机，开启「识别文字」后拍照录入笔记" else "未配置 · 填入腾讯云 SecretId / SecretKey 后，可拍照识别文字快速录入",
+                            onClick = { dialog = Dialog.Ocr },
+                        )
+                    }
+
+                    Group("系统") {
+                        SettingsItem(
+                            icon = Icons.Filled.Settings,
+                            title = "主题",
+                            summary = settings.themeMode.label,
+                            onClick = { dialog = Dialog.Theme },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Add,
+                            title = "快速入口",
+                            summary = "快速设置磁贴 · 分享菜单 · 桌面图标长按",
+                            onClick = { section = SEC_QUICK },
+                            trailing = { Chevron() },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Notifications,
+                            title = "后台同步（荣耀 MagicOS）",
+                            summary = if (batteryIgnored) "电池优化已忽略" else "建议开启，离线记下的内容才能及时同步",
+                            onClick = { section = SEC_BACKGROUND },
+                            trailing = { Chevron() },
+                        )
+                    }
+
+                    Group("关于") {
+                        SettingsItem(
+                            icon = Icons.Filled.Info,
+                            title = "拾忆",
+                            summary = "版本 ${BuildConfig.VERSION_NAME} · 记录自动同步到闪念贝壳与滴答清单",
+                            onClick = null,
+                        )
+                    }
+                }
+
+                SEC_RECORD -> Group(null) {
+                    SettingsItem(
+                        icon = Icons.Filled.Star,
+                        title = "默认标签",
+                        summary = settings.defaultTagsText.ifEmpty { "无（创建笔记时自动附加，逗号分隔）" },
+                        onClick = { dialog = Dialog.Tags },
+                    )
                     SettingsItem(
                         icon = Icons.Filled.DateRange,
-                        title = "提醒时间",
-                        summary = formatClock(settings.revisitReminderMinutes),
-                        onClick = { pickReminderTime() },
+                        title = "Daily Note 文件夹",
+                        summary = settings.dailyFolder,
+                        onClick = { dialog = Dialog.DailyFolder },
+                    )
+                }
+
+                SEC_REVISIT -> Group(null) {
+                    SettingsItem(
+                        icon = Icons.Filled.Refresh,
+                        title = "开始重温",
+                        summary = when {
+                            revisitToday.remaining > 0 -> "今天有 ${revisitToday.remaining} 条待重温 · 点击开始"
+                            revisitToday.total == 0 -> "还没有加入的内容 · 在笔记页点右上角的循环图标，或选中文字加入"
+                            revisitToday.doneToday > 0 -> "今天的重温完成了 · 共 ${revisitToday.total} 条在重温"
+                            else -> "今天没有待重温的 · 共 ${revisitToday.total} 条在重温"
+                        },
+                        onClick = onOpenRevisit,
+                    )
+                    SettingsItem(
+                        icon = Icons.Filled.Star,
+                        title = "每天最多重温",
+                        summary = "${settings.revisitDailyLimit} 条 · 超出的顺延到后面几天，不会一次性全抛出来",
+                        onClick = { dialog = Dialog.RevisitLimit },
+                    )
+                    SettingsItem(
+                        icon = Icons.Filled.Refresh,
+                        title = "目标记忆率",
+                        summary = "${settings.revisitRetention}% · 越高出现得越频繁（范围 80%–95%）",
+                        onClick = { dialog = Dialog.RevisitRetention },
                     )
                     SettingsItem(
                         icon = Icons.Filled.Notifications,
-                        title = "周末不提醒",
-                        summary = "周六、周日不发通知",
-                        onClick = { container.settings.setRevisitSkipWeekends(!settings.revisitSkipWeekends) },
+                        title = "每天提醒",
+                        summary = if (settings.revisitReminder) "每天 ${formatClock(settings.revisitReminderMinutes)} 一条通知「今天有 N 条待重温」" else "已关闭 · 「今天」页仍会显示今日重温",
+                        onClick = { setRevisitReminder(!settings.revisitReminder) },
+                        trailing = {
+                            Switch(checked = settings.revisitReminder, onCheckedChange = { setRevisitReminder(it) })
+                        },
+                    )
+                    if (settings.revisitReminder) {
+                        SettingsItem(
+                            icon = Icons.Filled.DateRange,
+                            title = "提醒时间",
+                            summary = formatClock(settings.revisitReminderMinutes),
+                            onClick = { pickReminderTime() },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Notifications,
+                            title = "周末不提醒",
+                            summary = "周六、周日不发通知",
+                            onClick = { container.settings.setRevisitSkipWeekends(!settings.revisitSkipWeekends) },
+                            trailing = {
+                                Switch(
+                                    checked = settings.revisitSkipWeekends,
+                                    onCheckedChange = { container.settings.setRevisitSkipWeekends(it) },
+                                )
+                            },
+                        )
+                    }
+                    SettingsItem(
+                        icon = Icons.Filled.Refresh,
+                        title = "全部推后 7 天",
+                        summary = "积压太多、一时看不过来时，把现在到期的都往后挪一周",
+                        onClick = { postponeRevisit() },
+                    )
+                }
+
+                SEC_TODO -> Group(null) {
+                    SettingsItem(
+                        icon = Icons.Filled.Star,
+                        title = "每日专注目标",
+                        summary = "${formatGoal(settings.focusGoalMin)} · 「今天」页的专注环以它为满环",
+                        onClick = { dialog = Dialog.FocusGoal },
+                    )
+                    SettingsItem(
+                        icon = Icons.Filled.Notifications,
+                        title = "常驻通知",
+                        summary = "通知栏显示「今天 N · 逾期 M」，可直接回复快记、点完成。系统可能允许你划掉它，下次刷新会重新出现",
+                        onClick = { setPersistentNotification(!settings.persistentNotification) },
                         trailing = {
                             Switch(
-                                checked = settings.revisitSkipWeekends,
-                                onCheckedChange = { container.settings.setRevisitSkipWeekends(it) },
+                                checked = settings.persistentNotification,
+                                onCheckedChange = { setPersistentNotification(it) },
                             )
                         },
                     )
-                }
-                SettingsItem(
-                    icon = Icons.Filled.Refresh,
-                    title = "全部推后 7 天",
-                    summary = "积压太多、一时看不过来时，把现在到期的都往后挪一周",
-                    onClick = { postponeRevisit() },
-                )
-            }
-
-            Group("文字识别") {
-                SettingsItem(
-                    icon = Icons.Filled.Create,
-                    title = "腾讯云文字识别",
-                    summary = if (ocrConfigured) "已配置 · 记一条里点相机，开启「识别文字」后拍照录入笔记" else "未配置 · 填入腾讯云 SecretId / SecretKey 后，可拍照识别文字快速录入",
-                    onClick = { dialog = Dialog.Ocr },
-                )
-            }
-
-            Group("外观") {
-                SettingsItem(
-                    icon = Icons.Filled.Settings,
-                    title = "主题",
-                    summary = settings.themeMode.label,
-                    onClick = { dialog = Dialog.Theme },
-                )
-            }
-
-            Group("快速入口") {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    SettingsItem(
+                        icon = Icons.Filled.Notifications,
+                        title = "每晚自动生成今日小结",
+                        summary = "每晚 23:20 把今天完成的任务和专注时长插到今天 Daily Note 最前面（需要连接滴答清单）",
+                        onClick = { container.settings.setAutoDaySummary(!settings.autoDaySummary) },
+                        trailing = {
+                            Switch(
+                                checked = settings.autoDaySummary,
+                                onCheckedChange = { container.settings.setAutoDaySummary(it) },
+                            )
+                        },
+                    )
                     SettingsItem(
                         icon = Icons.Filled.Add,
-                        title = "添加快速设置磁贴",
-                        summary = "下拉通知栏，一点就能弹出输入框",
-                        onClick = { requestAddTile(context) },
+                        title = "添加小部件",
+                        summary = "待办、专注、记录（时间河）三种，选一个放到桌面。也可以长按桌面空白处 → 小组件 → 拾忆",
+                        onClick = { dialog = Dialog.AddWidget },
                     )
                 }
-                SettingsItem(
-                    icon = Icons.Filled.Create,
-                    title = "其他入口",
-                    summary = "任何 App 里点「分享 → 拾忆」；选中文字后点菜单里的「记到拾忆」；长按桌面图标可直达「记一条」「记待办」",
-                    onClick = null,
-                )
-            }
 
-            Group("待办") {
-                SettingsItem(
-                    icon = Icons.Filled.Star,
-                    title = "每日专注目标",
-                    summary = "${formatGoal(settings.focusGoalMin)} · 「今天」页的专注环以它为满环",
-                    onClick = { dialog = Dialog.FocusGoal },
-                )
-                SettingsItem(
-                    icon = Icons.Filled.Notifications,
-                    title = "常驻通知",
-                    summary = "通知栏显示「今天 N · 逾期 M」，可直接回复快记、点完成。系统可能允许你划掉它，下次刷新会重新出现",
-                    onClick = { setPersistentNotification(!settings.persistentNotification) },
-                    trailing = {
-                        Switch(
-                            checked = settings.persistentNotification,
-                            onCheckedChange = { setPersistentNotification(it) },
+                SEC_QUICK -> Group(null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        SettingsItem(
+                            icon = Icons.Filled.Add,
+                            title = "添加快速设置磁贴",
+                            summary = "下拉通知栏，一点就能弹出输入框",
+                            onClick = { requestAddTile(context) },
                         )
-                    },
-                )
-                SettingsItem(
-                    icon = Icons.Filled.Notifications,
-                    title = "每晚自动生成今日小结",
-                    summary = "每晚 23:20 把今天完成的任务和专注时长插到今天 Daily Note 最前面（需要连接滴答清单）",
-                    onClick = { container.settings.setAutoDaySummary(!settings.autoDaySummary) },
-                    trailing = {
-                        Switch(
-                            checked = settings.autoDaySummary,
-                            onCheckedChange = { container.settings.setAutoDaySummary(it) },
-                        )
-                    },
-                )
-                SettingsItem(
-                    icon = Icons.Filled.Add,
-                    title = "添加小部件",
-                    summary = "待办、专注、记录（时间河）三种，选一个放到桌面。也可以长按桌面空白处 → 小组件 → 拾忆",
-                    onClick = { dialog = Dialog.AddWidget },
-                )
-            }
+                    }
+                    SettingsItem(
+                        icon = Icons.Filled.Create,
+                        title = "其他入口",
+                        summary = "任何 App 里点「分享 → 拾忆」；选中文字后点菜单里的「记到拾忆」；长按桌面图标可直达「记一条」「记待办」",
+                        onClick = null,
+                    )
+                }
 
-            Group("后台同步（荣耀 MagicOS）") {
-                SettingsItem(
-                    icon = Icons.Filled.Notifications,
-                    title = "忽略电池优化",
-                    summary = if (batteryIgnored) "已允许" else "未允许 · 建议开启，离线记下的内容才能及时同步",
-                    onClick = { if (!batteryIgnored) requestIgnoreBattery(context) },
-                )
-                SettingsItem(
-                    icon = Icons.Filled.Info,
-                    title = "应用启动管理",
-                    summary = "打开系统的应用信息页。在「应用启动管理」里把「拾忆」改为手动管理，打开「自启动」「关联启动」「后台活动」；再到多任务界面锁定「拾忆」卡片。不同系统版本入口略有差异。",
-                    onClick = { openAppDetails(context) },
-                )
-            }
+                SEC_BACKGROUND -> Group(null) {
+                    SettingsItem(
+                        icon = Icons.Filled.Notifications,
+                        title = "忽略电池优化",
+                        summary = if (batteryIgnored) "已允许" else "未允许 · 建议开启，离线记下的内容才能及时同步",
+                        onClick = { if (!batteryIgnored) requestIgnoreBattery(context) },
+                    )
+                    SettingsItem(
+                        icon = Icons.Filled.Info,
+                        title = "应用启动管理",
+                        summary = "打开系统的应用信息页。在「应用启动管理」里把「拾忆」改为手动管理，打开「自启动」「关联启动」「后台活动」；再到多任务界面锁定「拾忆」卡片。不同系统版本入口略有差异。",
+                        onClick = { openAppDetails(context) },
+                    )
+                }
 
-            Group("关于") {
-                SettingsItem(
-                    icon = Icons.Filled.Info,
-                    title = "拾忆",
-                    summary = "版本 ${BuildConfig.VERSION_NAME} · 记录自动同步到闪念贝壳与滴答清单",
-                    onClick = null,
-                )
+                else -> Unit
             }
         }
     }
@@ -611,18 +683,43 @@ private fun FocusGoalDialog(current: Int, onSelect: (Int) -> Unit, onDismiss: ()
 }
 
 @Composable
-private fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
+private fun Group(title: String?, content: @Composable ColumnScope.() -> Unit) {
     Column {
-        Text(
-            title,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
-        )
+        if (title != null) {
+            Text(
+                title,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
+            )
+        }
         GlassSurface(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth(), content = content)
         }
     }
+}
+
+/** 二级页面的标题栏：返回 + 页面名 */
+@Composable
+private fun SubPageHeader(title: String, onBack: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        CircleIconButton(Icons.AutoMirrored.Filled.ArrowBack, "返回", onBack)
+        Text(title, style = MaterialTheme.typography.headlineSmall)
+    }
+}
+
+/** 一级页面里「点进去还有更多」的右箭头 */
+@Composable
+private fun Chevron() {
+    Icon(
+        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }
 
 @Composable

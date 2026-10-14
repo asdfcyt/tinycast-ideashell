@@ -23,6 +23,7 @@ import com.carpe.ideashell.data.ideashell.DailyEntry
 import com.carpe.ideashell.data.ideashell.NoteInfo
 import com.carpe.ideashell.data.revisit.AddResult
 import com.carpe.ideashell.data.revisit.RevisitRepository
+import com.carpe.ideashell.data.revisit.RevisitStats
 import com.carpe.ideashell.data.dida.TodoData
 import com.carpe.ideashell.data.mcp.McpAuthException
 import com.carpe.ideashell.data.project.Workspace
@@ -161,6 +162,9 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
 
     /** 已在重温的条目 key：时间河据此在笔记 / 日记旁边显示小标记 */
     val revisitKeys: StateFlow<Set<String>> = container.revisit.keys
+
+    /** 顶部「间隔复习」统计卡的数据 */
+    val revisitStats: StateFlow<RevisitStats> = container.revisit.stats
 
     init {
         // 带 #重温 标签的笔记自动加入（时间线读到哪些就收哪些，已加入 / 点过「不再重温」的不会重复）

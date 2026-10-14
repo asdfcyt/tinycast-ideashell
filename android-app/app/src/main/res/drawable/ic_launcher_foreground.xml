@@ -4,33 +4,34 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 拾忆图标：一条竖向时间轴，上面是圆（日记）、方（待办）、三角（笔记）三种节点，右边是各自的内容行。
-         最新的一条（顶部）最亮，越往下越淡；全部在中间 66dp 安全区内；背景是品牌橙 -->
+    <!-- 拾忆图标：白底。一条竖向时间轴，上面是圆（日记）、方（待办）、三角（笔记）三种节点，右边是各自的内容行。
+         三种节点各用一个颜色：黄（圆）、橙（方）、焦糖棕（三角），同一暖色系；内容行用墨色，由上到下逐渐变淡。
+         全部在中间 66dp 安全区内；背景是白色（见 ic_launcher_background） -->
     <!-- 轴线 -->
     <path
-        android:fillColor="#80F7F2EA"
-        android:pathData="M33,40.500 H37 V48 H33 Z M33,60 H37 V68.500 H33 Z" />
-    <!-- 节点：圆（最亮） -->
+        android:fillColor="#E4D9CB"
+        android:pathData="M33.500,40.500 H36.500 V48 H33.500 Z M33.500,60 H36.500 V68.500 H33.500 Z" />
+    <!-- 节点：圆（黄） -->
     <path
-        android:fillColor="#FFF7F2EA"
+        android:fillColor="#F4B63F"
         android:pathData="M35,27.500 A6.500,6.500 0 1 1 35,40.500 A6.500,6.500 0 1 1 35,27.500 Z" />
-    <!-- 节点：空心圆角方块 -->
+    <!-- 节点：空心圆角方块（橙） -->
     <path
-        android:fillColor="#E6F7F2EA"
+        android:fillColor="#EE7C3E"
         android:fillType="evenOdd"
         android:pathData="M32,48 H38 A3,3 0 0 1 41,51 V57 A3,3 0 0 1 38,60 H32 A3,3 0 0 1 29,57 V51 A3,3 0 0 1 32,48 Z M33,51 H37 A1,1 0 0 1 38,52 V56 A1,1 0 0 1 37,57 H33 A1,1 0 0 1 32,56 V52 A1,1 0 0 1 33,51 Z" />
-    <!-- 节点：三角 -->
+    <!-- 节点：三角（焦糖棕） -->
     <path
-        android:fillColor="#BFF7F2EA"
+        android:fillColor="#A8612F"
         android:pathData="M35,68.500 L41,79 L29,79 Z" />
-    <!-- 内容行：由长到短，由亮到淡 -->
+    <!-- 内容行：由长到短，由深到淡 -->
     <path
-        android:fillColor="#FFF7F2EA"
+        android:fillColor="#2A2118"
         android:pathData="M50,31 H77 A3,3 0 0 1 77,37 H50 A3,3 0 0 1 50,31 Z" />
     <path
-        android:fillColor="#E6F7F2EA"
+        android:fillColor="#7A6A5C"
         android:pathData="M50,51 H69 A3,3 0 0 1 69,57 H50 A3,3 0 0 1 50,51 Z" />
     <path
-        android:fillColor="#BFF7F2EA"
+        android:fillColor="#B9AB9C"
         android:pathData="M50,71 H61 A3,3 0 0 1 61,77 H50 A3,3 0 0 1 50,71 Z" />
 </vector>

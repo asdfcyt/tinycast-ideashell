@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 启动图标背景：柔橙（与浅色主题一致） -->
-    <color name="ic_launcher_background">#E8794A</color>
+    <!-- 启动图标背景：白色，节点用黄 / 橙 / 焦糖棕三个暖色 -->
+    <color name="ic_launcher_background">#FFFFFF</color>
 
     <!-- 桌面小部件（浅色）：奶油底 + 深棕字，橙色（柔橙）只用在「+」上。背景半透明，系统若提供液态玻璃材质会叠在它下面 -->
     <color name="widget_bg_top">#F2F7F2EA</color>

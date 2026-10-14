@@ -46,6 +46,26 @@ data class RevisitToday(
     val remaining: Int get() = queue.size
 }
 
+/** 回顾页「间隔复习」卡的数据：内容处在记忆的哪个阶段、整体记得率、今天的进度 */
+data class RevisitStats(
+    /** 在重温的一共多少条（不含「不再重温」） */
+    val total: Int = 0,
+    /** 还没复习过的 */
+    val fresh: Int = 0,
+    /** 复习过、记忆还不牢（稳定性不到 [RevisitRepository.MATURE_DAYS] 天） */
+    val learning: Int = 0,
+    /** 已经记牢：稳定性达到 [RevisitRepository.MATURE_DAYS] 天以上 */
+    val mature: Int = 0,
+    val doneToday: Int = 0,
+    val remaining: Int = 0,
+    /** 累计复习次数 / 其中答「忘了」的次数 */
+    val reviews: Int = 0,
+    val lapses: Int = 0,
+) {
+    /** 记得率（百分比）；一次都没复习过为 null */
+    val recallRate: Int? get() = if (reviews == 0) null else (100.0 * (reviews - lapses).coerceAtLeast(0) / reviews).toInt()
+}
+
 enum class AddResult { ADDED, EXISTS, RESTORED }
 
 /** 在重温页「记一笔」的去向：[noteId] 是写入（或新建）的那篇笔记，界面据此提示并可以点开 */
@@ -89,6 +109,11 @@ class RevisitRepository(
         day,
     ) { items, limit, _ -> computeToday(items, limit, System.currentTimeMillis()) }
         .stateIn(scope, SharingStarted.Eagerly, RevisitToday())
+
+    /** 回顾页的统计卡用：库里内容的阶段分布 + 今天的进度 */
+    val stats: StateFlow<RevisitStats> = combine(dao.observeActive(), today) { items, t -> statsOf(items, t) }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.Eagerly, RevisitStats())
 
     private val addLock = Mutex()
     private val thoughtLock = Mutex()
@@ -405,6 +430,24 @@ class RevisitRepository(
         private fun retrievabilityOf(item: RevisitEntity, now: Long): Double {
             val stability = if (item.reps == 0) Fsrs.first(Fsrs.Rating.GOOD).stability else item.stability
             return Fsrs.retrievability(elapsedDays(item, now), stability)
+        }
+
+        /** 稳定性（≈ 记忆能维持的天数）达到这么多天，算「记牢了」 */
+        const val MATURE_DAYS = 21.0
+
+        internal fun statsOf(items: List<RevisitEntity>, today: RevisitToday): RevisitStats {
+            val fresh = items.count { it.reps == 0 }
+            val mature = items.count { it.reps > 0 && it.stability >= MATURE_DAYS }
+            return RevisitStats(
+                total = items.size,
+                fresh = fresh,
+                learning = items.size - fresh - mature,
+                mature = mature,
+                doneToday = today.doneToday,
+                remaining = today.remaining,
+                reviews = items.sumOf { it.reps },
+                lapses = items.sumOf { it.lapses },
+            )
         }
 
         internal fun computeToday(items: List<RevisitEntity>, limit: Int, now: Long): RevisitToday {
