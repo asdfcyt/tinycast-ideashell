@@ -76,7 +76,6 @@ import com.carpe.ideashell.domain.RhythmInsight
 import com.carpe.ideashell.domain.StreakInsight
 import com.carpe.ideashell.domain.TodoInsight
 import com.carpe.ideashell.domain.TopicInsight
-import com.carpe.ideashell.data.revisit.RevisitRange
 import com.carpe.ideashell.data.revisit.RevisitStats
 import com.carpe.ideashell.data.revisit.RevisitTrend
 import com.carpe.ideashell.ui.components.AppMenu
@@ -115,7 +114,6 @@ fun LazyListScope.insightsItem(
 class RevisitPanel(
     val stats: RevisitStats,
     val trend: RevisitTrend,
-    val onRange: (RevisitRange) -> Unit,
 )
 
 private const val CARD_HEIGHT = 188
@@ -200,7 +198,7 @@ private fun InsightCard(
     label: String,
     meta: String?,
     headline: AnnotatedString?,
-    /** 不为空时，右上角用它代替 [meta] 的小标签（例如可以点开的范围菜单） */
+    /** 不为空时，右上角用它代替 [meta] 的小标签（例如图例） */
     metaContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
@@ -388,53 +386,24 @@ private fun StaleRow(s: ProjectSlice, onOpenProject: (String) -> Unit) {
 
 // ───────────────────────── 间隔复习 ─────────────────────────
 
-/** 间隔复习：按天画「重温了几次」的折线，再叠一条「其中忘了几次」；右上角选统计范围 */
+/** 间隔复习：按天画「重温了几次」的折线，再叠一条「其中忘了几次」；统计范围跟着回顾页顶部选的范围走 */
 @Composable
 private fun RevisitTrendCard(panel: RevisitPanel) {
     val trend = panel.trend
-    var menu by remember { mutableStateOf(false) }
     val headline = if (trend.totalReviewed == 0) {
-        "${trend.range.label}还没有重温"
+        "${trend.label}还没有重温"
     } else {
-        "${trend.range.label}重温 «${trend.totalReviewed} 次»" + (trend.recallRate?.let { "，记得 $it%" } ?: "")
+        "${trend.label}重温 «${trend.totalReviewed} 次»" + (trend.recallRate?.let { "，记得 $it%" } ?: "")
     }
     InsightCard(
         label = "间隔复习",
         meta = null,
         headline = marked(headline),
+        // 图例放在卡片右上角的标题行里，不压在折线上
         metaContent = {
-            Box {
-                Row(
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
-                        .clickable(role = Role.Button, onClickLabel = "选择统计范围") { menu = true }
-                        .padding(start = 9.dp, end = 5.dp, top = 2.dp, bottom = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        trend.range.label,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                    )
-                    Icon(
-                        Icons.Filled.ArrowDropDown,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-                AppMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    RevisitRange.entries.forEach { r ->
-                        AppMenuItem(
-                            text = { Text(r.label) },
-                            selected = r == trend.range,
-                            onClick = { menu = false; panel.onRange(r) },
-                        )
-                    }
-                }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                LegendDot("重温", Brand.Orange)
+                LegendDot("忘了", MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
             }
         },
     ) {
@@ -462,7 +431,7 @@ private fun RevisitLineChart(trend: RevisitTrend) {
     val scheme = MaterialTheme.colorScheme
     val n = trend.days.size
     val maxV = (trend.reviewed.maxOfOrNull { it ?: 0 } ?: 1).coerceAtLeast(1)
-    // Y 轴只标最大值，免得挤；网格线只画 0 / 一半 / 最大三条
+    // 网格线只画 0 / 一半 / 最大三条
     val grid = scheme.onSurface.copy(alpha = 0.10f)
     val orange = Brand.Orange
     val ink = scheme.onSurface.copy(alpha = 0.55f)
@@ -512,16 +481,6 @@ private fun RevisitLineChart(trend: RevisitTrend) {
                 trend.forgotten.forEachIndexed { i, v ->
                     if (v != null && v > 0 && n <= 14) drawCircle(ink, radius = 2.dp.toPx(), center = Offset(x(i), y(v)))
                 }
-            }
-            Text(
-                "$maxV",
-                style = MaterialTheme.typography.labelSmall,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.TopStart),
-            )
-            Row(Modifier.align(Alignment.TopEnd), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                LegendDot("重温", orange)
-                LegendDot("忘了", ink)
             }
         }
         // 日期轴：每格一个，只有被选中的格写字（太密时每隔几天标一个）

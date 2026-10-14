@@ -154,7 +154,7 @@ private fun CustomEditor(date: LocalDate, rule: RepeatRule, onChange: (RepeatRul
             }
 
             RepeatRule.Freq.MONTHLY -> Text(
-                "每月 ${rule.monthDay ?: date.dayOfMonth} 日（跟随所选日期）",
+                if (rule.monthDay == -1) "每月最后一天" else "每月 ${rule.monthDay ?: date.dayOfMonth} 日（跟随所选日期）",
                 style = MaterialTheme.typography.bodySmall,
                 color = scheme.onSurfaceVariant,
             )

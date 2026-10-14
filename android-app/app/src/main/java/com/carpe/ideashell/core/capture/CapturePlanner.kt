@@ -114,7 +114,12 @@ object CapturePlanner {
                     important = important,
                     tags = a.tags, folderName = null, folderInferred = false,
                     priority = priority,
-                    repeat = schedule?.repeat?.resolved(schedule.date),
+                    // 面板里选的重复优先；没用面板时用文字里写的（「每周一」「每月 1 号」）
+                    repeat = if (schedule != null) {
+                        schedule.repeat?.resolved(schedule.date)
+                    } else {
+                        a.todo.repeat?.let { r -> a.todo.date?.let { d -> r.resolved(LocalDate.parse(d)) } }
+                    },
                 )
             }
 

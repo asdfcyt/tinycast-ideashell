@@ -189,6 +189,14 @@ class SettingsStore(context: Context) {
         prefs.edit().putLong(KEY_CLOUD_BACKUP_AT, ms).apply()
     }
 
+    /** 最近搜索：最新的在前，换行分隔存一份，退出应用后还在 */
+    fun recentSearches(): List<String> =
+        prefs.getString(KEY_RECENT_SEARCHES, null)?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
+
+    fun setRecentSearches(list: List<String>) {
+        prefs.edit().putString(KEY_RECENT_SEARCHES, list.joinToString("\n")).apply()
+    }
+
     /** 同步异常的提示只发一次：发过之后记着，等队列恢复正常再清掉 */
     fun syncAlerted(): Boolean = prefs.getBoolean(KEY_SYNC_ALERTED, false)
 
@@ -197,6 +205,7 @@ class SettingsStore(context: Context) {
     }
 
     private companion object {
+        const val KEY_RECENT_SEARCHES = "recent_searches"
         const val KEY_SYNC_ALERTED = "sync_alerted"
         const val KEY_BACKUP_NOTE_ID = "backup_note_id"
         const val KEY_CLOUD_BACKUP_AT = "cloud_backup_at"

@@ -158,7 +158,7 @@ fun ReviewScreen(
                         insightsItem(
                             flow = flow,
                             insights = insights,
-                            revisit = RevisitPanel(revisitStats, revisitTrend, viewModel::selectRevisitRange),
+                            revisit = RevisitPanel(revisitStats, revisitTrend),
                             rangeLabel = viewModel.preset?.label ?: viewModel.range.label,
                             onOpenProject = onOpenProject,
                         )

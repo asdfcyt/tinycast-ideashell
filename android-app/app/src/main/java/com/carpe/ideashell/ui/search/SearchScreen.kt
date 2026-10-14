@@ -30,6 +30,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.project.Project
+import com.carpe.ideashell.data.project.ProjectFocusLog
 import com.carpe.ideashell.domain.NoteText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -49,6 +50,7 @@ import com.carpe.ideashell.ui.review.LoadingBlock
 import com.carpe.ideashell.ui.review.NoteRow
 
 private const val TASK_LIMIT = 10
+private const val FOCUS_LIMIT = 8
 
 /**
  * 搜索：一个输入框，下面按「项目 / 待办 / 笔记」分组；笔记上方有这个词的「提及概览」（原来回顾里的档案）。
@@ -73,6 +75,7 @@ fun SearchScreen(
 
     val projects = viewModel.matchProjects(query, workspace.projects)
     val tasks = viewModel.matchTasks(query, todoData)
+    val focusLogs = viewModel.matchFocus(query, workspace)
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -81,7 +84,7 @@ fun SearchScreen(
         Column(Modifier.padding(padding)) {
             ScreenHeader(
                 title = "搜索",
-                subtitle = "笔记、待办和项目，一处找",
+                subtitle = "笔记、待办、项目和专注记录，一处找",
                 action = { CircleIconButton(Icons.AutoMirrored.Filled.ArrowBack, "返回", onBack) },
             )
             GlassSearchField(
@@ -125,6 +128,25 @@ fun SearchScreen(
                             if (tasks.size > TASK_LIMIT) {
                                 Text(
                                     "还有 ${tasks.size - TASK_LIMIT} 项，输入更具体的词缩小范围",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 8.dp, top = 4.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (focusLogs.isNotEmpty()) {
+                    item(key = "s-focus") {
+                        Column {
+                            GroupLabel("专注记录", count = focusLogs.size)
+                            ListGroup(Modifier.padding(top = 2.dp)) {
+                                DividedRows(focusLogs.take(FOCUS_LIMIT)) { f -> FocusHit(f) { onOpenProject(f.project) } }
+                            }
+                            if (focusLogs.size > FOCUS_LIMIT) {
+                                Text(
+                                    "还有 ${focusLogs.size - FOCUS_LIMIT} 条，输入更具体的词缩小范围",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(start = 8.dp, top = 4.dp),
@@ -235,7 +257,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.emptyQuery(viewModel:
     item(key = "s-hint") {
         EmptyNote(
             title = "想找什么？",
-            text = "项目和待办会边输边过滤；笔记按意思搜索，不必记得原话，例如「上次聊过的合作方案」。回车开始搜索笔记，搜完可以展开「提及概览」。",
+            text = "项目、待办和专注记录会边输边过滤；笔记按意思搜索，不必记得原话，例如「上次聊过的合作方案」。回车开始搜索笔记，搜完可以展开「提及概览」。",
         )
     }
 }
@@ -257,6 +279,36 @@ private fun ProjectHit(p: Project, onClick: () -> Unit) {
         }.joinToString(" · ")
         Text(
             sub,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** 一条专注记录：任务标题（没有就用项目名）+ 项目 · 日期时间 · 时长 */
+@Composable
+private fun FocusHit(f: ProjectFocusLog, onClick: () -> Unit) {
+    val zone = java.time.ZoneId.systemDefault()
+    val start = java.time.Instant.ofEpochMilli(f.startMs).atZone(zone)
+    val minutes = ((f.endMs - f.startMs) / 60_000L).toInt().coerceAtLeast(1)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            f.title.ifBlank { f.project },
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            listOf(f.project, start.format(java.time.format.DateTimeFormatter.ofPattern("M月d日 HH:mm")), "${minutes} 分钟")
+                .joinToString(" · "),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,

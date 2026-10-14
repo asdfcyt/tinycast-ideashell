@@ -50,7 +50,11 @@ data class RepeatRule(
             }
             Freq.MONTHLY -> {
                 val head = if (n == 1) "每月" else "每 $n 个月"
-                if (monthDay == null) head else "$head $monthDay 日"
+                when (monthDay) {
+                    null -> head
+                    -1 -> "每月最后一天"
+                    else -> "$head $monthDay 日"
+                }
             }
             Freq.YEARLY -> if (n == 1) "每年" else "每 $n 年"
         }

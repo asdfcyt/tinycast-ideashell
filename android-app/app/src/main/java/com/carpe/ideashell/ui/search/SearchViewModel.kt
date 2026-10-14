@@ -18,6 +18,7 @@ import com.carpe.ideashell.data.dida.TodoData
 import com.carpe.ideashell.data.ideashell.NoteInfo
 import com.carpe.ideashell.data.mcp.McpAuthException
 import com.carpe.ideashell.data.project.Project
+import com.carpe.ideashell.data.project.ProjectFocusLog
 import com.carpe.ideashell.data.project.Workspace
 import com.carpe.ideashell.domain.DossierData
 import com.carpe.ideashell.ui.review.Async
@@ -40,7 +41,8 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     var submitted by mutableStateOf("")
         private set
 
-    val recent = mutableStateListOf<String>()
+    /** 最近搜索（最新在前），保存在本机，下次打开还在 */
+    val recent = mutableStateListOf<String>().apply { addAll(container.settings.recentSearches()) }
 
     private val _notes = MutableStateFlow(Async<List<NoteInfo>>())
     val notes: StateFlow<Async<List<NoteInfo>>> = _notes.asStateFlow()
@@ -61,6 +63,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
         recent.remove(q)
         recent.add(0, q)
         while (recent.size > MAX_RECENT) recent.removeAt(recent.lastIndex)
+        container.settings.setRecentSearches(recent.toList())
         job?.cancel()
         resetOverview()
         _notes.value = Async(loading = true)
@@ -128,7 +131,19 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     /** 把搜索词设为项目；已经是项目返回 false */
     fun makeProject(keyword: String): Boolean = container.projects.add(keyword)
 
-    fun clearRecent() = recent.clear()
+    fun clearRecent() {
+        recent.clear()
+        container.settings.setRecentSearches(emptyList())
+    }
+
+    /** 专注记录：任务标题或项目名含搜索词（最近的在前；记录来自本机，只含从项目页发起的专注） */
+    fun matchFocus(q: String, ws: Workspace): List<ProjectFocusLog> {
+        val k = q.trim().lowercase()
+        if (k.isEmpty()) return emptyList()
+        return ws.focusLog
+            .filter { it.title.lowercase().contains(k) || it.project.lowercase().contains(k) }
+            .sortedByDescending { it.startMs }
+    }
 
     /** 项目：关键词或标签含搜索词 */
     fun matchProjects(q: String, projects: List<Project>): List<Project> {
@@ -153,7 +168,7 @@ class SearchViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     companion object {
-        private const val MAX_RECENT = 6
+        private const val MAX_RECENT = 8
 
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {

@@ -15,6 +15,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
+import com.carpe.ideashell.core.calendar.ChinaHolidays
+import com.carpe.ideashell.core.calendar.DayInfo
 import com.carpe.ideashell.core.parse.RepeatPreset
 import com.carpe.ideashell.core.parse.RepeatRule
 import com.carpe.ideashell.core.parse.TodoParser
@@ -38,6 +40,7 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -108,6 +111,9 @@ fun DateTimeSheet(
         weekStart = d.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
     }
 
+    // 法定节假日 / 调休是联网同步的：数据更新后（version 变化）日历格子重新取「休 / 班」
+    val holidayVersion by (context.applicationContext as IdeashellApp).container.holidays.version.collectAsState()
+
     // 每天有几个未完成任务（读待办的本地缓存，不发请求）
     val counts = remember {
         val container = (context.applicationContext as IdeashellApp).container
@@ -140,8 +146,15 @@ fun DateTimeSheet(
                 val commit = {
                     val parsed = TodoParser.parse(input.trim())
                     parsed.date?.let { d ->
-                        goto(LocalDate.parse(d))
+                        val picked = LocalDate.parse(d)
+                        goto(picked)
                         time = parsed.time?.let { LocalTime.parse(it) }
+                        // 「每周一」「每月 1 号」这类说法也一并识别成重复
+                        parsed.repeat?.let { r ->
+                            val p = RepeatPreset.of(r.resolved(picked), picked)
+                            preset = p
+                            custom = if (p == null) r else null
+                        }
                     }
                     editing = false
                 }
@@ -281,7 +294,7 @@ fun DateTimeSheet(
                 if (hasDate) {
                     val n = counts[date.toString()] ?: 0
                     Text(
-                        "${date.monthValue}月${date.dayOfMonth}日 ${weekday(date)} · ${n}个任务",
+                        "${date.monthValue}月${date.dayOfMonth}日 ${weekday(date)} · ${remember(date, holidayVersion) { DayInfo.of(date) }.detail()} · ${n}个任务",
                         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.labelSmall,
@@ -301,7 +314,7 @@ fun DateTimeSheet(
                     Row(Modifier.fillMaxWidth()) {
                         for (c in 0 until 7) {
                             val d = rowStart.plusDays(c.toLong())
-                            Box(Modifier.weight(1f).height(38.dp), contentAlignment = Alignment.Center) {
+                            Box(Modifier.weight(1f).height(48.dp), contentAlignment = Alignment.Center) {
                                 // 展开时，不属于当月的日期留空，只显示当月
                                 if (!expanded || YearMonth.from(d) == month) {
                                     DayCell(
@@ -310,6 +323,7 @@ fun DateTimeSheet(
                                         isToday = d == today,
                                         past = d.isBefore(today),
                                         hasTasks = (counts[d.toString()] ?: 0) > 0,
+                                        info = remember(d, holidayVersion) { DayInfo.of(d) },
                                     ) {
                                         hasDate = true
                                         date = d
@@ -475,36 +489,73 @@ private fun OptionRow(
     }
 }
 
+/** 日历里的一天：数字 + 下面一行农历 / 节日 / 节气小字；法定休息日右上角标「休」，调休上班标「班」；有任务的日子左上角一个小点 */
 @Composable
-private fun DayCell(day: Int, selected: Boolean, isToday: Boolean, past: Boolean, hasTasks: Boolean, onClick: () -> Unit) {
+private fun DayCell(day: Int, selected: Boolean, isToday: Boolean, past: Boolean, hasTasks: Boolean, info: DayInfo, onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            modifier = Modifier
-                .size(30.dp)
-                .clip(CircleShape)
-                .background(if (selected) scheme.primary else Color.Transparent)
-                .clickable(role = Role.Button, onClick = onClick),
-            contentAlignment = Alignment.Center,
-        ) {
+    val dark = isDarkSurface()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(if (selected) scheme.primary else Color.Transparent),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "$day",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (selected || isToday) FontWeight.Bold else FontWeight.Normal,
+                    color = when {
+                        selected -> scheme.onPrimary
+                        isToday -> scheme.primary
+                        past -> scheme.onSurface.copy(alpha = 0.4f)
+                        else -> scheme.onSurface
+                    },
+                )
+            }
             Text(
-                "$day",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (selected || isToday) FontWeight.Bold else FontWeight.Normal,
+                info.label,
+                fontSize = 9.sp,
+                lineHeight = 11.sp,
+                maxLines = 1,
+                softWrap = false,
+                fontWeight = if (info.highlight) FontWeight.Bold else FontWeight.Normal,
                 color = when {
-                    selected -> scheme.onPrimary
-                    isToday -> scheme.primary
-                    past -> scheme.onSurface.copy(alpha = 0.4f)
-                    else -> scheme.onSurface
+                    info.highlight -> if (dark) Color(0xFFE8856B) else scheme.primary
+                    past -> scheme.onSurfaceVariant.copy(alpha = 0.55f)
+                    else -> scheme.onSurfaceVariant
                 },
+                modifier = Modifier.padding(top = 1.dp),
             )
         }
-        Box(
-            Modifier
-                .padding(top = 1.dp)
-                .size(3.dp)
-                .clip(CircleShape)
-                .background(if (hasTasks && !selected) scheme.onSurfaceVariant else Color.Transparent),
-        )
+        info.holiday?.let { h ->
+            val off = h.kind == ChinaHolidays.Kind.OFF
+            Text(
+                if (off) "休" else "班",
+                fontSize = 8.sp,
+                lineHeight = 9.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (off) Color(0xFF2E9D6B) else Color(0xFFD2553A),
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 1.dp, end = 3.dp),
+            )
+        }
+        if (hasTasks) {
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = 4.dp, start = 4.dp)
+                    .size(4.dp)
+                    .clip(CircleShape)
+                    .background(if (selected) scheme.primary else scheme.onSurfaceVariant),
+            )
+        }
     }
 }

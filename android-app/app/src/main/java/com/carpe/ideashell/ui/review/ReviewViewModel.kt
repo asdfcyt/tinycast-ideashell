@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
@@ -23,7 +24,6 @@ import com.carpe.ideashell.data.ideashell.DailyEntry
 import com.carpe.ideashell.data.ideashell.NoteInfo
 import com.carpe.ideashell.data.revisit.AddResult
 import com.carpe.ideashell.data.revisit.RevisitRepository
-import com.carpe.ideashell.data.revisit.RevisitRange
 import com.carpe.ideashell.data.revisit.RevisitStats
 import com.carpe.ideashell.data.revisit.RevisitTrend
 import com.carpe.ideashell.data.dida.TodoData
@@ -170,18 +170,12 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
     /** 顶部「间隔复习」统计卡的数据 */
     val revisitStats: StateFlow<RevisitStats> = container.revisit.stats
 
-    /** 间隔复习折线图的统计范围（最近 7 天 / 本周 / 本月 / 上月……），用户在卡片右上角选 */
-    private val revisitRangeFlow = MutableStateFlow(RevisitRange.LAST7)
-    val revisitRange: StateFlow<RevisitRange> = revisitRangeFlow.asStateFlow()
-
+    /** 间隔复习折线图：统计范围跟着回顾页顶部选的范围走（最近 7 天 / 本周 / 本月 / 上月 / 自定义……） */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val revisitTrend: StateFlow<RevisitTrend> = revisitRangeFlow
+    val revisitTrend: StateFlow<RevisitTrend> = snapshotFlow { range }
+        .distinctUntilChanged()
         .flatMapLatest { container.revisit.trend(it) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, RevisitTrend.empty(RevisitRange.LAST7))
-
-    fun selectRevisitRange(range: RevisitRange) {
-        revisitRangeFlow.value = range
-    }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, RevisitTrend.empty(range))
 
     init {
         // 带 #重温 标签的笔记自动加入（时间线读到哪些就收哪些，已加入 / 点过「不再重温」的不会重复）

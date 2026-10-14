@@ -3,6 +3,7 @@ package com.carpe.ideashell
 import android.app.Application
 import android.content.Context
 import com.carpe.ideashell.data.backup.BackupService
+import com.carpe.ideashell.data.calendar.HolidayRepository
 import com.carpe.ideashell.data.capture.CaptureProcessor
 import com.carpe.ideashell.data.capture.CaptureRepository
 import com.carpe.ideashell.data.capture.CaptureScheduler
@@ -191,6 +192,9 @@ class AppContainer(context: Context) {
         todayFocusMin = { daySummary.todayFocus.value?.takeIf { it.first == LocalDate.now() }?.second },
         cacheFile = File(context.filesDir, "river_widget_cache.json"),
     )
+
+    /** 法定节假日 / 调休（联网同步，日历里显示「休 / 班」） */
+    val holidays = HolidayRepository(File(context.filesDir, "holidays"), appScope)
 
     /** 备份与迁移：导出 / 导入文件，或存进闪念贝壳里的备份笔记 */
     val backup = BackupService(

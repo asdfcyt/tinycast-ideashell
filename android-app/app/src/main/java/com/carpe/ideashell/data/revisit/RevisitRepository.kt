@@ -1,6 +1,7 @@
 package com.carpe.ideashell.data.revisit
 
 import com.carpe.ideashell.core.revisit.Fsrs
+import com.carpe.ideashell.core.parse.TimeRange
 import com.carpe.ideashell.data.db.RevisitDao
 import com.carpe.ideashell.data.db.RevisitEntity
 import com.carpe.ideashell.data.db.RevisitKind
@@ -341,11 +342,9 @@ class RevisitRepository(
     }
 
     /** 折线图：[range] 范围内每天重温了几次（新评分 / 撤销后自动更新） */
-    fun trend(range: RevisitRange, today: LocalDate = LocalDate.now()): Flow<RevisitTrend> {
-        val days = range.days(today)
-        return dao.observeLogs(startOfDay(days.first()), startOfDay(days.last().plusDays(1)))
+    fun trend(range: TimeRange, today: LocalDate = LocalDate.now()): Flow<RevisitTrend> =
+        dao.observeLogs(startOfDay(range.start), startOfDay(range.endExclusive))
             .map { logs -> RevisitTrend.build(range, today, logs) }
-    }
 
     // ───────────────────────── 备份 / 迁移 ─────────────────────────
 

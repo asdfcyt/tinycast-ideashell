@@ -83,8 +83,11 @@ object CaptureParser {
         val todoDate = todo.date
         val futureCue = todoDate != null && todoDate >= today && (todo.time != null || todoDate > today)
 
+        // 「每周一」这类带具体星期 / 几号的重复说法，也当成待办
+        val repeatCue = todo.repeat != null && todo.repeatAnchored
+
         val recommended = when {
-            futureCue -> CaptureKind.TODO
+            futureCue || repeatCue -> CaptureKind.TODO
             tags.isNotEmpty() || folderName != null -> CaptureKind.NOTE
             else -> CaptureKind.DAILY
         }
