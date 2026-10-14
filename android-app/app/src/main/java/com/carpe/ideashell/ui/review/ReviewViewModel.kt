@@ -23,7 +23,9 @@ import com.carpe.ideashell.data.ideashell.DailyEntry
 import com.carpe.ideashell.data.ideashell.NoteInfo
 import com.carpe.ideashell.data.revisit.AddResult
 import com.carpe.ideashell.data.revisit.RevisitRepository
+import com.carpe.ideashell.data.revisit.RevisitRange
 import com.carpe.ideashell.data.revisit.RevisitStats
+import com.carpe.ideashell.data.revisit.RevisitTrend
 import com.carpe.ideashell.data.dida.TodoData
 import com.carpe.ideashell.data.mcp.McpAuthException
 import com.carpe.ideashell.data.project.Workspace
@@ -32,6 +34,7 @@ import com.carpe.ideashell.domain.ProjectFlow
 import com.carpe.ideashell.domain.Timeline
 import com.carpe.ideashell.domain.TimelineData
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -41,6 +44,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -165,6 +169,19 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
 
     /** 顶部「间隔复习」统计卡的数据 */
     val revisitStats: StateFlow<RevisitStats> = container.revisit.stats
+
+    /** 间隔复习折线图的统计范围（最近 7 天 / 本周 / 本月 / 上月……），用户在卡片右上角选 */
+    private val revisitRangeFlow = MutableStateFlow(RevisitRange.LAST7)
+    val revisitRange: StateFlow<RevisitRange> = revisitRangeFlow.asStateFlow()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val revisitTrend: StateFlow<RevisitTrend> = revisitRangeFlow
+        .flatMapLatest { container.revisit.trend(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, RevisitTrend.empty(RevisitRange.LAST7))
+
+    fun selectRevisitRange(range: RevisitRange) {
+        revisitRangeFlow.value = range
+    }
 
     init {
         // 带 #重温 标签的笔记自动加入（时间线读到哪些就收哪些，已加入 / 点过「不再重温」的不会重复）

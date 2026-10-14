@@ -17,6 +17,9 @@ object NotificationIds {
     /** 专注进行中的实时通知（带系统倒计时，申请 Android 16 的实时更新 / 状态栏胶囊） */
     const val FOCUS_RUNNING = 2020
 
+    /** 同步异常提示（有记录失败 / 反复重试仍没发出去，只提示一次） */
+    const val SYNC_PROBLEM = 2030
+
     /** 间隔重温到期提醒 */
     const val REVISIT_DUE = 2010
 }

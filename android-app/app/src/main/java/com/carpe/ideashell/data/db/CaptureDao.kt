@@ -49,6 +49,35 @@ interface CaptureDao {
     @Query("UPDATE captures SET status = 'PENDING' WHERE status = 'SENDING' AND updatedAt < :before")
     suspend fun resetStale(before: Long)
 
+    /** 同步队列：还没发出去的（待发送 / 发送中 / 失败），新的在前 */
+    @Query("SELECT * FROM captures WHERE status != 'DONE' ORDER BY createdAt DESC")
+    fun observeUnfinished(): Flow<List<CaptureEntity>>
+
+    @Query("SELECT * FROM captures WHERE status = 'FAILED'")
+    suspend fun failed(): List<CaptureEntity>
+
+    /** 一键重试：所有失败的记录回到待发送 */
+    @Query("UPDATE captures SET status = 'PENDING', attempts = 0, readyAt = :now, lastError = NULL, updatedAt = :now WHERE status = 'FAILED'")
+    suspend fun requeueAll(now: Long): Int
+
+    /** 丢弃：只能丢弃还没发出去的（待发送 / 失败），发送中的不动，返回受影响行数 */
+    @Query("DELETE FROM captures WHERE id = :id AND status IN ('PENDING', 'FAILED')")
+    suspend fun discard(id: Long): Int
+
+    @Query("DELETE FROM captures WHERE status = 'FAILED'")
+    suspend fun discardFailed(): Int
+
+    @Query("SELECT COUNT(*) FROM captures WHERE status = 'FAILED'")
+    suspend fun countFailed(): Int
+
+    /** 反复重试仍没发出去的待发送记录（断网很久、服务端一直 5xx） */
+    @Query("SELECT COUNT(*) FROM captures WHERE status = 'PENDING' AND attempts >= :minAttempts")
+    suspend fun countStuck(minAttempts: Int): Int
+
+    /** 最近一条有问题的记录的原因，用在提示文案里 */
+    @Query("SELECT lastError FROM captures WHERE (status = 'FAILED' OR (status = 'PENDING' AND attempts >= :minAttempts)) AND lastError IS NOT NULL ORDER BY updatedAt DESC LIMIT 1")
+    suspend fun latestProblemError(minAttempts: Int): String?
+
     @Query("DELETE FROM captures WHERE status = 'DONE'")
     suspend fun clearDone()
 

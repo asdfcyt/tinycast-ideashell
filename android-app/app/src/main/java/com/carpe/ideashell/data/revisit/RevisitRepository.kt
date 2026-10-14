@@ -4,6 +4,7 @@ import com.carpe.ideashell.core.revisit.Fsrs
 import com.carpe.ideashell.data.db.RevisitDao
 import com.carpe.ideashell.data.db.RevisitEntity
 import com.carpe.ideashell.data.db.RevisitKind
+import com.carpe.ideashell.data.db.RevisitLogEntity
 import com.carpe.ideashell.core.notes.NoteSections
 import com.carpe.ideashell.core.notes.RevisitTopic
 import com.carpe.ideashell.data.ideashell.IdeashellApi
@@ -19,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -296,6 +298,7 @@ class RevisitRepository(
                 skippedUntil = 0L,
             ),
         )
+        dao.insertLog(RevisitLogEntity(itemKey = item.dedupeKey, reviewedAt = now, rating = rating.grade))
         return item
     }
 
@@ -328,7 +331,51 @@ class RevisitRepository(
     }
 
     suspend fun restoreAll(items: List<RevisitEntity>) {
-        if (items.isNotEmpty()) dao.updateAll(items)
+        if (items.isEmpty()) return
+        // 撤销的是一次评分：那一刻的流水也一并删掉，折线图不会多算
+        for (before in items) {
+            val now = dao.get(before.id) ?: continue
+            if (now.lastReviewAt > 0 && now.lastReviewAt != before.lastReviewAt) dao.deleteLog(now.dedupeKey, now.lastReviewAt)
+        }
+        dao.updateAll(items)
+    }
+
+    /** 折线图：[range] 范围内每天重温了几次（新评分 / 撤销后自动更新） */
+    fun trend(range: RevisitRange, today: LocalDate = LocalDate.now()): Flow<RevisitTrend> {
+        val days = range.days(today)
+        return dao.observeLogs(startOfDay(days.first()), startOfDay(days.last().plusDays(1)))
+            .map { logs -> RevisitTrend.build(range, today, logs) }
+    }
+
+    // ───────────────────────── 备份 / 迁移 ─────────────────────────
+
+    /** 整个重温库（含「不再重温」的）+ 全部重温流水 */
+    suspend fun exportAll(): Pair<List<RevisitEntity>, List<RevisitLogEntity>> = dao.all() to dao.allLogs()
+
+    /**
+     * 导入：库里没有的条目直接加入；已有的以「上次复习更晚」的那份为准（同一条在两台手机上都复习过时不丢进度）。
+     * 流水按（条目 key，时刻）去重。返回（新增条数，更新条数，新增流水条数）。
+     */
+    suspend fun importAll(items: List<RevisitEntity>, logs: List<RevisitLogEntity>): Triple<Int, Int, Int> = addLock.withLock {
+        var added = 0
+        var updated = 0
+        for (incoming in items) {
+            val local = dao.byKey(incoming.dedupeKey)
+            when {
+                local == null -> {
+                    dao.insert(incoming.copy(id = 0))
+                    added++
+                }
+                incoming.lastReviewAt > local.lastReviewAt -> {
+                    dao.update(incoming.copy(id = local.id))
+                    updated++
+                }
+            }
+        }
+        val known = dao.allLogs().mapTo(HashSet()) { it.itemKey to it.reviewedAt }
+        val fresh = logs.filter { known.add(it.itemKey to it.reviewedAt) }.map { it.copy(id = 0) }
+        if (fresh.isNotEmpty()) dao.insertLogs(fresh)
+        Triple(added, updated, fresh.size)
     }
 
     /** 当前已到期的条数（含超出每日上限的），用于「全部推后」的提示 */

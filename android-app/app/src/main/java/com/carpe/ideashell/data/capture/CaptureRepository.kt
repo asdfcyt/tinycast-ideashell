@@ -36,6 +36,9 @@ class CaptureRepository(
 ) {
     val recent: Flow<List<CaptureEntity>> = dao.observeRecent(RECENT_LIMIT)
 
+    /** 同步队列：还没发出去的记录（待发送 / 发送中 / 失败），给「连接与诊断」展示 */
+    val queue: Flow<List<CaptureEntity>> = dao.observeUnfinished()
+
     /** 万能输入。返回 null 表示没有可保存的内容。 */
     suspend fun submitText(
         input: String,
@@ -151,6 +154,31 @@ class CaptureRepository(
             scheduler.schedule(0)
             scope.launch { runCatching { processor.drain() } }
         }
+    }
+
+    /** 一键重试所有失败的记录 */
+    suspend fun retryAll() {
+        if (dao.requeueAll(System.currentTimeMillis()) > 0) {
+            scheduler.schedule(0)
+            scope.launch { runCatching { processor.drain() } }
+        }
+    }
+
+    /** 丢弃一条还没发出去的记录（连同它带的本地图片）；返回是否成功 */
+    suspend fun discard(id: Long): Boolean {
+        val item = dao.get(id)
+        val ok = dao.discard(id) > 0
+        if (ok && item != null) CaptureImages.delete(item.imageList())
+        processor.refreshHealth()
+        return ok
+    }
+
+    /** 丢弃所有失败的记录 */
+    suspend fun discardAllFailed() {
+        val images = dao.failed().flatMap { it.imageList() }
+        dao.discardFailed()
+        CaptureImages.delete(images)
+        processor.refreshHealth()
     }
 
     suspend fun clearDone() = dao.clearDone()

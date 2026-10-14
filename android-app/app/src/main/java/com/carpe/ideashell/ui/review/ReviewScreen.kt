@@ -92,6 +92,7 @@ fun ReviewScreen(
     val insights by viewModel.insights.collectAsStateWithLifecycle()
     val revisitKeys by viewModel.revisitKeys.collectAsStateWithLifecycle()
     val revisitStats by viewModel.revisitStats.collectAsStateWithLifecycle()
+    val revisitTrend by viewModel.revisitTrend.collectAsStateWithLifecycle()
 
     val clipboard = LocalClipboardManager.current
     val snackbar = remember { SnackbarHostState() }
@@ -154,7 +155,13 @@ fun ReviewScreen(
                     if (!connected) {
                         item(key = "connect") { ConnectIdeashellCard(onOpenConnection) }
                     } else {
-                        insightsItem(flow, insights, revisitStats, viewModel.preset?.label ?: viewModel.range.label, onOpenProject)
+                        insightsItem(
+                            flow = flow,
+                            insights = insights,
+                            revisit = RevisitPanel(revisitStats, revisitTrend, viewModel::selectRevisitRange),
+                            rangeLabel = viewModel.preset?.label ?: viewModel.range.label,
+                            onOpenProject = onOpenProject,
+                        )
                         riverItems(
                             state = timeline,
                             onOpenNote = onOpenNote,

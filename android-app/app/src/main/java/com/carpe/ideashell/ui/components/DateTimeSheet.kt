@@ -207,24 +207,22 @@ fun DateTimeSheet(
                 if (sat.isAfter(today.plusDays(1)) && sat != laterThisWeek) {
                     add(QuickDate("本周周末", R.drawable.ic_dt_couch, sat, weekday(sat)))
                 }
-                add(QuickDate("下周", R.drawable.ic_dt_next, nextMonday, "(周一) (${nextMonday.monthValue}月${nextMonday.dayOfMonth}日)"))
+                add(QuickDate("下周一", R.drawable.ic_dt_next, nextMonday, ""))
             }
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 quick.forEach { q ->
-                    OptionRow(
+                    QuickDateItem(
                         icon = q.icon,
                         label = q.label,
-                        trailing = q.trailing,
                         selected = hasDate && date == q.date,
-                    ) {
-                        goto(q.date)
-                    }
+                        modifier = Modifier.weight(1f),
+                    ) { goto(q.date) }
                 }
-                OptionRow(
+                QuickDateItem(
                     icon = R.drawable.ic_dt_ban,
                     label = "没有日期",
-                    trailing = "",
                     selected = !hasDate,
+                    modifier = Modifier.weight(1f),
                 ) {
                     hasDate = false
                     time = null
@@ -334,21 +332,23 @@ fun DateTimeSheet(
                     muted = time == null,
                     onTrailingClick = { time = null },
                 ) { pickTime = true }
-                OptionRow(
-                    icon = R.drawable.ic_dt_repeat,
-                    label = repeat?.label() ?: "重复",
-                    trailing = if (repeat != null) "清除" else "",
-                    selected = false,
-                    enabled = hasDate,
-                    muted = repeat == null,
-                    onTrailingClick = {
-                        preset = null
-                        custom = null
-                        repeatOpen = false
-                    },
-                ) { repeatOpen = !repeatOpen }
-                if (repeatOpen && hasDate) {
-                    RepeatPanel(
+                Box {
+                    OptionRow(
+                        icon = R.drawable.ic_dt_repeat,
+                        label = repeat?.label() ?: "重复",
+                        trailing = if (repeat != null) "清除" else "",
+                        selected = false,
+                        enabled = hasDate,
+                        muted = repeat == null,
+                        onTrailingClick = {
+                            preset = null
+                            custom = null
+                            repeatOpen = false
+                        },
+                    ) { repeatOpen = true }
+                    RepeatMenu(
+                        expanded = repeatOpen && hasDate,
+                        onDismiss = { repeatOpen = false },
                         date = date,
                         preset = preset,
                         custom = custom,
@@ -401,6 +401,31 @@ fun DateTimeSheet(
 private data class QuickDate(val label: String, val icon: Int, val date: LocalDate, val trailing: String)
 
 private fun weekday(d: LocalDate): String = "(" + d.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.CHINA).replace("星期", "周") + ")"
+
+/** 常用日期：图标在上、名字在下的一小格，五格排成一行；选中的那格涂一层浅色底 */
+@Composable
+private fun QuickDateItem(icon: Int, label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val accent = if (isDarkSurface()) Color(0xFFE8856B) else scheme.primary
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) scheme.primary.copy(alpha = 0.16f) else Color.Transparent)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(painterResource(icon), contentDescription = null, tint = accent, modifier = Modifier.size(28.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) scheme.onSurface else scheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+    }
+}
 
 @Composable
 private fun OptionRow(

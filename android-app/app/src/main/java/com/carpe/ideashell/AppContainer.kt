@@ -2,9 +2,11 @@ package com.carpe.ideashell
 
 import android.app.Application
 import android.content.Context
+import com.carpe.ideashell.data.backup.BackupService
 import com.carpe.ideashell.data.capture.CaptureProcessor
 import com.carpe.ideashell.data.capture.CaptureRepository
 import com.carpe.ideashell.data.capture.CaptureScheduler
+import com.carpe.ideashell.system.SyncNotifier
 import com.carpe.ideashell.data.db.AppDatabase
 import com.carpe.ideashell.data.dida.DaySummaryService
 import com.carpe.ideashell.data.dida.DidaApi
@@ -123,6 +125,8 @@ class AppContainer(context: Context) {
         dida = didaApi,
         dailyNotes = dailyNotes,
         onTodoCreated = { todos.refresh(force = true) },
+        onSyncProblem = { count, reason -> SyncNotifier.show(context, count, reason) },
+        onSyncHealthy = { SyncNotifier.cancel(context) },
     )
 
     /** 回顾：时间线（含 Daily Note 拆条）/ 搜索 / 往日回顾 / 提及概览 / 笔记全文 */
@@ -186,6 +190,15 @@ class AppContainer(context: Context) {
         credentials = credentials,
         todayFocusMin = { daySummary.todayFocus.value?.takeIf { it.first == LocalDate.now() }?.second },
         cacheFile = File(context.filesDir, "river_widget_cache.json"),
+    )
+
+    /** 备份与迁移：导出 / 导入文件，或存进闪念贝壳里的备份笔记 */
+    val backup = BackupService(
+        workspace = workspace,
+        settings = settings,
+        revisit = revisit,
+        ideashell = ideashellApi,
+        appVersion = BuildConfig.VERSION_NAME,
     )
 
     /** 项目 / 任务笔记 / 项目主页（防弹笔记法） */

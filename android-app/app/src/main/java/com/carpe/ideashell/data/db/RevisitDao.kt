@@ -37,4 +37,23 @@ interface RevisitDao {
 
     @Query("DELETE FROM revisit_items WHERE id = :id")
     suspend fun delete(id: Long)
+
+    // ───────────── 重温流水（折线图 / 备份用） ─────────────
+
+    @Insert
+    suspend fun insertLog(log: RevisitLogEntity): Long
+
+    @Insert
+    suspend fun insertLogs(logs: List<RevisitLogEntity>)
+
+    /** 撤销一次评分：删掉那一刻的流水 */
+    @Query("DELETE FROM revisit_logs WHERE itemKey = :key AND reviewedAt = :at")
+    suspend fun deleteLog(key: String, at: Long)
+
+    /** [from, to) 内的流水；有新评分或撤销时折线图自动刷新 */
+    @Query("SELECT * FROM revisit_logs WHERE reviewedAt >= :from AND reviewedAt < :to ORDER BY reviewedAt")
+    fun observeLogs(from: Long, to: Long): Flow<List<RevisitLogEntity>>
+
+    @Query("SELECT * FROM revisit_logs ORDER BY id")
+    suspend fun allLogs(): List<RevisitLogEntity>
 }

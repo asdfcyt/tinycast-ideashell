@@ -47,6 +47,10 @@ class CaptureProcessor(
     private val dailyNotes: DailyNoteService,
     /** 待办建到滴答后回调，用来刷新待办页 */
     private val onTodoCreated: () -> Unit = {},
+    /** 同步出了问题（有失败 / 反复重试仍没发出去的记录）：参数是问题条数和最近一条的原因。只在「正常 → 异常」时回调一次 */
+    private val onSyncProblem: (count: Int, reason: String?) -> Unit = { _, _ -> },
+    /** 队列恢复正常（问题记录都发出去了 / 被重试成功 / 被丢弃） */
+    private val onSyncHealthy: () -> Unit = {},
 ) {
     private val drainLock = Mutex()
 
@@ -83,7 +87,26 @@ class CaptureProcessor(
             }
         }
         dao.pruneDone(KEEP_DONE)
+        refreshHealth()
         dao.countUnsent() > 0
+    }
+
+    /**
+     * 检查队列健康度并决定要不要提示：有失败的、或某条重试了 [ALERT_ATTEMPTS] 次还没发出去 → 提示一次；
+     * 之后不再重复打扰，直到队列完全恢复正常（再出问题才会再提示）。
+     */
+    suspend fun refreshHealth() {
+        val problems = dao.countFailed() + dao.countStuck(ALERT_ATTEMPTS)
+        val alerted = settings.syncAlerted()
+        if (problems == 0) {
+            if (alerted) {
+                settings.setSyncAlerted(false)
+                runCatching { onSyncHealthy() }
+            }
+        } else if (!alerted) {
+            settings.setSyncAlerted(true)
+            runCatching { onSyncProblem(problems, dao.latestProblemError(ALERT_ATTEMPTS)) }
+        }
     }
 
     private suspend fun process(item: CaptureEntity): Outcome =
@@ -168,6 +191,9 @@ class CaptureProcessor(
 
     private companion object {
         const val MAX_ATTEMPTS = 10
+
+        /** 同一条记录重试到第几次还没发出去，就算「有问题」并提示一次 */
+        const val ALERT_ATTEMPTS = 3
         const val KEEP_DONE = 100
         const val STALE_SENDING_MS = 2 * 60_000L
     }

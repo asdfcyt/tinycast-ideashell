@@ -9,13 +9,17 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.carpe.ideashell.AppContainer
 import com.carpe.ideashell.IdeashellApp
+import com.carpe.ideashell.data.db.CaptureEntity
+import com.carpe.ideashell.data.db.CaptureStatus
 import com.carpe.ideashell.data.diagnostics.ConnectivityChecker
 import com.carpe.ideashell.data.diagnostics.McpTarget
 import com.carpe.ideashell.data.diagnostics.StepResult
 import com.carpe.ideashell.data.mcp.McpClient
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -47,6 +51,28 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
         ),
     )
     val state: StateFlow<DiagnosticsUiState> = _state.asStateFlow()
+
+    /** 同步队列：还没发出去的记录（待发送 / 发送中 / 失败） */
+    val queue: StateFlow<List<CaptureEntity>> = container.captures.queue
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun retry(id: Long) {
+        viewModelScope.launch { container.captures.retry(id) }
+    }
+
+    fun retryAll() {
+        viewModelScope.launch { container.captures.retryAll() }
+    }
+
+    fun syncNow() = container.captures.syncNow()
+
+    fun discard(id: Long) {
+        viewModelScope.launch { container.captures.discard(id) }
+    }
+
+    fun discardAllFailed() {
+        viewModelScope.launch { container.captures.discardAllFailed() }
+    }
 
     fun onInputChange(target: McpTarget, value: String) {
         _state.update { it.with(target) { s -> s.copy(input = value) } }
@@ -84,6 +110,17 @@ class DiagnosticsViewModel(private val container: AppContainer) : ViewModel() {
     fun buildReport(): String = buildString {
         appendLine("拾忆 Android · M0 连通性诊断")
         appendLine("设备：${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}（API ${Build.VERSION.SDK_INT}）")
+        appendLine()
+        appendLine("【同步队列】")
+        val q = queue.value
+        if (q.isEmpty()) {
+            appendLine("全部已同步")
+        } else {
+            appendLine("未发出 ${q.size} 条（失败 ${q.count { it.status == CaptureStatus.FAILED.name }} 条）")
+            q.take(20).forEach {
+                appendLine("- ${it.kind} · ${it.status} · 已重试 ${it.attempts} 次" + (it.lastError?.let { e -> " · $e" } ?: ""))
+            }
+        }
         for (target in McpTarget.entries) {
             appendLine()
             appendLine("【${target.label}】")

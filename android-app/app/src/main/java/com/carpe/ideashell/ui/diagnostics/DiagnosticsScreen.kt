@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,6 +31,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextOverflow
+import com.carpe.ideashell.data.db.CaptureEntity
+import com.carpe.ideashell.data.db.CaptureStatus
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -54,6 +61,7 @@ fun DiagnosticsScreen(
     viewModel: DiagnosticsViewModel = viewModel(factory = DiagnosticsViewModel.Factory),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val queue by viewModel.queue.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
 
     Scaffold(
@@ -76,6 +84,15 @@ fun DiagnosticsScreen(
                 "填入凭证后点「测试连接」。凭证只保存在本机（Android Keystore 加密），不会上传到任何第三方。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            QueueCard(
+                items = queue,
+                onRetry = viewModel::retry,
+                onRetryAll = viewModel::retryAll,
+                onSyncNow = viewModel::syncNow,
+                onDiscard = viewModel::discard,
+                onDiscardAllFailed = viewModel::discardAllFailed,
             )
 
             for (target in McpTarget.entries) {
@@ -103,6 +120,110 @@ fun DiagnosticsScreen(
       }
     }
 }
+
+/** 同步队列：没发出去的记录一目了然，失败的可以逐条 / 一键重试，也可以丢弃 */
+@Composable
+private fun QueueCard(
+    items: List<CaptureEntity>,
+    onRetry: (Long) -> Unit,
+    onRetryAll: () -> Unit,
+    onSyncNow: () -> Unit,
+    onDiscard: (Long) -> Unit,
+    onDiscardAllFailed: () -> Unit,
+) {
+    val failed = items.count { it.status == CaptureStatus.FAILED.name }
+    val waiting = items.size - failed
+    // 要二次确认的丢弃：某一条的 id；ALL 表示丢弃全部失败的
+    var confirm by remember { mutableStateOf<Long?>(null) }
+
+    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("同步队列", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Text(
+                    when {
+                        items.isEmpty() -> "全部已同步"
+                        failed > 0 && waiting > 0 -> "待发送 $waiting 条 · 失败 $failed 条"
+                        failed > 0 -> "失败 $failed 条"
+                        else -> "待发送 $waiting 条"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (failed > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (items.isEmpty()) {
+                Text(
+                    "记录会先存在本机，再在后台同步到闪念贝壳 / 滴答清单。没同步成功的会出现在这里。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                items.take(QUEUE_SHOWN).forEach { item ->
+                    QueueRow(item, onRetry = { onRetry(item.id) }, onDiscard = { confirm = item.id })
+                }
+                if (items.size > QUEUE_SHOWN) {
+                    Text(
+                        "还有 ${items.size - QUEUE_SHOWN} 条没有列出",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (failed > 0) {
+                        Button(onClick = onRetryAll) { Text("全部重试") }
+                        TextButton(onClick = { confirm = ALL }) { Text("丢弃失败的") }
+                    } else {
+                        OutlinedButton(onClick = onSyncNow) { Text("立即同步") }
+                    }
+                }
+            }
+        }
+    }
+
+    confirm?.let { target ->
+        AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text(if (target == ALL) "丢弃所有失败的记录？" else "丢弃这条记录？") },
+            text = { Text("丢弃后无法恢复，这些内容不会再同步到闪念贝壳 / 滴答清单。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = null
+                    if (target == ALL) onDiscardAllFailed() else onDiscard(target)
+                }) { Text("丢弃", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("取消") } },
+        )
+    }
+}
+
+@Composable
+private fun QueueRow(item: CaptureEntity, onRetry: () -> Unit, onDiscard: () -> Unit) {
+    val failed = item.status == CaptureStatus.FAILED.name
+    val sending = item.status == CaptureStatus.SENDING.name
+    val statusText = when {
+        failed -> "失败：${item.lastError ?: "未知原因"}"
+        sending -> "发送中…"
+        item.attempts > 0 -> "已重试 ${item.attempts} 次，稍后再试：${item.lastError ?: "网络异常"}"
+        else -> "等待发送"
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(item.summary, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                statusText,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (failed) TextButton(onClick = onRetry) { Text("重试") }
+        if (!sending) TextButton(onClick = onDiscard) { Text("丢弃") }
+    }
+}
+
+private const val QUEUE_SHOWN = 20
+private const val ALL = -1L
 
 @Composable
 private fun TargetCard(

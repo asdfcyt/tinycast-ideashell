@@ -93,12 +93,16 @@ class MainActivity : ComponentActivity() {
     /** 「今天有 N 条待重温」通知点进来：直接打开重温页；界面消费后清空 */
     private var requestedRevisit by mutableStateOf(false)
 
+    /** 「有记录没能同步」通知点进来：直接打开连接与诊断页（里面有同步队列）；界面消费后清空 */
+    private var requestedConnection by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as IdeashellApp).container
         requestedTab = readTab(intent)
         requestedFocus = intent?.getBooleanExtra(EXTRA_OPEN_FOCUS, false) == true
         requestedRevisit = intent?.getBooleanExtra(EXTRA_OPEN_REVISIT, false) == true
+        requestedConnection = intent?.getBooleanExtra(EXTRA_OPEN_CONNECTION, false) == true
 
         setContent {
             val settings by container.settings.state.collectAsStateWithLifecycle()
@@ -111,6 +115,8 @@ class MainActivity : ComponentActivity() {
                     onFocusConsumed = { requestedFocus = false },
                     requestedRevisit = requestedRevisit,
                     onRevisitConsumed = { requestedRevisit = false },
+                    requestedConnection = requestedConnection,
+                    onConnectionConsumed = { requestedConnection = false },
                 )
             }
         }
@@ -122,6 +128,7 @@ class MainActivity : ComponentActivity() {
         requestedTab = readTab(intent)
         requestedFocus = intent.getBooleanExtra(EXTRA_OPEN_FOCUS, false)
         requestedRevisit = intent.getBooleanExtra(EXTRA_OPEN_REVISIT, false)
+        requestedConnection = intent.getBooleanExtra(EXTRA_OPEN_CONNECTION, false)
     }
 
     private fun readTab(intent: Intent?): Int? =
@@ -131,6 +138,7 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_TAB = "tab"
         const val EXTRA_OPEN_FOCUS = "open_focus"
         const val EXTRA_OPEN_REVISIT = "open_revisit"
+        const val EXTRA_OPEN_CONNECTION = "open_connection"
     }
 }
 
@@ -151,9 +159,11 @@ private fun AppRoot(
     onFocusConsumed: () -> Unit,
     requestedRevisit: Boolean,
     onRevisitConsumed: () -> Unit,
+    requestedConnection: Boolean,
+    onConnectionConsumed: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(requestedTab ?: TAB_HOME) }
-    var connection by rememberSaveable { mutableStateOf(false) }
+    var connection by rememberSaveable { mutableStateOf(requestedConnection) }
     var search by rememberSaveable { mutableStateOf(false) }
     var focus by rememberSaveable { mutableStateOf(requestedFocus) }
     var revisit by rememberSaveable { mutableStateOf(requestedRevisit) }
@@ -207,6 +217,17 @@ private fun AppRoot(
             search = false
             noteId = null
             onRevisitConsumed()
+        }
+    }
+
+    LaunchedEffect(requestedConnection) {
+        if (requestedConnection) {
+            connection = true
+            revisit = false
+            focus = false
+            search = false
+            noteId = null
+            onConnectionConsumed()
         }
     }
 

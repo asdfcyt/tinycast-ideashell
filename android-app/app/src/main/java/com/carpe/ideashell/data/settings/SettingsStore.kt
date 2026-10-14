@@ -175,7 +175,31 @@ class SettingsStore(context: Context) {
         prefs.edit().putString(KEY_AUTO_SUMMARY_DATE, date).apply()
     }
 
+    // ── 闪念贝壳里的备份笔记：id 和最近一次备份的时间 ──
+
+    fun backupNoteId(): String? = prefs.getString(KEY_BACKUP_NOTE_ID, null)
+
+    fun setBackupNoteId(id: String) {
+        prefs.edit().putString(KEY_BACKUP_NOTE_ID, id).apply()
+    }
+
+    fun cloudBackupAt(): Long = prefs.getLong(KEY_CLOUD_BACKUP_AT, 0L)
+
+    fun setCloudBackupAt(ms: Long) {
+        prefs.edit().putLong(KEY_CLOUD_BACKUP_AT, ms).apply()
+    }
+
+    /** 同步异常的提示只发一次：发过之后记着，等队列恢复正常再清掉 */
+    fun syncAlerted(): Boolean = prefs.getBoolean(KEY_SYNC_ALERTED, false)
+
+    fun setSyncAlerted(alerted: Boolean) {
+        prefs.edit().putBoolean(KEY_SYNC_ALERTED, alerted).apply()
+    }
+
     private companion object {
+        const val KEY_SYNC_ALERTED = "sync_alerted"
+        const val KEY_BACKUP_NOTE_ID = "backup_note_id"
+        const val KEY_CLOUD_BACKUP_AT = "cloud_backup_at"
         const val KEY_REVISIT_RETENTION = "revisit_retention"
         const val KEY_REVISIT_LIMIT = "revisit_daily_limit"
         const val KEY_REVISIT_REMINDER = "revisit_reminder"

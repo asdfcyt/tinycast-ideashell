@@ -16,6 +16,7 @@ import com.carpe.ideashell.domain.Dossier
 import com.carpe.ideashell.domain.DossierData
 import com.carpe.ideashell.domain.DossierTodo
 import com.carpe.ideashell.domain.MemoryData
+import com.carpe.ideashell.data.backup.BackupService
 import com.carpe.ideashell.domain.MemoryLane
 import com.carpe.ideashell.domain.Timeline
 import com.carpe.ideashell.domain.TimelineData
@@ -69,7 +70,7 @@ class NotesRepository(
         val dailyJob = async { softly { dailyNotes.daysInRange(range.start, range.last) } ?: emptyMap() }
         val found: NotesInRange = notesJob.await()
         val (tasks, todoNote) = tasksJob.await()
-        Timeline.build(range, found.notes, tasks, found.truncated, todoNote, zone, dailyJob.await())
+        Timeline.build(range, found.notes.filterNot { BackupService.isBackupNote(it) }, tasks, found.truncated, todoNote, zone, dailyJob.await())
     }
 
 
@@ -104,7 +105,7 @@ class NotesRepository(
         val start = today.minusYears(MemoryLane.LOOKBACK_YEARS.toLong()).atStartOfDay(zone).toInstant()
         val end = today.plusDays(1).atStartOfDay(zone).toInstant()
         val found = ideashell.notesInRange(start, end)
-        return MemoryLane.build(found.notes, found.truncated, today)
+        return MemoryLane.build(found.notes.filterNot { BackupService.isBackupNote(it) }, found.truncated, today)
     }
 
     /**

@@ -40,11 +40,14 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -87,13 +90,17 @@ import com.carpe.ideashell.system.TodoWidgetProvider
 import com.carpe.ideashell.ui.glass.GlassBadge
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
+import com.carpe.ideashell.data.backup.BackupFile
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val SEC_RECORD = "record"
 private const val SEC_REVISIT = "revisit"
 private const val SEC_TODO = "todo"
 private const val SEC_QUICK = "quick"
 private const val SEC_BACKGROUND = "background"
+private const val SEC_BACKUP = "backup"
 
 private sealed interface Dialog {
     data object Tags : Dialog
@@ -184,6 +191,66 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
     var section by rememberSaveable { mutableStateOf<String?>(null) }
     BackHandler(enabled = section != null) { section = null }
 
+    // ── 备份与迁移 ──
+    var backupBusy by remember { mutableStateOf(false) }
+    var pendingRestore by remember { mutableStateOf<BackupFile?>(null) }
+    var cloudBackupAt by remember { mutableStateOf(container.backup.lastCloudBackupAt()) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            scope.launch {
+                backupBusy = true
+                runCatching {
+                    val text = container.backup.encode(container.backup.build())
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
+                            ?: error("无法写入所选位置")
+                    }
+                }.onSuccess { toast(context, "已导出备份文件") }
+                    .onFailure { toast(context, "导出失败：${it.message ?: "未知错误"}") }
+                backupBusy = false
+            }
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                backupBusy = true
+                runCatching {
+                    val text = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                            ?: error("无法读取所选文件")
+                    }
+                    container.backup.decode(text)
+                }.onSuccess { pendingRestore = it }
+                    .onFailure { toast(context, it.message ?: "读取失败") }
+                backupBusy = false
+            }
+        }
+    }
+    fun backupToIdeashell() {
+        if (backupBusy) return
+        scope.launch {
+            backupBusy = true
+            runCatching { container.backup.pushToIdeashell() }
+                .onSuccess {
+                    cloudBackupAt = container.backup.lastCloudBackupAt()
+                    toast(context, "已备份到闪念贝壳")
+                }
+                .onFailure { toast(context, "备份失败：${it.message ?: "网络异常"}") }
+            backupBusy = false
+        }
+    }
+    fun restoreFromIdeashell() {
+        if (backupBusy) return
+        scope.launch {
+            backupBusy = true
+            runCatching { container.backup.pullFromIdeashell() }
+                .onSuccess { pendingRestore = it }
+                .onFailure { toast(context, it.message ?: "读取失败") }
+            backupBusy = false
+        }
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets.statusBars,
@@ -201,6 +268,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                 SEC_TODO -> "待办"
                 SEC_QUICK -> "快速入口"
                 SEC_BACKGROUND -> "后台同步"
+                SEC_BACKUP -> "备份与迁移"
                 else -> null
             }
             if (sectionTitle == null) {
@@ -271,6 +339,13 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                             title = "主题",
                             summary = settings.themeMode.label,
                             onClick = { dialog = Dialog.Theme },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Share,
+                            title = "备份与迁移",
+                            summary = if (cloudBackupAt > 0) "上次备份到闪念贝壳：${formatDateTime(cloudBackupAt)}" else "导出 / 导入文件，或备份到闪念贝壳，换手机不丢数据",
+                            onClick = { section = SEC_BACKUP },
+                            trailing = { Chevron() },
                         )
                         SettingsItem(
                             icon = Icons.Filled.Add,
@@ -445,9 +520,68 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                     )
                 }
 
+                SEC_BACKUP -> {
+                    Group(null) {
+                        SettingsItem(
+                            icon = Icons.Filled.Share,
+                            title = "导出到文件",
+                            summary = "项目、任务笔记、模板、专注记录、设置、重温库，保存成一个 JSON 文件",
+                            onClick = { if (!backupBusy) exportLauncher.launch("拾忆备份-${java.time.LocalDate.now()}.json") },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Add,
+                            title = "从文件导入",
+                            summary = "选择之前导出的备份文件，合并进当前数据",
+                            onClick = { if (!backupBusy) importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
+                        )
+                    }
+                    Group("闪念贝壳（可选）") {
+                        SettingsItem(
+                            icon = Icons.Filled.Send,
+                            title = "备份到闪念贝壳",
+                            summary = if (!ideashellConnected) "请先连接闪念贝壳"
+                            else if (cloudBackupAt > 0) "存成一篇备份笔记（回顾里不显示）· 上次：${formatDateTime(cloudBackupAt)}"
+                            else "存成一篇备份笔记（回顾里不显示），换机时一键恢复",
+                            onClick = { if (ideashellConnected) backupToIdeashell() else onOpenConnection() },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Refresh,
+                            title = "从闪念贝壳恢复",
+                            summary = if (ideashellConnected) "读取备份笔记并合并进当前数据" else "请先连接闪念贝壳",
+                            onClick = { if (ideashellConnected) restoreFromIdeashell() else onOpenConnection() },
+                        )
+                    }
+                    Text(
+                        "备份不含 API Key、口令等凭证，换机后需要在「连接」里重新填写。恢复是合并：同名项目 / 模板以备份为准，本机多出来的内容不会被删除。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
+                    if (backupBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+
                 else -> Unit
             }
         }
+    }
+
+    pendingRestore?.let { file ->
+        AlertDialog(
+            onDismissRequest = { pendingRestore = null },
+            title = { Text("恢复这份备份？") },
+            text = { Text(file.summary() + "\n\n同名项目 / 模板以备份为准，本机多出来的内容不会被删除。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingRestore = null
+                    scope.launch {
+                        runCatching { container.backup.restore(file) }
+                            .onSuccess { toast(context, it.text()) }
+                            .onFailure { toast(context, "恢复失败：${it.message ?: "未知错误"}") }
+                    }
+                }) { Text("恢复") }
+            },
+            dismissButton = { TextButton(onClick = { pendingRestore = null }) { Text("取消") } },
+        )
     }
 
     when (dialog) {
@@ -597,6 +731,10 @@ private fun AddWidgetDialog(onPick: (PinnableWidget) -> Unit, onDismiss: () -> U
 
 private val REVISIT_LIMIT_PRESETS = listOf(3, 5, 8, 10, 15, 20)
 private val REVISIT_RETENTION_PRESETS = listOf(80, 85, 90, 95)
+
+private fun formatDateTime(ms: Long): String =
+    java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault())
+        .format(java.time.format.DateTimeFormatter.ofPattern("M月d日 HH:mm"))
 
 private fun formatClock(minutes: Int): String = "%02d:%02d".format(minutes / 60, minutes % 60)
 

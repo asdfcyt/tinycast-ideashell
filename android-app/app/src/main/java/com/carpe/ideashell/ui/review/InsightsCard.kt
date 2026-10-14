@@ -22,22 +22,34 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.AnnotatedString
@@ -64,7 +76,12 @@ import com.carpe.ideashell.domain.RhythmInsight
 import com.carpe.ideashell.domain.StreakInsight
 import com.carpe.ideashell.domain.TodoInsight
 import com.carpe.ideashell.domain.TopicInsight
+import com.carpe.ideashell.data.revisit.RevisitRange
 import com.carpe.ideashell.data.revisit.RevisitStats
+import com.carpe.ideashell.data.revisit.RevisitTrend
+import com.carpe.ideashell.ui.components.AppMenu
+import com.carpe.ideashell.ui.components.AppMenuItem
+import java.time.LocalDate
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.theme.Brand
 import java.util.Locale
@@ -76,7 +93,7 @@ import kotlin.math.roundToInt
  * 每张卡只有三层：标签 + 右上角标、一行结论、撑满剩余空间的图——图占满，所以不会有大片空白。
  *
  * 卡的顺序（没有数据撑起来的那张直接不出现；只剩一张时不做分页）：
- *   时间分配（环形，按项目拆专注时长）→ 间隔复习（今天进度 + 记忆阶段分布）→ 专注趋势（每日柱 + 日均虚线）
+ *   时间分配（环形，按项目拆专注时长）→ 间隔复习（折线：每天重温几次，范围可选）→ 专注趋势（每日柱 + 日均虚线）
  *   → 专注时间线（每天一行，橙块 = 一次专注；底色带 = 最佳专注时段）→ 记录时刻（24 小时柱）→ 连续记录（每日记录量柱）
  *   → 项目（谁记得最多、谁久没记）→ 习惯（打卡完成率）→ 待办（按时 / 延期 / 未完成）→ 话题（高频标签）。
  * 结论里的关键数字用橙色荧光笔标出（文字里用 «» 包起来）。
@@ -84,15 +101,22 @@ import kotlin.math.roundToInt
 fun LazyListScope.insightsItem(
     flow: ProjectFlow,
     insights: Insights?,
-    revisit: RevisitStats,
+    revisit: RevisitPanel,
     rangeLabel: String,
     onOpenProject: (String) -> Unit,
 ) {
     val hasRing = flow.slices.any { flow.weightOf(it) > 0 || it.stale }
     val ins = insights ?: Insights.Empty
-    if (!hasRing && ins.isEmpty && revisit.total == 0) return
+    if (!hasRing && ins.isEmpty && revisit.stats.total == 0) return
     item(key = "insights") { InsightsPager(flow, ins, revisit, hasRing, rangeLabel, onOpenProject) }
 }
+
+/** 间隔复习卡要的全部：库里的总数、折线图数据、以及换统计范围的回调 */
+class RevisitPanel(
+    val stats: RevisitStats,
+    val trend: RevisitTrend,
+    val onRange: (RevisitRange) -> Unit,
+)
 
 private const val CARD_HEIGHT = 188
 
@@ -113,14 +137,14 @@ private fun averageText(min: Int): String =
 private fun InsightsPager(
     flow: ProjectFlow,
     insights: Insights,
-    revisit: RevisitStats,
+    revisit: RevisitPanel,
     hasRing: Boolean,
     rangeLabel: String,
     onOpenProject: (String) -> Unit,
 ) {
     val pages = buildList<@Composable () -> Unit> {
         if (hasRing) add { AllocationCard(flow, rangeLabel, onOpenProject) }
-        if (revisit.total > 0) add { RevisitStatsCard(revisit) }
+        if (revisit.stats.total > 0) add { RevisitTrendCard(revisit) }
         insights.focus?.let { f ->
             if (f.hasTrend) {
                 add { FocusTrendCard(f) }
@@ -176,6 +200,8 @@ private fun InsightCard(
     label: String,
     meta: String?,
     headline: AnnotatedString?,
+    /** 不为空时，右上角用它代替 [meta] 的小标签（例如可以点开的范围菜单） */
+    metaContent: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -192,7 +218,9 @@ private fun InsightCard(
                     fontWeight = FontWeight.ExtraBold,
                     color = scheme.onSurface,
                 )
-                if (!meta.isNullOrBlank()) {
+                if (metaContent != null) {
+                    metaContent()
+                } else if (!meta.isNullOrBlank()) {
                     Text(
                         meta,
                         style = MaterialTheme.typography.labelSmall,
@@ -360,22 +388,175 @@ private fun StaleRow(s: ProjectSlice, onOpenProject: (String) -> Unit) {
 
 // ───────────────────────── 间隔复习 ─────────────────────────
 
-/** 间隔复习：今天的进度 + 重温库里的内容处在记忆的哪个阶段（刚加入 / 巩固中 / 已记牢） */
+/** 间隔复习：按天画「重温了几次」的折线，再叠一条「其中忘了几次」；右上角选统计范围 */
 @Composable
-private fun RevisitStatsCard(r: RevisitStats) {
-    val scheme = MaterialTheme.colorScheme
-    val headline = when {
-        r.remaining > 0 -> "今天还剩 «${r.remaining} 条»待重温"
-        r.doneToday > 0 -> "今天重温了 «${r.doneToday} 条»，完成"
-        else -> "今天没有待重温的"
-    } + (r.recallRate?.let { "，记得率 $it%" } ?: "")
-    val peak = maxOf(r.fresh, r.learning, r.mature, 1)
-    InsightCard("间隔复习", "共 ${r.total} 条", marked(headline)) {
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center) {
-            BarRow("刚加入", r.fresh, peak, scheme.onSurface.copy(alpha = 0.28f), trailing = "${r.fresh} 条")
-            BarRow("巩固中", r.learning, peak, Brand.Orange, trailing = "${r.learning} 条")
-            BarRow("已记牢", r.mature, peak, scheme.onSurface, trailing = "${r.mature} 条")
+private fun RevisitTrendCard(panel: RevisitPanel) {
+    val trend = panel.trend
+    var menu by remember { mutableStateOf(false) }
+    val headline = if (trend.totalReviewed == 0) {
+        "${trend.range.label}还没有重温"
+    } else {
+        "${trend.range.label}重温 «${trend.totalReviewed} 次»" + (trend.recallRate?.let { "，记得 $it%" } ?: "")
+    }
+    InsightCard(
+        label = "间隔复习",
+        meta = null,
+        headline = marked(headline),
+        metaContent = {
+            Box {
+                Row(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+                        .clickable(role = Role.Button, onClickLabel = "选择统计范围") { menu = true }
+                        .padding(start = 9.dp, end = 5.dp, top = 2.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        trend.range.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                    )
+                    Icon(
+                        Icons.Filled.ArrowDropDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                AppMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    RevisitRange.entries.forEach { r ->
+                        AppMenuItem(
+                            text = { Text(r.label) },
+                            selected = r == trend.range,
+                            onClick = { menu = false; panel.onRange(r) },
+                        )
+                    }
+                }
+            }
+        },
+    ) {
+        if (trend.totalReviewed == 0) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "这段时间没有重温记录。在「今天」页或设置里开始重温，这里会画出每天的重温次数。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        } else {
+            RevisitLineChart(trend)
         }
+    }
+}
+
+/**
+ * 折线图：橙线 = 每天重温次数（线下淡橙色填充），深色细线 = 其中「忘了」的次数；
+ * 还没到的日子不画。底下是日期：7 天内是星期，更长的范围每隔几天标一个日号。
+ */
+@Composable
+private fun RevisitLineChart(trend: RevisitTrend) {
+    val scheme = MaterialTheme.colorScheme
+    val n = trend.days.size
+    val maxV = (trend.reviewed.maxOfOrNull { it ?: 0 } ?: 1).coerceAtLeast(1)
+    // Y 轴只标最大值，免得挤；网格线只画 0 / 一半 / 最大三条
+    val grid = scheme.onSurface.copy(alpha = 0.10f)
+    val orange = Brand.Orange
+    val ink = scheme.onSurface.copy(alpha = 0.55f)
+    val fill = Brush.verticalGradient(listOf(orange.copy(alpha = 0.28f), orange.copy(alpha = 0.02f)))
+    Column(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            Canvas(Modifier.fillMaxSize()) {
+                val padTop = 8.dp.toPx()
+                val padBottom = 4.dp.toPx()
+                val h = size.height - padTop - padBottom
+                fun x(i: Int) = size.width * (i + 0.5f) / n
+                fun y(v: Int) = padTop + h * (1f - v.toFloat() / maxV)
+                for (f in listOf(0f, 0.5f, 1f)) {
+                    val gy = padTop + h * f
+                    drawLine(grid, Offset(0f, gy), Offset(size.width, gy), strokeWidth = 1.dp.toPx())
+                }
+                // 连续有数据的一段画成一条折线（本周 / 本月尚未到来的日子是 null，在那里断开）
+                fun path(values: List<Int?>, close: Boolean): Path? {
+                    val p = Path()
+                    var first = -1
+                    var last = -1
+                    values.forEachIndexed { i, v ->
+                        if (v == null) return@forEachIndexed
+                        if (first < 0) { first = i; p.moveTo(x(i), y(v)) } else p.lineTo(x(i), y(v))
+                        last = i
+                    }
+                    if (first < 0) return null
+                    if (close) {
+                        p.lineTo(x(last), padTop + h)
+                        p.lineTo(x(first), padTop + h)
+                        p.close()
+                    }
+                    return p
+                }
+                path(trend.reviewed, close = true)?.let { drawPath(it, fill) }
+                path(trend.forgotten, close = false)?.let {
+                    drawPath(it, ink, style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+                path(trend.reviewed, close = false)?.let {
+                    drawPath(it, orange, style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                }
+                // 点：天数不多时每天一个点；太密就只在有重温的那天画
+                trend.reviewed.forEachIndexed { i, v ->
+                    if (v == null) return@forEachIndexed
+                    if (n <= 14 || v > 0) drawCircle(orange, radius = 3.dp.toPx(), center = Offset(x(i), y(v)))
+                }
+                trend.forgotten.forEachIndexed { i, v ->
+                    if (v != null && v > 0 && n <= 14) drawCircle(ink, radius = 2.dp.toPx(), center = Offset(x(i), y(v)))
+                }
+            }
+            Text(
+                "$maxV",
+                style = MaterialTheme.typography.labelSmall,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.TopStart),
+            )
+            Row(Modifier.align(Alignment.TopEnd), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                LegendDot("重温", orange)
+                LegendDot("忘了", ink)
+            }
+        }
+        // 日期轴：每格一个，只有被选中的格写字（太密时每隔几天标一个）
+        val step = when {
+            n <= 7 -> 1
+            n <= 16 -> 3
+            else -> 5
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
+            trend.days.forEachIndexed { i, d ->
+                val show = n <= 7 || i % step == 0
+                Box(Modifier.weight(1f).height(14.dp), contentAlignment = Alignment.TopCenter) {
+                    if (show) {
+                        Text(
+                            if (n <= 7) TimeRanges.weekdayName(d).takeLast(1) else d.dayOfMonth.toString(),
+                            fontSize = 10.5.sp,
+                            lineHeight = 14.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (d == LocalDate.now()) scheme.primary else scheme.onSurfaceVariant,
+                            maxLines = 1,
+                            softWrap = false,
+                            modifier = Modifier.wrapContentWidth(unbounded = true),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LegendDot(label: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Box(Modifier.size(7.dp).clip(CircleShape).background(color))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

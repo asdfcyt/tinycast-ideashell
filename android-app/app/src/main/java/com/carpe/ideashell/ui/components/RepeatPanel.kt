@@ -13,11 +13,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,36 +35,77 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 
 /**
- * 日期面板里「重复」展开后的选项（对标滴答）：不重复 / 每天 / 每个工作日 / 每周 / 每月 / 每年 / 自定义。
- * 每周、每月的具体星期、几号跟着当前选的日期走；自定义可以设「每 N 天 / 周 / 月 / 年」，每周还能多选星期。
+ * 日期面板里「重复」的子菜单（对标滴答）：不重复 / 每天 / 每个工作日 / 每周 / 每月 / 每年 / 自定义…。
+ * 每周、每月的具体星期、几号跟着当前选的日期走；选「自定义…」弹出对话框，可以设「每 N 天 / 周 / 月 / 年」，每周还能多选星期。
+ * 菜单要放在「重复」那一行的同一个 Box 里，才会贴着那一行弹出。
  *
  * @param preset 当前选中的常用选项；[custom] 非空表示正在用自定义规则；两者都为空 = 不重复
  */
 @Composable
-internal fun RepeatPanel(
+internal fun RepeatMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
     date: LocalDate,
     preset: RepeatPreset?,
     custom: RepeatRule?,
     onPreset: (RepeatPreset?) -> Unit,
     onCustom: (RepeatRule) -> Unit,
 ) {
-    var customOpen by remember { mutableStateOf(custom != null) }
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        ChoiceRow("不重复", "", selected = preset == null && custom == null) {
-            customOpen = false
-            onPreset(null)
-        }
+    val scheme = MaterialTheme.colorScheme
+    var customOpen by remember { mutableStateOf(false) }
+    AppMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        AppMenuItem(
+            text = { Text("不重复") },
+            selected = preset == null && custom == null,
+            onClick = { onPreset(null); onDismiss() },
+        )
         RepeatPreset.entries.forEach { p ->
-            ChoiceRow(p.label, p.hint(date), selected = custom == null && preset == p) {
-                customOpen = false
-                onPreset(p)
-            }
+            val hint = p.hint(date)
+            AppMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(p.label)
+                        if (hint.isNotEmpty()) {
+                            Text(hint, style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant, maxLines = 1)
+                        }
+                    }
+                },
+                selected = custom == null && preset == p,
+                onClick = { onPreset(p); onDismiss() },
+            )
         }
-        ChoiceRow("自定义", custom?.resolved(date)?.label().orEmpty(), selected = custom != null) {
-            customOpen = true
-            if (custom == null) onCustom(preset?.rule(date) ?: RepeatRule(RepeatRule.Freq.DAILY))
-        }
-        if (customOpen && custom != null) CustomEditor(date, custom, onCustom)
+        AppMenuDivider()
+        AppMenuItem(
+            text = {
+                Column {
+                    Text("自定义…")
+                    custom?.resolved(date)?.label()?.let {
+                        Text(it, style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant, maxLines = 1)
+                    }
+                }
+            },
+            selected = custom != null,
+            onClick = { onDismiss(); customOpen = true },
+        )
+    }
+    if (customOpen) {
+        var draft by remember { mutableStateOf(custom ?: preset?.rule(date) ?: RepeatRule(RepeatRule.Freq.DAILY)) }
+        AlertDialog(
+            onDismissRequest = { customOpen = false },
+            title = { Text("自定义重复") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CustomEditor(date, draft) { draft = it }
+                    Text(
+                        draft.resolved(date).label(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = scheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { onCustom(draft); customOpen = false }) { Text("确定") } },
+            dismissButton = { TextButton(onClick = { customOpen = false }) { Text("取消") } },
+        )
     }
 }
 
@@ -169,36 +209,6 @@ private fun Chip(label: String, selected: Boolean, modifier: Modifier = Modifier
             color = if (selected) scheme.onPrimary else scheme.onSurface,
             maxLines = 1,
         )
-    }
-}
-
-@Composable
-private fun ChoiceRow(label: String, hint: String, selected: Boolean, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) scheme.primary.copy(alpha = 0.16f) else scheme.onSurface.copy(alpha = 0.05f))
-            .clickable(role = Role.RadioButton, onClick = onClick)
-            .height(46.dp)
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-        )
-        Text(
-            hint,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-            color = scheme.onSurfaceVariant,
-            maxLines = 1,
-        )
-        if (selected) Icon(Icons.Filled.Check, contentDescription = "已选", tint = scheme.primary, modifier = Modifier.size(20.dp))
     }
 }
 
