@@ -422,10 +422,12 @@ private fun RevisitEntry(remaining: Int, done: Int, onClick: () -> Unit, modifie
 
 private const val REVIEW_LIMIT = 8
 
-private fun formatFocus(min: Int): String = when {
-    min < 60 -> "${min}m"
-    min % 60 == 0 -> "${min / 60}h"
-    else -> "${min / 60}h${min % 60}m"
+internal fun formatFocus(min: Int): String {
+    if (min < 60) return "$min 分钟"
+    val tenths = Math.round(min / 6.0).toInt()
+    val hours = tenths / 10
+    val frac = tenths % 10
+    return if (frac == 0) "$hours 小时" else "$hours.$frac 小时"
 }
 
 @Composable
@@ -504,12 +506,16 @@ private fun Dashboard(
                         fontSize = 22.sp,
                         lineHeight = 26.sp,
                         fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        softWrap = false,
                     )
                     Text(
                         "/ ${formatFocus(focusGoal)}",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = scheme.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false,
                     )
                 }
                 Text(
