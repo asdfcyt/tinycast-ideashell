@@ -62,6 +62,7 @@ import com.carpe.ideashell.ui.theme.ApplyEdgeToEdge
 import com.carpe.ideashell.ui.theme.IdeashellTheme
 import com.carpe.ideashell.ui.theme.isDark
 import com.carpe.ideashell.ui.todos.TodoScreen
+import com.carpe.ideashell.ui.todos.TodoView
 import com.carpe.ideashell.ui.todos.TodoViewModel
 import kotlinx.coroutines.delay
 
@@ -365,12 +366,11 @@ private fun AppRoot(
                 fab = {
                     AddFab(
                         onClick = {
-                            context.startActivity(
-                                Intent(context, QuickCaptureActivity::class.java).apply {
-                                    action = QuickCaptureActivity.ACTION_QUICK_CAPTURE
-                                    // 不预设类型：由输入内容自动判断，也可以在面板上方手动指定
-                                },
-                            )
+                            // 在待办页的「任务」视图里选了今天或以后的某一天：新待办直接带上这一天；
+                            // 其他情况不预设类型：由输入内容自动判断，也可以在面板上方手动指定
+                            val picked = todo.day
+                                ?.takeIf { tab == TAB_TODOS && todo.view == TodoView.LIST && it >= java.time.LocalDate.now() }
+                            context.startActivity(QuickCaptureActivity.intent(context, picked))
                         },
                     )
                 },

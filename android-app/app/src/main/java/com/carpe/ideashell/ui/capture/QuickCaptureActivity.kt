@@ -12,6 +12,7 @@ import androidx.core.content.IntentCompat
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.carpe.ideashell.IdeashellApp
+import com.carpe.ideashell.core.capture.CaptureSchedule
 import com.carpe.ideashell.core.capture.ClipBuilder
 import com.carpe.ideashell.core.capture.ClipInput
 import com.carpe.ideashell.core.parse.CaptureKind
@@ -20,6 +21,7 @@ import com.carpe.ideashell.ui.MainActivity
 import com.carpe.ideashell.ui.theme.ApplyEdgeToEdge
 import com.carpe.ideashell.ui.theme.IdeashellTheme
 import com.carpe.ideashell.ui.theme.isDark
+import java.time.LocalDate
 
 /**
  * 轻量输入面板，一个 Activity 服务所有入口：
@@ -80,6 +82,8 @@ class QuickCaptureActivity : ComponentActivity() {
         var caption: String? = null
         // 预填到输入框的文字（项目快捷方式：「#项目 」）
         var presetText: String? = null
+        // 预选的日期（待办页选了某一天再点「+」）：带上这一天，全天
+        var presetDate: LocalDate? = null
 
         if (sharedImages.isNotEmpty()) {
             caption = (intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: intent.getStringExtra(Intent.EXTRA_SUBJECT))
@@ -123,6 +127,7 @@ class QuickCaptureActivity : ComponentActivity() {
                 preset = intent.getStringExtra(EXTRA_KIND)
                     ?.let { runCatching { CaptureKind.valueOf(it.uppercase()) }.getOrNull() }
                 presetText = intent.getStringExtra(DirectShare.EXTRA_PRESET_TEXT)
+                presetDate = intent.getStringExtra(EXTRA_DATE)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
             }
         }
 
@@ -145,6 +150,7 @@ class QuickCaptureActivity : ComponentActivity() {
 
         if (fresh) viewModel.reconfigure(clip, preset, origin) else viewModel.configure(clip, preset, origin)
         if (presetText != null) viewModel.text = presetText
+        if (presetDate != null) viewModel.schedule = CaptureSchedule(presetDate, null)
         if (sharedImages.isNotEmpty()) {
             if (caption != null) viewModel.text = presetText.orEmpty() + caption
             viewModel.addImages(this, sharedImages)
@@ -189,5 +195,18 @@ class QuickCaptureActivity : ComponentActivity() {
     companion object {
         const val ACTION_QUICK_CAPTURE = "com.carpe.ideashell.action.QUICK_CAPTURE"
         const val EXTRA_KIND = "kind"
+
+        /** 预选日期（yyyy-MM-dd）：待办页选了某一天后点「+」，新待办直接排在这一天 */
+        const val EXTRA_DATE = "date"
+
+        /** 打开快记面板；[date] 不为空时预设为待办并排在这一天 */
+        fun intent(context: Context, date: LocalDate? = null): Intent =
+            Intent(context, QuickCaptureActivity::class.java).apply {
+                action = ACTION_QUICK_CAPTURE
+                if (date != null) {
+                    putExtra(EXTRA_KIND, CaptureKind.TODO.name)
+                    putExtra(EXTRA_DATE, date.toString())
+                }
+            }
     }
 }

@@ -4,9 +4,12 @@ import com.carpe.ideashell.data.mcp.McpAuthException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -28,6 +31,10 @@ data class TodoData(
 @Serializable
 private data class TodoCache(val overview: DidaOverview, val updatedAt: Long)
 
+/** 日历视图读到的任务，存成文件：重新打开应用、进日历时先有数据可画 */
+@Serializable
+private data class RangedCache(val tasks: List<DidaTask>)
+
 /**
  * 待办的数据来源（以滴答为主）：本地缓存秒开 → 后台刷新；完成 / 改期等操作先改本地（乐观更新），
  * 再提交滴答，失败回滚并把原因抛给界面。
@@ -48,7 +55,55 @@ class TodoRepository(
     /** 本次运行中刚完成的任务：刷新结果里即使还带着它（服务端延迟）也先不显示 */
     private val recentlyDone = HashMap<String, Long>()
 
+    /**
+     * 日历视图读到的任务（含已完成，覆盖概览之外更远的日期）。key = 任务 id + 「|o」（未完成）/「|d」（已完成），
+     * 因为重复任务的「已完成的这一次」和「下一次」id 相同。完成 / 改期 / 删除等操作会同步改它，日历不用重读也是对的。
+     */
+    private val _ranged = MutableStateFlow<Map<String, DidaTask>>(emptyMap())
+    val ranged: StateFlow<Map<String, DidaTask>> = _ranged.asStateFlow()
+
+    private fun openKey(id: String) = "$id|o"
+    private fun doneKey(id: String) = "$id|d"
+
+    private val rangedFile get() = File(cacheFile.parentFile, "todo_ranged.json")
+
+    private fun keyOf(t: DidaTask) = if (t.done) doneKey(t.id) else openKey(t.id)
+
+    /** 读 [from]..[to] 之间的任务并替换日历缓存里这段日期的旧数据；失败时保留旧数据 */
+    suspend fun loadRange(from: LocalDate, to: LocalDate): Result<Unit> = attempt {
+        // 一个月最多几百条任务的 JSON：解析放到后台线程，别卡住正在滑动的界面
+        val fetched = withContext(Dispatchers.Default) { api.tasksInRange(from, to).filter { it.date != null } }
+        val lo = from.toString()
+        val hi = to.toString()
+        _ranged.update { cur ->
+            cur.filterValues { (it.date ?: "") < lo || (it.date ?: "") > hi } +
+                fetched.associateBy { if (it.done) doneKey(it.id) else openKey(it.id) }
+        }
+    }
+
+    @OptIn(FlowPreview::class)
+    private fun startRangedPersistence() {
+        // 先把上次存的读进来（读到之前已经有新数据的话，新数据优先）
+        scope.launch(Dispatchers.IO) {
+            val saved = runCatching { json.decodeFromString(RangedCache.serializer(), rangedFile.readText()) }.getOrNull()
+            if (saved != null) {
+                _ranged.update { cur -> saved.tasks.associateBy { keyOf(it) } + cur }
+            }
+        }
+        // 之后每次变化（读到新月份、完成、改期……）稍等一下再写盘，别每次都写
+        scope.launch(Dispatchers.IO) {
+            _ranged.drop(1).debounce(1_500).collect { map ->
+                val today = LocalDate.now()
+                val lo = today.minusDays(200).toString()
+                val hi = today.plusDays(400).toString()
+                val keep = map.values.filter { (it.date ?: "") in lo..hi }
+                runCatching { rangedFile.writeText(json.encodeToString(RangedCache.serializer(), RangedCache(keep))) }
+            }
+        }
+    }
+
     init {
+        startRangedPersistence()
         scope.launch(Dispatchers.IO) {
             val cache = runCatching { json.decodeFromString(TodoCache.serializer(), cacheFile.readText()) }.getOrNull()
             if (cache != null && _state.value.overview == null) {
@@ -105,13 +160,18 @@ class TodoRepository(
     /** 完成任务（乐观更新）。失败时回滚并返回失败原因 */
     suspend fun complete(task: DidaTask): Result<Unit> {
         val before = _state.value.overview
+        val rangedBefore = _ranged.value
         stateLock.withLock { recentlyDone[task.id] = System.currentTimeMillis() }
         mutate { o ->
             o.withoutTask(task.id).copy(done = listOf(task.copy(done = true, completedAt = System.currentTimeMillis())) + o.done)
         }
+        if (task.date != null) {
+            _ranged.update { it - openKey(task.id) + (doneKey(task.id) to task.copy(done = true, completedAt = System.currentTimeMillis())) }
+        }
         return attempt { api.complete(task) }.onFailure {
             stateLock.withLock { recentlyDone.remove(task.id) }
             rollback(before)
+            _ranged.value = rangedBefore
         }
     }
 
@@ -142,41 +202,73 @@ class TodoRepository(
     /** 撤销刚才的完成 */
     suspend fun undoComplete(task: DidaTask): Result<Unit> {
         val before = _state.value.overview
+        val rangedBefore = _ranged.value
         stateLock.withLock { recentlyDone.remove(task.id) }
         mutate { o -> insertOpen(o.copy(done = o.done.filterNot { it.id == task.id }), task.copy(done = false, completedAt = null)) }
-        return attempt { api.reopen(task) }.onFailure { rollback(before) }
+        if (task.date != null) {
+            _ranged.update { it - doneKey(task.id) + (openKey(task.id) to task.copy(done = false, completedAt = null)) }
+        }
+        return attempt { api.reopen(task) }.onFailure {
+            rollback(before)
+            _ranged.value = rangedBefore
+        }
     }
 
     suspend fun reschedule(task: DidaTask, date: String, time: String?): Result<Unit> {
         val before = _state.value.overview
+        val rangedBefore = _ranged.value
         mutate { o -> insertOpen(o.withoutTask(task.id), task.copy(date = date, time = time)) }
-        return attempt { api.reschedule(task, date, time) }.onFailure { rollback(before) }
+        _ranged.update { it - openKey(task.id) + (openKey(task.id) to task.copy(date = date, time = time, done = false)) }
+        return attempt { api.reschedule(task, date, time) }.onFailure {
+            rollback(before)
+            _ranged.value = rangedBefore
+        }
     }
 
     suspend fun setPriority(task: DidaTask, priority: Int): Result<Unit> {
         val before = _state.value.overview
+        val rangedBefore = _ranged.value
         mutate { o -> replaceOpen(o, task.copy(priority = priority)) }
-        return attempt { api.setPriority(task, priority) }.onFailure { rollback(before) }
+        patchRanged(task.copy(priority = priority))
+        return attempt { api.setPriority(task, priority) }.onFailure {
+            rollback(before)
+            _ranged.value = rangedBefore
+        }
     }
 
     /** 改标题（`!重要` / `!紧急` 标记就写在标题里） */
     suspend fun setTitle(task: DidaTask, title: String): Result<Unit> {
         val before = _state.value.overview
+        val rangedBefore = _ranged.value
         mutate { o -> replaceOpen(o, task.copy(title = title)) }
-        return attempt { api.setTitle(task, title) }.onFailure { rollback(before) }
+        patchRanged(task.copy(title = title))
+        return attempt { api.setTitle(task, title) }.onFailure {
+            rollback(before)
+            _ranged.value = rangedBefore
+        }
     }
 
     /** 整体替换标签（「归入项目」就是给任务加项目标签） */
     suspend fun setTags(task: DidaTask, tags: List<String>): Result<Unit> {
         val before = _state.value.overview
+        val rangedBefore = _ranged.value
         mutate { o -> replaceOpen(o, task.copy(tags = tags)) }
-        return attempt { api.setTags(task, tags) }.onFailure { rollback(before) }
+        patchRanged(task.copy(tags = tags))
+        return attempt { api.setTags(task, tags) }.onFailure {
+            rollback(before)
+            _ranged.value = rangedBefore
+        }
     }
 
     suspend fun delete(task: DidaTask): Result<Unit> {
         val before = _state.value.overview
+        val rangedBefore = _ranged.value
         mutate { o -> o.withoutTask(task.id) }
-        return attempt { api.deleteTask(task) }.onFailure { rollback(before) }
+        _ranged.update { it - openKey(task.id) - doneKey(task.id) }
+        return attempt { api.deleteTask(task) }.onFailure {
+            rollback(before)
+            _ranged.value = rangedBefore
+        }
     }
 
     /** 评论失败不影响主流程 */
@@ -213,6 +305,11 @@ class TodoRepository(
             d <= limit -> o.copy(upcoming = o.upcoming + task)
             else -> o
         }
+    }
+
+    /** 日历缓存里同一个任务（未完成的那份）换成新内容 */
+    private fun patchRanged(task: DidaTask) {
+        _ranged.update { cur -> cur.mapValues { (_, v) -> if (v.id == task.id && !v.done) task else v } }
     }
 
     private fun replaceOpen(o: DidaOverview, task: DidaTask): DidaOverview {

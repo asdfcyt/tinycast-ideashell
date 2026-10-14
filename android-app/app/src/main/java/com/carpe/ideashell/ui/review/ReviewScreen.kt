@@ -54,7 +54,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carpe.ideashell.data.project.firstMatching
 import com.carpe.ideashell.data.project.taskKeyOf
 import com.carpe.ideashell.domain.Insights
-import com.carpe.ideashell.domain.TimelineData
 import com.carpe.ideashell.ui.components.ScreenHeader
 import com.carpe.ideashell.ui.components.SearchButton
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
@@ -117,7 +116,6 @@ fun ReviewScreen(
         Column(Modifier.padding(padding)) {
             ScreenHeader(
                 title = "回顾",
-                subtitle = subtitleOf(viewModel, timeline.data),
                 action = {
                     RangeMenu(
                         label = viewModel.preset?.label ?: "自定义",
@@ -245,16 +243,6 @@ fun ReviewScreen(
                 title = { Text("选择起止日期", modifier = Modifier.padding(start = 24.dp, top = 16.dp)) },
             )
         }
-    }
-}
-
-/** 标题下的一行：范围 + 笔记 / 日记 / 待办的总数（总数只是背景信息，不再占首屏） */
-private fun subtitleOf(viewModel: ReviewViewModel, data: TimelineData?): String = buildString {
-    append(viewModel.range.label)
-    if (data != null) {
-        append(" · ${data.noteCount} 篇笔记")
-        if (data.dailyCount > 0) append(" · ${data.dailyCount} 条日记")
-        if (data.todoTotal > 0) append(" · 待办 ${data.todoDone}/${data.todoTotal}")
     }
 }
 

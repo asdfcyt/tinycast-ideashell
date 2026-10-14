@@ -150,7 +150,7 @@ fun QuickCaptureScreen(
                 // 类型选择浮在面板上方（对标滴答清单的「任务 / 笔记 / 习惯」）；分享进来的内容、未连接、保存完成时不显示
                 if (composing && viewModel.clip == null) {
                     KindSelector(
-                        active = resolvedKind,
+                        active = resolvedKind ?: viewModel.override,
                         override = viewModel.override,
                         onSelect = { viewModel.override = it },
                         onTemplates = { viewModel.showTemplates = true },

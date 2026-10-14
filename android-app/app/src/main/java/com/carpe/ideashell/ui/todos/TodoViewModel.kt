@@ -48,6 +48,7 @@ sealed interface TodoEvent {
  */
 enum class TodoView(val label: String) {
     LIST("任务"),
+    CALENDAR("日历"),
     PROJECTS("项目"),
     HABITS("习惯"),
 }
@@ -116,6 +117,82 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
             loadPast(day, force = true)
         }
     }
+
+    // ───────────── 日历视图 ─────────────
+
+    /** 日历视图正在看的月份（留在 ViewModel 里：打开任务、切走再回来仍在这个月） */
+    var calMonth by mutableStateOf(java.time.YearMonth.now())
+
+    /** 日历读到的任务（含概览之外更远的日期、已完成的），完成 / 改期时会同步更新 */
+    val ranged: StateFlow<Map<String, DidaTask>> = container.todos.ranged
+
+    var calLoading by mutableStateOf(false)
+        private set
+
+    private val calLoadedAt = HashMap<java.time.YearMonth, Long>()
+
+    /** 日历格子覆盖的日期范围：从本月 1 号所在那周的周一，到本月最后一天所在那周的周日 */
+    fun gridRange(month: java.time.YearMonth): Pair<java.time.LocalDate, java.time.LocalDate> {
+        val first = month.atDay(1).with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY))
+        val last = month.atEndOfMonth().with(java.time.temporal.TemporalAdjusters.nextOrSame(java.time.DayOfWeek.SUNDAY))
+        return first to last
+    }
+
+    /**
+     * 读这个月（含首尾补出来的几天）的任务。
+     * - 缓存里已经有这段日期的数据（这次运行读过的，或上次存在本地的）就先画出来，后台静默更新，不转圈；
+     * - [minAge] 内读过的不重复读；[force] 忽略；
+     * - 读完后顺带把前后两个月也预读好，左右划切月时基本是现成的。
+     */
+    fun loadCalendar(month: java.time.YearMonth, force: Boolean = false, minAge: Long = 60_000L, prefetchNeighbors: Boolean = true) {
+        if (!connected.value) return
+        viewModelScope.launch {
+            fetchMonth(month, force, minAge, silent = false)
+            if (prefetchNeighbors) {
+                // 先下个月（更常看），再上个月；错开一点，别和手上正在读的请求抢
+                for (m in listOf(month.plusMonths(1), month.minusMonths(1))) {
+                    kotlinx.coroutines.delay(300)
+                    fetchMonth(m, force = false, minAge = 5 * 60_000L, silent = true)
+                }
+            }
+        }
+    }
+
+    /** 进入待办页后在后台把当前月预热好，之后下拉进日历直接有数据 */
+    fun warmCalendar() = loadCalendar(calMonth, minAge = 5 * 60_000L, prefetchNeighbors = false)
+
+    private suspend fun fetchMonth(month: java.time.YearMonth, force: Boolean, minAge: Long, silent: Boolean) {
+        val now = System.currentTimeMillis()
+        if (!force && now - (calLoadedAt[month] ?: 0L) < minAge) return
+        calLoadedAt[month] = now
+        val (from, to) = gridRange(month)
+        val lo = from.toString()
+        val hi = to.toString()
+        val hasData = ranged.value.values.any { (it.date ?: "") in lo..hi }
+        val spinner = !silent && !hasData
+        if (spinner) calLoading = true
+        container.todos.loadRange(from, to).onFailure {
+            calLoadedAt.remove(month)
+            // 预读失败不打扰；有缓存可看时也只在手动看这个月时提示
+            if (!silent) message(if (hasData) "日历没能更新：${it.message ?: "网络异常"}" else "日历没能读到这个月的任务：${it.message ?: "网络异常"}")
+        }
+        if (spinner) calLoading = false
+    }
+
+    /** 日历里点开不在概览里的任务（更远日期的）时，从日历缓存里找 */
+    fun rangedTask(id: String): DidaTask? = ranged.value.values.firstOrNull { it.id == id && !it.done }
+        ?: ranged.value.values.firstOrNull { it.id == id }
+
+    /** 把无日期任务拖到某一天：改成那天的全天任务 */
+    fun scheduleByDrag(task: DidaTask, date: java.time.LocalDate) {
+        viewModelScope.launch {
+            container.todos.reschedule(task, date.toString(), null)
+                .onSuccess { message("已安排到 ${date.monthValue}月${date.dayOfMonth}日") }
+                .onFailure { fail("安排失败", it) }
+        }
+    }
+
+    fun notice(text: String) = message(text)
 
     /** 当前视图（留在 ViewModel 里：打开笔记再回来仍在原处） */
     var view by mutableStateOf(TodoView.LIST)

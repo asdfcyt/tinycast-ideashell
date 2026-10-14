@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -43,6 +45,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +55,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -60,6 +66,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -85,6 +92,7 @@ import com.carpe.ideashell.ui.theme.Brand
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import kotlin.math.roundToInt
 
 internal enum class Tone { OVERDUE, TODAY, NORMAL, MUTED }
 
@@ -170,19 +178,6 @@ private fun buildGroups(
 
 private const val UNDATED_PREVIEW = 5
 
-/** 标题下方那一行：只写有的事实，不堆砌 */
-private fun summaryOf(overview: DidaOverview, today: LocalDate): String {
-    val todayStr = today.toString()
-    val parts = buildList {
-        if (overview.overdue.isNotEmpty()) add("逾期 ${overview.overdue.size}")
-        val t = overview.upcoming.count { it.date == todayStr }
-        if (t > 0) add("今天 $t")
-        val f = overview.upcoming.count { it.date != todayStr }
-        if (f > 0) add("未来 7 天 $f")
-    }
-    return if (parts.isEmpty()) "${today.label()} · 没有待办" else parts.joinToString(" · ")
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodoScreen(
@@ -198,6 +193,8 @@ fun TodoScreen(
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val delivery by viewModel.delivery.collectAsStateWithLifecycle()
     val focusStats by viewModel.focusStats.collectAsStateWithLifecycle()
+    // 日历视图里读到的更远日期的任务：点开它们的详情时要用
+    val ranged by viewModel.ranged.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -281,6 +278,25 @@ fun TodoScreen(
         LaunchedEffect(openKey) { viewModel.openProject = null }
     }
 
+    // 任务 ⇄ 日历的展开进度（0 = 任务，1 = 日历）：手势拖动时跟手，菜单 / 返回键 / 点小横条时自动滑过去
+    val revealScope = rememberCoroutineScope()
+    val wantCalendar = view == TodoView.CALENDAR && connected
+    val reveal = remember { CalendarReveal(if (wantCalendar) 1f else 0f, revealScope) }
+    reveal.travel = with(LocalDensity.current) { 320.dp.toPx() }
+    LaunchedEffect(wantCalendar) { if (!reveal.dragging && reveal.target != wantCalendar) reveal.settle(wantCalendar) }
+    // 进待办页稍等一下，在后台把当前月的日历数据预热好
+    LaunchedEffect(connected, overview != null) {
+        if (connected && overview != null) {
+            delay(1_200)
+            viewModel.warmCalendar()
+        }
+    }
+    val listVisible by remember { derivedStateOf { reveal.progress < 0.999f } }
+    val calVisible by remember { derivedStateOf { reveal.progress > 0.001f } }
+    fun finishReveal(open: Boolean) {
+        if (open) viewModel.view = TodoView.CALENDAR else if (viewModel.view == TodoView.CALENDAR) viewModel.view = TodoView.LIST
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets.statusBars,
@@ -312,18 +328,13 @@ fun TodoScreen(
         } else Column(Modifier.padding(padding)) {
             ScreenHeader(
                 title = if (view == TodoView.LIST) "待办" else view.label,
-                subtitle = when {
-                    overview != null && view == TodoView.LIST -> summaryOf(overview, today)
-                    view == TodoView.LIST -> today.label()
-                    view == TodoView.PROJECTS -> {
-                        val active = briefs.count { it.project.status != ProjectStatus.PAUSED }
-                        val stale = briefs.count { it.stale }
-                        if (briefs.isEmpty()) "还没有项目" else "$active 个进行中" + if (stale > 0) " · $stale 个该记一条了" else ""
-                    }
-                    else -> today.label()
-                },
                 action = {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        // 在看别的日子的时间轴时，一键回到今天
+                        val picked = viewModel.day
+                        if (view == TodoView.LIST && picked != null && picked != today) {
+                            TodayButton(onClick = { viewModel.day = null })
+                        }
                         if (view != TodoView.LIST) {
                             CircleIconButton(Icons.AutoMirrored.Filled.ArrowBack, "返回待办", onClick = { viewModel.view = TodoView.LIST })
                         }
@@ -342,6 +353,22 @@ fun TodoScreen(
                 },
             )
 
+            // 任务 ⇄ 日历：进度跟着手指走（往下拖，日历从标题栏下面落下来；往上推，收回去），松手后顺势滑完
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clipToBounds(),
+            ) {
+            if (listVisible) Box(
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        val p = reveal.progress
+                        alpha = (1f - p * 1.6f).coerceIn(0f, 1f)
+                        translationY = p * reveal.travel * 0.18f
+                    },
+            ) {
             PullToRefreshBox(
                 isRefreshing = (data.loading && overview != null) || (view == TodoView.HABITS && viewModel.habitUi.loading && viewModel.habitUi.habits.isNotEmpty()),
                 onRefresh = {
@@ -349,7 +376,7 @@ fun TodoScreen(
                     if (view == TodoView.HABITS && connected) viewModel.loadHabits(force = true)
                     if (view == TodoView.PROJECTS) viewModel.loadStats(force = true)
                 },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxSize(),
             ) {
                 LazyColumn(
                     contentPadding = PaddingValues(
@@ -415,6 +442,17 @@ fun TodoScreen(
                                         viewModel.day = it
                                         if (it < today) viewModel.loadPast(it)
                                     },
+                                    // 往下拉 / 点小横条：进入日历视图，项目、最近完成和当天的安排都收起
+                                    onExpand = {
+                                        viewModel.calMonth = java.time.YearMonth.from(day)
+                                        viewModel.view = TodoView.CALENDAR
+                                    },
+                                    onDragStart = {
+                                        viewModel.calMonth = java.time.YearMonth.from(day)
+                                        reveal.dragStart()
+                                    },
+                                    onDragBy = { reveal.dragBy(it) },
+                                    onDragStop = { v -> finishReveal(reveal.release(v)) },
                                 )
                             }
                             if (isPast) {
@@ -577,6 +615,29 @@ fun TodoScreen(
                     }
                 }
             }
+            }
+            if (calVisible) CalendarPage(
+                viewModel = viewModel,
+                overview = overview,
+                today = today,
+                workspace = workspace,
+                onOpenTask = { t -> selectedId = t.id },
+                onOpenDay = { d ->
+                    viewModel.day = d
+                    if (d < today) viewModel.loadPast(d)
+                    viewModel.view = TodoView.LIST
+                },
+                onAddOnDay = { d -> context.startActivity(QuickCaptureActivity.intent(context, d)) },
+                onCollapse = { viewModel.view = TodoView.LIST },
+                onDragStart = { reveal.dragStart() },
+                onDragBy = { reveal.dragBy(it) },
+                onDragStop = { v -> finishReveal(reveal.release(v)) },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset { IntOffset(0, (-(1f - reveal.progress) * reveal.travel).roundToInt()) }
+                    .graphicsLayer { alpha = (reveal.progress * 1.6f).coerceIn(0f, 1f) },
+            )
+            }
         }
     }
 
@@ -592,6 +653,8 @@ fun TodoScreen(
 
     val selected = selectedId?.let { id ->
         overview?.let { o -> o.findOpen(id) ?: o.done.firstOrNull { it.id == id } }
+            ?: ranged.values.firstOrNull { it.id == id && !it.done }
+            ?: ranged.values.firstOrNull { it.id == id }
     }
     if (selected != null && overview != null) {
         TaskSheet(

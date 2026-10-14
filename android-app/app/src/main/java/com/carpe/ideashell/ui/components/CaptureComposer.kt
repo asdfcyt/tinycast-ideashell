@@ -237,21 +237,27 @@ fun CaptureComposer(
         val kind = plan?.kind
         val todoLike = kind == null || kind == CaptureKind.TODO
         val folderLike = kind == null || kind == CaptureKind.NOTE
-        val dateText = if (plan != null && plan.kind == CaptureKind.TODO && plan.todoDate != null) {
-            CapturePlanner.describeWhen(plan.todoDate, plan.todoTime) + (plan.repeat?.let { " · ${it.label()}" } ?: "")
-        } else {
-            null
+        val dateText = when {
+            plan != null && plan.kind == CaptureKind.TODO && plan.todoDate != null ->
+                CapturePlanner.describeWhen(plan.todoDate, plan.todoTime) + (plan.repeat?.let { " · ${it.label()}" } ?: "")
+            // 还没输入文字时 plan 为空，但预选的日期（待办页选了某天再点「+」）也要显示出来
+            plan == null && schedule != null ->
+                CapturePlanner.describeWhen(schedule.date.toString(), schedule.time?.let { "%02d:%02d".format(it.hour, it.minute) }) +
+                    (schedule.repeat?.let { " · ${it.label()}" } ?: "")
+            else -> null
         }
         val tagText = plan?.tags?.takeIf { it.isNotEmpty() }?.let { "#${it.first()}" + if (it.size > 1) " +${it.size - 1}" else "" }
         val priority = if (plan != null && plan.kind == CaptureKind.TODO) plan.priority else 0
         var dateSheet by remember { mutableStateOf(false) }
         if (dateSheet) {
             val curDate = plan?.todoDate?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+                ?: schedule?.date.takeIf { plan == null }
             val curTime = plan?.todoTime?.let { runCatching { java.time.LocalTime.parse(it) }.getOrNull() }
+                ?: schedule?.time.takeIf { plan == null }
             DateTimeSheet(
                 initialDate = curDate,
                 initialTime = curTime,
-                initialRepeat = plan?.repeat,
+                initialRepeat = plan?.repeat ?: schedule?.repeat.takeIf { plan == null },
                 onConfirm = { d, t, r ->
                     dateSheet = false
                     // 选的时间不往输入框里写，只记在 schedule 里（工具栏上的日期会显示）；文字里原有的日期时间词去掉，免得重复

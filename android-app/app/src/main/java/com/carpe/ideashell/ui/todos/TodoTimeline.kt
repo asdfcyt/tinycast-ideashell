@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
@@ -156,12 +157,11 @@ private fun DayCell(
     }
 }
 
-// ───────────────────────── 日期带 + 当月日历 ─────────────────────────
+// ───────────────────────── 日期带 + 下拉进入日历 ─────────────────────────
 
 /**
- * 日期带 + 下拉展开的当月日历：在日期带上往下拖，日历跟着手指一点点长出来（日期带渐隐、日历渐显），松手后吸附到展开或收起；
- * 点下面的小横条也能切换。展开后选日期不会收回，只有往上拖或点小横条才收起。
- * 日历里可以翻月（最早一年前，最晚到概览覆盖的未来一周）。
+ * 日期带 + 下面的小横条：在日期带上往下拖一小段，或点小横条，直接进入「日历」视图（整月大格子，
+ * 项目、最近完成、当天的安排都收起，只留无日期的任务，可以拖到日期上安排）。
  */
 @Composable
 internal fun CalendarStrip(
@@ -169,221 +169,43 @@ internal fun CalendarStrip(
     selected: LocalDate,
     counts: Map<String, Int>,
     onSelect: (LocalDate) -> Unit,
+    onExpand: () -> Unit,
+    onDragStart: () -> Unit,
+    onDragBy: (Float) -> Unit,
+    onDragStop: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // 展开与否要跟着页面保存：列表滑出屏幕再回来、旋转屏幕后都保持
-    var expanded by rememberSaveable { mutableStateOf(false) }
-    val progress = remember { Animatable(if (expanded) 1f else 0f) }
-    var month by remember { mutableStateOf(YearMonth.from(selected)) }
-    val current by rememberUpdatedState(selected)
-    val scope = rememberCoroutineScope()
-    // 日历完全展开比日期带多出来的高度（px），拖动时用它把手指位移换算成进度
-    val range = remember { floatArrayOf(1f) }
-    val showWeek by remember { derivedStateOf { progress.value < 0.999f } }
-
-    fun settle(open: Boolean) {
-        if (open && progress.value < 0.01f) month = YearMonth.from(current)
-        expanded = open
-        scope.launch { progress.animateTo(if (open) 1f else 0f, tween(220)) }
-    }
-
-    val drag = rememberDraggableState { dy ->
-        scope.launch { progress.snapTo((progress.value + dy / range[0]).coerceIn(0f, 1f)) }
-    }
-
+    // 日历跟着手指从上面落下来：拖动量、松手速度都交给外面的 CalendarReveal
+    val dragState = rememberDraggableState { onDragBy(it) }
     Column(
         modifier = modifier
             .fillMaxWidth()
             .draggable(
-                state = drag,
+                state = dragState,
                 orientation = Orientation.Vertical,
-                onDragStarted = {
-                    progress.stop()
-                    if (progress.value < 0.01f) month = YearMonth.from(current)
-                },
-                onDragStopped = { velocity ->
-                    settle(if (kotlin.math.abs(velocity) > 700f) velocity > 0 else progress.value > 0.5f)
-                },
+                onDragStarted = { onDragStart() },
+                onDragStopped = { onDragStop(it) },
             ),
+    ) {
+        WeekStrip(today = today, selected = selected, counts = counts, onSelect = onSelect)
+        PullHandle(onClick = onExpand)
+    }
+}
+
+/** 日期带 / 日历下面那条小横条，点一下切换 */
+@Composable
+internal fun PullHandle(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.fillMaxWidth().height(22.dp).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
         Box(
             Modifier
-                .fillMaxWidth()
-                .clipToBounds()
-                .layout { measurable, constraints ->
-                    val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
-                    val weekH = 62.dp.roundToPx()
-                    val extra = (placeable.height - weekH).coerceAtLeast(0)
-                    range[0] = extra.coerceAtLeast(1).toFloat()
-                    layout(placeable.width, (weekH + extra * progress.value).roundToInt()) { placeable.place(0, 0) }
-                },
-        ) {
-            // 日历一直排好版（透明度随进度变），这样拖动一开始就能量出它的高度；日期带盖在它上面，展开后拿掉
-            Box(
-                Modifier
-                    .layout { measurable, constraints ->
-                        val placeable = measurable.measure(constraints)
-                        // 收起时只量不摆：不画、也接不到点击，避免和上面的日期带抢触摸
-                        layout(placeable.width, placeable.height) { if (progress.value > 0.02f) placeable.place(0, 0) }
-                    }
-                    .graphicsLayer { alpha = progress.value },
-            ) {
-                MonthCalendar(
-                    month = month,
-                    today = today,
-                    selected = selected,
-                    counts = counts,
-                    onMonth = { month = it },
-                    onSelect = onSelect,
-                )
-            }
-            if (showWeek) {
-                Box(Modifier.align(Alignment.TopStart).graphicsLayer { alpha = 1f - progress.value }) {
-                    WeekStrip(today = today, selected = selected, counts = counts, onSelect = onSelect)
-                }
-            }
-        }
-        Box(
-            modifier = Modifier.fillMaxWidth().height(22.dp).clickable { settle(!expanded) },
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                Modifier
-                    .width(36.dp)
-                    .height(4.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
-            )
-        }
-    }
-}
-
-@Composable
-private fun MonthCalendar(
-    month: YearMonth,
-    today: LocalDate,
-    selected: LocalDate,
-    counts: Map<String, Int>,
-    onMonth: (YearMonth) -> Unit,
-    onSelect: (LocalDate) -> Unit,
-) {
-    val scheme = MaterialTheme.colorScheme
-    val first = today.minusDays(PAST_DAYS.toLong())
-    val last = today.plusDays(6)
-    val canPrev = month > YearMonth.from(first)
-    val canNext = month < YearMonth.from(last)
-    ListGroup {
-        Column(Modifier.padding(horizontal = 8.dp, vertical = 10.dp)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("${month.year}年${month.monthValue}月", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                if (month != YearMonth.from(today)) {
-                    Text(
-                        "回到今天",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = scheme.primary,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { onMonth(YearMonth.from(today)) }
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                    )
-                }
-                MonthArrow("‹", canPrev) { onMonth(month.minusMonths(1)) }
-                MonthArrow("›", canNext) { onMonth(month.plusMonths(1)) }
-            }
-            Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                "一二三四五六日".forEach { c ->
-                    Text(
-                        c.toString(),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = scheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.weight(1f).padding(vertical = 4.dp),
-                    )
-                }
-            }
-            val offset = month.atDay(1).dayOfWeek.value - 1
-            val weeks = (offset + month.lengthOfMonth() + 6) / 7
-            repeat(weeks) { w ->
-                Row(Modifier.fillMaxWidth()) {
-                    repeat(7) { d ->
-                        val n = w * 7 + d - offset + 1
-                        if (n < 1 || n > month.lengthOfMonth()) {
-                            Spacer(Modifier.weight(1f).height(46.dp))
-                        } else {
-                            val day = month.atDay(n)
-                            MonthDay(
-                                day = day,
-                                isToday = day == today,
-                                selected = day == selected,
-                                enabled = day >= first && day <= last,
-                                past = day < today,
-                                count = if (day < today) 0 else counts[day.toString()] ?: 0,
-                                onClick = { onSelect(day) },
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MonthArrow(text: String, enabled: Boolean, onClick: () -> Unit) {
-    Text(
-        text,
-        fontSize = 22.sp,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.25f),
-        textAlign = TextAlign.Center,
-        modifier = Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(top = 4.dp),
-    )
-}
-
-@Composable
-private fun MonthDay(
-    day: LocalDate,
-    isToday: Boolean,
-    selected: Boolean,
-    enabled: Boolean,
-    past: Boolean,
-    count: Int,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val scheme = MaterialTheme.colorScheme
-    val fg = when {
-        selected -> scheme.inverseOnSurface
-        !enabled -> scheme.onSurface.copy(alpha = 0.28f)
-        past -> scheme.onSurface.copy(alpha = 0.65f)
-        else -> scheme.onSurface
-    }
-    Box(modifier.height(46.dp), contentAlignment = Alignment.Center) {
-        Column(
-            modifier = Modifier
-                .size(40.dp)
+                .width(36.dp)
+                .height(4.dp)
                 .clip(CircleShape)
-                .then(if (selected) Modifier.background(scheme.inverseSurface) else Modifier)
-                .then(if (isToday && !selected) Modifier.border(1.5.dp, Brand.Orange, CircleShape) else Modifier)
-                .clickable(enabled = enabled, onClick = onClick),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(day.dayOfMonth.toString(), fontSize = 15.sp, lineHeight = 18.sp, fontWeight = if (isToday || selected) FontWeight.Black else FontWeight.Bold, color = fg)
-            Box(
-                Modifier
-                    .padding(top = 1.dp)
-                    .size(4.dp)
-                    .clip(CircleShape)
-                    .background(if (count > 0 && enabled) Brand.Orange else androidx.compose.ui.graphics.Color.Transparent),
-            )
-        }
+                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
+        )
     }
 }
 
@@ -566,5 +388,21 @@ internal fun ViewMenuButton(
                 )
             }
         }
+    }
+}
+
+/** 标题栏上的「今天」：在看别的日子的时间轴时出现，点一下回到今天；和旁边的圆钮同高同底色 */
+@Composable
+internal fun TodayButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .height(44.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("今天", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold, color = Brand.OrangeDeep)
     }
 }
