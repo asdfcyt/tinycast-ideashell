@@ -442,6 +442,16 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                         )
                     }
                     SettingsItem(
+                        icon = Icons.Filled.Create,
+                        title = "填空模式",
+                        summary = if (settings.revisitCloze) "已开启 · 重温时把关键词挖空，点空白处查看。用 {{词}}、**加粗**、==高亮== 标出的词优先挖，没标就自动挑"
+                        else "关闭 · 开启后重温时把正文里的关键词挖空，先回忆再看答案",
+                        onClick = { container.settings.setRevisitCloze(!settings.revisitCloze) },
+                        trailing = {
+                            Switch(checked = settings.revisitCloze, onCheckedChange = { container.settings.setRevisitCloze(it) })
+                        },
+                    )
+                    SettingsItem(
                         icon = Icons.Filled.Refresh,
                         title = "全部推后 7 天",
                         summary = "积压太多、一时看不过来时，把现在到期的都往后挪一周",
@@ -543,6 +553,28 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                             else if (cloudBackupAt > 0) "存成一篇备份笔记（回顾里不显示）· 上次：${formatDateTime(cloudBackupAt)}"
                             else "存成一篇备份笔记（回顾里不显示），换机时一键恢复",
                             onClick = { if (ideashellConnected) backupToIdeashell() else onOpenConnection() },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Refresh,
+                            title = "每周自动备份",
+                            summary = autoBackupSummary(
+                                connected = ideashellConnected,
+                                enabled = settings.autoCloudBackup,
+                                lastAt = cloudBackupAt,
+                                error = container.settings.autoBackupError(),
+                            ),
+                            onClick = {
+                                if (!ideashellConnected) onOpenConnection()
+                                else container.settings.setAutoCloudBackup(!settings.autoCloudBackup)
+                            },
+                            trailing = {
+                                Switch(
+                                    checked = settings.autoCloudBackup && ideashellConnected,
+                                    onCheckedChange = {
+                                        if (ideashellConnected) container.settings.setAutoCloudBackup(it) else onOpenConnection()
+                                    },
+                                )
+                            },
                         )
                         SettingsItem(
                             icon = Icons.Filled.Refresh,
@@ -1002,4 +1034,13 @@ private fun requestPinWidget(context: Context, widget: PinnableWidget) {
     } else {
         Toast.makeText(context, "请长按桌面空白处 → 小组件 → 拾忆 → ${widget.title}", Toast.LENGTH_LONG).show()
     }
+}
+
+/** 「每周自动备份」那一行的说明：没连接 / 已开启（带上次时间与最近的失败原因）/ 未开启 */
+private fun autoBackupSummary(connected: Boolean, enabled: Boolean, lastAt: Long, error: String?): String = when {
+    !connected -> "请先连接闪念贝壳"
+    !enabled -> "每 7 天在有网络时自动更新那篇备份笔记，不用再手动点"
+    error != null -> "已开启 · 最近一次自动备份失败：$error（系统会稍后重试）"
+    lastAt > 0 -> "已开启 · 每 7 天一次 · 上次：${formatDateTime(lastAt)}"
+    else -> "已开启 · 每 7 天一次，马上会先备份一次"
 }

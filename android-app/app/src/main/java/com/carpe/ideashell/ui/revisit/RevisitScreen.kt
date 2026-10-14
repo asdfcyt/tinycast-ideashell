@@ -44,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -65,6 +66,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carpe.ideashell.R
+import com.carpe.ideashell.core.revisit.Cloze
 import com.carpe.ideashell.core.revisit.Fsrs
 import com.carpe.ideashell.data.db.RevisitEntity
 import com.carpe.ideashell.data.db.RevisitKind
@@ -94,6 +96,7 @@ fun RevisitScreen(
     viewModel: RevisitViewModel = viewModel(factory = RevisitViewModel.Factory),
 ) {
     val today by viewModel.today.collectAsStateWithLifecycle()
+    val cloze by viewModel.cloze.collectAsStateWithLifecycle()
     val current = today.queue.firstOrNull()
     val snackbar = remember { SnackbarHostState() }
     var composing by remember { mutableStateOf(false) }
@@ -122,6 +125,8 @@ fun RevisitScreen(
                 today = today,
                 current = current,
                 canUndo = viewModel.undoItems.isNotEmpty(),
+                cloze = cloze,
+                onToggleCloze = viewModel::toggleCloze,
                 onBack = onBack,
                 onUndo = viewModel::undo,
                 onSkip = { current?.let(viewModel::skipToday) },
@@ -147,7 +152,7 @@ fun RevisitScreen(
                     },
                     label = "revisit-card",
                 ) { item ->
-                    if (item != null) RevisitCard(item) else EmptyState(today, onBack)
+                    if (item != null) RevisitCard(item, cloze) else EmptyState(today, onBack)
                 }
                 if (current != null) {
                     // 卡片右下角的「记一笔」：图标按钮，不占一整行；已有专题笔记时，入口放在左下角
@@ -255,6 +260,8 @@ private fun TopBar(
     today: RevisitToday,
     current: RevisitEntity?,
     canUndo: Boolean,
+    cloze: Boolean,
+    onToggleCloze: () -> Unit,
     onBack: () -> Unit,
     onUndo: () -> Unit,
     onSkip: () -> Unit,
@@ -297,6 +304,10 @@ private fun TopBar(
                     if (current.noteId != null) {
                         AppMenuItem(text = { Text("在笔记中打开") }, onClick = { menu = false; onOpenSource() })
                     }
+                    AppMenuItem(
+                        text = { Text(if (cloze) "关闭填空模式" else "开启填空模式") },
+                        onClick = { menu = false; onToggleCloze() },
+                    )
                     AppMenuItem(text = { Text("不再重温") }, destructive = true, onClick = { menu = false; onArchive() })
                     AppMenuDivider()
                 }
@@ -391,11 +402,20 @@ private fun BigReading(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun RevisitCard(item: RevisitEntity) {
+private fun RevisitCard(item: RevisitEntity, cloze: Boolean) {
     val scheme = MaterialTheme.colorScheme
     val long = remember(item.id) { item.text.length > 200 || item.text.count { it == '\n' } > 5 }
     var expanded by remember(item.id) { mutableStateOf(!long) }
     val isNote = item.kind == RevisitKind.NOTE.name
+    // 整篇笔记且正文和标题一样（短笔记）时不重复显示
+    val showBody = !(isNote && item.text.trim() == item.title.trim())
+
+    // 填空：每次重温（reps 不同）、点「换一批」（reroll 加一）自动挑的位置都会换
+    var reroll by remember(item.id) { mutableIntStateOf(0) }
+    val plain = remember(item.id, item.text, item.reps, reroll, cloze, showBody) {
+        if (cloze && showBody) Cloze.build(item.text, item.id * 31L + item.reps * 7919L + reroll) else null
+    }
+    var revealed by remember(plain) { mutableStateOf(emptySet<Int>()) }
 
     Column(
         modifier = Modifier
@@ -436,10 +456,23 @@ private fun RevisitCard(item: RevisitEntity) {
                 )
             }
 
-            // 整篇笔记且正文和标题一样（短笔记）时不重复显示
-            val showBody = !(isNote && item.text.trim() == item.title.trim())
             if (showBody) {
-                Box(Modifier.animateContentSize()) {
+                if (plain != null) {
+                    ClozeBar(
+                        total = plain.blanks.size,
+                        shown = revealed.size,
+                        auto = plain.auto,
+                        onToggleAll = {
+                            revealed = if (revealed.size == plain.blanks.size) emptySet() else plain.blanks.indices.toSet()
+                        },
+                        onReroll = { reroll++ },
+                    )
+                    ClozeText(
+                        plain = plain,
+                        revealed = revealed,
+                        onToggle = { i -> revealed = if (i in revealed) revealed - i else revealed + i },
+                    )
+                } else Box(Modifier.animateContentSize()) {
                     if (expanded) {
                         MarkdownText(item.text)
                     } else {
@@ -460,7 +493,7 @@ private fun RevisitCard(item: RevisitEntity) {
             }
         }
 
-        if (!expanded) {
+        if (!expanded && plain == null) {
             Box(
                 modifier = Modifier
                     .padding(top = 4.dp)

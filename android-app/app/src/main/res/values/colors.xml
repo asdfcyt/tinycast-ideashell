@@ -21,4 +21,7 @@
     <color name="notification_accent">#A9441C</color>
     <!-- 通知里「+」圆和圆环弧的填充色：浅色用柔橙，深色用品牌橙 -->
     <color name="notification_fill">#E8794A</color>
+    <!-- 通知里「+」按钮：浅色用淡橙底 + 主题橙加号；深色（见 values-night）用奶油白底 + 主题橙加号 -->
+    <color name="notification_add_bg">#FBE3D5</color>
+    <color name="notification_add_icon">#D9622E</color>
 </resources>

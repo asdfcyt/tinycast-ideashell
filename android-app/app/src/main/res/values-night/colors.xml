@@ -12,4 +12,6 @@
     <color name="widget_amber">#FFB020</color>
     <color name="notification_accent">#E8855A</color>
     <color name="notification_fill">#E0703F</color>
+    <color name="notification_add_bg">#F8EFE7</color>
+    <color name="notification_add_icon">#E0703F</color>
 </resources>

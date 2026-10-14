@@ -42,4 +42,18 @@
                 android:value="true" />
         </intent>
     </shortcut>
+
+    <!--
+        直接分享（Direct Share）：分享菜单第一行出现「拾忆 · 待办 / 日记 / 笔记 / 某个项目」。
+        这些目标本身是代码里发布的动态快捷方式（见 system/DirectShare.kt），带同一个 category 就会按下面的声明接收分享。
+        文字走「拾忆 · 摘录」入口，图片走「拾忆 · 图片」入口。
+    -->
+    <share-target android:targetClass="com.carpe.ideashell.ShareToIdeashell">
+        <data android:mimeType="text/*" />
+        <category android:name="com.carpe.ideashell.category.SHARE_TARGET" />
+    </share-target>
+    <share-target android:targetClass="com.carpe.ideashell.ShareImageToIdeashell">
+        <data android:mimeType="image/*" />
+        <category android:name="com.carpe.ideashell.category.SHARE_TARGET" />
+    </share-target>
 </shortcuts>

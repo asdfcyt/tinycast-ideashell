@@ -15,6 +15,7 @@ import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.core.capture.ClipBuilder
 import com.carpe.ideashell.core.capture.ClipInput
 import com.carpe.ideashell.core.parse.CaptureKind
+import com.carpe.ideashell.system.DirectShare
 import com.carpe.ideashell.ui.MainActivity
 import com.carpe.ideashell.ui.theme.ApplyEdgeToEdge
 import com.carpe.ideashell.ui.theme.IdeashellTheme
@@ -77,6 +78,8 @@ class QuickCaptureActivity : ComponentActivity() {
         // 分享进来的图片：不走「摘录」卡，直接进普通输入面板的图片栏，和相册选图是同一条路径
         val sharedImages = sharedImageUris(intent)
         var caption: String? = null
+        // 预填到输入框的文字（项目快捷方式：「#项目 」）
+        var presetText: String? = null
 
         if (sharedImages.isNotEmpty()) {
             caption = (intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: intent.getStringExtra(Intent.EXTRA_SUBJECT))
@@ -119,12 +122,31 @@ class QuickCaptureActivity : ComponentActivity() {
             else -> {
                 preset = intent.getStringExtra(EXTRA_KIND)
                     ?.let { runCatching { CaptureKind.valueOf(it.uppercase()) }.getOrNull() }
+                presetText = intent.getStringExtra(DirectShare.EXTRA_PRESET_TEXT)
+            }
+        }
+
+        // 从分享菜单第一行的「直接分享」目标进来：按目标决定类型 / 项目
+        val target = if (origin == "share") DirectShare.parse(intent.getStringExtra(Intent.EXTRA_SHORTCUT_ID)) else null
+        if (target != null) {
+            preset = target.kind
+            if (target.project != null) presetText = "#${target.project} "
+            // 待办 / 日记：文字不走「摘录」卡，直接成为输入框里的内容，再按类型保存
+            val shared = clip
+            if (shared != null && target.kind != CaptureKind.NOTE) {
+                presetText = listOfNotNull(
+                    shared.quote.takeIf { it.isNotBlank() },
+                    shared.pageTitle?.takeIf { shared.quote.isBlank() },
+                    shared.url,
+                ).joinToString(" ")
+                clip = null
             }
         }
 
         if (fresh) viewModel.reconfigure(clip, preset, origin) else viewModel.configure(clip, preset, origin)
+        if (presetText != null) viewModel.text = presetText
         if (sharedImages.isNotEmpty()) {
-            if (caption != null) viewModel.text = caption
+            if (caption != null) viewModel.text = presetText.orEmpty() + caption
             viewModel.addImages(this, sharedImages)
         }
     }

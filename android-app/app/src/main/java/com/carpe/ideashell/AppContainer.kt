@@ -24,6 +24,8 @@ import com.carpe.ideashell.data.project.ProjectService
 import com.carpe.ideashell.data.project.WorkspaceStore
 import com.carpe.ideashell.data.revisit.RevisitRepository
 import com.carpe.ideashell.system.RevisitNotifier
+import com.carpe.ideashell.system.CloudBackupScheduler
+import com.carpe.ideashell.system.DirectShare
 import com.carpe.ideashell.system.RevisitReminderScheduler
 import com.carpe.ideashell.data.secure.CredentialStore
 import com.carpe.ideashell.data.secure.SecureStore
@@ -250,6 +252,20 @@ class AppContainer(context: Context) {
                 .map { it.revisitReminder to it.revisitReminderMinutes }
                 .distinctUntilChanged()
                 .collect { (enabled, minutes) -> RevisitReminderScheduler.apply(appContext, enabled, minutes) }
+        }
+        // 分享菜单第一行的「直接分享」目标：项目增删 / 改状态后重新发布
+        appScope.launch {
+            workspace.state
+                .map { DirectShare.projectKeywords(it) }
+                .distinctUntilChanged()
+                .collect { DirectShare.publish(appContext, it) }
+        }
+        // 每周自动备份到闪念贝壳
+        appScope.launch {
+            settings.state
+                .map { it.autoCloudBackup }
+                .distinctUntilChanged()
+                .collect { CloudBackupScheduler.apply(appContext, it) }
         }
         // 今天的重温都做完了，就把「今天有 N 条待重温」的提醒收掉
         appScope.launch {

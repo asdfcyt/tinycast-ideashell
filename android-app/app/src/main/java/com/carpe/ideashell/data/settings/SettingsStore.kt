@@ -39,6 +39,10 @@ data class AppSettings(
     val revisitReminderMinutes: Int = DEFAULT_REVISIT_MINUTES,
     /** 笔记重温：周六、周日不提醒（今天页的卡片仍然会出现） */
     val revisitSkipWeekends: Boolean = false,
+    /** 笔记重温：填空模式，把正文里的关键词挖空，先回忆再看答案 */
+    val revisitCloze: Boolean = false,
+    /** 每周自动把备份写进闪念贝壳（需要已连接闪念贝壳、有网络） */
+    val autoCloudBackup: Boolean = false,
 ) {
     val defaultTags: List<String>
         get() = defaultTagsText.split(',', '，').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }
@@ -89,6 +93,10 @@ class SettingsStore(context: Context) {
 
     fun setRevisitSkipWeekends(skip: Boolean) = update { it.copy(revisitSkipWeekends = skip) }
 
+    fun setRevisitCloze(enabled: Boolean) = update { it.copy(revisitCloze = enabled) }
+
+    fun setAutoCloudBackup(enabled: Boolean) = update { it.copy(autoCloudBackup = enabled) }
+
     private fun update(transform: (AppSettings) -> AppSettings) {
         val next = transform(_state.value)
         prefs.edit()
@@ -105,6 +113,8 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_REVISIT_REMINDER, next.revisitReminder)
             .putInt(KEY_REVISIT_MINUTES, next.revisitReminderMinutes)
             .putBoolean(KEY_REVISIT_SKIP_WEEKENDS, next.revisitSkipWeekends)
+            .putBoolean(KEY_AUTO_CLOUD_BACKUP, next.autoCloudBackup)
+            .putBoolean(KEY_REVISIT_CLOZE, next.revisitCloze)
             .apply()
         _state.value = next
     }
@@ -124,6 +134,8 @@ class SettingsStore(context: Context) {
         revisitReminder = prefs.getBoolean(KEY_REVISIT_REMINDER, true),
         revisitReminderMinutes = prefs.getInt(KEY_REVISIT_MINUTES, AppSettings.DEFAULT_REVISIT_MINUTES).coerceIn(0, 24 * 60 - 1),
         revisitSkipWeekends = prefs.getBoolean(KEY_REVISIT_SKIP_WEEKENDS, false),
+        autoCloudBackup = prefs.getBoolean(KEY_AUTO_CLOUD_BACKUP, false),
+        revisitCloze = prefs.getBoolean(KEY_REVISIT_CLOZE, false),
     )
 
     // ── 文件夹缓存 ──
@@ -189,6 +201,13 @@ class SettingsStore(context: Context) {
         prefs.edit().putLong(KEY_CLOUD_BACKUP_AT, ms).apply()
     }
 
+    /** 最近一次自动备份失败的原因；成功后清空（设置页里显示，方便知道为什么没备份上） */
+    fun autoBackupError(): String? = prefs.getString(KEY_AUTO_BACKUP_ERROR, null)?.ifBlank { null }
+
+    fun setAutoBackupError(message: String?) {
+        prefs.edit().putString(KEY_AUTO_BACKUP_ERROR, message.orEmpty()).apply()
+    }
+
     /** 最近搜索：最新的在前，换行分隔存一份，退出应用后还在 */
     fun recentSearches(): List<String> =
         prefs.getString(KEY_RECENT_SEARCHES, null)?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
@@ -206,6 +225,9 @@ class SettingsStore(context: Context) {
 
     private companion object {
         const val KEY_RECENT_SEARCHES = "recent_searches"
+        const val KEY_REVISIT_CLOZE = "revisit_cloze"
+        const val KEY_AUTO_CLOUD_BACKUP = "auto_cloud_backup"
+        const val KEY_AUTO_BACKUP_ERROR = "auto_backup_error"
         const val KEY_SYNC_ALERTED = "sync_alerted"
         const val KEY_BACKUP_NOTE_ID = "backup_note_id"
         const val KEY_CLOUD_BACKUP_AT = "cloud_backup_at"

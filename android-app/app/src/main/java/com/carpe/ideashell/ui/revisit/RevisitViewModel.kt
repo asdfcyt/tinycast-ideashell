@@ -19,7 +19,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
@@ -29,6 +32,14 @@ import kotlinx.coroutines.launch
  */
 class RevisitViewModel(container: AppContainer) : ViewModel() {
     private val repo = container.revisit
+    private val settings = container.settings
+
+    /** 填空模式（设置里也能开关）：卡片正文里的关键词挖空，点空白处查看 */
+    val cloze: StateFlow<Boolean> = settings.state
+        .map { it.revisitCloze }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, settings.current.revisitCloze)
+
+    fun toggleCloze() = settings.setRevisitCloze(!settings.current.revisitCloze)
 
     val today: StateFlow<RevisitToday> = repo.today
 
