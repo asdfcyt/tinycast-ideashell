@@ -16,7 +16,7 @@ import com.carpe.ideashell.ui.capture.QuickCaptureActivity
  * 拾忆 · 待办 / 日记 / 笔记，以及最多几个进行中的项目（拾忆 · 项目名）——选中后分享的内容直接按这个去向进入输入面板。
  *
  * 做法：用动态快捷方式（带 [CATEGORY]）+ `res/xml/shortcuts.xml` 里的 share-target 声明。
- * 同一批快捷方式也会出现在长按桌面图标的菜单里（点它们等于「记一条 / 记到某个项目」）。
+ * 这些快捷方式不出现在长按桌面图标的菜单里（长按菜单只留「快速记一条 / 快速专注 / 摘录模式」）。
  * 选中后系统启动分享入口，并在 Intent 里带上 [Intent.EXTRA_SHORTCUT_ID]，由 [QuickCaptureActivity] 解析。
  */
 object DirectShare {
@@ -92,6 +92,8 @@ object DirectShare {
             .setIntent(launch)
             .setCategories(setOf(CATEGORY))
             .setLongLived(true)
+            // 只给分享菜单当「直接分享」目标，不出现在长按桌面图标的菜单里
+            .setExcludedFromSurfaces(ShortcutInfoCompat.SURFACE_LAUNCHER)
             .build()
     }
 }

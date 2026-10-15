@@ -48,6 +48,10 @@ data class AppSettings(
     val autoCloudBackup: Boolean = false,
     /** 转交问题到闪念贝壳 AI 后自动点发送（需要开启无障碍服务） */
     val aiAutoSend: Boolean = false,
+    /** 摘录模式：开启后屏幕边缘有闪电小胶囊，选中文字后点一下就摘录（需要开启「拾忆 · 快速摘录」无障碍服务） */
+    val excerptMode: Boolean = false,
+    /** 摘录后是否弹出抽屉写想法（来源 / 标签在同一个 App 里延续）；关闭则直接存原文 + 来源 */
+    val excerptWriteNote: Boolean = true,
 ) {
     val defaultTags: List<String>
         get() = defaultTagsText.split(',', '，').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }
@@ -109,6 +113,10 @@ class SettingsStore(context: Context) {
 
     fun setAiAutoSend(enabled: Boolean) = update { it.copy(aiAutoSend = enabled) }
 
+    fun setExcerptMode(enabled: Boolean) = update { it.copy(excerptMode = enabled) }
+
+    fun setExcerptWriteNote(enabled: Boolean) = update { it.copy(excerptWriteNote = enabled) }
+
     fun setAutoCloudBackup(enabled: Boolean) = update { it.copy(autoCloudBackup = enabled) }
 
     private fun update(transform: (AppSettings) -> AppSettings) {
@@ -132,6 +140,8 @@ class SettingsStore(context: Context) {
             .putInt(KEY_CLOZE_MIN, next.clozeMinPercent)
             .putInt(KEY_CLOZE_MAX, next.clozeMaxPercent)
             .putBoolean(KEY_AI_AUTO_SEND, next.aiAutoSend)
+            .putBoolean(KEY_EXCERPT_MODE, next.excerptMode)
+            .putBoolean(KEY_EXCERPT_WRITE_NOTE, next.excerptWriteNote)
             .apply()
         _state.value = next
     }
@@ -156,6 +166,8 @@ class SettingsStore(context: Context) {
         clozeMinPercent = prefs.getInt(KEY_CLOZE_MIN, AppSettings.DEFAULT_CLOZE_MIN).coerceIn(3, 80),
         clozeMaxPercent = prefs.getInt(KEY_CLOZE_MAX, AppSettings.DEFAULT_CLOZE_MAX).coerceIn(3, 80),
         aiAutoSend = prefs.getBoolean(KEY_AI_AUTO_SEND, false),
+        excerptMode = prefs.getBoolean(KEY_EXCERPT_MODE, false),
+        excerptWriteNote = prefs.getBoolean(KEY_EXCERPT_WRITE_NOTE, true),
     )
 
     // ── 文件夹缓存 ──
@@ -249,6 +261,8 @@ class SettingsStore(context: Context) {
         const val KEY_CLOZE_MIN = "cloze_min_percent"
         const val KEY_CLOZE_MAX = "cloze_max_percent"
         const val KEY_AI_AUTO_SEND = "ai_auto_send"
+        const val KEY_EXCERPT_MODE = "excerpt_mode"
+        const val KEY_EXCERPT_WRITE_NOTE = "excerpt_write_note"
         const val KEY_AUTO_CLOUD_BACKUP = "auto_cloud_backup"
         const val KEY_AUTO_BACKUP_ERROR = "auto_backup_error"
         const val KEY_SYNC_ALERTED = "sync_alerted"

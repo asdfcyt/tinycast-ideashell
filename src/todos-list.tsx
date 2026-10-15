@@ -40,6 +40,7 @@ import {
   ReviewForm,
   TaskNoteForm,
 } from "./project-forms";
+import { importPhoneBackup, importSummary } from "./backup-import";
 import { InboxPage } from "./inbox-page";
 import { ProjectPage } from "./project-page";
 import { PendingOpen, takePendingOpen } from "./pending-open";
@@ -50,6 +51,7 @@ import {
   recordMilestone,
   loadTaskNotes,
   restoreTaskNotes,
+  discoverProjects,
   noteUrl,
   TaskNoteRef,
 } from "./task-notes";
@@ -622,6 +624,23 @@ export default function Command() {
         icon={Icon.Pin}
         shortcut={{ modifiers: ["cmd", "shift"], key: "p" }}
         target={<WatchAddForm />}
+      />
+      <Action
+        title="同步手机上的项目和任务笔记"
+        icon={Icon.Mobile}
+        onAction={async () => {
+          const toast = await showToast({ style: Toast.Style.Animated, title: "正在读取手机备份…" });
+          try {
+            const r = await importPhoneBackup();
+            const found = await discoverProjects();
+            toast.style = Toast.Style.Success;
+            toast.title = importSummary(r) + (found > 0 ? `；自动发现项目 ${found} 个` : "");
+          } catch (e) {
+            toast.style = Toast.Style.Failure;
+            toast.title = "同步失败";
+            toast.message = e instanceof Error ? e.message : String(e);
+          }
+        }}
       />
       <Action
         title={view === "quad" ? "切换到时间视图" : "切换到四象限视图"}

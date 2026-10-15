@@ -164,6 +164,9 @@ class AppContainer(context: Context) {
         scope = appScope,
     )
 
+    /** 摘录模式：连续摘录写进同一篇笔记 */
+    val excerpts = com.carpe.ideashell.data.capture.ExcerptNotes(ideashellApi, settings) { captures }
+
     /** 项目 / 任务笔记 / 模板 / 习惯打卡兜底：本机的小数据（可丢弃重建） */
     val workspace = WorkspaceStore(File(context.filesDir, "workspace.json"), appScope)
 

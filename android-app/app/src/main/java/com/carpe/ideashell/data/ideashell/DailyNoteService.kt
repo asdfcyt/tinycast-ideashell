@@ -74,6 +74,18 @@ class DailyNoteService(
         return id
     }
 
+    /**
+     * 删掉某一天 Daily Note 里的一条（时间 + 文字都对得上的那一条）。
+     * 先重读那天最新的全文再改，避免覆盖别处刚写的内容；找不到这一条（已被改过 / 删过）返回 false。
+     */
+    suspend fun deleteEntry(date: LocalDate, entry: DailyEntry): Boolean {
+        synchronized(pastDays) { pastDays.remove(date) }
+        val note = findNote(date.toString()) ?: return false
+        val updated = DailyFormat.removeEntry(note.content, entry.time, entry.text) ?: return false
+        api.updateNoteBody(note.id, updated)
+        return true
+    }
+
     /** 指定日期的 Daily Note 的全部条目（时间 + 文字）；那天没有 Daily Note 时为 null */
     suspend fun entriesOn(date: LocalDate): DailyDay? {
         val note = findNote(date.toString()) ?: return null
@@ -360,6 +372,35 @@ object DailyFormat {
         content.lines().joinToString("\n") { line ->
             ENTRY_RE.find(line)?.let { m -> "- **${m.groupValues[1]}** ${m.groupValues[2]}".trimEnd() } ?: line
         }.trim()
+
+    /**
+     * 去掉一条日记：时间戳行 + 它的续行；时间和文字（按 [entries] 同样的方式合并续行后）都对上才删。
+     * 没找到返回 null，其余内容原样保留。
+     */
+    fun removeEntry(content: String, time: String, text: String): String? {
+        val lines = content.lines()
+        val wanted = text.trim()
+        var i = 0
+        while (i < lines.size) {
+            val h = head(lines[i])
+            if (h == null) {
+                i++
+                continue
+            }
+            var j = i + 1
+            val body = StringBuilder(h.rest)
+            while (j < lines.size && head(lines[j]) == null && continues(lines[j])) {
+                body.append(' ').append(lines[j].trim())
+                j++
+            }
+            val merged = (if (h.struck) body.toString().replace("~~", "") else body.toString()).trim()
+            if (h.time == time && merged == wanted) {
+                return (lines.take(i) + lines.drop(j)).joinToString("\n").trim()
+            }
+            i = j
+        }
+        return null
+    }
 
     /** 去掉开头已有的、带指定标记的引用块（连续以 ">" 开头的行），以及它后面的空行 */
     fun stripLeadingQuote(content: String, marker: String): String {

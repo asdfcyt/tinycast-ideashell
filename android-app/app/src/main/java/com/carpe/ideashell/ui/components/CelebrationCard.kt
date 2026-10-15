@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -123,7 +125,7 @@ private fun CelebrationCard(c: Celebration, onDismiss: () -> Unit) {
                     .clip(RoundedCornerShape(16.dp))
                     .background(scheme.onSurface.copy(alpha = 0.06f))
                     .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
                     if (c.kind == Celebration.Kind.POMODORO) "这个番茄里你记录了" else "这个任务一路记下的",
@@ -132,11 +134,22 @@ private fun CelebrationCard(c: Celebration, onDismiss: () -> Unit) {
                     color = scheme.onSurfaceVariant,
                 )
                 shown.forEach { e ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(e.tag, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Brand.OrangeDeep, modifier = Modifier.padding(top = 2.dp))
+                    // 标签是固定宽度的小胶囊、与正文第一行同高同基线，不同长度的标签（进展 / 复盘 / 专注记录 / 快记）也能对齐
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
+                        Box(
+                            Modifier
+                                .width(54.dp)
+                                .height(20.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Brand.Orange.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(e.tag, fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold, color = Brand.OrangeDeep, maxLines = 1)
+                        }
                         Text(
                             e.text.replace(Regex("\\s+"), " "),
-                            style = MaterialTheme.typography.bodySmall,
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp,
                             color = scheme.onSurface,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
@@ -145,7 +158,7 @@ private fun CelebrationCard(c: Celebration, onDismiss: () -> Unit) {
                     }
                 }
                 if (hidden > 0) {
-                    Text("还有更早的 $hidden 条", fontSize = 11.sp, color = scheme.onSurfaceVariant)
+                    Text("还有更早的 $hidden 条", fontSize = 11.sp, color = scheme.onSurfaceVariant, modifier = Modifier.padding(start = 64.dp))
                 }
             }
         }

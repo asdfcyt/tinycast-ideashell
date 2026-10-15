@@ -44,6 +44,10 @@ class NotesRepository(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, NoteDetail>?): Boolean = size > DETAIL_CACHE_SIZE
     }
 
+    /** 删除某一天 Daily Note 里的一条日记；返回是否真的删掉了 */
+    suspend fun deleteDailyEntry(date: java.time.LocalDate, entry: com.carpe.ideashell.data.ideashell.DailyEntry): Boolean =
+        dailyNotes.deleteEntry(date, entry)
+
     /** 范围内的笔记 + 待办，按天分组。待办拉不到时只影响待办统计，不影响笔记。 */
     suspend fun timeline(range: TimeRange): TimelineData = coroutineScope {
         val zone = ZoneId.systemDefault()

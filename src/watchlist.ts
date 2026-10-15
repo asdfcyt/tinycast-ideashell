@@ -114,6 +114,31 @@ export async function addWatch(keyword: string, tags: string[] = []): Promise<bo
   return true;
 }
 
+/**
+ * 合并外部来源（拾忆备份）的项目：本机没有的才加，已有的一律保留本机的设置（只读导入，不覆盖）。
+ * 返回新增的个数。
+ */
+export async function mergeProjects(incoming: Array<Partial<WatchItem> & { keyword: string }>): Promise<number> {
+  const list = await loadWatchlist();
+  const next = [...list];
+  let added = 0;
+  for (const p of incoming) {
+    const k = (p.keyword ?? "").trim();
+    if (!k || next.some((x) => same(x.keyword, k))) continue;
+    next.push({
+      keyword: k,
+      addedAt: Number(p.addedAt) > 0 ? Number(p.addedAt) : Date.now(),
+      staleDays: Number(p.staleDays) > 0 ? Number(p.staleDays) : DEFAULT_STALE_DAYS,
+      status: STATUS_ORDER.includes(p.status as ProjectStatus) ? (p.status as ProjectStatus) : "active",
+      next: typeof p.next === "string" ? p.next : "",
+      tags: cleanTags(Array.isArray(p.tags) ? p.tags : []),
+    });
+    added++;
+  }
+  if (added > 0) await writeWatchlist(next);
+  return added;
+}
+
 export async function removeWatch(keyword: string): Promise<void> {
   const list = await loadWatchlist();
   await writeWatchlist(list.filter((x) => !same(x.keyword, keyword)));

@@ -15,9 +15,14 @@
     <string name="shortcut_voice_long">用闪念贝壳录音</string>
     <string name="shortcut_ai_short">问 AI</string>
     <string name="shortcut_ai_long">问闪念贝壳 AI</string>
-    <string name="shortcut_focus_short">开始专注</string>
-    <string name="shortcut_focus_long">开始专注</string>
+    <string name="shortcut_focus_short">快速专注</string>
+    <string name="shortcut_focus_long">快速专注</string>
     <string name="tile_focus_label">专注</string>
+    <string name="tile_excerpt_label">摘录</string>
+    <string name="excerpt_label">拾忆 · 快速摘录</string>
+    <string name="excerpt_description">开启「摘录模式」后，屏幕边缘会有一个小胶囊。选中文字后点它，选中的文字就存进拾忆。只读取你选中的那段文字，从不后台读取其他内容，也不会操作屏幕（微信、小红书等会替你点一下菜单里的「复制」）。</string>
+    <string name="shortcut_excerpt_short">摘录模式</string>
+    <string name="shortcut_excerpt_long">摘录模式（开启 / 关闭摘录胶囊）</string>
     <string name="widget_title">待办</string>
     <string name="widget_add">新建待办</string>
     <string name="widget_complete">完成</string>

@@ -173,6 +173,7 @@ fun ReviewScreen(
                                 keys = revisitKeys,
                                 onNote = viewModel::toggleNoteRevisit,
                                 onDaily = viewModel::toggleDailyRevisit,
+                                onDeleteDaily = viewModel::deleteDaily,
                             ),
                         )
                     }

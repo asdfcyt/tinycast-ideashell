@@ -119,6 +119,60 @@
                 android:resource="@xml/ai_auto_send_service" />
         </service>
 
+        <!-- 无障碍服务：快速摘录模式下，悬浮气泡 + 读取选中的文字（设置 / 磁贴 / 桌面快捷方式开启） -->
+        <service
+            android:name=".system.ExcerptService"
+            android:exported="false"
+            android:label="@string/excerpt_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/excerpt_service" />
+        </service>
+
+        <!-- 透明跳板：切换快速摘录模式（桌面快捷方式用） -->
+        <activity
+            android:name=".ui.capture.ExcerptToggleActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Ideashell.Translucent" />
+
+        <!-- 透明页：点摘录胶囊时读一下剪贴板（后台读不了剪贴板，要借一个有焦点的页面） -->
+        <activity
+            android:name=".system.ExcerptClipActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Ideashell.Translucent" />
+
+        <!-- 摘录抽屉：点摘录胶囊后从底部升起，写想法、确认来源和标签 -->
+        <activity
+            android:name=".ui.capture.ExcerptSheetActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Ideashell.Translucent"
+            android:windowSoftInputMode="adjustResize|stateVisible" />
+
+        <!-- 快速设置磁贴：开始 / 结束快速摘录 -->
+        <service
+            android:name=".system.ExcerptTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile"
+            android:label="@string/tile_excerpt_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <!-- 全屏相机页：快记面板工具栏上「拍照 / 插入图片」合并后的入口（相册、快门、识别文字） -->
         <activity
             android:name=".ui.capture.CameraOcrActivity"

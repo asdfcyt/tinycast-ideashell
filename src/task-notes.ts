@@ -1,4 +1,5 @@
 import { LocalStorage } from "@raycast/api";
+import { mergeProjects } from "./watchlist";
 import {
   createNote,
   getNoteDetail,
@@ -58,6 +59,37 @@ export async function saveProjectHome(
   await LocalStorage.setItem(PROJECT_HOME_KEY, JSON.stringify(map));
 }
 
+/** 合并任务笔记对应关系：只补本机没有的；返回新增个数 */
+export async function mergeTaskNotes(incoming: Record<string, TaskNoteRef>): Promise<number> {
+  const map = await loadTaskNotes();
+  let added = 0;
+  for (const [key, ref] of Object.entries(incoming)) {
+    if (!key || map[key] || !ref?.noteId) continue;
+    map[key] = {
+      noteId: ref.noteId,
+      deliverable: ref.deliverable || "任务笔记",
+      project: ref.project || undefined,
+      createdAt: Number(ref.createdAt) > 0 ? Number(ref.createdAt) : Date.now(),
+    };
+    added++;
+  }
+  if (added > 0) await LocalStorage.setItem(TASK_NOTES_KEY, JSON.stringify(map));
+  return added;
+}
+
+/** 合并项目主页笔记 id：只补本机没有的；返回新增个数 */
+export async function mergeProjectHomes(incoming: Record<string, string>): Promise<number> {
+  const map = await loadProjectHomes();
+  let added = 0;
+  for (const [keyword, noteId] of Object.entries(incoming)) {
+    if (!keyword || !noteId || map[keyword]) continue;
+    map[keyword] = noteId;
+    added++;
+  }
+  if (added > 0) await LocalStorage.setItem(PROJECT_HOME_KEY, JSON.stringify(map));
+  return added;
+}
+
 // ── 自动发现：以笔记 / 滴答任务内容为准，不依赖本机记录（与安卓端互通） ──
 
 const tagKey = (t: string) => t.replace(/^#+/, "").trim().toLowerCase();
@@ -97,6 +129,33 @@ export async function resolveProjectHome(
   keyword: string,
 ): Promise<string | undefined> {
   return (await loadProjectHomes())[keyword] ?? (await findProjectHome(keyword));
+}
+
+/**
+ * 把闪念贝壳里已有的「项目主页」笔记（比如在手机上建的）导入为项目，与安卓端的「自动发现」一致：
+ * 带「项目主页」标签、或标题以「 项目主页」结尾的笔记；关键词取另一个标签，没有就取标题去掉后缀。
+ * 本机已有同名项目的跳过（忽略大小写）；新项目同时记下主页笔记 id。返回新增的项目个数，网络失败返回 0。
+ */
+export async function discoverProjects(): Promise<number> {
+  let list: Awaited<ReturnType<typeof searchNotes>>;
+  try {
+    list = await searchNotes("项目主页", 20);
+  } catch {
+    return 0;
+  }
+  const suffix = " 项目主页";
+  const found: Array<{ keyword: string; noteId: string }> = [];
+  for (const n of list) {
+    const tags = (n.tags ?? []).map((t) => t.replace(/^#+/, "").trim()).filter(Boolean);
+    const title = n.title.trim();
+    if (!tags.includes("项目主页") && !title.endsWith(suffix)) continue;
+    const keyword = tags.find((t) => t !== "项目主页") ?? title.replace(/\s*项目主页$/, "").trim();
+    if (keyword) found.push({ keyword, noteId: getNoteId(n) });
+  }
+  if (found.length === 0) return 0;
+  const added = await mergeProjects(found.map((f) => ({ keyword: f.keyword })));
+  await mergeProjectHomes(Object.fromEntries(found.map((f) => [f.keyword, f.noteId])));
+  return added;
 }
 
 const TASK_NOTE_LINK = /任务笔记[：:]\s*https?:\/\/[^\s/]+\/boards\/([a-f0-9]+)/i;

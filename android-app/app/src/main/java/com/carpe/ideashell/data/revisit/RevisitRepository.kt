@@ -320,8 +320,12 @@ class RevisitRepository(
         dao.update(item.copy(skippedUntil = startOfDay(LocalDate.now().plusDays(1))))
     }
 
-    /** 把撤销前的状态原样写回 */
-    suspend fun restoreState(item: RevisitEntity) = dao.update(item)
+    /**
+     * 把撤销前的状态原样写回。「记一笔」建出的专题笔记 id 不属于被撤销的状态：
+     * 评分后写了想法再撤销评分，不能把它抹掉，否则下一条想法会另建一篇笔记。
+     */
+    suspend fun restoreState(item: RevisitEntity) =
+        dao.update(item.copy(topicNoteId = dao.get(item.id)?.topicNoteId ?: item.topicNoteId))
 
     /** 一键把现在已到期的全部推后 [days] 天（积压太多时用）；返回受影响的条数和原状态（用于撤销） */
     suspend fun postponeAll(days: Int = 7): List<RevisitEntity> {
@@ -340,7 +344,7 @@ class RevisitRepository(
             val now = dao.get(before.id) ?: continue
             if (now.lastReviewAt > 0 && now.lastReviewAt != before.lastReviewAt) dao.deleteLog(now.dedupeKey, now.lastReviewAt)
         }
-        dao.updateAll(items)
+        dao.updateAll(items.map { before -> before.copy(topicNoteId = dao.get(before.id)?.topicNoteId ?: before.topicNoteId) })
     }
 
     /** 折线图：[range] 范围内每天重温了几次（新评分 / 撤销后自动更新） */

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -411,6 +412,10 @@ private fun RevisitCard(item: RevisitEntity, cloze: Boolean, clozeRatio: IntRang
     val isNote = item.kind == RevisitKind.NOTE.name
     // 整篇笔记且正文和标题一样（短笔记）时不重复显示
     val showBody = !(isNote && item.text.trim() == item.title.trim())
+    // 笔记标题就是正文第一行时（闪念贝壳按第一行起标题）：不再把同一句话显示两遍。
+    // 填空模式下标题不单独露出来——它本身就是答案的一部分，留在正文里一起被挖空；普通模式下标题单独当标题，正文去掉这一行
+    val titleIsFirstLine = showBody && firstLineOf(item.text) == plainLine(item.title)
+    val bodyText = if (isNote && titleIsFirstLine && !cloze) dropFirstLine(item.text) else item.text
 
     // 填空：每次重温（reps 不同）、点「换一批」（reroll 加一）自动挑的位置都会换
     var reroll by remember(item.id) { mutableIntStateOf(0) }
@@ -444,27 +449,35 @@ private fun RevisitCard(item: RevisitEntity, cloze: Boolean, clozeRatio: IntRang
             .padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 84.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            "${item.sourceLabel} · 记于 ${recordedText(item.recordedAt)}",
-            style = MaterialTheme.typography.labelLarge,
-            color = Brand.OrangeDeep,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            historyText(item),
-            style = MaterialTheme.typography.labelMedium,
-            color = scheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(10.dp))
+        // 出处与重温次数合成一行：左边出处和日期，右边重温次数
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "${item.sourceLabel} · ${recordedText(item.recordedAt)}",
+                style = MaterialTheme.typography.labelLarge,
+                color = Brand.OrangeDeep,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Text(
+                historyText(item),
+                style = MaterialTheme.typography.labelMedium,
+                color = scheme.onSurfaceVariant,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
 
         BigReading {
-            if (isNote) {
+            if (isNote && !(titleIsFirstLine && cloze)) {
                 Text(
                     item.title,
                     style = MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.padding(bottom = 8.dp),
                 )
-            } else if (item.title.isNotBlank()) {
+            } else if (item.title.isNotBlank() && !titleIsFirstLine) {
                 Text(
                     "摘自「${item.title}」",
                     style = MaterialTheme.typography.bodySmall,
@@ -510,10 +523,10 @@ private fun RevisitCard(item: RevisitEntity, cloze: Boolean, clozeRatio: IntRang
                     )
                 } else Box(Modifier.animateContentSize()) {
                     if (expanded) {
-                        MarkdownText(item.text)
+                        MarkdownText(bodyText)
                     } else {
                         Box(Modifier.heightIn(max = COLLAPSED_HEIGHT).clipToBounds()) {
-                            MarkdownText(item.text)
+                            MarkdownText(bodyText)
                         }
                         Box(
                             Modifier
@@ -548,6 +561,20 @@ private fun RevisitCard(item: RevisitEntity, cloze: Boolean, clozeRatio: IntRang
 
 private val COLLAPSED_HEIGHT = 160.dp
 
+/** 去掉行首的 # 标题记号和首尾空白，用来比较「标题是不是正文第一行」 */
+private fun plainLine(s: String): String = s.trim().trimStart('#').trim()
+
+private fun firstLineOf(text: String): String =
+    text.lineSequence().map { plainLine(it) }.firstOrNull { it.isNotEmpty() }.orEmpty()
+
+/** 去掉第一个非空行（以及它后面紧跟的空行） */
+private fun dropFirstLine(text: String): String {
+    val lines = text.lines()
+    val i = lines.indexOfFirst { it.isNotBlank() }
+    if (i < 0) return text
+    return lines.drop(i + 1).dropWhile { it.isBlank() }.joinToString("\n").ifBlank { text }
+}
+
 private fun recordedText(ms: Long): String {
     val date = RevisitRepository.dateOf(ms)
     val today = LocalDate.now()
@@ -562,9 +589,9 @@ private fun recordedText(ms: Long): String {
 }
 
 private fun historyText(item: RevisitEntity): String = when {
-    item.reps == 0 -> "第一次重温"
-    item.lapses > 0 -> "已重温 ${item.reps} 次 · 忘过 ${item.lapses} 次"
-    else -> "已重温 ${item.reps} 次"
+    item.reps == 0 -> "首次重温"
+    item.lapses > 0 -> "重温 ${item.reps} 次 · 忘 ${item.lapses} 次"
+    else -> "重温 ${item.reps} 次"
 }
 
 // ───────────────────────── 评分 ─────────────────────────

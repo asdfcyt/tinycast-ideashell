@@ -218,6 +218,31 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** 删除 Daily Note 里的一条日记：先在界面上去掉，再改那天的 Daily Note，最后悄悄重读一遍对齐（失败时也靠它回滚） */
+    fun deleteDaily(entry: DailyEntry, date: LocalDate) {
+        _timeline.update { st ->
+            val d = st.data ?: return@update st
+            val days = d.days.map { day ->
+                if (day.date != date) day
+                else {
+                    val i = day.daily.indexOfFirst { it.time == entry.time && it.text == entry.text }
+                    if (i < 0) day else day.copy(daily = day.daily.toMutableList().also { it.removeAt(i) })
+                }
+            }
+            st.copy(data = d.copy(days = days))
+        }
+        viewModelScope.launch {
+            try {
+                if (container.notes.deleteDailyEntry(date, entry)) say("已删除这条日记") else say("没找到这条日记，可能已经被改过")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                say("删除失败：${e.message ?: "网络异常"}")
+            }
+            loadTimeline(quiet = true)
+        }
+    }
+
     private fun revisitAddedText(result: AddResult): String = when (result) {
         AddResult.ADDED, AddResult.RESTORED -> "已加入重温 · 明天开始出现"
         AddResult.EXISTS -> "已经在重温里了"

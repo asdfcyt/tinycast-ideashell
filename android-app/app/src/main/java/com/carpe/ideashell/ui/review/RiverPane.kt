@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
@@ -31,7 +32,9 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import com.carpe.ideashell.R
 import com.carpe.ideashell.data.revisit.RevisitRepository
+import com.carpe.ideashell.system.openIdeaShellNote
 import com.carpe.ideashell.ui.components.AppMenu
+import com.carpe.ideashell.ui.components.ConfirmDialog
 import com.carpe.ideashell.ui.components.AppMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -127,6 +130,8 @@ class RevisitActions(
     val keys: Set<String>,
     val onNote: (note: NoteInfo, inRevisit: Boolean) -> Unit,
     val onDaily: (entry: DailyEntry, noteId: String?, date: LocalDate, inRevisit: Boolean) -> Unit,
+    /** 删除一条日记（长按菜单 →「删除」→ 确认） */
+    val onDeleteDaily: (entry: DailyEntry, date: LocalDate) -> Unit,
 )
 
 fun LazyListScope.riverItems(
@@ -385,6 +390,7 @@ private fun DailyLine(
 ) {
     val inRevisit = RevisitRepository.snippetKey(row.noteId, row.entry.text) in revisit.keys
     var menu by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     TimelineRow(
         clock = row.entry.time,
         kind = Kind.DAILY,
@@ -405,8 +411,20 @@ private fun DailyLine(
             )
             if (inRevisit) RevisitMark()
         }
-        RevisitMenu(menu, inRevisit, onDismiss = { menu = false }) {
+        RevisitMenu(menu, inRevisit, onDismiss = { menu = false }, onDelete = { confirmDelete = true }) {
             revisit.onDaily(row.entry, row.noteId, date, inRevisit)
+        }
+        if (confirmDelete) {
+            ConfirmDialog(
+                title = "删除这条日记？",
+                text = "将从 $date 的 Daily Note 里删掉：\n\n${row.entry.text.take(120)}",
+                confirmLabel = "删除",
+                onDismiss = { confirmDelete = false },
+                onConfirm = {
+                    confirmDelete = false
+                    revisit.onDeleteDaily(row.entry, date)
+                },
+            )
         }
     }
 }
@@ -423,7 +441,16 @@ private fun RevisitMark() {
 }
 
 @Composable
-private fun RevisitMenu(expanded: Boolean, inRevisit: Boolean, onDismiss: () -> Unit, onToggle: () -> Unit) {
+private fun RevisitMenu(
+    expanded: Boolean,
+    inRevisit: Boolean,
+    onDismiss: () -> Unit,
+    /** 菜单里的「删除」类项目：文字、图标和动作；没有就不显示 */
+    onDelete: (() -> Unit)? = null,
+    deleteText: String = "删除",
+    deleteIcon: Int? = null,
+    onToggle: () -> Unit,
+) {
     AppMenu(expanded = expanded, onDismissRequest = onDismiss) {
         AppMenuItem(
             text = { Text(if (inRevisit) "移出重温" else "加入重温") },
@@ -433,6 +460,19 @@ private fun RevisitMenu(expanded: Boolean, inRevisit: Boolean, onDismiss: () -> 
                 onToggle()
             },
         )
+        if (onDelete != null) {
+            AppMenuItem(
+                text = { Text(deleteText) },
+                leadingIcon = {
+                    if (deleteIcon != null) Icon(painterResource(deleteIcon), contentDescription = null)
+                    else Icon(Icons.Filled.Delete, contentDescription = null)
+                },
+                onClick = {
+                    onDismiss()
+                    onDelete()
+                },
+            )
+        }
     }
 }
 
@@ -440,6 +480,7 @@ private fun RevisitMenu(expanded: Boolean, inRevisit: Boolean, onDismiss: () -> 
 private fun NoteLine(note: NoteInfo, first: Boolean, last: Boolean, onOpenNote: (String) -> Unit, revisit: RevisitActions) {
     val scheme = MaterialTheme.colorScheme
     val inRevisit = RevisitRepository.noteKey(note.id) in revisit.keys
+    val context = androidx.compose.ui.platform.LocalContext.current
     var menu by remember { mutableStateOf(false) }
     TimelineRow(
         clock = note.localClock.orEmpty(),
@@ -469,7 +510,14 @@ private fun NoteLine(note: NoteInfo, first: Boolean, last: Boolean, onOpenNote: 
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        RevisitMenu(menu, inRevisit, onDismiss = { menu = false }) { revisit.onNote(note, inRevisit) }
+        // 闪念贝壳的接口不能删除笔记：「删除」跳到闪念贝壳里的这条笔记，在那边删
+        RevisitMenu(
+            menu, inRevisit,
+            onDismiss = { menu = false },
+            onDelete = { openIdeaShellNote(context, note.id) },
+            deleteText = "在闪念贝壳中删除",
+            deleteIcon = R.drawable.ic_open_in_new,
+        ) { revisit.onNote(note, inRevisit) }
     }
 }
 

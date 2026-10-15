@@ -111,6 +111,27 @@ async function writeLocalTemplates(list: Template[]): Promise<void> {
   await LocalStorage.setItem(LOCAL_KEY, JSON.stringify(list));
 }
 
+/** 合并外部来源（拾忆备份）的自定义模板：本机没有同名的才加；返回新增个数 */
+export async function mergeLocalTemplates(incoming: Array<Partial<Template> & { name: string }>): Promise<number> {
+  const local = await loadLocalTemplates();
+  const have = new Set([...local, ...BUILTIN_TEMPLATES].map((t) => t.name.toLowerCase()));
+  const add: Template[] = [];
+  for (const t of incoming) {
+    const name = (t.name ?? "").trim();
+    if (!name || have.has(name.toLowerCase()) || !Array.isArray(t.fields) || t.fields.length === 0) continue;
+    have.add(name.toLowerCase());
+    add.push({
+      name,
+      fields: t.fields.filter((x) => x?.name).map((x) => ({ name: String(x.name), multiline: !!x.multiline })),
+      tags: Array.isArray(t.tags) ? t.tags.map(String) : [],
+      folderName: t.folderName || undefined,
+      source: "local",
+    });
+  }
+  if (add.length > 0) await writeLocalTemplates([...local, ...add]);
+  return add.length;
+}
+
 /** 保存一个本地模板；replaceName 为被编辑的原名（改名时替换旧的），同名的本地模板也会被覆盖 */
 export async function saveLocalTemplate(t: Template, replaceName?: string): Promise<void> {
   const keys = new Set([t.name.toLowerCase(), (replaceName ?? "").toLowerCase()]);

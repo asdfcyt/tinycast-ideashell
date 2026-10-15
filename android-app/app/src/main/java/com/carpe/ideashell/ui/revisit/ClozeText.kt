@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -123,7 +126,7 @@ internal fun ClozeText(
     )
 }
 
-/** 正文上方的一行：已揭开几个、全部显示 / 再遮住、自动挑词时可以换一批 */
+/** 正文上方的一条操作栏：左边「填空 已揭开/总数」，右边是文字操作（全部显示 / 换一批 / 手动挖空），之间用细竖线隔开 */
 @Composable
 internal fun ClozeBar(
     total: Int,
@@ -133,25 +136,23 @@ internal fun ClozeBar(
     onReroll: () -> Unit,
     onEdit: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "填空 $shown/$total",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-        )
-        ClozePill(if (shown >= total) "再遮住" else "全部显示", onToggleAll)
-        if (auto) ClozePill("换一批", onReroll)
-        ClozePill("手动挖空", onEdit)
+    ClozeStrip {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("填空", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("$shown/$total", fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = Brand.OrangeDeep)
+        }
+        Spacer(Modifier.weight(1f))
+        ClozeAction(if (shown >= total) "再遮住" else "全部显示", onToggleAll)
+        if (auto) {
+            ClozeDivider()
+            ClozeAction("换一批", onReroll)
+        }
+        ClozeDivider()
+        ClozeAction("手动挖空", onEdit)
     }
 }
 
-/** 手动挖空时正文上方的操作条：说明怎么选，以及清空 / 恢复自动 / 完成 */
+/** 手动挖空时正文上方的操作栏：说明怎么选，以及清空 / 恢复自动 / 完成 */
 @Composable
 internal fun ClozeEditBar(
     count: Int,
@@ -160,38 +161,85 @@ internal fun ClozeEditBar(
     onRestoreAuto: () -> Unit,
     onDone: () -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 10.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("手动挖空", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("已挖 $count 处", fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = Brand.OrangeDeep)
+        }
         Text(
-            "手动挖空 · 已挖 $count 处：点一个词挖空 / 取消，长按后拖动可整段挖空，改动自动保存",
-            style = MaterialTheme.typography.labelMedium,
+            "点一个词挖空 / 取消；长按后拖动可整段挖空；改动自动保存",
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            ClozePill("清空", onClear)
-            if (manualSaved) ClozePill("恢复自动", onRestoreAuto)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ClozeAction("清空", onClear, startPadding = 0.dp)
+            if (manualSaved) {
+                ClozeDivider()
+                ClozeAction("恢复自动", onRestoreAuto)
+            }
             Spacer(Modifier.weight(1f))
-            ClozePill("完成", onDone)
+            ClozeAction("完成", onDone, bold = true, endPadding = 0.dp)
         }
     }
 }
 
+/** 操作栏的底：一条淡淡的圆角带，不抢正文的视线 */
 @Composable
-private fun ClozePill(text: String, onClick: () -> Unit) {
+private fun ClozeStrip(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 10.dp)
+            .height(42.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        content = content,
+    )
+}
+
+@Composable
+private fun ClozeAction(
+    text: String,
+    onClick: () -> Unit,
+    bold: Boolean = false,
+    startPadding: androidx.compose.ui.unit.Dp = 10.dp,
+    endPadding: androidx.compose.ui.unit.Dp = 10.dp,
+) {
     Box(
         modifier = Modifier
-            .height(30.dp)
-            .clip(CircleShape)
-            .background(Brand.Orange.copy(alpha = 0.18f))
+            .height(42.dp)
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp),
+            .padding(start = startPadding, end = endPadding),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp,
+            fontWeight = if (bold) FontWeight.ExtraBold else FontWeight.Bold,
             color = Brand.OrangeDeep,
             maxLines = 1,
+            softWrap = false,
         )
     }
+}
+
+@Composable
+private fun ClozeDivider() {
+    Box(
+        Modifier
+            .width(1.dp)
+            .height(14.dp)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
+    )
 }

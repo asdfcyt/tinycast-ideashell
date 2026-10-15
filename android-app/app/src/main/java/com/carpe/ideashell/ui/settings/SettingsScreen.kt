@@ -80,6 +80,7 @@ import com.carpe.ideashell.BuildConfig
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.R
 import com.carpe.ideashell.system.AiAutoSendService
+import com.carpe.ideashell.system.ExcerptService
 import com.carpe.ideashell.data.settings.ThemeMode
 import com.carpe.ideashell.ui.components.AppTextField
 import com.carpe.ideashell.ui.components.CircleIconButton
@@ -131,9 +132,11 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
     var dialog by remember { mutableStateOf<Dialog?>(null) }
     var batteryIgnored by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
     var autoSendServiceOn by remember { mutableStateOf(AiAutoSendService.isEnabled(context)) }
+    var excerptServiceOn by remember { mutableStateOf(ExcerptService.isEnabled(context)) }
     LifecycleResumeEffect(Unit) {
         batteryIgnored = isIgnoringBatteryOptimizations(context)
         autoSendServiceOn = AiAutoSendService.isEnabled(context)
+        excerptServiceOn = ExcerptService.isEnabled(context)
         onPauseOrDispose { }
     }
 
@@ -544,6 +547,45 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                                     container.settings.setAiAutoSend(it)
                                     if (it && !autoSendServiceOn) openAccessibilitySettings(context)
                                 },
+                            )
+                        },
+                    )
+                    SettingsItem(
+                        icon = Icons.Filled.Create,
+                        title = "摘录模式",
+                        summary = when {
+                            !settings.excerptMode -> "关闭 · 开启后屏幕边缘出现闪电小胶囊，选中文字后点它，就存成摘录笔记。也可从下拉磁贴「摘录」、长按桌面图标「摘录模式」开启"
+                            excerptServiceOn -> "摘录中 · 在任何 App 选中文字，点屏幕边缘的闪电胶囊。只读取你选中的文字"
+                            else -> "还差一步 · 请在「无障碍」里打开「拾忆 · 快速摘录」（点此前往）"
+                        },
+                        onClick = {
+                            if (settings.excerptMode && excerptServiceOn) {
+                                container.settings.setExcerptMode(false)
+                            } else {
+                                container.settings.setExcerptMode(true)
+                                if (!excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
+                            }
+                        },
+                        trailing = {
+                            Switch(
+                                checked = settings.excerptMode,
+                                onCheckedChange = {
+                                    container.settings.setExcerptMode(it)
+                                    if (it && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
+                                },
+                            )
+                        },
+                    )
+                    SettingsItem(
+                        icon = Icons.Filled.Create,
+                        title = "摘录后写想法",
+                        summary = if (settings.excerptWriteNote) "开启 · 摘录后从底部升起抽屉，写下想法、确认来源和标签；同一个 App 里来源和标签自动延续，连续摘录写进同一篇笔记"
+                        else "关闭 · 不弹抽屉，摘录直接存进笔记（原文 + 来源），同样追加进同一篇",
+                        onClick = { container.settings.setExcerptWriteNote(!settings.excerptWriteNote) },
+                        trailing = {
+                            Switch(
+                                checked = settings.excerptWriteNote,
+                                onCheckedChange = { container.settings.setExcerptWriteNote(it) },
                             )
                         },
                     )
