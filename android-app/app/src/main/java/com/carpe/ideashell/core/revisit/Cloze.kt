@@ -11,6 +11,7 @@ import kotlin.random.Random
  * 挖哪些词，按优先级：
  * 1. 用户在原文里亲手标的 `{{词}}`（只挖这些）；
  * 2. 没有的话，用 `**加粗**` / `==高亮==` 的词（写的时候强调过，就是重点）；
+ * 1'. 用户在重温时手动点选 / 拖选保存的空（[build] 的 manual 参数），优先于下面所有规则；
  * 3. 都没有就自动挑：数字 / 日期、英文术语、中文词（用系统自带的 ICU 分词，去掉「我们 / 因为 / 可以」这类虚词），
  *    数量随篇幅走，每次重温（[seed] 不同）挑的位置会换，避免背「空的位置」而不是背内容。
  *
@@ -18,7 +19,7 @@ import kotlin.random.Random
  */
 object Cloze {
     /** 去掉 Markdown 记号后的文字，以及要挖空的区间（互不重叠、按位置排序）；[auto] 表示是自动挑的（可以「换一批」） */
-    data class Plain(val text: String, val blanks: List<IntRange>, val auto: Boolean) {
+    data class Plain(val text: String, val blanks: List<IntRange>, val auto: Boolean, val manual: Boolean = false) {
         /** 点到 [offset] 附近时命中哪个空（点在字缝上也算），没有返回 -1 */
         fun blankAt(offset: Int): Int {
             blanks.forEachIndexed { i, r -> if (offset in r.first..(r.last + 1)) return i }
@@ -27,13 +28,18 @@ object Cloze {
     }
 
     private const val MIN_LENGTH = 8
-    private const val MAX_BLANKS = 8
+    private const val MAX_BLANKS = 14
 
     /** 原文里没有任何可挖的词（太短、全是虚词）时返回 null，界面按普通卡片显示 */
-    fun build(source: String, seed: Long): Plain? {
+    fun build(source: String, seed: Long, manual: List<IntRange>? = null): Plain? {
         val flat = flatten(source)
         val text = flat.text.trim('\n')
         if (text.replace(Regex("\\s"), "").length < MIN_LENGTH) return null
+        // 用户亲手挖的空优先于一切自动规则
+        if (!manual.isNullOrEmpty()) {
+            val mine = normalize(manual.filter { it.first >= 0 && it.last < text.length && it.first <= it.last })
+            if (mine.isNotEmpty()) return Plain(text, mine, auto = false, manual = true)
+        }
         val shift = flat.text.length - flat.text.trimStart('\n').length
 
         fun shifted(list: List<IntRange>) =
@@ -46,11 +52,54 @@ object Cloze {
             flat.emphasis.isNotEmpty() -> shifted(flat.emphasis).filter { it.last - it.first < 24 }.take(MAX_BLANKS)
             else -> auto(text, seed)
         }
-        val blanks = chosen.sortedBy { it.first }.fold(mutableListOf<IntRange>()) { acc, r ->
-            if (acc.isEmpty() || r.first > acc.last().last) acc += r
-            acc
-        }
+        val blanks = normalize(chosen)
         return if (blanks.isEmpty()) null else Plain(text, blanks, isAuto)
+    }
+
+    /** 排序并去掉重叠 */
+    private fun normalize(list: List<IntRange>): List<IntRange> = list.sortedBy { it.first }.fold(mutableListOf<IntRange>()) { acc, r ->
+        if (acc.isEmpty() || r.first > acc.last().last) acc += r
+        acc
+    }
+
+    // ───────────────────────── 手动挖空 ─────────────────────────
+
+    /** 渲染用的纯文本（手动挖空的区间就是相对它的位置；文本变了，存的区间就作废） */
+    fun flatText(source: String): String = flatten(source).text.trim('\n')
+
+    /** [offset] 所在的词（ICU 分词；落在空白 / 标点上返回 null） */
+    fun wordAt(text: String, offset: Int): IntRange? {
+        if (text.isEmpty()) return null
+        val at = offset.coerceIn(0, text.length - 1)
+        val iter = BreakIterator.getWordInstance(Locale.CHINA)
+        iter.setText(text)
+        val end = iter.following(at)
+        if (end == BreakIterator.DONE) return null
+        val start = iter.previous()
+        if (start == BreakIterator.DONE || start >= end) return null
+        if (text.substring(start, end).none { it.isLetterOrDigit() }) return null
+        return start until end
+    }
+
+    /** 点一个词：已经是空就取消，不是就挖空 */
+    fun toggleWord(text: String, blanks: List<IntRange>, offset: Int): List<IntRange> {
+        val word = wordAt(text, offset) ?: return blanks
+        val hit = blanks.filter { it.first <= word.last && it.last >= word.first }
+        return if (hit.isNotEmpty()) blanks - hit.toSet() else normalize(blanks + listOf(word))
+    }
+
+    /** 拖选一段：从起点所在词的开头到终点所在词的结尾整段挖空（盖掉其中已有的空） */
+    fun addRange(text: String, blanks: List<IntRange>, from: Int, to: Int): List<IntRange> {
+        if (text.isEmpty()) return blanks
+        val lo = minOf(from, to).coerceIn(0, text.length - 1)
+        val hi = maxOf(from, to).coerceIn(0, text.length - 1)
+        var start = wordAt(text, lo)?.first ?: lo
+        var end = wordAt(text, hi)?.last ?: hi
+        while (start < end && text[start].isWhitespace()) start++
+        while (end > start && text[end].isWhitespace()) end--
+        if (text[start].isWhitespace()) return blanks
+        val r = start..end
+        return normalize(blanks.filterNot { it.first <= r.last && it.last >= r.first } + listOf(r))
     }
 
     // ───────────────────────── 去 Markdown 记号 ─────────────────────────
@@ -58,7 +107,7 @@ object Cloze {
     private class Flat(val text: String, val explicit: List<IntRange>, val emphasis: List<IntRange>)
 
     private val RE_INLINE = Regex(
-        "\\{\\{(.+?)}}|(\\*\\*|__|==)(.+?)\\2|!\\[[^\\]]*]\\([^)]*\\)|\\[([^\\]]+)]\\([^)]*\\)|`+([^`]+)`+",
+        "\\{\\{(.+?)\\}\\}|(\\*\\*|__|==)(.+?)\\2|!\\[[^\\]]*]\\([^)]*\\)|\\[([^\\]]+)]\\([^)]*\\)|`+([^`]+)`+",
     )
     private val RE_HEADING = Regex("^\\s{0,3}#{1,6}\\s+")
     private val RE_BULLET = Regex("^(\\s*)[-*+]\\s+")
@@ -131,7 +180,7 @@ object Cloze {
         }
         if (candidates.isEmpty()) return emptyList()
 
-        val want = (text.length / 45.0).roundToInt().coerceIn(1, MAX_BLANKS)
+        val want = (text.length / 22.0).roundToInt().coerceIn(2, MAX_BLANKS)
         val picked = mutableListOf<IntRange>()
         for (c in candidates.sortedByDescending { it.score }) {
             if (picked.size >= want) break

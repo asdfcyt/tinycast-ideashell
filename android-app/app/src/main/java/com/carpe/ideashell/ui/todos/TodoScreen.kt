@@ -37,6 +37,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -233,6 +234,7 @@ fun TodoScreen(
                     val result = snackbar.showSnackbar(
                         message = "已完成「${TodoMeta.cleanTitle(event.task.title).take(14)}」",
                         actionLabel = "撤销",
+                        duration = SnackbarDuration.Short,
                     )
                     if (result == SnackbarResult.ActionPerformed) viewModel.undoComplete(event.task)
                 }

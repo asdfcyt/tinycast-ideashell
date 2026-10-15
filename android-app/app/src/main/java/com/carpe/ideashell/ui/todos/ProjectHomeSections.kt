@@ -1,6 +1,18 @@
 package com.carpe.ideashell.ui.todos
 
 import androidx.compose.foundation.clickable
+import com.carpe.ideashell.ui.theme.Brand
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.draw.clip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -184,14 +196,14 @@ internal fun LazyListScope.homeBottomSections(
 ) {
     if (homeId == null || text == null) return
 
-    // 里程碑与进展：最新在上，默认 5 条
+    // 里程碑与进展：每个完成的任务笔记一张卡（成果 + 完成日期 + 复盘总结），最新在上，默认 4 项
     item(key = "home-milestone") {
-        val all = itemsOf(NoteSections.sectionBody(text, SEC_MILESTONE)).asReversed()
+        val entries = remember(text) { milestoneEntries(itemsOf(NoteSections.sectionBody(text, SEC_MILESTONE))) }
         var expanded by remember { mutableStateOf(false) }
-        val shown = if (expanded) all else all.take(5)
+        val shown = if (expanded) entries else entries.take(MILESTONE_PREVIEW)
         SectionCard(
             title = "里程碑与进展",
-            count = all.size.takeIf { it > 0 },
+            count = entries.size.takeIf { it > 0 },
             action = "记一条",
             onAction = {
                 onEdit(
@@ -201,10 +213,16 @@ internal fun LazyListScope.homeBottomSections(
                 )
             },
         ) {
-            if (all.isEmpty()) Hint("还没有记录。完成相关任务时会自动记一行，也可以自己记。")
-            shown.forEach { line -> MilestoneRow(line, onOpenNote) }
-            if (all.size > 5) {
-                TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起" else "还有 ${all.size - 5} 条 ›") }
+            if (entries.isEmpty()) Hint("还没有里程碑。任务完成后，任务笔记的复盘总结会汇到这里。")
+            shown.forEachIndexed { i, e ->
+                if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                when (e) {
+                    is MilestoneEntry.Done -> MilestoneCard(e, onOpenNote)
+                    is MilestoneEntry.Note -> NoteLine(e)
+                }
+            }
+            if (entries.size > MILESTONE_PREVIEW) {
+                TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起" else "还有 ${entries.size - MILESTONE_PREVIEW} 项 ›") }
             }
         }
     }
@@ -288,33 +306,181 @@ private fun openLink(url: String, onOpenNote: (String) -> Unit): () -> Unit {
     }
 }
 
-@Composable
-private fun MilestoneRow(line: String, onOpenNote: (String) -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    val m = STAMPED.find(line)
-    val date = m?.let { "${it.groupValues[2]}${it.groupValues[3].takeIf { t -> t.isNotEmpty() }?.let { t -> " $t" } ?: ""}" }
-    val body = m?.groupValues?.get(4)?.ifEmpty { line } ?: line
-    val url = firstUrl(body)
-    val open = if (url != null) openLink(url, onOpenNote) else null
-    Row(
-        modifier = Modifier.fillMaxWidth().then(if (open != null) Modifier.clickable(onClick = open) else Modifier),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            date.orEmpty(),
-            fontSize = 12.sp,
-            lineHeight = 20.sp,
-            fontWeight = FontWeight.ExtraBold,
-            color = scheme.primary,
-            modifier = Modifier.width(84.dp),
-        )
-        Text(
-            plain(body),
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (open != null) scheme.primary else scheme.onSurface,
-            modifier = Modifier.weight(1f),
+private const val MILESTONE_PREVIEW = 4
+
+/** 里程碑区的一项：完成的成果（带复盘总结），或一句单独的记录 */
+private sealed interface MilestoneEntry {
+    val stamp: String
+
+    /** [review]：任务笔记复盘总结；[process]：完成之前记过的进展 / 专注记录（折叠） */
+    class Done(
+        override val stamp: String,
+        val title: String,
+        val url: String?,
+        val review: List<String>,
+        val process: List<Pair<String, String>>,
+    ) : MilestoneEntry
+
+    class Note(override val stamp: String, val text: String) : MilestoneEntry
+}
+
+private val RE_DONE = Regex("^完成[：:]\\s*(.*?)(?:（\\[任务笔记]\\(([^)\\s]+)\\)）)?$", RegexOption.DOT_MATCHES_ALL)
+private val RE_TAGGED = Regex("^〔([^〕]*)〕\\s*(.*)$", RegexOption.DOT_MATCHES_ALL)
+private val RE_REVIEW = Regex("^复盘[：:]\\s*(.*)$", RegexOption.DOT_MATCHES_ALL)
+
+private fun stampOf(m: MatchResult): String =
+    "${m.groupValues[1]}-${m.groupValues[2]}" + m.groupValues[3].takeIf { it.isNotEmpty() }?.let { " $it" }.orEmpty()
+
+/**
+ * 把「里程碑与进展」里的行整理成条目：「完成：成果」是一张卡，带上同一成果的「〔成果〕复盘：…」作为复盘总结，
+ * 同一成果的其他「〔成果〕…」记录归为折叠的过程；没有对应完成行的记录单独成行。最新在上。
+ */
+private fun milestoneEntries(lines: List<String>): List<MilestoneEntry> {
+    class Ln(val stamp: String, val body: String)
+    val rows = lines.map { line ->
+        val m = STAMPED.find(line)
+        if (m != null) Ln(stampOf(m), m.groupValues[4].ifEmpty { line }) else Ln("", line)
+    }
+    val doneTitles = rows.mapNotNull { r -> RE_DONE.find(r.body)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() } }.toSet()
+    val review = HashMap<String, MutableList<String>>()
+    val process = HashMap<String, MutableList<Pair<String, String>>>()
+    val out = mutableListOf<MilestoneEntry>()
+    for (r in rows) {
+        val done = RE_DONE.find(r.body)
+        if (done != null) continue
+        val tagged = RE_TAGGED.find(r.body)
+        val tag = tagged?.groupValues?.get(1)?.trim()
+        if (tagged != null && tag != null && tag in doneTitles) {
+            val rest = tagged.groupValues[2].trim()
+            val rv = RE_REVIEW.find(rest)
+            if (rv != null) review.getOrPut(tag) { mutableListOf() } += rv.groupValues[1].trim()
+            else process.getOrPut(tag) { mutableListOf() } += r.stamp to rest
+        } else {
+            out += MilestoneEntry.Note(r.stamp, if (tagged != null) "${tag.orEmpty()} · ${tagged.groupValues[2].trim()}" else r.body)
+        }
+    }
+    // 同一个成果可能完成过不止一次（重新打开再完成）：合并成一张卡，取最新的完成时间；复盘和过程按正文去重
+    val dones = LinkedHashMap<String, Pair<String, String?>>()
+    for (r in rows) {
+        val done = RE_DONE.find(r.body) ?: continue
+        val title = done.groupValues[1].trim().ifEmpty { "已完成" }
+        val url = done.groupValues[2].takeIf { it.isNotEmpty() }
+        val old = dones[title]
+        dones[title] = if (old == null) r.stamp to url else maxOf(old.first, r.stamp) to (url ?: old.second)
+    }
+    for ((title, v) in dones) {
+        out += MilestoneEntry.Done(
+            stamp = v.first,
+            title = title,
+            url = v.second,
+            review = review[title].orEmpty().map { it.trim() }.filter { it.isNotBlank() }.distinct(),
+            process = process[title].orEmpty().filter { it.second.isNotBlank() }.distinctBy { it.second.trim() },
         )
     }
+    return out.sortedByDescending { it.stamp }
+}
+
+private fun shortStamp(stamp: String): String = if (stamp.length >= 10) stamp.substring(5) else stamp
+
+/** 一个完成的成果：对勾 + 成果名 + 完成日期，下面是复盘总结（点一下展开 / 收起），再下面是折叠的过程记录 */
+@Composable
+private fun MilestoneCard(e: MilestoneEntry.Done, onOpenNote: (String) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    var open by remember(e.stamp, e.title) { mutableStateOf(false) }
+    var showProcess by remember(e.stamp, e.title) { mutableStateOf(false) }
+    val summary = e.review.joinToString("\n")
+    val expandable = summary.length > 70 || e.review.size > 1 || e.process.isNotEmpty()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (expandable) Modifier.clickable { open = !open } else Modifier),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            Modifier.padding(top = 1.dp).size(22.dp).clip(CircleShape).background(Brand.Orange),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Filled.Check, contentDescription = null, tint = Brand.Brown, modifier = Modifier.size(14.dp))
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    plain(e.title),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = if (open) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    shortStamp(e.stamp).substringBefore(' '),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+            if (summary.isNotEmpty()) {
+                Text(
+                    summary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = if (open) Int.MAX_VALUE else 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                Text("还没有复盘总结", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant.copy(alpha = 0.7f))
+            }
+            if (open) {
+                if (e.process.isNotEmpty()) {
+                    Text(
+                        if (showProcess) "收起过程记录" else "过程记录 ${e.process.size} 条 ›",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.primary,
+                        modifier = Modifier.clickable { showProcess = !showProcess }.padding(vertical = 2.dp),
+                    )
+                    if (showProcess) {
+                        e.process.forEach { (stamp, body) ->
+                            Text(
+                                (if (stamp.isNotEmpty()) "${shortStamp(stamp)}  " else "") + plain(body),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = scheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                if (e.url != null) {
+                    val openNote = openLink(e.url, onOpenNote)
+                    Text(
+                        "查看任务笔记 ›",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = scheme.primary,
+                        modifier = Modifier.clickable(onClick = openNote).padding(vertical = 2.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 一句单独的记录：日期在前、文字接在后面，整行铺满，不再分成窄窄的两列 */
+@Composable
+private fun NoteLine(e: MilestoneEntry.Note) {
+    val scheme = MaterialTheme.colorScheme
+    Text(
+        buildAnnotatedString {
+            if (e.stamp.isNotEmpty()) {
+                withStyle(SpanStyle(color = scheme.primary, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)) { append(shortStamp(e.stamp)) }
+                append("  ")
+            }
+            append(plain(e.text))
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        color = scheme.onSurface,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @Composable

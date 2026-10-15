@@ -152,7 +152,7 @@ fun RevisitScreen(
                     },
                     label = "revisit-card",
                 ) { item ->
-                    if (item != null) RevisitCard(item, cloze) else EmptyState(today, onBack)
+                    if (item != null) RevisitCard(item, cloze, viewModel) else EmptyState(today, onBack)
                 }
                 if (current != null) {
                     // 卡片右下角的「记一笔」：图标按钮，不占一整行；已有专题笔记时，入口放在左下角
@@ -195,6 +195,7 @@ fun RevisitScreen(
             label = "想法",
             hint = thoughtHint(current),
             minLines = 4,
+            draftKey = "revisit:${current.id}",
             onDismiss = { composing = false; draft = "" },
             onConfirm = { text ->
                 composing = false
@@ -402,7 +403,7 @@ private fun BigReading(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun RevisitCard(item: RevisitEntity, cloze: Boolean) {
+private fun RevisitCard(item: RevisitEntity, cloze: Boolean, viewModel: RevisitViewModel) {
     val scheme = MaterialTheme.colorScheme
     val long = remember(item.id) { item.text.length > 200 || item.text.count { it == '\n' } > 5 }
     var expanded by remember(item.id) { mutableStateOf(!long) }
@@ -412,10 +413,25 @@ private fun RevisitCard(item: RevisitEntity, cloze: Boolean) {
 
     // 填空：每次重温（reps 不同）、点「换一批」（reroll 加一）自动挑的位置都会换
     var reroll by remember(item.id) { mutableIntStateOf(0) }
-    val plain = remember(item.id, item.text, item.reps, reroll, cloze, showBody) {
-        if (cloze && showBody) Cloze.build(item.text, item.id * 31L + item.reps * 7919L + reroll) else null
+    // 手动挖的空（存在本机）：有的话优先于自动挑词
+    var saved by remember(item.id, item.text) {
+        mutableStateOf(runCatching { viewModel.manualBlanks(item, Cloze.flatText(item.text)) }.getOrNull())
     }
-    var revealed by remember(plain) { mutableStateOf(emptySet<Int>()) }
+    var editing by remember(item.id) { mutableStateOf(false) }
+    var draft by remember(item.id) { mutableStateOf<List<IntRange>>(emptyList()) }
+    val basePlain = remember(item.id, item.text, item.reps, reroll, cloze, showBody, saved) {
+        // 挖空算法出任何问题都退回普通卡片，不能因为它让重温页打不开
+        if (cloze && showBody) runCatching { Cloze.build(item.text, item.id * 31L + item.reps * 7919L + reroll, saved) }.getOrNull() else null
+    }
+    // 编辑时显示的是正在改的草稿（改一下存一下）
+    val plain = if (editing && basePlain != null) Cloze.Plain(basePlain.text, draft, auto = false, manual = true) else basePlain
+    var revealed by remember(basePlain) { mutableStateOf(emptySet<Int>()) }
+    fun commit(next: List<IntRange>) {
+        draft = next
+        val text = basePlain?.text ?: return
+        runCatching { viewModel.saveManualBlanks(item, text, next) }
+        saved = next.takeIf { it.isNotEmpty() }
+    }
 
     Column(
         modifier = Modifier
@@ -458,19 +474,38 @@ private fun RevisitCard(item: RevisitEntity, cloze: Boolean) {
 
             if (showBody) {
                 if (plain != null) {
-                    ClozeBar(
-                        total = plain.blanks.size,
-                        shown = revealed.size,
-                        auto = plain.auto,
-                        onToggleAll = {
-                            revealed = if (revealed.size == plain.blanks.size) emptySet() else plain.blanks.indices.toSet()
-                        },
-                        onReroll = { reroll++ },
-                    )
+                    if (editing) {
+                        ClozeEditBar(
+                            count = draft.size,
+                            manualSaved = saved != null,
+                            onClear = { commit(emptyList()) },
+                            onRestoreAuto = {
+                                runCatching { viewModel.clearManualBlanks(item) }
+                                saved = null
+                                draft = emptyList()
+                                editing = false
+                            },
+                            onDone = { editing = false },
+                        )
+                    } else {
+                        ClozeBar(
+                            total = plain.blanks.size,
+                            shown = revealed.size,
+                            auto = plain.auto,
+                            onToggleAll = {
+                                revealed = if (revealed.size == plain.blanks.size) emptySet() else plain.blanks.indices.toSet()
+                            },
+                            onReroll = { reroll++ },
+                            onEdit = { draft = plain.blanks; editing = true },
+                        )
+                    }
                     ClozeText(
                         plain = plain,
-                        revealed = revealed,
+                        revealed = if (editing) plain.blanks.indices.toSet() else revealed,
                         onToggle = { i -> revealed = if (i in revealed) revealed - i else revealed + i },
+                        editing = editing,
+                        onPickWord = { off -> commit(Cloze.toggleWord(plain.text, draft, off)) },
+                        onPickRange = { a, b -> commit(Cloze.addRange(plain.text, draft, a, b)) },
                     )
                 } else Box(Modifier.animateContentSize()) {
                     if (expanded) {

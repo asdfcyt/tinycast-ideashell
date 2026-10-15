@@ -256,6 +256,7 @@ internal fun TaskSheet(
             required = false,
             confirmLabel = "完成",
             minLines = 4,
+            draftKey = "review:${task.id}",
             onDismiss = { dialog = null },
             onConfirm = {
                 dialog = null
@@ -268,6 +269,7 @@ internal fun TaskSheet(
             label = "进展",
             hint = "今天做了什么？卡在哪里？下一步是什么？会同步成滴答任务上的一条评论。",
             minLines = 3,
+            draftKey = "progress:${task.id}",
             onDismiss = { dialog = null },
             onConfirm = { text ->
                 dialog = null
@@ -284,6 +286,7 @@ internal fun TaskSheet(
                 FormField("行动步骤", multiline = true, placeholder = "一行一步，会变成待勾选清单"),
             ),
             confirmLabel = "创建",
+            draftKey = "note:${task.id}",
             onDismiss = { dialog = null },
             onConfirm = { v ->
                 dialog = null

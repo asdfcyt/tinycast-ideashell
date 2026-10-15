@@ -876,6 +876,7 @@ internal fun ProjectPage(
             label = "进展",
             hint = e.ref.deliverable,
             minLines = 3,
+            draftKey = "progress:${e.taskId}",
             onDismiss = { progressFor = null },
             onConfirm = { text ->
                 progressFor = null

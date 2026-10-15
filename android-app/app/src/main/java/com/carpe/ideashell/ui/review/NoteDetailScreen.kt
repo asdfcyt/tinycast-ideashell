@@ -26,6 +26,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -115,7 +116,12 @@ fun NoteDetailScreen(
     fun toast(text: String, undo: (suspend () -> Unit)? = null) {
         scope.launch {
             snackbar.currentSnackbarData?.dismiss()
-            val result = snackbar.showSnackbar(text, actionLabel = if (undo != null) "撤销" else null)
+            val result = snackbar.showSnackbar(
+                text,
+                actionLabel = if (undo != null) "撤销" else null,
+                // 带「撤销」按钮的提示默认不会自己消失：几秒后收起
+                duration = SnackbarDuration.Short,
+            )
             if (result == SnackbarResult.ActionPerformed) undo?.invoke()
         }
     }

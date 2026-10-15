@@ -41,6 +41,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -151,6 +152,7 @@ fun HomeScreen(
                         message = "已保存 · ${event.receipt.detail}",
                         actionLabel = "撤销",
                         withDismissAction = false,
+                        duration = SnackbarDuration.Short,
                     )
                     if (result == SnackbarResult.ActionPerformed) viewModel.undo(event.receipt.id)
                 }
@@ -495,30 +497,35 @@ private fun Dashboard(
                     fontWeight = FontWeight.Black,
                 )
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                // 标签在上、数值在下：「1h20m / 1h30m」这种长的也不会和标签挤在一行
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Dot(focusColor)
                     Text("专注", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurfaceVariant)
-                    Text(
-                        focusMin?.let(::formatFocus) ?: "–",
-                        fontSize = 22.sp,
-                        lineHeight = 26.sp,
-                        fontWeight = FontWeight.Black,
-                    )
-                    Text(
-                        "/ ${formatFocus(focusGoal)}",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = scheme.onSurfaceVariant,
-                    )
                 }
+                val focusNow = focusMin?.let(::formatFocus) ?: "–"
+                val focusGoalText = formatFocus(focusGoal)
+                // 当前和目标都带小时时字多，主数字缩一点
+                val bigSize = if (focusNow.length + focusGoalText.length > 9) 19.sp else 22.sp
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(fontSize = bigSize, fontWeight = FontWeight.Black)) { append(focusNow) }
+                        withStyle(SpanStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurfaceVariant)) {
+                            append("  / $focusGoalText")
+                        }
+                    },
+                    lineHeight = 26.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 Text(
                     buildAnnotatedString {
                         append("待办 ")
                         withStyle(SpanStyle(fontWeight = FontWeight.ExtraBold, color = scheme.onSurface)) {
                             append(if (loaded) "$todoDone/$todoTotal" else "–")
                         }
-                        append("  ·  项目进展 ")
+                        append(" · 项目进展 ")
                         withStyle(SpanStyle(fontWeight = FontWeight.ExtraBold, color = scheme.onSurface)) {
                             append(projectProgress?.let { "${(it * 100).toInt()}%" } ?: "–")
                         }

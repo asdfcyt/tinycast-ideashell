@@ -137,6 +137,12 @@ object NoteSections {
             .map { it.trim().removePrefix("-").removePrefix("*").trim() }
             .filter { it.isNotEmpty() && !isPlaceholderLine(it) }
 
+    /** 任务笔记「复盘」小节里的每一段（空行分段，去掉占位行） */
+    fun reviewParagraphs(content: String): List<String> =
+        sectionBody(content, "复盘").orEmpty().split(Regex("\\n\\s*\\n"))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !isPlaceholderLine(it) }
+
     /** 里程碑文字：有任务笔记就写交付成果并带链接，否则写任务标题 */
     fun milestoneText(title: String, deliverable: String?, noteLink: String?): String =
         if (deliverable != null) "完成：$deliverable${if (noteLink != null) "（[任务笔记]($noteLink)）" else ""}" else "完成：$title"

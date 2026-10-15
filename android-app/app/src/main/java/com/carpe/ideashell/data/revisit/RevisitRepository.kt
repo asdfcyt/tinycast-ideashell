@@ -305,12 +305,14 @@ class RevisitRepository(
 
     /** 评分按钮下面的「明天 / 3 天后」预览 */
     fun previewDays(item: RevisitEntity, rating: Fsrs.Rating, now: Long = System.currentTimeMillis()): Int =
-        Fsrs.nextIntervalDays(
-            memoryOf(item),
-            elapsedDays(item, now),
-            rating,
-            settings.current.revisitRetention / 100.0,
-        )
+        runCatching {
+            Fsrs.nextIntervalDays(
+                memoryOf(item),
+                elapsedDays(item, now),
+                rating,
+                settings.current.revisitRetention / 100.0,
+            )
+        }.getOrDefault(1)
 
     /** 今天跳过：明天再出现，不影响记忆曲线 */
     suspend fun skipToday(id: Long) {

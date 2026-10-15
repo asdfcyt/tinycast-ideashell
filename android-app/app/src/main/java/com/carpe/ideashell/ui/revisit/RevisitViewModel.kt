@@ -33,6 +33,13 @@ import kotlinx.coroutines.launch
 class RevisitViewModel(container: AppContainer) : ViewModel() {
     private val repo = container.revisit
     private val settings = container.settings
+    private val manualStore = container.clozeManual
+
+    fun manualBlanks(item: RevisitEntity, text: String): List<IntRange>? = manualStore.get(item.dedupeKey, text)
+
+    fun saveManualBlanks(item: RevisitEntity, text: String, ranges: List<IntRange>) = manualStore.put(item.dedupeKey, text, ranges)
+
+    fun clearManualBlanks(item: RevisitEntity) = manualStore.clear(item.dedupeKey)
 
     /** 填空模式（设置里也能开关）：卡片正文里的关键词挖空，点空白处查看 */
     val cloze: StateFlow<Boolean> = settings.state

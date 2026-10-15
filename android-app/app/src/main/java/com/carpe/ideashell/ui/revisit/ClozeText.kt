@@ -2,10 +2,13 @@ package com.carpe.ideashell.ui.revisit
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -42,13 +45,19 @@ internal fun ClozeText(
     revealed: Set<Int>,
     onToggle: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** 手动挖空模式：点一个词挖空 / 取消，长按后拖选一段整段挖空；空都以橙色标出 */
+    editing: Boolean = false,
+    onPickWord: (Int) -> Unit = {},
+    onPickRange: (Int, Int) -> Unit = { _, _ -> },
 ) {
     val scheme = MaterialTheme.colorScheme
     val hiddenBg = scheme.onSurface.copy(alpha = 0.16f)
-    val annotated = remember(plain, revealed, hiddenBg) {
+    var preview by remember { mutableStateOf<IntRange?>(null) }
+    val annotated = remember(plain, revealed, hiddenBg, preview) {
         buildAnnotatedString {
             var pos = 0
             plain.blanks.forEachIndexed { i, r ->
+                if (r.first < pos || r.last >= plain.text.length) return@forEachIndexed
                 append(plain.text.substring(pos, r.first))
                 val word = plain.text.substring(r.first, r.last + 1)
                 if (i in revealed) {
@@ -61,6 +70,11 @@ internal fun ClozeText(
                 pos = r.last + 1
             }
             append(plain.text.substring(pos))
+            preview?.let { r ->
+                if (r.first >= 0 && r.last < plain.text.length) {
+                    addStyle(SpanStyle(background = Brand.Orange.copy(alpha = 0.45f)), r.first, r.last + 1)
+                }
+            }
         }
     }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
@@ -71,12 +85,40 @@ internal fun ClozeText(
         onTextLayout = { layout = it },
         modifier = modifier
             .fillMaxWidth()
-            .pointerInput(plain) {
+            .pointerInput(plain, editing) {
                 detectTapGestures { position ->
                     val l = layout ?: return@detectTapGestures
-                    val index = plain.blankAt(l.getOffsetForPosition(position))
-                    if (index >= 0) onToggle(index)
+                    val offset = l.getOffsetForPosition(position)
+                    if (editing) onPickWord(offset) else {
+                        val index = plain.blankAt(offset)
+                        if (index >= 0) onToggle(index)
+                    }
                 }
+            }
+            .pointerInput(plain, editing) {
+                if (!editing) return@pointerInput
+                var anchor = 0
+                var current = 0
+                fun span() = minOf(anchor, current)..maxOf(anchor, current)
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { position ->
+                        val l = layout ?: return@detectDragGesturesAfterLongPress
+                        anchor = l.getOffsetForPosition(position)
+                        current = anchor
+                        preview = span()
+                    },
+                    onDrag = { change, _ ->
+                        val l = layout ?: return@detectDragGesturesAfterLongPress
+                        current = l.getOffsetForPosition(change.position)
+                        preview = span()
+                        change.consume()
+                    },
+                    onDragEnd = {
+                        preview = null
+                        onPickRange(anchor, current)
+                    },
+                    onDragCancel = { preview = null },
+                )
             },
     )
 }
@@ -89,6 +131,7 @@ internal fun ClozeBar(
     auto: Boolean,
     onToggleAll: () -> Unit,
     onReroll: () -> Unit,
+    onEdit: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
@@ -96,7 +139,7 @@ internal fun ClozeBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            "填空 $shown/$total · 点空白处查看",
+            "填空 $shown/$total",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
@@ -104,6 +147,31 @@ internal fun ClozeBar(
         )
         ClozePill(if (shown >= total) "再遮住" else "全部显示", onToggleAll)
         if (auto) ClozePill("换一批", onReroll)
+        ClozePill("手动挖空", onEdit)
+    }
+}
+
+/** 手动挖空时正文上方的操作条：说明怎么选，以及清空 / 恢复自动 / 完成 */
+@Composable
+internal fun ClozeEditBar(
+    count: Int,
+    manualSaved: Boolean,
+    onClear: () -> Unit,
+    onRestoreAuto: () -> Unit,
+    onDone: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "手动挖空 · 已挖 $count 处：点一个词挖空 / 取消，长按后拖动可整段挖空，改动自动保存",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            ClozePill("清空", onClear)
+            if (manualSaved) ClozePill("恢复自动", onRestoreAuto)
+            Spacer(Modifier.weight(1f))
+            ClozePill("完成", onDone)
+        }
     }
 }
 

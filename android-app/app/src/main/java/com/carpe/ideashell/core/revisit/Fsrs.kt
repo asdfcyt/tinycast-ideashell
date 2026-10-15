@@ -43,7 +43,9 @@ object Fsrs {
     fun intervalDays(stability: Double, retention: Double): Int {
         val r = retention.coerceIn(MIN_RETENTION, MAX_RETENTION)
         val days = stability / FACTOR * (r.pow(1.0 / DECAY) - 1.0)
-        return days.roundToInt().coerceIn(1, MAX_INTERVAL_DAYS)
+        // 数据异常（稳定性是 NaN / 无穷）时 roundToInt 会抛异常：按最短间隔处理
+        if (days.isNaN()) return 1
+        return days.coerceIn(1.0, MAX_INTERVAL_DAYS.toDouble()).roundToInt()
     }
 
     private fun initialStability(r: Rating): Double = max(W[r.grade - 1], MIN_STABILITY)

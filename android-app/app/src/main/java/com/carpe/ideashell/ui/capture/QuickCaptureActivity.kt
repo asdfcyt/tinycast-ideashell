@@ -66,6 +66,12 @@ class QuickCaptureActivity : ComponentActivity() {
         configureFrom(intent, fresh = true)
     }
 
+    override fun onPause() {
+        // 点到面板外面、返回键、切走：没提交的文字先存下来，下次打开还在
+        viewModel.saveDraft()
+        super.onPause()
+    }
+
     override fun finish() {
         super.finish()
         // 面板自己有退场动画，系统的窗口转场关掉，避免叠加抖动
@@ -149,7 +155,13 @@ class QuickCaptureActivity : ComponentActivity() {
         }
 
         if (fresh) viewModel.reconfigure(clip, preset, origin) else viewModel.configure(clip, preset, origin)
-        if (presetText != null) viewModel.text = presetText
+        if (presetText != null) {
+            viewModel.text = presetText
+            viewModel.baselineText = presetText
+        } else if (clip == null && sharedImages.isEmpty()) {
+            // 普通的「记一条」：把上次没提交就关掉的文字放回来
+            viewModel.restoreDraft()
+        }
         if (presetDate != null) viewModel.schedule = CaptureSchedule(presetDate, null)
         if (sharedImages.isNotEmpty()) {
             if (caption != null) viewModel.text = presetText.orEmpty() + caption

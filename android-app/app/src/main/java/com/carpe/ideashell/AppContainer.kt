@@ -71,6 +71,12 @@ class AppContainer(context: Context) {
     val credentials = CredentialStore(SecureStore(context))
     val settings = SettingsStore(context)
 
+    /** 快记面板写到一半的文字 */
+    val captureDraft = com.carpe.ideashell.data.capture.CaptureDraft(context)
+
+    /** 重温时手动挖的空 */
+    val clozeManual = com.carpe.ideashell.data.revisit.ClozeManualStore(context)
+
     private val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(40, TimeUnit.SECONDS)

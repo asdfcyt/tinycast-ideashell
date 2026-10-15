@@ -80,7 +80,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
                 origin = origin,
             )
             showTemplates = false
-            state = QuickState.Saved(receipt)
+            markSaved(receipt)
         }
         return true
     }
@@ -100,6 +100,32 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
     private var origin = "quick"
     private var configured = false
 
+    /** 入口预填的文字（比如项目快捷方式的「#项目 」）：只剩它不算草稿，不用存 */
+    var baselineText = ""
+
+    /** 关闭面板（点到外面、返回键）时把没提交的文字存下来，下次打开放回输入框 */
+    fun saveDraft() {
+        val current = text
+        if (state !is QuickState.Composing || clip != null) return
+        if (current.isBlank() || current.trim() == baselineText.trim()) {
+            if (current.isBlank()) container.captureDraft.clear()
+            return
+        }
+        container.captureDraft.save(current)
+    }
+
+    /** 输入框是空的才放回，避免盖住别的入口带来的内容 */
+    fun restoreDraft() {
+        if (text.isNotBlank()) return
+        val saved = container.captureDraft.load()
+        if (saved.isNotBlank()) text = saved
+    }
+
+    private fun markSaved(receipt: SubmitReceipt) {
+        container.captureDraft.clear()
+        state = QuickState.Saved(receipt)
+    }
+
     val folders: StateFlow<List<FolderInfo>> = container.folders.folders
     val connected: StateFlow<Boolean> = container.credentials.ideashellConnected
 
@@ -117,10 +143,13 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
      * 丢掉旧输入，按新内容重新开始。和 [configure] 不同，它每次都生效。
      */
     fun reconfigure(clip: ClipInput?, preset: CaptureKind?, origin: String) {
+        // 旧输入先存成草稿，不丢
+        saveDraft()
         configured = false
         CaptureImages.delete(images.toList())
         images.clear()
         text = ""
+        baselineText = ""
         schedule = null
         error = null
         state = QuickState.Composing
@@ -183,7 +212,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
                     error = "没有可保存的内容"
                 } else {
                     images.clear()
-                    state = QuickState.Saved(receipt)
+                    markSaved(receipt)
                 }
                 return@launch
             }
@@ -202,7 +231,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
                 error = "没有可保存的内容"
                 return@launch
             }
-            state = QuickState.Saved(receipt)
+            markSaved(receipt)
         }
     }
 

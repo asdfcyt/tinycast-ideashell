@@ -85,7 +85,30 @@ fun InputSheet(
     }
 }
 
-/** 一个输入框的抽屉；[required] 为 true 时内容为空不能确认 */
+/**
+ * 抽屉里写到一半、被点到外面 / 按返回关掉的内容：按 key 暂存在内存里，下次打开同一个抽屉还在；点确认后清掉。
+ * 只管「新写」的内容（编辑已有内容的抽屉不用，那里的初始值是真实数据）。
+ */
+object DraftBox {
+    private val drafts = HashMap<String, List<String>>()
+
+    fun get(key: String?): List<String>? = key?.let { drafts[it] }
+
+    fun put(key: String?, values: List<String>) {
+        if (key == null) return
+        if (values.all { it.isBlank() }) drafts.remove(key) else drafts[key] = values
+    }
+
+    fun clear(key: String?) {
+        if (key != null) drafts.remove(key)
+    }
+}
+
+/**
+ * 一个输入框的抽屉；[required] 为 true 时内容为空不能确认。
+ * 新写内容（[initial] 为空）时，没点确认就关掉的文字会按 [draftKey]（默认用标题）暂存，再打开还在；
+ * 同一个标题下有多个对象（比如每个任务都有「记一条进展」）时，请传带对象 id 的 [draftKey]。
+ */
 @Composable
 fun TextPromptDialog(
     title: String,
@@ -98,20 +121,25 @@ fun TextPromptDialog(
     required: Boolean = true,
     confirmLabel: String = "保存",
     minLines: Int = 1,
+    draftKey: String? = null,
 ) {
-    var value by remember { mutableStateOf(initial) }
+    val key = draftKey ?: if (initial.isEmpty()) "t:$title" else null
+    var value by remember { mutableStateOf(initial.ifEmpty { DraftBox.get(key)?.firstOrNull().orEmpty() }) }
     InputSheet(
         title = title,
         hint = hint,
         confirmLabel = confirmLabel,
         confirmEnabled = !required || value.isNotBlank(),
         onDismiss = onDismiss,
-        onConfirm = { onConfirm(value.trim()) },
+        onConfirm = {
+            DraftBox.clear(key)
+            onConfirm(value.trim())
+        },
     ) {
         ListGroup {
             AppTextField(
                 value = value,
-                onValueChange = { value = it },
+                onValueChange = { value = it; DraftBox.put(key, listOf(it)) },
                 // 抽屉标题已经说明了这是什么，输入行里不再重复名称（[label] 仅保留给调用方，不显示）
                 label = null,
                 placeholder = "点这里输入",
@@ -140,8 +168,12 @@ fun FormDialog(
     onConfirm: (List<String>) -> Unit,
     hint: String? = null,
     confirmLabel: String = "保存",
+    /** 写到一半关掉时按它暂存（见 [DraftBox]）；不传就不暂存 */
+    draftKey: String? = null,
 ) {
-    val values = remember { mutableStateOf(fields.map { it.initial }) }
+    val values = remember {
+        mutableStateOf(DraftBox.get(draftKey)?.takeIf { it.size == fields.size } ?: fields.map { it.initial })
+    }
     val ok = fields.indices.all { i -> !fields[i].required || values.value[i].isNotBlank() }
     InputSheet(
         title = title,
@@ -149,14 +181,20 @@ fun FormDialog(
         confirmLabel = confirmLabel,
         confirmEnabled = ok,
         onDismiss = onDismiss,
-        onConfirm = { onConfirm(values.value.map { it.trim() }) },
+        onConfirm = {
+            DraftBox.clear(draftKey)
+            onConfirm(values.value.map { it.trim() })
+        },
     ) {
         ListGroup {
             fields.forEachIndexed { i, f ->
                 if (i > 0) RowDivider()
                 AppTextField(
                     value = values.value[i],
-                    onValueChange = { v -> values.value = values.value.toMutableList().also { it[i] = v } },
+                    onValueChange = { v ->
+                        values.value = values.value.toMutableList().also { it[i] = v }
+                        DraftBox.put(draftKey, values.value)
+                    },
                     label = if (f.required) "${f.label} *" else f.label,
                     placeholder = f.placeholder ?: "点这里输入",
                     autoFocus = i == 0,

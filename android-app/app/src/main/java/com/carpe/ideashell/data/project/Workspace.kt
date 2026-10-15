@@ -64,6 +64,8 @@ data class TaskNoteRef(
     val createdAt: Long = System.currentTimeMillis(),
     /** 任务完成后，笔记里的进展已经移到项目主页的「里程碑与进展」：不再出现在项目页的任务笔记列表里，但仍算已交付的成果 */
     val archived: Boolean = false,
+    /** 任务笔记「复盘」小节里的总结已经汇到项目主页的里程碑（旧数据没汇过，打开项目页时补一次） */
+    val reviewSynced: Boolean = false,
 )
 
 /** 从某个项目发起的一次专注（本机留一份：没有绑定任务的专注滴答里按任务才查得到，统计项目专注时要靠它） */

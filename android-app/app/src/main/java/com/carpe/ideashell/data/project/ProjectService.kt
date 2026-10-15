@@ -222,7 +222,8 @@ class ProjectService(
             ),
         )
         val created = ideashell.createNote(
-            title = NoteText.truncate(goal, 30),
+            // 笔记标题用任务本身的名字；交付成果写在正文里
+            title = NoteText.truncate(TodoMeta.cleanTitle(task.title), 30),
             body = body,
             tags = listOf("任务笔记") + listOfNotNull(project),
         )
@@ -275,7 +276,13 @@ class ProjectService(
         val project = projectOf(task)
         val text = review.trim()
         if (project != null) {
-            if (ref != null) {
+            if (ref != null && ref.archived && text.isNotEmpty()) {
+                // 笔记已经归档过（比如重新完成）：新写的复盘也要汇到里程碑
+                softly {
+                    val homeId = resolveHome(project.keyword) ?: return@softly
+                    appendMilestones(homeId, listOf("- ${NoteSections.minuteStamp()} 〔${ref.deliverable}〕复盘：${text.replace(Regex("\\s*\\n\\s*"), " ")}"))
+                }
+            } else if (ref != null) {
                 // 有任务笔记：把笔记里的进展（和这次的复盘）移到「里程碑与进展」，再记一行「完成」，笔记随之归档
                 softly { archiveTaskNote(project.keyword, TaskNoteEntry(taskKeyOf(task.id), ref), text) }
             } else {
@@ -392,7 +399,10 @@ class ProjectService(
                 async {
                     val d = softly { ideashell.noteFull(id) } ?: return@async null
                     val project = d.tags.map { it.trim().trimStart('#').trim() }.firstOrNull { it.isNotEmpty() && it != "任务笔记" }
-                    key to TaskNoteRef(noteId = id, deliverable = d.title.ifBlank { "任务笔记" }, project = project)
+                    // 笔记标题是任务名，交付成果要从正文的「交付成果」小节里读
+                    val deliverable = NoteSections.sectionBody(d.content, "交付成果")
+                        ?.lines()?.map { it.trim() }?.firstOrNull { it.isNotEmpty() && !NoteSections.isPlaceholderLine(it) }
+                    key to TaskNoteRef(noteId = id, deliverable = deliverable ?: d.title.ifBlank { "任务笔记" }, project = project)
                 }
             }.awaitAll().filterNotNull()
         }
@@ -458,16 +468,45 @@ class ProjectService(
         val tag = "〔${ref.deliverable}〕"
         val detail = ideashell.noteDetail(ref.noteId)
         val lines = mutableListOf<String>()
-        for (line in NoteSections.progressLines(detail.content)) {
-            val (stamp, body) = NoteSections.splitStamp(line)
-            lines += "- ${stamp ?: NoteSections.minuteStamp()} ${tag}$body"
+        // 里程碑只汇总任务笔记的「复盘」总结：笔记里已经写的复盘，加上这次完成时写的；过程中的进展记录留在任务笔记里
+        for (para in NoteSections.reviewParagraphs(detail.content)) {
+            val (stamp, body) = NoteSections.splitStamp(para)
+            lines += "- ${stamp ?: NoteSections.minuteStamp()} ${tag}复盘：${body.replace(Regex("\\s*\\n\\s*"), " ")}"
         }
         val now = NoteSections.minuteStamp()
         if (review.isNotBlank()) lines += "- $now ${tag}复盘：${review.trim().replace(Regex("\\s*\\n\\s*"), " ")}"
         lines += "- $now ${NoteSections.milestoneText("", ref.deliverable, noteUrl(ref.noteId))}"
         appendMilestones(homeId, lines)
-        store.update { w -> w.copy(taskNotes = w.taskNotes + (entry.taskKey to ref.copy(archived = true))) }
+        store.update { w -> w.copy(taskNotes = w.taskNotes + (entry.taskKey to ref.copy(archived = true, reviewSynced = true))) }
         true
+    }
+
+    /**
+     * 旧数据补齐：已经完成归档、但复盘总结没汇到里程碑的任务笔记（以前的版本不汇，或复盘是完成之后才写进笔记的），
+     * 读它的「复盘」小节补一份到项目主页。每个笔记只补一次；返回是否写入了新内容（界面据此重读主页）。
+     */
+    suspend fun backfillReviews(p: Project): Boolean = archiveLock.withLock {
+        val entries = taskNotesOf(p).filter { it.ref.archived && !it.ref.reviewSynced }.take(15)
+        if (entries.isEmpty()) return@withLock false
+        val homeId = resolveHome(p.keyword) ?: return@withLock false
+        var wrote = false
+        for (e in entries) {
+            val detail = softly { ideashell.noteDetail(e.ref.noteId) } ?: continue
+            val tag = "〔${e.ref.deliverable}〕"
+            val lines = NoteSections.reviewParagraphs(detail.content).map { para ->
+                val (stamp, body) = NoteSections.splitStamp(para)
+                "- ${stamp ?: NoteSections.minuteStamp()} ${tag}复盘：${body.replace(Regex("\\s*\\n\\s*"), " ")}"
+            }
+            if (lines.isNotEmpty()) {
+                if (softly { appendMilestones(homeId, lines) } == null) continue
+                wrote = true
+            }
+            store.update { w ->
+                val cur = w.taskNotes[e.taskKey] ?: return@update w
+                w.copy(taskNotes = w.taskNotes + (e.taskKey to cur.copy(reviewSynced = true)))
+            }
+        }
+        wrote
     }
 
     /**

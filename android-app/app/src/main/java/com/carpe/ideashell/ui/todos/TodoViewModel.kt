@@ -509,6 +509,13 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             container.projects.resolveHome(p.keyword)?.let { id ->
                 homeText = readNote(id)
+                // 旧数据：完成归档的任务笔记里的复盘总结，补汇到里程碑后重读一次
+                try {
+                    if (container.projects.backfillReviews(p)) homeText = readNote(id)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
             }
             container.projects.taskNotesOf(p).take(10).forEach { e ->
                 launch { noteTexts[e.ref.noteId] = readNote(e.ref.noteId) }
