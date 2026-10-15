@@ -65,12 +65,14 @@ class IdeashellApi(private val mcp: McpClient) {
         )
     }
 
-    suspend fun updateNoteBody(noteId: String, body: String): String =
+    /** [tags] 不为空时一并传给接口（笔记当前的全部标签）；App 认的是正文末尾那一行 `#标签` */
+    suspend fun updateNoteBody(noteId: String, body: String, tags: List<String> = emptyList()): String =
         mcp.callText(
             "note_update",
             buildJsonObject {
                 put("note_id", noteId)
                 put("content", body)
+                if (tags.isNotEmpty()) putJsonArray("tags") { tags.forEach { add(it) } }
             },
         )
 

@@ -8,6 +8,11 @@ import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.TransitionDrawable
+import android.animation.ValueAnimator
+import android.view.accessibility.AccessibilityWindowInfo
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -21,6 +26,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.Toast
 import com.carpe.ideashell.IdeashellApp
+import com.carpe.ideashell.data.capture.ExcerptDrafts
 import com.carpe.ideashell.ui.capture.ExcerptSheetActivity
 import com.carpe.ideashell.R
 import com.carpe.ideashell.data.settings.ThemeMode
@@ -54,6 +60,9 @@ class ExcerptService : AccessibilityService() {
     /** 悬浮的竖向胶囊：平时一半吸附在屏幕边缘；有选中的文字时整个滑出来，点一下就摘录 */
     private var capsule: FrameLayout? = null
     private var capsuleParams: WindowManager.LayoutParams? = null
+    private var capsuleIcon: ImageView? = null
+    private var xAnim: ValueAnimator? = null
+    private var shownActive = false
 
     /** 最近一次选中的内容（选区事件或扫描得到）；null 表示没有 */
     private var pending: Selection? = null
@@ -65,6 +74,7 @@ class ExcerptService : AccessibilityService() {
     private val menuCheck: Runnable = object : Runnable {
       override fun run() {
         menuCheckQueued = false
+        if (sheetOpen) return
         val up = hasCopyMenu()
         if (up != menuUp) {
             menuUp = up
@@ -76,6 +86,19 @@ class ExcerptService : AccessibilityService() {
             main.postDelayed(this, 500)
         }
       }
+    }
+
+    /** 未提交的想法（[ExcerptDrafts]）过期时刷新胶囊：缩回边缘 */
+    private val draftExpire = Runnable { refreshStyle() }
+
+    /** 抽屉里的草稿有变化（暂存 / 保存 / 丢弃）：草稿还活着时胶囊保持滑出，点一下接着写；到期后缩回 */
+    fun onDraftChanged() {
+        main.post {
+            main.removeCallbacks(draftExpire)
+            val d = ExcerptDrafts.alive()
+            if (d != null) main.postDelayed(draftExpire, ExcerptDrafts.MAX_AGE_MS - (System.currentTimeMillis() - d.at) + 200)
+            refreshStyle()
+        }
     }
 
     /** 点胶囊那一刻识别到的书名 / 文章标题（识别不到为 null） */
@@ -96,6 +119,8 @@ class ExcerptService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
         if (!container.settings.current.excerptMode) return
+        // 摘录抽屉开着（正在打字）：键盘每按一下都会发窗口事件，这里再去遍历所有窗口会把主线程占住，输入就卡；抽屉开着时什么都不做
+        if (sheetOpen) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg == packageName || isSensitive(pkg)) return
         if (event.eventType != AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED) {
@@ -227,26 +252,33 @@ class ExcerptService : AccessibilityService() {
 
     private fun showCapsule() {
         if (capsule != null) return
+        val bolt = ImageView(this).apply {
+            setImageResource(R.drawable.ic_bolt)
+            setColorFilter(orange)
+        }
         val box = FrameLayout(this).apply {
             contentDescription = "快速摘录：先选中文字，再点这里"
-            addView(
-                ImageView(context).apply {
-                    setImageResource(R.drawable.ic_bolt)
-                    setColorFilter(orange)
-                },
-                // 图标放在露出来的那一半里
-                FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER),
-            )
+            // 图标放在露出来的那一半里
+            addView(bolt, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
         }
-        box.background = capsuleBackground(highlight = false)
+        // 平常态和高亮态叠在一起，切换时淡入淡出（而不是一下子换掉）
+        box.background = TransitionDrawable(arrayOf(capsuleBackground(highlight = false), capsuleBackground(highlight = true))).apply {
+            isCrossFadeEnabled = true
+        }
+        shownActive = false
         val params = overlayParams().apply {
             x = dockX(out = false)
             y = if (lastY >= 0) lastY else resources.displayMetrics.heightPixels / 3
         }
         box.setOnTouchListener(DragListener(params))
+        // 刚出现时淡入，不是突然冒出来
+        box.alpha = 0f
         wm.addView(box, params)
+        box.animate().alpha(1f).setDuration(280).start()
         capsule = box
         capsuleParams = params
+        capsuleIcon = bolt
+        refreshStyle()
     }
 
     /**
@@ -279,14 +311,39 @@ class ExcerptService : AccessibilityService() {
         }
     }
 
-    /** 有没有选中的文字，决定胶囊是滑出来（描上主题色）还是缩回边缘 */
+    /** 有没有选中的文字，决定胶囊是滑出来（描上主题色）还是缩回边缘；位置和描边都是渐变过去的 */
     private fun refreshStyle() {
         val box = capsule ?: return
+        val active = pending != null || menuUp || ExcerptDrafts.alive() != null
+        if (active != shownActive) {
+            shownActive = active
+            (box.background as? TransitionDrawable)?.let { if (active) it.startTransition(CAPSULE_ANIM_MS) else it.reverseTransition(CAPSULE_ANIM_MS) }
+            // 闪电：滑出来时弹一下，缩回时恢复
+            capsuleIcon?.animate()?.cancel()
+            if (active) {
+                capsuleIcon?.animate()?.scaleX(1.25f)?.scaleY(1.25f)?.setDuration(CAPSULE_ANIM_MS.toLong())?.setInterpolator(OvershootInterpolator(2.2f))?.start()
+            } else {
+                capsuleIcon?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(CAPSULE_ANIM_MS.toLong())?.setInterpolator(DecelerateInterpolator())?.start()
+            }
+        }
+        slideTo(dockX(out = active), overshoot = active)
+    }
+
+    /** 把胶囊平滑地挪到横坐标 [target]：滑出来时带一点点回弹，缩回 / 吸边时减速停住 */
+    private fun slideTo(target: Int, overshoot: Boolean) {
+        val box = capsule ?: return
         val params = capsuleParams ?: return
-        val active = pending != null || menuUp
-        box.background = capsuleBackground(highlight = active)
-        params.x = dockX(out = active)
-        runCatching { wm.updateViewLayout(box, params) }
+        xAnim?.cancel()
+        if (params.x == target) return
+        xAnim = ValueAnimator.ofInt(params.x, target).apply {
+            duration = CAPSULE_ANIM_MS.toLong()
+            interpolator = if (overshoot) OvershootInterpolator(1.4f) else DecelerateInterpolator(1.8f)
+            addUpdateListener {
+                params.x = it.animatedValue as Int
+                runCatching { wm.updateViewLayout(box, params) }
+            }
+            start()
+        }
     }
 
     private inner class DragListener(private val params: WindowManager.LayoutParams) : View.OnTouchListener {
@@ -299,6 +356,7 @@ class ExcerptService : AccessibilityService() {
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    xAnim?.cancel()
                     downX = e.rawX; downY = e.rawY
                     startX = params.x; startY = params.y
                     moved = false
@@ -372,6 +430,17 @@ class ExcerptService : AccessibilityService() {
     private fun onCapsuleTap() {
         tapDocTitle = detectDocTitle()
         val sel = pending ?: scanSelection()
+        // 没有新的划线、但有没提交的想法：重新打开抽屉，接着写
+        val draft = ExcerptDrafts.alive()
+        if (sel == null && !menuUp && draft != null) {
+            runCatching {
+                startActivity(
+                    ExcerptSheetActivity.intent(this, draft.pkg, draft.appName, draft.docTitle, draft.quote)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
+                )
+            }
+            return
+        }
         if (sel == null) {
             fromClipboard()
             return
@@ -405,7 +474,11 @@ class ExcerptService : AccessibilityService() {
     /** 在所有窗口（除了自己的悬浮窗）里找选区菜单上的「复制」按钮 */
     private fun findCopyNode(): AccessibilityNodeInfo? {
         val roots = buildList {
-            windows?.forEach { w -> w.root?.takeIf { it.packageName != packageName }?.let { add(it) } }
+            // 键盘窗口的节点树又大又不会有「复制」菜单，跳过
+            windows?.forEach { w ->
+                if (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) return@forEach
+                w.root?.takeIf { it.packageName != packageName }?.let { add(it) }
+            }
             rootInActiveWindow?.let { add(it) }
         }
         for (root in roots) {
@@ -468,16 +541,24 @@ class ExcerptService : AccessibilityService() {
     private fun hideAll() {
         main.removeCallbacks(clearPending)
         main.removeCallbacks(menuCheck)
+        main.removeCallbacks(draftExpire)
         menuCheckQueued = false
         menuUp = false
-        capsule?.let { runCatching { wm.removeView(it) } }
+        xAnim?.cancel()
+        xAnim = null
+        capsule?.let { runCatching { it.animate().cancel(); wm.removeView(it) } }
         capsule = null
         capsuleParams = null
+        capsuleIcon = null
     }
 
     companion object {
         private const val CAPSULE_W = 30
         private const val CAPSULE_H = 46
+        private const val CAPSULE_ANIM_MS = 260
+
+        /** 摘录抽屉是否在前台：开着时服务不去遍历窗口，免得打字时主线程被占住而卡顿 */
+        @Volatile var sheetOpen = false
         private var dockRight = true
         private var lastY = -1
 

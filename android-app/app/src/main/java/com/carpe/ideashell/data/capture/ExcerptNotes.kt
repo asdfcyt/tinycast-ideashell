@@ -39,6 +39,8 @@ class ExcerptNotes(
         val tags: List<String>,
         val quote: String,
         val thought: String,
+        /** true：和同一来源上一篇接着写；false：另起一篇 */
+        val append: Boolean = true,
     )
 
     sealed interface Result {
@@ -68,12 +70,13 @@ class ExcerptNotes(
         val title = truncate(source, 30)
         try {
             val key = "${e.pkg}|$source"
-            val current = session?.takeIf { it.key == key && now - it.updatedAt < SESSION_MS }
+            val current = if (e.append) session?.takeIf { it.key == key && now - it.updatedAt < SESSION_MS } else null
             if (current != null) {
                 try {
                     val detail = api.noteDetail(current.noteId)
                     if (detail.content.isNotBlank()) {
-                        api.updateNoteBody(current.noteId, insertBlock(detail.content, block(e.quote, e.thought), tags))
+                        val (content, allTags) = insertBlock(detail.content, block(e.quote, e.thought), tags)
+                        api.updateNoteBody(current.noteId, content, allTags)
                         session = current.copy(updatedAt = now)
                         return@withLock Result.Appended(current.title)
                     }
@@ -108,22 +111,23 @@ class ExcerptNotes(
         return if (t.isEmpty()) quoted else "$quoted\n\n$t"
     }
 
-    /** 新的一段放在正文末尾、结尾的 `#标签` 行之前；新标签并进标签行 */
-    private fun insertBlock(content: String, block: String, tags: List<String>): String {
+    /** 新的一段放在正文末尾、结尾的 `#标签` 行之前；新标签并进标签行。返回（新正文，这篇笔记的全部标签） */
+    private fun insertBlock(content: String, block: String, tags: List<String>): Pair<String, List<String>> {
         val lines = content.trimEnd().lines()
         val last = lines.lastOrNull()?.trim().orEmpty()
         val isTagLine = last.isNotEmpty() && last.split(Regex("\\s+")).all { it.startsWith("#") && it.length > 1 }
         val body = if (isTagLine) lines.dropLast(1).joinToString("\n").trimEnd() else content.trimEnd()
-        val existing = if (isTagLine) last.split(Regex("\\s+")).map { it.removePrefix("#") } else emptyList()
+        val existing = if (isTagLine) last.split(Regex("\\s+")).map(::cleanTag).filter { it.isNotEmpty() } else emptyList()
         val merged = (existing + tags).distinct()
         val tagLine = merged.joinToString(" ") { "#$it" }
-        return buildString {
+        val text = buildString {
             append(body).append("\n\n").append(block)
             if (tagLine.isNotEmpty()) append("\n\n").append(tagLine)
         }
+        return text to merged
     }
 
-    private fun cleanTag(t: String): String = t.trim().removePrefix("#").replace(Regex("\\s+"), "")
+    private fun cleanTag(t: String): String = IdeashellApi.cleanTag(t)
 
     companion object {
         const val SESSION_MS = 3 * 60 * 60 * 1000L
@@ -133,6 +137,6 @@ class ExcerptNotes(
 
         /** 把输入框里的「#a #b，c」拆成标签列表 */
         fun parseTags(text: String): List<String> =
-            text.split(Regex("[\\s,，、]+")).map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }.distinct()
+            text.split(Regex("[\\s,，、;；#＃]+")).map(IdeashellApi::cleanTag).filter { it.isNotEmpty() }.distinct()
     }
 }

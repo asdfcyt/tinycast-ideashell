@@ -25,7 +25,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -43,6 +49,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -59,16 +71,24 @@ fun ExcerptSheetScreen(
     appName: String,
     initialSource: String,
     initialTags: String,
-    onSave: (source: String, tags: String, thought: String) -> Unit,
-    onClose: () -> Unit,
+    initialThought: String,
+    initialAppend: Boolean,
+    onSave: (source: String, tags: String, thought: String, append: Boolean) -> Unit,
+    /** 点遮罩 / 返回键放弃：带上已写的内容，由调用方暂存成草稿 */
+    onClose: (source: String, tags: String, thought: String, append: Boolean) -> Unit,
 ) {
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
     val scrim by animateFloatAsState(if (visible) 0.5f else 0f, tween(220), label = "scrim")
     val noRipple = remember { MutableInteractionSource() }
-    var thought by rememberSaveable { mutableStateOf("") }
+    var thought by rememberSaveable { mutableStateOf(initialThought) }
     var source by rememberSaveable { mutableStateOf(initialSource) }
     var tags by rememberSaveable { mutableStateOf(initialTags) }
+    var append by rememberSaveable { mutableStateOf(initialAppend) }
+    val send = { onSave(source, tags, thought, append) }
+    val dismiss = { onClose(source, tags, thought, append) }
+    // 返回键（键盘收起之后的那一下）和点遮罩一样：放弃，但想法暂存
+    BackHandler(onBack = dismiss)
     val focus = remember { FocusRequester() }
     LaunchedEffect(visible) { if (visible) runCatching { focus.requestFocus() } }
 
@@ -76,7 +96,7 @@ fun ExcerptSheetScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = scrim))
-            .clickable(interactionSource = noRipple, indication = null, onClick = onClose),
+            .clickable(interactionSource = noRipple, indication = null, onClick = dismiss),
     ) {
         AnimatedVisibility(
             visible = visible,
@@ -107,6 +127,7 @@ fun ExcerptSheetScreen(
                                 label = "来源",
                                 placeholder = appName,
                                 modifier = Modifier.weight(1.25f),
+                                onSend = send,
                             )
                             CompactField(
                                 value = tags,
@@ -114,7 +135,9 @@ fun ExcerptSheetScreen(
                                 label = "#",
                                 placeholder = "标签",
                                 modifier = Modifier.weight(1f),
+                                onSend = send,
                             )
+                            AppendToggle(append = append, onToggle = { append = !append })
                         }
                         QuoteCard(quote)
                         Field(
@@ -124,11 +147,12 @@ fun ExcerptSheetScreen(
                             minLines = 2,
                             maxLines = 5,
                             modifier = Modifier.focusRequester(focus),
+                            onSend = send,
                         )
                     }
                     SubmitCorner(
                         enabled = true,
-                        onClick = { onSave(source, tags, thought) },
+                        onClick = send,
                         modifier = Modifier.align(Alignment.TopEnd),
                     )
                 }
@@ -167,6 +191,7 @@ private fun Field(
     singleLine: Boolean = false,
     minLines: Int = 1,
     maxLines: Int = 1,
+    onSend: () -> Unit = {},
 ) {
     GlassSurface(
         modifier = Modifier.fillMaxWidth(),
@@ -185,7 +210,15 @@ private fun Field(
             TextField(
                 value = value,
                 onValueChange = onChange,
-                modifier = modifier.fillMaxWidth(),
+                modifier = modifier.fillMaxWidth().onPreviewKeyEvent { e ->
+                    // 实体键盘 / 部分输入法的回车是按键事件：回车 = 发送，Shift + 回车才换行
+                    if (e.key == Key.Enter && !e.isShiftPressed) {
+                        if (e.type == KeyEventType.KeyDown) onSend()
+                        true
+                    } else {
+                        false
+                    }
+                },
                 placeholder = {
                     Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
@@ -193,7 +226,9 @@ private fun Field(
                 singleLine = singleLine,
                 minLines = minLines,
                 maxLines = if (singleLine) 1 else maxLines,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                // 键盘的回车键是「发送」，不是换行
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { onSend() }),
                 colors = TextFieldDefaults.colors(
                     focusedContainerColor = Color.Transparent,
                     unfocusedContainerColor = Color.Transparent,
@@ -215,6 +250,7 @@ private fun CompactField(
     label: String,
     placeholder: String,
     modifier: Modifier = Modifier,
+    onSend: () -> Unit = {},
 ) {
     val scheme = MaterialTheme.colorScheme
     BasicTextField(
@@ -222,6 +258,8 @@ private fun CompactField(
         onValueChange = { onChange(it.replace('\n', ' ')) },
         modifier = modifier,
         singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+        keyboardActions = KeyboardActions(onSend = { onSend() }),
         textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, color = scheme.onSurface),
         cursorBrush = SolidColor(scheme.primary),
         decorationBox = { inner ->
@@ -255,4 +293,27 @@ private fun CompactField(
             }
         },
     )
+}
+
+/** 「追加 / 新建」开关：开 = 接着同一来源上一篇写（橙色），关 = 这条另起一篇 */
+@Composable
+private fun AppendToggle(append: Boolean, onToggle: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Box(
+        modifier = Modifier
+            .height(36.dp)
+            .clip(CircleShape)
+            .background(if (append) scheme.primary else scheme.surfaceContainerHigh)
+            .clickable(role = Role.Switch, onClick = onToggle)
+            .semantics { contentDescription = if (append) "追加进同一篇，点一下改为新建" else "新建一篇，点一下改为追加" }
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            if (append) "追加" else "新建",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = if (append) scheme.onPrimary else scheme.onSurfaceVariant,
+        )
+    }
 }
