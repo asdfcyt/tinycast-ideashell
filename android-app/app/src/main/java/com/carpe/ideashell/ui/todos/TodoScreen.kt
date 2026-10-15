@@ -690,6 +690,7 @@ fun TodoScreen(
                 onProgress = { noteId, text -> viewModel.addProgress(selected, noteId, text) },
             ),
             onDismiss = { selectedId = null },
+            onOpenFocus = onOpenFocus,
         )
     } else if (selectedId != null && overview != null) {
         // 任务已不在列表里（例如刚完成），收起详情

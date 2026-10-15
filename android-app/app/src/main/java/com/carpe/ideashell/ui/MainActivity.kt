@@ -327,6 +327,7 @@ private fun AppRoot(
                                     todo.openProject = keyword
                                     tab = TAB_TODOS
                                 },
+                                onOpenFocus = { focus = true },
                             )
 
                             TAB_TODOS -> TodoScreen(

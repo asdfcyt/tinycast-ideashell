@@ -42,7 +42,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.core.parse.TodoMeta
+import com.carpe.ideashell.data.focus.FocusKind
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.project.Project
 import com.carpe.ideashell.data.project.TaskNoteRef
@@ -91,6 +93,8 @@ internal fun TaskSheet(
     note: TaskNoteRef?,
     actions: TaskSheetActions,
     onDismiss: () -> Unit,
+    /** 点「开始专注」后跳到专注页（不传则只开始计时、留在原页面） */
+    onOpenFocus: (() -> Unit)? = null,
 ) {
     var pickDate by remember { mutableStateOf(false) }
     var pickTime by remember { mutableStateOf(false) }
@@ -213,6 +217,12 @@ internal fun TaskSheet(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (!task.done) {
                     TextButton(onClick = { dialog = SheetDialog.REVIEW }) { Text("完成并复盘") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = {
+                        startFocusOn(context, task)
+                        onDismiss()
+                        onOpenFocus?.invoke()
+                    }) { Text("开始专注") }
                 }
                 Spacer(Modifier.weight(1f))
                 var more by remember { mutableStateOf(false) }
@@ -363,4 +373,15 @@ private fun dateText(date: String?, today: LocalDate): String {
         today.minusDays(1) -> "昨天"
         else -> "${d.monthValue}月${d.dayOfMonth}日"
     }
+}
+
+/** 一键针对这个任务开始专注：用上次选的时长，自动归入匹配的项目；已经有专注在进行时只提示 */
+private fun startFocusOn(context: android.content.Context, task: DidaTask) {
+    val container = (context.applicationContext as IdeashellApp).container
+    val focus = container.focus
+    val title = TodoMeta.cleanTitle(task.title).ifBlank { task.title }
+    val project = container.projects.projectOf(task)?.keyword
+    val started = focus.start(task.id, task.projectId, title, focus.lastMinutes, FocusKind.FOCUS, project)
+    val message = if (started) "开始专注 ${focus.lastMinutes} 分钟 · $title" else "已经有一个专注在进行"
+    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
 }

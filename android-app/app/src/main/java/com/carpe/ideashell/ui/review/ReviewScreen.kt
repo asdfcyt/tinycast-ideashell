@@ -80,6 +80,7 @@ fun ReviewScreen(
     onOpenSearch: () -> Unit = {},
     onOpenNote: (String) -> Unit,
     onOpenProject: (String) -> Unit = {},
+    onOpenFocus: () -> Unit = {},
     viewModel: ReviewViewModel = viewModel(factory = ReviewViewModel.Factory),
 ) {
     val connected by viewModel.connected.collectAsStateWithLifecycle()
@@ -217,6 +218,7 @@ fun ReviewScreen(
                 onProgress = { noteId, text -> viewModel.addTodoProgress(selected, noteId, text) },
             ),
             onDismiss = { viewModel.openTodo(null) },
+            onOpenFocus = onOpenFocus,
         )
     }
 
