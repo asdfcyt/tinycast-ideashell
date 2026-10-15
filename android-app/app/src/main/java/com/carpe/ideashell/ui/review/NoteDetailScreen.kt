@@ -26,8 +26,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
@@ -67,6 +65,8 @@ import com.carpe.ideashell.core.parse.TimeRanges
 import com.carpe.ideashell.data.ideashell.NoteDetail
 import com.carpe.ideashell.data.mcp.McpAuthException
 import com.carpe.ideashell.system.openIdeaShellNote
+import com.carpe.ideashell.ui.components.AppSnackbarHost
+import com.carpe.ideashell.ui.components.showTimed
 import com.carpe.ideashell.ui.components.MarkdownText
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
@@ -116,12 +116,7 @@ fun NoteDetailScreen(
     fun toast(text: String, undo: (suspend () -> Unit)? = null) {
         scope.launch {
             snackbar.currentSnackbarData?.dismiss()
-            val result = snackbar.showSnackbar(
-                text,
-                actionLabel = if (undo != null) "撤销" else null,
-                // 带「撤销」按钮的提示默认不会自己消失：几秒后收起
-                duration = SnackbarDuration.Short,
-            )
+            val result = snackbar.showTimed(text, actionLabel = if (undo != null) "撤销" else null)
             if (result == SnackbarResult.ActionPerformed) undo?.invoke()
         }
     }
@@ -276,7 +271,7 @@ fun NoteDetailScreen(
                 onClick = { addSelection(note) },
             )
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = LocalBottomBarPadding.current))
+        AppSnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = LocalBottomBarPadding.current))
     }
     }
 }

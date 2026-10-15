@@ -49,6 +49,8 @@ data class FocusRun(
     val kind: FocusKind = FocusKind.FOCUS,
     /** 从项目页发起的专注：项目关键词。专注中的「记录」会写进这个项目的「里程碑与进展」 */
     val project: String? = null,
+    /** 这一次专注中通过通知「记录」写下的内容（结束时拿来做反馈） */
+    val records: List<String> = emptyList(),
 ) {
     val paused: Boolean get() = pausedAtMs != null
     val plannedMs: Long get() = plannedMin * 60_000L
@@ -92,6 +94,10 @@ class FocusRepository(
     val notifier: FocusNotifier,
     /** 从项目页发起的专注记录成功落盘时回调：（项目, 开始, 结束, 任务 id, 标题） */
     private val onProjectFocus: (String, Long, Long, String?, String) -> Unit = { _, _, _, _, _ -> },
+    /** 专注结束时给用户的反馈（番茄完成 / 提前结束且有记录） */
+    private val onCelebrate: (Celebration) -> Unit = {},
+    /** 这段时间内快记的内容（摘要） */
+    private val capturedBetween: suspend (Long, Long) -> List<String> = { _, _ -> emptyList() },
 ) {
     private val prefs = context.applicationContext.getSharedPreferences("focus", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
@@ -185,6 +191,13 @@ class FocusRepository(
     /** 放弃：不记录 */
     fun discard() = setSession(null)
 
+    /** 专注中记下一条（通知「记录」保存成功后调用），结束时在反馈里展示 */
+    fun addRecord(text: String) {
+        val s = _session.value ?: return
+        if (s.kind.isBreak || text.isBlank()) return
+        setSession(s.copy(records = s.records + text.trim()))
+    }
+
     /**
      * 结束并记录。倒计时走完或「提前结束」都走这里：按实际专注的时长记，不足 1 分钟不记。
      * 先落盘再上传：上传失败时记录留在本机，不会丢。
@@ -215,7 +228,26 @@ class FocusRepository(
             val minutes = Math.round(elapsed / 60_000.0).toInt().coerceAtLeast(1)
             val synced = record !in _pending.value
             val next = if (completed) _pendingBreak.value else null
-            notifier.showDone(s.title, minutes, completed, synced, next, next?.let { lastMinutes(it) } ?: 0)
+            val captured = runCatching { capturedBetween(s.startMs, System.currentTimeMillis()) }.getOrDefault(emptyList())
+            val entries = s.records.map { Celebration.Entry("专注记录", it) } + captured.map { Celebration.Entry("快记", it) }
+            notifier.showDone(s.title, minutes, completed, synced, next, next?.let { lastMinutes(it) } ?: 0, entries.map { it.text })
+            if (completed || entries.isNotEmpty()) {
+                val stats = buildList {
+                    add("$minutes 分钟")
+                    if (completed) add(if (_cycle.value > 0) "本轮第 ${_cycle.value} 个番茄" else "番茄完成")
+                    if (entries.isNotEmpty()) add("${entries.size} 条记录")
+                }
+                onCelebrate(
+                    Celebration(
+                        kind = Celebration.Kind.POMODORO,
+                        title = com.carpe.ideashell.core.parse.TodoMeta.cleanTitle(s.title).ifBlank { s.title },
+                        headline = if (completed) "番茄完成" else "专注已记录",
+                        message = Cheer.pomodoro(entries.isNotEmpty(), completed),
+                        stats = stats,
+                        records = entries,
+                    ),
+                )
+            }
             FocusResult.Recorded(minutes, synced)
         }
         if (outcome is FocusResult.Recorded) refresh()

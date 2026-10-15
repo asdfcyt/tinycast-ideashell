@@ -35,14 +35,14 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import com.carpe.ideashell.ui.components.AppSnackbarHost
+import com.carpe.ideashell.ui.components.showTimed
 import com.carpe.ideashell.ui.components.AppMenu
 import com.carpe.ideashell.ui.components.AppMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -148,11 +148,9 @@ fun HomeScreen(
             when (event) {
                 is HomeEvent.Message -> snackbar.showSnackbar(event.text)
                 is HomeEvent.Saved -> {
-                    val result = snackbar.showSnackbar(
+                    val result = snackbar.showTimed(
                         message = "已保存 · ${event.receipt.detail}",
                         actionLabel = "撤销",
-                        withDismissAction = false,
-                        duration = SnackbarDuration.Short,
                     )
                     if (result == SnackbarResult.ActionPerformed) viewModel.undo(event.receipt.id)
                 }
@@ -197,7 +195,7 @@ fun HomeScreen(
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
+        snackbarHost = { AppSnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
     ) { padding ->
         // 下拉强制刷新：待办、专注、往日回顾、热力图都重新读，不看缓存
         PullToRefreshBox(

@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -72,6 +71,7 @@ import com.carpe.ideashell.data.db.RevisitEntity
 import com.carpe.ideashell.data.db.RevisitKind
 import com.carpe.ideashell.data.revisit.RevisitRepository
 import com.carpe.ideashell.data.revisit.RevisitToday
+import com.carpe.ideashell.ui.components.AppSnackbarHost
 import com.carpe.ideashell.ui.components.AppMenu
 import com.carpe.ideashell.ui.components.AppMenuDivider
 import com.carpe.ideashell.ui.components.AppMenuItem
@@ -97,6 +97,7 @@ fun RevisitScreen(
 ) {
     val today by viewModel.today.collectAsStateWithLifecycle()
     val cloze by viewModel.cloze.collectAsStateWithLifecycle()
+    val clozeRatio by viewModel.clozeRatio.collectAsStateWithLifecycle()
     val current = today.queue.firstOrNull()
     val snackbar = remember { SnackbarHostState() }
     var composing by remember { mutableStateOf(false) }
@@ -152,7 +153,7 @@ fun RevisitScreen(
                     },
                     label = "revisit-card",
                 ) { item ->
-                    if (item != null) RevisitCard(item, cloze, viewModel) else EmptyState(today, onBack)
+                    if (item != null) RevisitCard(item, cloze, clozeRatio, viewModel) else EmptyState(today, onBack)
                 }
                 if (current != null) {
                     // 卡片右下角的「记一笔」：图标按钮，不占一整行；已有专题笔记时，入口放在左下角
@@ -183,7 +184,7 @@ fun RevisitScreen(
                 Spacer(Modifier.height(LocalBottomBarPadding.current))
             }
         }
-        SnackbarHost(
+        AppSnackbarHost(
             snackbar,
             Modifier.align(Alignment.BottomCenter).padding(bottom = LocalBottomBarPadding.current),
         )
@@ -403,7 +404,7 @@ private fun BigReading(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun RevisitCard(item: RevisitEntity, cloze: Boolean, viewModel: RevisitViewModel) {
+private fun RevisitCard(item: RevisitEntity, cloze: Boolean, clozeRatio: IntRange, viewModel: RevisitViewModel) {
     val scheme = MaterialTheme.colorScheme
     val long = remember(item.id) { item.text.length > 200 || item.text.count { it == '\n' } > 5 }
     var expanded by remember(item.id) { mutableStateOf(!long) }
@@ -419,9 +420,9 @@ private fun RevisitCard(item: RevisitEntity, cloze: Boolean, viewModel: RevisitV
     }
     var editing by remember(item.id) { mutableStateOf(false) }
     var draft by remember(item.id) { mutableStateOf<List<IntRange>>(emptyList()) }
-    val basePlain = remember(item.id, item.text, item.reps, reroll, cloze, showBody, saved) {
+    val basePlain = remember(item.id, item.text, item.reps, reroll, cloze, showBody, saved, clozeRatio) {
         // 挖空算法出任何问题都退回普通卡片，不能因为它让重温页打不开
-        if (cloze && showBody) runCatching { Cloze.build(item.text, item.id * 31L + item.reps * 7919L + reroll, saved) }.getOrNull() else null
+        if (cloze && showBody) runCatching { Cloze.build(item.text, item.id * 31L + item.reps * 7919L + reroll, saved, clozeRatio) }.getOrNull() else null
     }
     // 编辑时显示的是正在改的草稿（改一下存一下）
     val plain = if (editing && basePlain != null) Cloze.Plain(basePlain.text, draft, auto = false, manual = true) else basePlain

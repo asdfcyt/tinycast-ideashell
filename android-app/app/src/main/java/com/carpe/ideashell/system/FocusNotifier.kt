@@ -73,6 +73,7 @@ class FocusNotifier(private val context: Context) {
         synced: Boolean,
         nextBreak: com.carpe.ideashell.data.focus.FocusKind? = null,
         nextBreakMin: Int = 0,
+        records: List<String> = emptyList(),
     ) {
         if (!canNotify()) return
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -80,12 +81,16 @@ class FocusNotifier(private val context: Context) {
         val head = if (completed) "专注完成 · $minutes 分钟" else "已结束专注 · $minutes 分钟"
         val tail = if (synced) "已记入滴答清单" else "已保存在本机，联网后自动同步到滴答"
         val text = if (title.isBlank()) tail else "$title · $tail"
+        // 过程中记录了什么：最多列 4 条，展开通知时能看到
+        val recap = if (records.isEmpty()) "" else "\n\n这段时间你记录了 ${records.size} 条：\n" +
+            records.take(4).joinToString("\n") { "· " + it.replace(Regex("\\s+"), " ").take(40) } +
+            if (records.size > 4) "\n…… 等 ${records.size} 条" else ""
         val builder = NotificationCompat.Builder(context, if (completed) DONE_CHANNEL else QUIET_DONE_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_shiyi)
             .setColor(ACCENT)
             .setContentTitle(head)
             .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text + recap))
             .setContentIntent(openFocus())
             .setAutoCancel(true)
             .setCategory(if (completed) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_STATUS)

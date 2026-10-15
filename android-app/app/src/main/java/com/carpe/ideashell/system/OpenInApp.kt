@@ -41,7 +41,9 @@ private val IDEASHELL_APPS = listOf(
 /**
  * 在闪念贝壳 App 里打开一条笔记。
  * App 并不认 `ideashell.site/boards/…` 这种网页链接（它只接管 api.ideashell.cn），所以改用它自己的链接协议
- * `ideashellcn://note/detail?id=笔记id`（国内版；推送通知点开笔记用的就是这种格式）。
+ * `ideashellcn://note/detail?id=笔记id&session_id=笔记id`（国内版；推送通知点开笔记用的就是这种格式）。
+ * 注意 `session_id` 必须带：App 校验链接时要求 `session_id` 存在且合法（与笔记 id 相同即可），缺了就判为无效链接，
+ * 只会打开首页——之前「只能打开闪念贝壳、进不了那条笔记」就是这个原因。
  * 链接打不开时至少把 App 拉起来；没装 App 才退回网页版。
  */
 fun openIdeaShellNote(context: Context, noteId: String) {
@@ -49,7 +51,7 @@ fun openIdeaShellNote(context: Context, noteId: String) {
     for ((pkg, scheme) in IDEASHELL_APPS) {
         try {
             context.startActivity(
-                Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://note/detail?id=$id"))
+                Intent(Intent.ACTION_VIEW, Uri.parse("$scheme://note/detail?id=$id&session_id=$id"))
                     .setPackage(pkg)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )

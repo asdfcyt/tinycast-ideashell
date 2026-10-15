@@ -52,11 +52,13 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -77,6 +79,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.carpe.ideashell.BuildConfig
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.R
+import com.carpe.ideashell.system.AiAutoSendService
 import com.carpe.ideashell.data.settings.ThemeMode
 import com.carpe.ideashell.ui.components.AppTextField
 import com.carpe.ideashell.ui.components.CircleIconButton
@@ -111,6 +114,7 @@ private sealed interface Dialog {
     data object Ocr : Dialog
     data object RevisitLimit : Dialog
     data object RevisitRetention : Dialog
+    data object ClozeRange : Dialog
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -126,8 +130,10 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
 
     var dialog by remember { mutableStateOf<Dialog?>(null) }
     var batteryIgnored by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+    var autoSendServiceOn by remember { mutableStateOf(AiAutoSendService.isEnabled(context)) }
     LifecycleResumeEffect(Unit) {
         batteryIgnored = isIgnoringBatteryOptimizations(context)
+        autoSendServiceOn = AiAutoSendService.isEnabled(context)
         onPauseOrDispose { }
     }
 
@@ -451,6 +457,14 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                             Switch(checked = settings.revisitCloze, onCheckedChange = { container.settings.setRevisitCloze(it) })
                         },
                     )
+                    if (settings.revisitCloze) {
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "自动挖空比例",
+                            summary = "${settings.clozeMinPercent}% – ${settings.clozeMaxPercent}% · 挖掉的字数占正文的比例，每次重温在范围内随机取；你手动挖的空不受影响",
+                            onClick = { dialog = Dialog.ClozeRange },
+                        )
+                    }
                     SettingsItem(
                         icon = Icons.Filled.Refresh,
                         title = "全部推后 7 天",
@@ -507,6 +521,32 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                             onClick = { requestAddTile(context) },
                         )
                     }
+                    SettingsItem(
+                        icon = Icons.Filled.Create,
+                        title = "问 AI 自动发送",
+                        summary = when {
+                            !settings.aiAutoSend -> "关闭 · 从拾忆转交问题到闪念贝壳 AI 时，只把问题填进输入框，需要自己点发送"
+                            autoSendServiceOn -> "已开启 · 转交问题后自动点发送键。仅在转交后几秒内、且前台是闪念贝壳时动作"
+                            else -> "还差一步 · 请在「无障碍」里打开「拾忆 · 问 AI 自动发送」（点此前往）"
+                        },
+                        onClick = {
+                            if (settings.aiAutoSend && autoSendServiceOn) {
+                                container.settings.setAiAutoSend(false)
+                            } else {
+                                container.settings.setAiAutoSend(true)
+                                if (!autoSendServiceOn) openAccessibilitySettings(context)
+                            }
+                        },
+                        trailing = {
+                            Switch(
+                                checked = settings.aiAutoSend,
+                                onCheckedChange = {
+                                    container.settings.setAiAutoSend(it)
+                                    if (it && !autoSendServiceOn) openAccessibilitySettings(context)
+                                },
+                            )
+                        },
+                    )
                     SettingsItem(
                         icon = Icons.Filled.Create,
                         title = "其他入口",
@@ -663,6 +703,13 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
             onDismiss = { dialog = null },
         )
 
+        Dialog.ClozeRange -> ClozeRangeDialog(
+            minPercent = settings.clozeMinPercent,
+            maxPercent = settings.clozeMaxPercent,
+            onConfirm = { lo, hi -> container.settings.setClozeRange(lo, hi) },
+            onDismiss = { dialog = null },
+        )
+
         Dialog.AddWidget -> AddWidgetDialog(
             onPick = { widget -> requestPinWidget(context, widget) },
             onDismiss = { dialog = null },
@@ -806,6 +853,41 @@ private fun <T> ChoiceDialog(
             }
         },
         confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+/** 自动挖空比例：拖两端的圆点定范围 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ClozeRangeDialog(minPercent: Int, maxPercent: Int, onConfirm: (Int, Int) -> Unit, onDismiss: () -> Unit) {
+    var range by remember { mutableStateOf(minPercent.toFloat()..maxPercent.toFloat()) }
+    val lo = range.start.toInt()
+    val hi = range.endInclusive.toInt()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("自动挖空比例") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    if (lo == hi) "挖掉约 $lo% 的字" else "挖掉 $lo% – $hi% 的字",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                RangeSlider(
+                    value = range,
+                    onValueChange = { range = it },
+                    valueRange = 5f..60f,
+                    steps = 54,
+                )
+                Text(
+                    "比例按正文字数算，每次重温在这个范围内随机取一个目标，位置也会换。比例小：只挖最关键的词；比例大：几乎每个词都要回忆。原文里用 {{词}} 标出的、加粗或高亮的词，以及你手动挖的空，不受这个比例影响。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(lo, hi); onDismiss() }) { Text("确定") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
@@ -1043,4 +1125,11 @@ private fun autoBackupSummary(connected: Boolean, enabled: Boolean, lastAt: Long
     error != null -> "已开启 · 最近一次自动备份失败：$error（系统会稍后重试）"
     lastAt > 0 -> "已开启 · 每 7 天一次 · 上次：${formatDateTime(lastAt)}"
     else -> "已开启 · 每 7 天一次，马上会先备份一次"
+}
+
+private fun openAccessibilitySettings(context: android.content.Context) {
+    runCatching {
+        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+    Toast.makeText(context, "在列表里找到「拾忆 · 问 AI 自动发送」并打开", Toast.LENGTH_LONG).show()
 }

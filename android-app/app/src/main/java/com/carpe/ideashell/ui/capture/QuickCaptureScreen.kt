@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.platform.LocalContext
+import com.carpe.ideashell.system.IdeashellBridge
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
@@ -130,6 +131,17 @@ fun QuickCaptureScreen(
     val openCamera = {
         cameraLauncher.launch((CaptureImages.MAX_COUNT - viewModel.images.size).coerceAtLeast(0))
     }
+    // 闪念贝壳的语音录音 / AI：交给它的 App 处理，这里收起面板；问 AI 会把已写的文字带过去，成功转交后清空输入
+    val bridgeContext = LocalContext.current
+    val openVoice = {
+        if (IdeashellBridge.startVoiceRecording(bridgeContext)) onClose()
+    }
+    val openAskAi = {
+        if (IdeashellBridge.askAi(bridgeContext, viewModel.text)) {
+            viewModel.text = ""
+            onClose()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -175,10 +187,10 @@ fun QuickCaptureScreen(
                             label = "quick-state",
                         ) { state ->
                             when (state) {
-                                QuickState.Composing -> ComposingContent(viewModel, readClipboard, onOpenApp, canSubmit, openCamera)
+                                QuickState.Composing -> ComposingContent(viewModel, readClipboard, onOpenApp, canSubmit, openCamera, openVoice, openAskAi)
                                 // 保存成功后面板直接收起（只给一下震动和一句 Toast），不再停留一个带「撤销」的确认窗口；
                                 // 收起前仍画输入内容，避免面板先塌成一条空白
-                                is QuickState.Saved -> ComposingContent(viewModel, readClipboard, onOpenApp, canSubmit, openCamera)
+                                is QuickState.Saved -> ComposingContent(viewModel, readClipboard, onOpenApp, canSubmit, openCamera, openVoice, openAskAi)
                             }
                         }
                     }
@@ -282,6 +294,8 @@ private fun ComposingContent(
     onOpenApp: () -> Unit,
     canSubmit: Boolean,
     onOpenCamera: () -> Unit,
+    onVoice: () -> Unit,
+    onAskAi: () -> Unit,
 ) {
     val connected by viewModel.connected.collectAsStateWithLifecycle()
     val folders by viewModel.folders.collectAsStateWithLifecycle()
@@ -340,6 +354,8 @@ private fun ComposingContent(
                 images = viewModel.images,
                 onRemoveImage = viewModel::removeImage,
                 onCamera = onOpenCamera,
+                onVoice = onVoice,
+                onAskAi = onAskAi,
             )
         }
 

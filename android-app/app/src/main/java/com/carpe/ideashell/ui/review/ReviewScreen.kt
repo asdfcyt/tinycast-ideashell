@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DateRangePicker
+import com.carpe.ideashell.ui.components.AppSnackbarHost
 import com.carpe.ideashell.ui.components.AppMenu
 import com.carpe.ideashell.ui.components.AppMenuDivider
 import com.carpe.ideashell.ui.components.AppMenuItem
@@ -28,7 +29,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -111,7 +111,7 @@ fun ReviewScreen(
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets.statusBars,
-        snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
+        snackbarHost = { AppSnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
     ) { padding ->
         Column(Modifier.padding(padding)) {
             ScreenHeader(

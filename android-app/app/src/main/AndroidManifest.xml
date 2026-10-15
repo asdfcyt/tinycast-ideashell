@@ -83,6 +83,42 @@
             </intent-filter>
         </activity>
 
+        <!-- 透明跳板：转给闪念贝壳 App 的语音录音 / 新建文字笔记 / AI 对话（桌面快捷方式与其他应用、自动化工具都从这里进） -->
+        <activity
+            android:name=".ui.capture.IdeashellBridgeActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Ideashell.Translucent">
+            <intent-filter>
+                <action android:name="com.carpe.ideashell.action.IDEASHELL_VOICE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.carpe.ideashell.action.IDEASHELL_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.carpe.ideashell.action.IDEASHELL_ASK_AI" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <!-- 无障碍服务：转交问题到闪念贝壳 AI 后，替用户点一下发送键（设置里开启） -->
+        <service
+            android:name=".system.AiAutoSendService"
+            android:exported="false"
+            android:label="@string/ai_auto_send_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/ai_auto_send_service" />
+        </service>
+
         <!-- 全屏相机页：快记面板工具栏上「拍照 / 插入图片」合并后的入口（相册、快门、识别文字） -->
         <activity
             android:name=".ui.capture.CameraOcrActivity"

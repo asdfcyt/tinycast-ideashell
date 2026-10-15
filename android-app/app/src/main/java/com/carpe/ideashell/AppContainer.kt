@@ -175,6 +175,9 @@ class AppContainer(context: Context) {
         hasDida = { !credentials.didaToken.isNullOrBlank() },
     )
 
+    /** 完成番茄 / 任务时的反馈（界面根布局显示） */
+    val celebrations = com.carpe.ideashell.data.focus.CelebrationCenter()
+
     /** 专注：应用内倒计时，结束后写进滴答（create_focus），并把滴答里的专注读回来 */
     val focus = FocusRepository(
         context = context,
@@ -188,6 +191,8 @@ class AppContainer(context: Context) {
                 w.copy(focusLog = (w.focusLog + entry).takeLast(500))
             }
         },
+        onCelebrate = { celebrations.post(it) },
+        capturedBetween = { from, to -> database.captureDao().between(from, to).map { it.summary.ifBlank { it.body }.trim() }.filter { it.isNotEmpty() } },
     )
 
     /** 专注小部件 + 记录时间河小部件 */
@@ -223,7 +228,41 @@ class AppContainer(context: Context) {
         daySummary = daySummary,
         store = workspace,
         hasDida = { !credentials.didaToken.isNullOrBlank() },
+        onTaskDone = { task, ref, review -> celebrateTaskDone(task, ref, review) },
     )
+
+    /** 任务完成：把这个任务一路记下的进展、累计专注、复盘汇成一张反馈卡（什么都没有就不打扰，只留「已完成」提示） */
+    private fun celebrateTaskDone(task: com.carpe.ideashell.data.dida.DidaTask, ref: com.carpe.ideashell.data.project.TaskNoteRef?, review: String) {
+        appScope.launch {
+            val records = mutableListOf<com.carpe.ideashell.data.focus.Celebration.Entry>()
+            if (ref != null) {
+                val lines = runCatching { com.carpe.ideashell.core.notes.NoteSections.progressLines(ideashellApi.noteDetail(ref.noteId).content) }
+                    .getOrDefault(emptyList())
+                records += lines.map { line ->
+                    val body = com.carpe.ideashell.core.notes.NoteSections.splitStamp(line).second
+                    com.carpe.ideashell.data.focus.Celebration.Entry("进展", body)
+                }
+            }
+            if (review.isNotBlank()) records += com.carpe.ideashell.data.focus.Celebration.Entry("复盘", review.trim())
+            val tf = focus.summary.value?.byTask?.get(task.id)
+            val focusMin = tf?.weekMin ?: 0
+            if (records.isEmpty() && focusMin <= 0) return@launch
+            val stats = buildList {
+                if (focusMin > 0) add("近 7 天专注 ${if (focusMin >= 60) "${focusMin / 60} 小时" + (if (focusMin % 60 > 0) " ${focusMin % 60} 分钟" else "") else "$focusMin 分钟"}")
+                if (records.isNotEmpty()) add("${records.size} 条记录")
+            }
+            celebrations.post(
+                com.carpe.ideashell.data.focus.Celebration(
+                    kind = com.carpe.ideashell.data.focus.Celebration.Kind.TASK,
+                    title = com.carpe.ideashell.core.parse.TodoMeta.cleanTitle(task.title),
+                    headline = "任务完成",
+                    message = com.carpe.ideashell.data.focus.Cheer.task(records.isNotEmpty()),
+                    stats = stats,
+                    records = records,
+                ),
+            )
+        }
+    }
 
     init {
         startSurfaceSync(context.applicationContext)

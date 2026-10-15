@@ -72,6 +72,8 @@ class ProjectService(
     private val daySummary: DaySummaryService,
     private val store: WorkspaceStore,
     private val hasDida: () -> Boolean,
+    /** 任务完成时回调：（任务, 它的任务笔记, 这次写的复盘）；用来给用户做完成反馈 */
+    private val onTaskDone: (DidaTask, TaskNoteRef?, String) -> Unit = { _, _, _ -> },
 ) {
     val workspace: StateFlow<Workspace> = store.state
 
@@ -275,6 +277,7 @@ class ProjectService(
         val ref = taskNote(task.id)
         val project = projectOf(task)
         val text = review.trim()
+        runCatching { onTaskDone(task, ref, text) }
         if (project != null) {
             if (ref != null && ref.archived && text.isNotEmpty()) {
                 // 笔记已经归档过（比如重新完成）：新写的复盘也要汇到里程碑

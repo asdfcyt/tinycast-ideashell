@@ -39,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.R
+import com.carpe.ideashell.ui.components.CelebrationHost
 import com.carpe.ideashell.ui.diagnostics.DiagnosticsScreen
 import com.carpe.ideashell.ui.focus.FocusScreen
 import com.carpe.ideashell.ui.glass.AddFab
@@ -352,6 +353,10 @@ private fun AppRoot(
                 }
             }
         }
+
+        // 完成番茄 / 任务的反馈卡（盖在最上面，不挡操作）
+        val appContainer = (context.applicationContext as IdeashellApp).container
+        CelebrationHost(appContainer.celebrations, Modifier.align(Alignment.TopCenter))
 
         AnimatedVisibility(
             visible = !subpage,

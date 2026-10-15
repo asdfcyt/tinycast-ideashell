@@ -9,6 +9,12 @@
     <string name="shortcut_note_long">快速记一条</string>
     <string name="shortcut_todo_short">记待办</string>
     <string name="shortcut_todo_long">快速记待办</string>
+    <string name="ai_auto_send_label">拾忆 · 问 AI 自动发送</string>
+    <string name="ai_auto_send_description">从拾忆转交问题到闪念贝壳 AI 后，自动点一下发送键。只在转交后的几秒内、且前台是闪念贝壳时动作，不读取其他内容。</string>
+    <string name="shortcut_voice_short">语音记</string>
+    <string name="shortcut_voice_long">用闪念贝壳录音</string>
+    <string name="shortcut_ai_short">问 AI</string>
+    <string name="shortcut_ai_long">问闪念贝壳 AI</string>
     <string name="shortcut_focus_short">开始专注</string>
     <string name="shortcut_focus_long">开始专注</string>
     <string name="tile_focus_label">专注</string>

@@ -41,8 +41,13 @@ data class AppSettings(
     val revisitSkipWeekends: Boolean = false,
     /** 笔记重温：填空模式，把正文里的关键词挖空，先回忆再看答案 */
     val revisitCloze: Boolean = false,
+    /** 自动挖空的比例范围（挖掉的字数占正文的百分比）：每次重温在 min–max 之间随机取一个目标 */
+    val clozeMinPercent: Int = DEFAULT_CLOZE_MIN,
+    val clozeMaxPercent: Int = DEFAULT_CLOZE_MAX,
     /** 每周自动把备份写进闪念贝壳（需要已连接闪念贝壳、有网络） */
     val autoCloudBackup: Boolean = false,
+    /** 转交问题到闪念贝壳 AI 后自动点发送（需要开启无障碍服务） */
+    val aiAutoSend: Boolean = false,
 ) {
     val defaultTags: List<String>
         get() = defaultTagsText.split(',', '，').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }
@@ -51,6 +56,8 @@ data class AppSettings(
         const val DEFAULT_DAILY_FOLDER = "Daily Notes"
         const val DEFAULT_FOCUS_GOAL_MIN = 120
         const val DEFAULT_REVISIT_RETENTION = 90
+        const val DEFAULT_CLOZE_MIN = 10
+        const val DEFAULT_CLOZE_MAX = 25
         const val DEFAULT_REVISIT_LIMIT = 5
         const val DEFAULT_REVISIT_MINUTES = 20 * 60
     }
@@ -95,6 +102,13 @@ class SettingsStore(context: Context) {
 
     fun setRevisitCloze(enabled: Boolean) = update { it.copy(revisitCloze = enabled) }
 
+    fun setClozeRange(minPercent: Int, maxPercent: Int) = update {
+        val lo = minPercent.coerceIn(3, 80)
+        it.copy(clozeMinPercent = lo, clozeMaxPercent = maxPercent.coerceIn(lo, 80))
+    }
+
+    fun setAiAutoSend(enabled: Boolean) = update { it.copy(aiAutoSend = enabled) }
+
     fun setAutoCloudBackup(enabled: Boolean) = update { it.copy(autoCloudBackup = enabled) }
 
     private fun update(transform: (AppSettings) -> AppSettings) {
@@ -115,6 +129,9 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_REVISIT_SKIP_WEEKENDS, next.revisitSkipWeekends)
             .putBoolean(KEY_AUTO_CLOUD_BACKUP, next.autoCloudBackup)
             .putBoolean(KEY_REVISIT_CLOZE, next.revisitCloze)
+            .putInt(KEY_CLOZE_MIN, next.clozeMinPercent)
+            .putInt(KEY_CLOZE_MAX, next.clozeMaxPercent)
+            .putBoolean(KEY_AI_AUTO_SEND, next.aiAutoSend)
             .apply()
         _state.value = next
     }
@@ -136,6 +153,9 @@ class SettingsStore(context: Context) {
         revisitSkipWeekends = prefs.getBoolean(KEY_REVISIT_SKIP_WEEKENDS, false),
         autoCloudBackup = prefs.getBoolean(KEY_AUTO_CLOUD_BACKUP, false),
         revisitCloze = prefs.getBoolean(KEY_REVISIT_CLOZE, false),
+        clozeMinPercent = prefs.getInt(KEY_CLOZE_MIN, AppSettings.DEFAULT_CLOZE_MIN).coerceIn(3, 80),
+        clozeMaxPercent = prefs.getInt(KEY_CLOZE_MAX, AppSettings.DEFAULT_CLOZE_MAX).coerceIn(3, 80),
+        aiAutoSend = prefs.getBoolean(KEY_AI_AUTO_SEND, false),
     )
 
     // ── 文件夹缓存 ──
@@ -226,6 +246,9 @@ class SettingsStore(context: Context) {
     private companion object {
         const val KEY_RECENT_SEARCHES = "recent_searches"
         const val KEY_REVISIT_CLOZE = "revisit_cloze"
+        const val KEY_CLOZE_MIN = "cloze_min_percent"
+        const val KEY_CLOZE_MAX = "cloze_max_percent"
+        const val KEY_AI_AUTO_SEND = "ai_auto_send"
         const val KEY_AUTO_CLOUD_BACKUP = "auto_cloud_backup"
         const val KEY_AUTO_BACKUP_ERROR = "auto_backup_error"
         const val KEY_SYNC_ALERTED = "sync_alerted"

@@ -46,6 +46,11 @@ class RevisitViewModel(container: AppContainer) : ViewModel() {
         .map { it.revisitCloze }
         .stateIn(viewModelScope, SharingStarted.Eagerly, settings.current.revisitCloze)
 
+    /** 自动挖空的比例范围（百分比） */
+    val clozeRatio: StateFlow<IntRange> = settings.state
+        .map { it.clozeMinPercent..it.clozeMaxPercent }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, settings.current.clozeMinPercent..settings.current.clozeMaxPercent)
+
     fun toggleCloze() = settings.setRevisitCloze(!settings.current.revisitCloze)
 
     val today: StateFlow<RevisitToday> = repo.today

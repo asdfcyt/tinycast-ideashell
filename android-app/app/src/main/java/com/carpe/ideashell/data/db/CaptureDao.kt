@@ -13,6 +13,9 @@ interface CaptureDao {
     @Query("SELECT * FROM captures ORDER BY createdAt DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<CaptureEntity>>
 
+    @Query("SELECT * FROM captures WHERE createdAt >= :from AND createdAt <= :to ORDER BY createdAt ASC")
+    suspend fun between(from: Long, to: Long): List<CaptureEntity>
+
     @Query("SELECT * FROM captures WHERE id = :id")
     suspend fun get(id: Long): CaptureEntity?
 

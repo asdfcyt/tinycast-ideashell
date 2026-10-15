@@ -126,6 +126,9 @@ fun CaptureComposer(
     images: List<String> = emptyList(),
     onRemoveImage: (String) -> Unit = {},
     onCamera: (() -> Unit)? = null,
+    /** 调用闪念贝壳 App 的语音录音 / AI 对话（AI 会带上输入框里已有的文字） */
+    onVoice: (() -> Unit)? = null,
+    onAskAi: (() -> Unit)? = null,
 ) {
     // 识别结果（日期 / 标签 / 重要 / 文件夹）显示在底部工具栏上，与保存时用的是同一份计划
     val plan = remember(text, override, folders, schedule) { CapturePlanner.plan(text, override, folders, schedule = schedule) }
@@ -312,6 +315,8 @@ fun CaptureComposer(
                 }
                 // 拍照 / 相册 / 识别文字合并成一个入口：点开全屏相机页，左下相册、中间快门、右下识别文字开关
                 if (onCamera != null) ToolIcon(R.drawable.ic_camera, "拍照、相册与文字识别", onCamera)
+                if (onVoice != null) ToolIcon(R.drawable.ic_mic, "语音记（用闪念贝壳录音）", onVoice)
+                if (onAskAi != null) ToolIcon(R.drawable.ic_sparkle, "问闪念贝壳 AI（带上输入框里的文字）", onAskAi)
             }
             if (folderLike && folders.isNotEmpty()) {
                 Box {

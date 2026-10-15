@@ -39,7 +39,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -78,6 +80,11 @@ class FocusRecordActivity : ComponentActivity() {
             else -> "已记录到任务笔记和「$project」的里程碑"
         }
 
+        // 写到一半被点到外面 / 返回键关掉时，文字存在本机，下次从通知点「记录」自动放回来；提交后清掉
+        val prefs = getSharedPreferences("focus_record_draft", MODE_PRIVATE)
+        val draftKey = "draft:" + (taskId?.takeIf { it.isNotBlank() } ?: ("project:" + project.orEmpty()))
+        val initial = prefs.getString(draftKey, "").orEmpty()
+
         setContent {
             val settings by container.settings.state.collectAsStateWithLifecycle()
             IdeashellTheme(settings.themeMode) {
@@ -85,11 +92,15 @@ class FocusRecordActivity : ComponentActivity() {
                 RecordPanel(
                     heading = target,
                     taskTitle = taskTitle,
+                    initial = initial,
+                    onTextChange = { t -> if (t.isBlank()) prefs.edit().remove(draftKey).apply() else prefs.edit().putString(draftKey, t).apply() },
                     onClose = { finish() },
                     onSubmit = { text ->
+                        prefs.edit().remove(draftKey).apply()
                         container.appScope.launch {
                             try {
                                 val synced = container.projects.recordFocus(taskId, project, text)
+                                container.focus.addRecord(text)
                                 val brief = text.take(24) + (if (text.length > 24) "…" else "")
                                 container.focus.refreshNotification("已记录：" + brief + (if (synced) "" else "（滴答评论未同步）"))
                             } catch (e: CancellationException) {
@@ -114,9 +125,17 @@ class FocusRecordActivity : ComponentActivity() {
 }
 
 @Composable
-private fun RecordPanel(heading: String, taskTitle: String, onClose: () -> Unit, onSubmit: (String) -> Unit) {
+private fun RecordPanel(
+    heading: String,
+    taskTitle: String,
+    initial: String,
+    onTextChange: (String) -> Unit,
+    onClose: () -> Unit,
+    onSubmit: (String) -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
-    var text by remember { mutableStateOf("") }
+    var field by remember { mutableStateOf(TextFieldValue(initial, TextRange(initial.length))) }
+    val text = field.text
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     val canSave = text.isNotBlank()
@@ -144,8 +163,8 @@ private fun RecordPanel(heading: String, taskTitle: String, onClose: () -> Unit,
             Text(heading, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurfaceVariant)
             Text(taskTitle, style = MaterialTheme.typography.titleMedium, maxLines = 1)
             BasicTextField(
-                value = text,
-                onValueChange = { text = it },
+                value = field,
+                onValueChange = { field = it; onTextChange(it.text) },
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
                 cursorBrush = SolidColor(scheme.primary),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),

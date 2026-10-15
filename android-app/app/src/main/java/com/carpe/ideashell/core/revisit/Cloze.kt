@@ -31,7 +31,7 @@ object Cloze {
     private const val MAX_BLANKS = 14
 
     /** 原文里没有任何可挖的词（太短、全是虚词）时返回 null，界面按普通卡片显示 */
-    fun build(source: String, seed: Long, manual: List<IntRange>? = null): Plain? {
+    fun build(source: String, seed: Long, manual: List<IntRange>? = null, ratio: IntRange = 10..25): Plain? {
         val flat = flatten(source)
         val text = flat.text.trim('\n')
         if (text.replace(Regex("\\s"), "").length < MIN_LENGTH) return null
@@ -50,7 +50,7 @@ object Cloze {
         val chosen = when {
             explicit.isNotEmpty() -> explicit
             flat.emphasis.isNotEmpty() -> shifted(flat.emphasis).filter { it.last - it.first < 24 }.take(MAX_BLANKS)
-            else -> auto(text, seed)
+            else -> auto(text, seed, ratio)
         }
         val blanks = normalize(chosen)
         return if (blanks.isEmpty()) null else Plain(text, blanks, isAuto)
@@ -165,7 +165,7 @@ object Cloze {
         "以前", "为了", "由于", "因此", "而是", "成为", "进行", "能够", "开始", "觉得", "知道", "东西", "问题", "时间", "今天", "明天", "昨天",
     )
 
-    private fun auto(text: String, seed: Long): List<IntRange> {
+    private fun auto(text: String, seed: Long, ratio: IntRange): List<IntRange> {
         val rnd = Random(seed)
         val candidates = mutableListOf<Candidate>()
         val iter = BreakIterator.getWordInstance(Locale.CHINA)
@@ -180,12 +180,20 @@ object Cloze {
         }
         if (candidates.isEmpty()) return emptyList()
 
-        val want = (text.length / 22.0).roundToInt().coerceIn(2, MAX_BLANKS)
+        // 目标：挖掉的字数占正文（不含空白）的比例，在用户设的范围内随机取（每次重温不同）
+        val lo = ratio.first.coerceAtLeast(1)
+        val hi = ratio.last.coerceAtLeast(lo)
+        val percent = lo + rnd.nextDouble() * (hi - lo)
+        val target = (text.count { !it.isWhitespace() } * percent / 100.0).roundToInt().coerceAtLeast(2)
         val picked = mutableListOf<IntRange>()
+        var covered = 0
         for (c in candidates.sortedByDescending { it.score }) {
-            if (picked.size >= want) break
+            if (covered >= target && picked.isNotEmpty()) break
             // 两个空之间至少隔一个字，免得连成一大块看不出是两个词
-            if (picked.none { c.range.first <= it.last + 2 && c.range.last >= it.first - 2 }) picked += c.range
+            if (picked.none { c.range.first <= it.last + 2 && c.range.last >= it.first - 2 }) {
+                picked += c.range
+                covered += c.range.last - c.range.first + 1
+            }
         }
         return picked
     }

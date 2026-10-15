@@ -28,6 +28,28 @@
         </intent>
     </shortcut>
     <shortcut
+        android:shortcutId="ideashell_voice"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_note"
+        android:shortcutShortLabel="@string/shortcut_voice_short"
+        android:shortcutLongLabel="@string/shortcut_voice_long">
+        <intent
+            android:action="com.carpe.ideashell.action.IDEASHELL_VOICE"
+            android:targetPackage="com.carpe.ideashell"
+            android:targetClass="com.carpe.ideashell.ui.capture.IdeashellBridgeActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="ideashell_ask_ai"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_note"
+        android:shortcutShortLabel="@string/shortcut_ai_short"
+        android:shortcutLongLabel="@string/shortcut_ai_long">
+        <intent
+            android:action="com.carpe.ideashell.action.IDEASHELL_ASK_AI"
+            android:targetPackage="com.carpe.ideashell"
+            android:targetClass="com.carpe.ideashell.ui.capture.IdeashellBridgeActivity" />
+    </shortcut>
+    <shortcut
         android:shortcutId="start_focus"
         android:enabled="true"
         android:icon="@drawable/ic_shortcut_focus"

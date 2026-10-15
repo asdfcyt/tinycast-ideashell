@@ -37,8 +37,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
@@ -80,6 +78,8 @@ import com.carpe.ideashell.data.project.TaskNoteEntry
 import com.carpe.ideashell.data.project.firstMatching
 import com.carpe.ideashell.data.project.taskKeyOf
 import com.carpe.ideashell.ui.capture.QuickCaptureActivity
+import com.carpe.ideashell.ui.components.AppSnackbarHost
+import com.carpe.ideashell.ui.components.showTimed
 import com.carpe.ideashell.ui.components.CircleIconButton
 import com.carpe.ideashell.ui.components.EmptyNote
 import com.carpe.ideashell.ui.components.GroupCard
@@ -231,10 +231,9 @@ fun TodoScreen(
             when (event) {
                 is TodoEvent.Message -> launch { snackbar.showSnackbar(event.text) }
                 is TodoEvent.Completed -> launch {
-                    val result = snackbar.showSnackbar(
+                    val result = snackbar.showTimed(
                         message = "已完成「${TodoMeta.cleanTitle(event.task.title).take(14)}」",
                         actionLabel = "撤销",
-                        duration = SnackbarDuration.Short,
                     )
                     if (result == SnackbarResult.ActionPerformed) viewModel.undoComplete(event.task)
                 }
@@ -302,7 +301,7 @@ fun TodoScreen(
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets.statusBars,
-        snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
+        snackbarHost = { AppSnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
     ) { padding ->
         if (openedProject != null) {
             Box(Modifier.padding(padding)) {

@@ -57,7 +57,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -96,6 +95,7 @@ import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.dida.FocusSession
 import com.carpe.ideashell.data.focus.FocusRepository
 import com.carpe.ideashell.data.focus.FocusRun
+import com.carpe.ideashell.ui.components.AppSnackbarHost
 import com.carpe.ideashell.ui.components.CircleIconButton
 import com.carpe.ideashell.ui.components.ConfirmDialog
 import com.carpe.ideashell.ui.components.RowDivider
@@ -163,7 +163,7 @@ fun FocusScreen(
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets.statusBars,
-        snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
+        snackbarHost = { AppSnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
     ) { padding ->
         Column(Modifier.padding(padding)) {
             ScreenHeader(
