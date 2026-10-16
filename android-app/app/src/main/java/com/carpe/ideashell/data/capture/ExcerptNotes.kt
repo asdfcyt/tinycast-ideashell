@@ -99,7 +99,7 @@ class ExcerptNotes(
                 body = "$sourceLine\n\n${block(e.quote, e.thought)}",
                 tags = (settings.current.defaultTags + "摘录" + tags).distinct(),
             )
-            val id = (RE_JSON.find(created) ?: RE_TEXT.find(created) ?: RE_HEX.find(created))?.groupValues?.get(1)
+            val id = parseNoteId(created)
             session = id?.let { Session(key, it, title, now) }
             Result.Created(title)
         } catch (c: CancellationException) {
@@ -118,21 +118,8 @@ class ExcerptNotes(
         return if (t.isEmpty()) quoted else "$quoted\n\n$t"
     }
 
-    /** 新的一段放在正文末尾、结尾的 `#标签` 行之前；新标签并进标签行。返回（新正文，这篇笔记的全部标签） */
-    private fun insertBlock(content: String, block: String, tags: List<String>): Pair<String, List<String>> {
-        val lines = content.trimEnd().lines()
-        val last = lines.lastOrNull()?.trim().orEmpty()
-        val isTagLine = last.isNotEmpty() && last.split(Regex("\\s+")).all { it.startsWith("#") && it.length > 1 }
-        val body = if (isTagLine) lines.dropLast(1).joinToString("\n").trimEnd() else content.trimEnd()
-        val existing = if (isTagLine) last.split(Regex("\\s+")).map(::cleanTag).filter { it.isNotEmpty() } else emptyList()
-        val merged = (existing + tags).distinct()
-        val tagLine = merged.joinToString(" ") { "#$it" }
-        val text = buildString {
-            append(body).append("\n\n").append(block)
-            if (tagLine.isNotEmpty()) append("\n\n").append(tagLine)
-        }
-        return text to merged
-    }
+    private fun insertBlock(content: String, block: String, tags: List<String>): Pair<String, List<String>> =
+        Companion.insertBlock(content, block, tags)
 
     private fun cleanTag(t: String): String = IdeashellApi.cleanTag(t)
 
@@ -141,6 +128,26 @@ class ExcerptNotes(
         private val RE_JSON = Regex("\"note_id\"\\s*:\\s*\"([^\"]+)\"")
         private val RE_TEXT = Regex("note_id[:\\s]+([0-9a-f]{16,})", RegexOption.IGNORE_CASE)
         private val RE_HEX = Regex("([a-f0-9]{32})", RegexOption.IGNORE_CASE)
+
+        /** 从 note_create 的返回里取出笔记 ID */
+        fun parseNoteId(created: String): String? =
+            (RE_JSON.find(created) ?: RE_TEXT.find(created) ?: RE_HEX.find(created))?.groupValues?.get(1)
+
+        /** 新的一段放在正文末尾、结尾的 `#标签` 行之前；新标签并进标签行。返回（新正文，这篇笔记的全部标签） */
+        fun insertBlock(content: String, block: String, tags: List<String>): Pair<String, List<String>> {
+            val lines = content.trimEnd().lines()
+            val last = lines.lastOrNull()?.trim().orEmpty()
+            val isTagLine = last.isNotEmpty() && last.split(Regex("\\s+")).all { it.startsWith("#") && it.length > 1 }
+            val body = if (isTagLine) lines.dropLast(1).joinToString("\n").trimEnd() else content.trimEnd()
+            val existing = if (isTagLine) last.split(Regex("\\s+")).map(IdeashellApi::cleanTag).filter { it.isNotEmpty() } else emptyList()
+            val merged = (existing + tags).distinct()
+            val tagLine = merged.joinToString(" ") { "#$it" }
+            val text = buildString {
+                append(body).append("\n\n").append(block)
+                if (tagLine.isNotEmpty()) append("\n\n").append(tagLine)
+            }
+            return text to merged
+        }
 
         /** 把输入框里的「#a #b，c」拆成标签列表 */
         fun parseTags(text: String): List<String> =

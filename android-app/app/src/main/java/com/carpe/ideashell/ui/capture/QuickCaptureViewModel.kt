@@ -41,6 +41,29 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
     var text by mutableStateOf("")
     var override by mutableStateOf<CaptureKind?>(null)
 
+    /** 追加开关：开着时保存成「追加到上一篇快记笔记」，类型固定为笔记 */
+    var append by mutableStateOf(false)
+        private set
+
+    /** 追加会接到哪一篇（标题，给用户确认）；还没有上一篇为 null（会新建） */
+    var appendTarget by mutableStateOf<String?>(null)
+        private set
+
+    /** 点追加按钮：开 / 关；打开时顺便查出目标笔记的标题，并去掉手动选的类型（追加一定是笔记） */
+    fun toggleAppend() {
+        append = !append
+        if (append) {
+            override = null
+            viewModelScope.launch { appendTarget = container.captures.appendTarget() }
+        }
+    }
+
+    /** 手动选了类型：和追加冲突，追加自动关掉 */
+    fun selectKind(kind: CaptureKind?) {
+        append = false
+        override = kind
+    }
+
     /** 在日期时间面板里选定的时间：不写进输入框，保存时直接带上 */
     var schedule by mutableStateOf<CaptureSchedule?>(null)
 
@@ -151,6 +174,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         text = ""
         baselineText = ""
         schedule = null
+        append = false
         error = null
         state = QuickState.Composing
         configure(clip, preset, origin)
@@ -225,7 +249,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
                     return@launch
                 }
                 val kind = override ?: if (resolved.fromClipboard) CaptureKind.NOTE else null
-                container.captures.submitText(resolved.input, kind, origin, schedule = schedule)
+                container.captures.submitText(resolved.input, kind, origin, schedule = schedule, appendToLast = append)
             }
             if (receipt == null) {
                 error = "没有可保存的内容"

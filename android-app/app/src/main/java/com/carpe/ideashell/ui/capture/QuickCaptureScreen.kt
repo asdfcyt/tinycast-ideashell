@@ -108,8 +108,9 @@ fun QuickCaptureScreen(
     val folders by viewModel.folders.collectAsStateWithLifecycle()
     // 按当前输入会保存成哪种类型：上方圆形图标据此高亮（自动识别成什么就亮哪个）
     val hasImages = viewModel.images.isNotEmpty()
-    val resolvedKind = remember(viewModel.text, viewModel.override, folders, hasImages, viewModel.schedule) {
-        resolveKind(viewModel.text, viewModel.override, folders, hasImages, viewModel.schedule)
+    // 追加开着：一律是笔记
+    val resolvedKind = remember(viewModel.text, viewModel.override, folders, hasImages, viewModel.schedule, viewModel.append) {
+        resolveKind(viewModel.text, if (viewModel.append) CaptureKind.NOTE else viewModel.override, folders, hasImages, viewModel.schedule)
     }
     val canSubmit = viewModel.clip != null || resolvedKind != null
     val composing = connected && viewModel.state == QuickState.Composing
@@ -162,10 +163,12 @@ fun QuickCaptureScreen(
                 // 类型选择浮在面板上方（对标滴答清单的「任务 / 笔记 / 习惯」）；分享进来的内容、未连接、保存完成时不显示
                 if (composing && viewModel.clip == null) {
                     KindSelector(
-                        active = resolvedKind ?: viewModel.override,
+                        active = if (viewModel.append) CaptureKind.NOTE else resolvedKind ?: viewModel.override,
                         override = viewModel.override,
-                        onSelect = { viewModel.override = it },
+                        append = viewModel.append,
+                        onSelect = viewModel::selectKind,
                         onTemplates = { viewModel.showTemplates = true },
+                        onAppend = viewModel::toggleAppend,
                     )
                 }
                 Box(
@@ -224,7 +227,14 @@ fun QuickCaptureScreen(
  * 手动点一个类型就固定为它，再点一次它、或点「自动」，回到自动识别。
  */
 @Composable
-private fun KindSelector(active: CaptureKind?, override: CaptureKind?, onSelect: (CaptureKind?) -> Unit, onTemplates: () -> Unit) {
+private fun KindSelector(
+    active: CaptureKind?,
+    override: CaptureKind?,
+    append: Boolean,
+    onSelect: (CaptureKind?) -> Unit,
+    onTemplates: () -> Unit,
+    onAppend: () -> Unit,
+) {
     Row(
         modifier = Modifier.padding(start = 16.dp, bottom = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -284,6 +294,30 @@ private fun KindSelector(active: CaptureKind?, override: CaptureKind?, onSelect:
             Spacer(Modifier.height(3.dp))
             Text("模板", style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp), color = Color.White)
         }
+        // 追加：开着时保存成「追加到上一篇快记笔记」（类型固定为笔记）；亮起表示已开启，再点一次关闭
+        Column(
+            modifier = Modifier
+                .widthIn(min = 44.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    role = Role.Switch,
+                    onClick = onAppend,
+                ),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(if (append) Brand.Orange else Color.White.copy(alpha = 0.28f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(painterResource(R.drawable.ic_append), contentDescription = null, tint = if (append) Brand.Brown else Color.White, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.height(3.dp))
+            Text("追加", style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp), color = Color.White)
+        }
     }
 }
 
@@ -341,6 +375,23 @@ private fun ComposingContent(
                 onSubmit = { viewModel.submit(readClipboard) },
             )
         } else {
+            if (viewModel.append) {
+                // 追加开着：把目标笔记的标题亮出来，用户看一眼，点保存就是确认
+                val target = viewModel.appendTarget
+                val withImages = viewModel.images.isNotEmpty()
+                Text(
+                    text = when {
+                        withImages -> "带图片的内容会另存一篇新笔记"
+                        target != null -> "追加到「$target」"
+                        else -> "还没有上一篇笔记，这条会新建一篇"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 20.dp, end = 64.dp, top = 14.dp),
+                )
+            }
             CaptureComposer(
                 text = viewModel.text,
                 onTextChange = { viewModel.text = it },

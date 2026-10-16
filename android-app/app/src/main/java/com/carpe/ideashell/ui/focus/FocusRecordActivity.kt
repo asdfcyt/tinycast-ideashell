@@ -51,6 +51,25 @@ import com.carpe.ideashell.ui.theme.ApplyEdgeToEdge
 import com.carpe.ideashell.ui.theme.Brand
 import com.carpe.ideashell.ui.theme.IdeashellTheme
 import com.carpe.ideashell.ui.theme.isDark
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
+import com.carpe.ideashell.R
+import com.carpe.ideashell.data.capture.CaptureImages
+import com.carpe.ideashell.ui.capture.CameraCaptureContract
+import com.carpe.ideashell.ui.components.SubmitCorner
+import com.carpe.ideashell.ui.components.ToolIcon
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -134,77 +153,105 @@ private fun RecordPanel(
     onSubmit: (String) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
     var field by remember { mutableStateOf(TextFieldValue(initial, TextRange(initial.length))) }
     val text = field.text
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     val canSave = text.isNotBlank()
+
+    // 和快记面板一样的样式与相机入口：半透明遮罩 + 从底部升起的卡片，键盘弹出时整体上移
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        visible = true
+        delay(160)
+        runCatching { focus.requestFocus() }
+    }
+    val scrim by animateFloatAsState(if (visible) 0.5f else 0f, tween(220), label = "scrim")
+
+    // 拍照 / 相册 → 文字识别：只要识别出的文字，追加到输入框末尾（已有内容另起一行）；-1 表示相机页不收图片
+    val cameraLauncher = rememberLauncherForActivityResult(CameraCaptureContract()) { result ->
+        if (result == null) return@rememberLauncherForActivityResult
+        CaptureImages.delete(result.images)
+        val recognized = result.text
+        if (recognized == null) {
+            Toast.makeText(context, "没有识别出文字", Toast.LENGTH_SHORT).show()
+        } else {
+            val merged = if (text.isBlank()) recognized else text.trimEnd() + "\n" + recognized
+            field = TextFieldValue(merged, TextRange(merged.length))
+            onTextChange(merged)
+        }
+        runCatching { focus.requestFocus() }
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.32f))
+            .background(Color.Black.copy(alpha = scrim))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClose),
-        contentAlignment = Alignment.BottomCenter,
     ) {
-        Column(
+        AnimatedVisibility(
+            visible = visible,
             modifier = Modifier
-                .fillMaxWidth()
-                .imePadding()
-                .navigationBarsPadding()
-                .padding(12.dp)
-                .clip(RoundedCornerShape(28.dp))
-                .background(scheme.surface)
-                // 点面板本身不关闭
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .align(Alignment.BottomCenter)
+                .imePadding(),
+            enter = slideInVertically(tween(280)) { it } + fadeIn(tween(200)),
+            exit = slideOutVertically(tween(200)) { it } + fadeOut(tween(160)),
         ) {
-            Text(heading, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurfaceVariant)
-            Text(taskTitle, style = MaterialTheme.typography.titleMedium, maxLines = 1)
-            BasicTextField(
-                value = field,
-                onValueChange = { field = it; onTextChange(it.text) },
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
-                cursorBrush = SolidColor(scheme.primary),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            Box(
                 modifier = Modifier
+                    .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                    .navigationBarsPadding()
                     .fillMaxWidth()
-                    .heightIn(min = 96.dp, max = 200.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(scheme.onSurface.copy(alpha = 0.06f))
-                    .padding(14.dp)
-                    .focusRequester(focus),
-                decorationBox = { inner ->
-                    Box {
-                        if (text.isEmpty()) {
-                            Text("专注时的想法、进展、卡点…", style = MaterialTheme.typography.bodyLarge, color = scheme.onSurfaceVariant)
-                        }
-                        inner()
+                    // 吃掉点击，避免点到卡片时误触发「点遮罩关闭」
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(scheme.surfaceContainerLowest),
+            ) {
+                Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp)) {
+                    Column(
+                        modifier = Modifier.padding(start = 20.dp, end = 64.dp, top = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(heading, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = scheme.onSurfaceVariant)
+                        Text(taskTitle, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                     }
-                },
-            )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
-                Box(
-                    modifier = Modifier
-                        .height(44.dp)
-                        .clip(CircleShape)
-                        .background(scheme.surfaceContainerHigh)
-                        .clickable(role = Role.Button, onClick = onClose)
-                        .padding(horizontal = 22.dp),
-                    contentAlignment = Alignment.Center,
-                ) { Text("取消", fontWeight = FontWeight.Bold) }
-                Box(
-                    modifier = Modifier
-                        .height(44.dp)
-                        .clip(CircleShape)
-                        .background(if (canSave) Brand.Orange else scheme.onSurface.copy(alpha = 0.12f))
-                        .clickable(enabled = canSave, role = Role.Button, onClick = { onSubmit(text.trim()) })
-                        .padding(horizontal = 26.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("记录", fontWeight = FontWeight.ExtraBold, color = if (canSave) Brand.Brown else scheme.onSurfaceVariant)
+                    val inputStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, lineHeight = 24.sp)
+                    TextField(
+                        value = field,
+                        onValueChange = { field = it; onTextChange(it.text) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focus),
+                        placeholder = {
+                            Text("专注时的想法、进展、卡点…", style = inputStyle, color = scheme.outline.copy(alpha = 0.6f))
+                        },
+                        textStyle = inputStyle,
+                        minLines = 2,
+                        maxLines = 8,
+                        // 键盘右下角的按键就是「发送」，和快记面板一致
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { if (canSave) onSubmit(text.trim()) }),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            disabledIndicatorColor = Color.Transparent,
+                        ),
+                    )
+                    Row(
+                        modifier = Modifier.padding(start = 4.dp, end = 8.dp, top = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ToolIcon(R.drawable.ic_camera, "拍照、相册与文字识别", { cameraLauncher.launch(-1) })
+                    }
                 }
+                SubmitCorner(
+                    enabled = canSave,
+                    onClick = { onSubmit(text.trim()) },
+                    modifier = Modifier.align(Alignment.TopEnd),
+                )
             }
         }
     }

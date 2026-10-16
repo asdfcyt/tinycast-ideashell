@@ -8,11 +8,13 @@ import com.carpe.ideashell.core.capture.ClipInput
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.data.db.CaptureDao
 import com.carpe.ideashell.data.db.CaptureEntity
+import com.carpe.ideashell.data.db.CaptureStatus
 import com.carpe.ideashell.data.db.imageList
 import com.carpe.ideashell.data.ideashell.FolderRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** 保存后的回执，界面据此显示「已保存 · 撤销」 */
@@ -33,6 +35,7 @@ class CaptureRepository(
     private val scheduler: CaptureScheduler,
     private val processor: CaptureProcessor,
     private val scope: CoroutineScope,
+    private val lastNote: LastNoteStore,
 ) {
     val recent: Flow<List<CaptureEntity>> = dao.observeRecent(RECENT_LIMIT)
 
@@ -48,6 +51,8 @@ class CaptureRepository(
         images: List<String> = emptyList(),
         /** 在日期时间面板里选定的时间（不在文字里） */
         schedule: CaptureSchedule? = null,
+        /** 追加到上一篇快记笔记（类型固定为笔记）；带图片时不追加（图片只能随新笔记上传） */
+        appendToLast: Boolean = false,
     ): SubmitReceipt? {
         if (images.isNotEmpty()) {
             // 带图片：一律存为笔记（待办和 Daily Note 都装不下图片）；文字可以为空
@@ -69,8 +74,31 @@ class CaptureRepository(
                 ),
             )
         }
+        if (appendToLast) {
+            val plan = CapturePlanner.plan(input, CaptureKind.NOTE, folders.folders.value) ?: return null
+            val base = entityOf(plan, origin)
+            val target = appendTarget()
+            val detail = buildString {
+                append(if (target != null) "追加到「$target」" else "笔记（还没有上一篇，已新建）")
+                if (plan.tags.isNotEmpty()) append(" · ").append(plan.tags.joinToString(" ") { "#$it" })
+            }
+            return enqueue(base.copy(appendToLast = true, detail = detail))
+        }
         val plan = CapturePlanner.plan(input, override, folders.folders.value, schedule = schedule) ?: return null
         return enqueue(entityOf(plan, origin))
+    }
+
+    /**
+     * 「追加」会接到哪一篇笔记后面（给面板显示标题，由用户确认）；没有就返回 null（会新建）。
+     * 记录要等 5 秒缓冲才同步，所以队列里还没发出去的新笔记，比「最近同步成功的那篇」更靠后：
+     * 追加是在同步时才决定目标的，这里也按同样的顺序找。
+     */
+    suspend fun appendTarget(): String? {
+        val pending = queue.first()
+            .filter { it.kind == CaptureKind.NOTE.name && !it.appendToLast && it.status != CaptureStatus.FAILED.name }
+            .maxByOrNull { it.createdAt }
+        if (pending != null) return pending.noteTitle?.takeIf { it.isNotBlank() } ?: pending.summary
+        return lastNote.get()?.title?.takeIf { it.isNotBlank() }
     }
 
     /** 分享 / 选中文字的摘录与收藏 */

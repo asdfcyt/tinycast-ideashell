@@ -45,6 +45,8 @@ class CaptureProcessor(
     private val ideashell: IdeashellApi,
     private val dida: DidaApi,
     private val dailyNotes: DailyNoteService,
+    /** 记下最近保存成的那篇笔记（快记面板的「追加」接在它后面） */
+    private val lastNote: LastNoteStore,
     /** 待办建到滴答后回调，用来刷新待办页 */
     private val onTodoCreated: () -> Unit = {},
     /** 同步出了问题（有失败 / 反复重试仍没发出去的记录）：参数是问题条数和最近一条的原因。只在「正常 → 异常」时回调一次 */
@@ -181,10 +183,39 @@ class CaptureProcessor(
         val tags = (settings.current.defaultTags + item.tagList()).distinct()
         val title = item.noteTitle?.takeIf { it.isNotBlank() } ?: truncate(item.body.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().trim(), 30)
         val paths = item.imageList()
+        // 追加：接在上一篇快记笔记末尾；上一篇读不到 / 已被删，就退回新建
+        if (item.appendToLast && paths.isEmpty()) {
+            val appended = tryAppend(item)
+            if (appended != null) return appended
+        }
         val uploads = loadImages(paths)
-        ideashell.createNote(title = title, body = item.body, tags = tags, folderId = folderId, images = uploads)
+        val created = ideashell.createNote(title = title, body = item.body, tags = tags, folderId = folderId, images = uploads)
+        // 摘录兜底进队列的不算「快记笔记」，别被追加接上
+        if (item.origin != "excerpt") ExcerptNotes.parseNoteId(created)?.let { lastNote.set(it, title) }
         CaptureImages.delete(paths)
         return "已保存为笔记$folderNote" + if (uploads.isNotEmpty()) "（${uploads.size} 张图片）" else ""
+    }
+
+    /** 追加到上一篇快记笔记；成功返回说明，没有上一篇 / 读不到返回 null（调用方新建）。断网、凭证、服务端错误照常抛出让队列重试 */
+    private suspend fun tryAppend(item: CaptureEntity): String? {
+        val last = lastNote.get() ?: return null
+        try {
+            val detail = ideashell.noteDetail(last.id)
+            if (detail.content.isBlank()) return null
+            val (content, allTags) = ExcerptNotes.insertBlock(detail.content, item.body.trim(), item.tagList())
+            ideashell.updateNoteBody(last.id, content, allTags)
+            return "已追加到「${last.title.ifBlank { "上一篇笔记" }}」"
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            throw e
+        } catch (e: McpAuthException) {
+            throw e
+        } catch (e: McpHttpException) {
+            throw e
+        } catch (_: Exception) {
+            return null
+        }
     }
 
     private fun retryDelay(attempt: Int): Long = minOf(30_000L * attempt, 10 * 60_000L)

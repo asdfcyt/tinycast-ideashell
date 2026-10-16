@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [CaptureEntity::class, RevisitEntity::class, RevisitLogEntity::class], version = 6, exportSchema = false)
+@Database(entities = [CaptureEntity::class, RevisitEntity::class, RevisitLogEntity::class], version = 7, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun captureDao(): CaptureDao
     abstract fun revisitDao(): RevisitDao
@@ -15,8 +15,15 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "ideashell.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .build()
+
+        /** v7：记录增加「追加到上一篇笔记」标记（快记面板的追加按钮） */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE captures ADD COLUMN appendToLast INTEGER NOT NULL DEFAULT 0")
+            }
+        }
 
         /**
          * v6：新增「重温流水」表（每次评分一行，间隔复习的折线图用）；

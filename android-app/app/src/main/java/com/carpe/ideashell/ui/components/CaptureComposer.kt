@@ -414,7 +414,7 @@ fun SubmitCorner(enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Mod
  * [enabled] 为 false 表示当前类型用不上（例如笔记没有日期），图标变淡且不可点。
  */
 @Composable
-private fun ToolIcon(
+internal fun ToolIcon(
     icon: Int,
     description: String,
     onClick: () -> Unit,

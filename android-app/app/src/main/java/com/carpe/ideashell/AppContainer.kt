@@ -74,6 +74,9 @@ class AppContainer(context: Context) {
     /** 快记面板写到一半的文字 */
     val captureDraft = com.carpe.ideashell.data.capture.CaptureDraft(context)
 
+    /** 快记面板最近保存成的那篇笔记（「追加」按钮的目标） */
+    val lastNote = com.carpe.ideashell.data.capture.LastNoteStore(context)
+
     /** 重温时手动挖的空 */
     val clozeManual = com.carpe.ideashell.data.revisit.ClozeManualStore(context)
 
@@ -133,6 +136,7 @@ class AppContainer(context: Context) {
         ideashell = ideashellApi,
         dida = didaApi,
         dailyNotes = dailyNotes,
+        lastNote = lastNote,
         onTodoCreated = { todos.refresh(force = true) },
         onSyncProblem = { count, reason -> SyncNotifier.show(context, count, reason) },
         onSyncHealthy = { SyncNotifier.cancel(context) },
@@ -162,6 +166,7 @@ class AppContainer(context: Context) {
         scheduler = CaptureScheduler(context),
         processor = processor,
         scope = appScope,
+        lastNote = lastNote,
     )
 
     /** 摘录模式：连续摘录写进同一篇笔记 */

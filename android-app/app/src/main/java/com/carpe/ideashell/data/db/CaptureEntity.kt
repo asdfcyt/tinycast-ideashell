@@ -45,6 +45,8 @@ data class CaptureEntity(
     @ColumnInfo(defaultValue = "0") val priority: Int = 0,
     /** 待办的重复规则（滴答 repeatFlag，如 `RRULE:FREQ=DAILY;INTERVAL=1`）；不重复为 null */
     val repeatRule: String? = null,
+    /** 笔记：同步时追加到上一篇快记笔记的末尾，而不是新建（上一篇不在了就新建） */
+    @ColumnInfo(defaultValue = "0") val appendToLast: Boolean = false,
 )
 
 /** 实际写给滴答的优先级 */

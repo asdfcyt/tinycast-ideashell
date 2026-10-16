@@ -147,7 +147,13 @@ fun CameraOcrScreen(
     ) { uris -> viewModel.onPicked(context, uris, ocrOn, deliverImages) }
 
     val noRoom = !ocrOn && remaining <= 0
-    fun warnNoRoom() = Toast.makeText(context, "最多 9 张图片", Toast.LENGTH_SHORT).show()
+    // remaining < 0：调用方只要识别出的文字（比如专注记录），不收图片
+    val ocrOnly = remaining < 0
+    fun warnNoRoom() = Toast.makeText(
+        context,
+        if (ocrOnly) "这里只收识别出的文字，请先打开右下角「识别文字」" else "最多 9 张图片",
+        Toast.LENGTH_SHORT,
+    ).show()
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (viewModel.imagePath == null) {
