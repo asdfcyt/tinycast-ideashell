@@ -19,6 +19,7 @@
 
     <!-- Android 16+：专注中的通知申请「实时通知」（状态栏胶囊 / 荣耀灵动胶囊是否采用由系统决定） -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- 分享 / 选中文字时，用来把来源应用的包名换成应用名 -->
     <queries>

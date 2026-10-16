@@ -23,6 +23,11 @@ data class AppSettings(
     val persistentNotification: Boolean = false,
     /** 每日专注目标（分钟）：「今天」页专注环以它为满环 */
     val focusGoalMin: Int = DEFAULT_FOCUS_GOAL_MIN,
+    /** 专注（番茄）自然走完后自动开始休息倒计时；关闭时只在通知 / 专注页上给出「开始休息」 */
+    val autoBreak: Boolean = false,
+    /** 短休息 / 长休息的默认时长（分钟） */
+    val shortBreakMin: Int = DEFAULT_SHORT_BREAK_MIN,
+    val longBreakMin: Int = DEFAULT_LONG_BREAK_MIN,
     /** 相机页上「识别文字」开关的上次状态 */
     val ocrEnabled: Boolean = false,
     /** 识别页的选择方式：false = 划选识别，true = 选择框（先框出识别区域再识别） */
@@ -59,6 +64,8 @@ data class AppSettings(
     companion object {
         const val DEFAULT_DAILY_FOLDER = "Daily Notes"
         const val DEFAULT_FOCUS_GOAL_MIN = 120
+        const val DEFAULT_SHORT_BREAK_MIN = 5
+        const val DEFAULT_LONG_BREAK_MIN = 15
         const val DEFAULT_REVISIT_RETENTION = 90
         const val DEFAULT_CLOZE_MIN = 10
         const val DEFAULT_CLOZE_MAX = 25
@@ -87,6 +94,12 @@ class SettingsStore(context: Context) {
     fun setPersistentNotification(enabled: Boolean) = update { it.copy(persistentNotification = enabled) }
 
     fun setFocusGoalMin(minutes: Int) = update { it.copy(focusGoalMin = minutes.coerceIn(10, 720)) }
+
+    fun setAutoBreak(enabled: Boolean) = update { it.copy(autoBreak = enabled) }
+
+    fun setShortBreakMin(minutes: Int) = update { it.copy(shortBreakMin = minutes.coerceIn(1, 60)) }
+
+    fun setLongBreakMin(minutes: Int) = update { it.copy(longBreakMin = minutes.coerceIn(1, 60)) }
 
     fun setOcrEnabled(enabled: Boolean) = update { it.copy(ocrEnabled = enabled) }
 
@@ -127,6 +140,9 @@ class SettingsStore(context: Context) {
             .putString(KEY_THEME, next.themeMode.name)
             .putBoolean(KEY_PERSISTENT_NOTIFICATION, next.persistentNotification)
             .putInt(KEY_FOCUS_GOAL, next.focusGoalMin)
+            .putBoolean(KEY_AUTO_BREAK, next.autoBreak)
+            .putInt(KEY_SHORT_BREAK, next.shortBreakMin)
+            .putInt(KEY_LONG_BREAK, next.longBreakMin)
             .putBoolean(KEY_OCR_ENABLED, next.ocrEnabled)
             .putBoolean(KEY_OCR_FRAME, next.ocrFrameMode)
             .putBoolean(KEY_AUTO_SUMMARY, next.autoDaySummary)
@@ -153,6 +169,9 @@ class SettingsStore(context: Context) {
             .getOrDefault(ThemeMode.SYSTEM),
         persistentNotification = prefs.getBoolean(KEY_PERSISTENT_NOTIFICATION, false),
         focusGoalMin = prefs.getInt(KEY_FOCUS_GOAL, AppSettings.DEFAULT_FOCUS_GOAL_MIN),
+        autoBreak = prefs.getBoolean(KEY_AUTO_BREAK, false),
+        shortBreakMin = prefs.getInt(KEY_SHORT_BREAK, AppSettings.DEFAULT_SHORT_BREAK_MIN),
+        longBreakMin = prefs.getInt(KEY_LONG_BREAK, AppSettings.DEFAULT_LONG_BREAK_MIN),
         ocrEnabled = prefs.getBoolean(KEY_OCR_ENABLED, false),
         ocrFrameMode = prefs.getBoolean(KEY_OCR_FRAME, false),
         autoDaySummary = prefs.getBoolean(KEY_AUTO_SUMMARY, true),
@@ -276,6 +295,9 @@ class SettingsStore(context: Context) {
         const val KEY_AUTO_SUMMARY = "auto_day_summary"
         const val KEY_AUTO_SUMMARY_DATE = "auto_summary_date"
         const val KEY_FOCUS_GOAL = "focus_goal_min"
+        const val KEY_AUTO_BREAK = "focus_auto_break"
+        const val KEY_SHORT_BREAK = "focus_short_break_min"
+        const val KEY_LONG_BREAK = "focus_long_break_min"
         const val KEY_OCR_ENABLED = "ocr_enabled"
         const val KEY_OCR_FRAME = "ocr_frame_mode"
         const val KEY_DAILY_COUNT_PREFIX = "daily_count_"

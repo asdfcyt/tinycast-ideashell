@@ -83,6 +83,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun CelebrationHost(center: CelebrationCenter, modifier: Modifier = Modifier) {
     val current by center.current.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     // 退出动画期间 current 已经是 null，留一份最后显示的内容
     var last by remember { mutableStateOf<Celebration?>(null) }
     if (current != null) last = current
@@ -94,6 +95,7 @@ fun CelebrationHost(center: CelebrationCenter, modifier: Modifier = Modifier) {
             center.dismiss(c.id)
             return@LaunchedEffect
         }
+        com.carpe.ideashell.system.Haptics.terminalOn(context)
         delay(14_000L)
         center.dismiss(c.id)
     }
@@ -187,9 +189,11 @@ private fun CelebrationTicket(c: Celebration, todayMinutes: () -> Int, modifier:
     val bmp = rememberTicketBitmap(c, today)
     // 终端先亮起来，停一下再开始出纸
     var print by remember(c.id) { mutableStateOf(false) }
+    val context = LocalContext.current
     LaunchedEffect(c.id) {
         delay(450)
         print = true
+        com.carpe.ideashell.system.Haptics.printTicket(context)
     }
     AnimatedVisibility(
         visible = bmp != null && print,

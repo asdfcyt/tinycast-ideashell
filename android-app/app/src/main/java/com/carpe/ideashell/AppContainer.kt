@@ -210,6 +210,14 @@ class AppContainer(context: Context) {
         },
         onCelebrate = { celebrations.post(it) },
         capturedBetween = { from, to -> database.captureDao().between(from, to).map { it.summary.ifBlank { it.body }.trim() }.filter { it.isNotEmpty() } },
+        autoBreak = { settings.current.autoBreak },
+        breakMinutes = { kind ->
+            when (kind) {
+                com.carpe.ideashell.data.focus.FocusKind.SHORT_BREAK -> settings.current.shortBreakMin
+                com.carpe.ideashell.data.focus.FocusKind.LONG_BREAK -> settings.current.longBreakMin
+                else -> null
+            }
+        },
     )
 
     /** 专注小部件 + 记录时间河小部件 */

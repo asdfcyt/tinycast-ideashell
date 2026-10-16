@@ -100,6 +100,10 @@ class FocusRepository(
     private val onCelebrate: (Celebration) -> Unit = {},
     /** 这段时间内快记的内容（摘要） */
     private val capturedBetween: suspend (Long, Long) -> List<String> = { _, _ -> emptyList() },
+    /** 设置：番茄自然走完后是否自动开始休息 */
+    private val autoBreak: () -> Boolean = { false },
+    /** 设置：短 / 长休息的时长（分钟）；不是休息返回 null */
+    private val breakMinutes: (FocusKind) -> Int? = { null },
 ) {
     private val prefs = context.applicationContext.getSharedPreferences("focus", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
@@ -134,9 +138,9 @@ class FocusRepository(
     val lastMinutes: Int
         get() = lastMinutes(FocusKind.FOCUS)
 
-    /** 每种倒计时各记一个上次选的时长（短休息 / 长休息默认 5 / 15 分钟） */
+    /** 专注记住上次选的时长；休息的时长以设置里的短 / 长休息时长为准（默认 5 / 15 分钟） */
     fun lastMinutes(kind: FocusKind): Int =
-        prefs.getInt(keyOf(kind), kind.defaultMin).coerceIn(kind.minMin, kind.maxMin)
+        (breakMinutes(kind) ?: prefs.getInt(keyOf(kind), kind.defaultMin)).coerceIn(kind.minMin, kind.maxMin)
 
     private fun keyOf(kind: FocusKind) = if (kind == FocusKind.FOCUS) KEY_LAST_MIN else "last_minutes_${kind.name}"
 
@@ -232,7 +236,9 @@ class FocusRepository(
             flushLocked()
             val minutes = Math.round(elapsed / 60_000.0).toInt().coerceAtLeast(1)
             val synced = record !in _pending.value
-            val next = if (completed) _pendingBreak.value else null
+            // 设置了「自动开始休息」时，下面直接开始休息倒计时，完成通知上就不用再给「开始休息」按钮
+            val autoStartBreak = completed && autoBreak() && _pendingBreak.value != null
+            val next = if (completed && !autoStartBreak) _pendingBreak.value else null
             val captured = runCatching { capturedBetween(s.startMs, System.currentTimeMillis()) }.getOrDefault(emptyList())
             val entries = s.records.map { Celebration.Entry("专注记录", it) } + captured.map { Celebration.Entry("快记", it) }
             notifier.showDone(s.title, minutes, completed, synced, next, next?.let { lastMinutes(it) } ?: 0, entries.map { it.text })
@@ -260,6 +266,7 @@ class FocusRepository(
                     ),
                 )
             }
+            if (autoStartBreak) _pendingBreak.value?.let { k -> start(null, null, "", lastMinutes(k), k) }
             FocusResult.Recorded(minutes, synced)
         }
         if (outcome is FocusResult.Recorded) refresh()

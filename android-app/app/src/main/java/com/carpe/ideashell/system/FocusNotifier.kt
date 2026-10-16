@@ -194,14 +194,16 @@ class FocusNotifier(private val context: Context) {
 
         val useMetric = USE_METRIC_STYLE && Build.VERSION.SDK_INT >= 37
         val progress = android.app.Notification.ProgressStyle()
-            .setStyledByProgress(true)
-            .setProgressSegments(listOf(android.app.Notification.ProgressStyle.Segment(totalSec).setColor(color)))
+            // 不用系统的「按进度区分」：它把未走的部分画成更细的线，进度头右边会多出一道竖线。
+            // 改成自己切成两段、同样粗细，未走的一段用淡色
+            .setStyledByProgress(false)
+            .setProgressSegments(segments(totalSec, doneSec, color))
             .setProgress(doneSec)
             .setProgressTrackerIcon(android.graphics.drawable.Icon.createWithBitmap(dotIcon(color)))
         if (records.isNotEmpty()) {
             progress.setProgressPoints(
                 run.recordAtSec.take(records.size).map { it.coerceIn(1, (totalSec - 1).coerceAtLeast(1)) }.distinct().map { sec ->
-                    android.app.Notification.ProgressStyle.Point(sec).setColor(0xFFFFFFFF.toInt())
+                    recordPoint(sec)
                 }
             )
         }
@@ -265,6 +267,23 @@ class FocusNotifier(private val context: Context) {
             style.addMetric(android.app.Notification.Metric(android.app.Notification.Metric.FixedInt(recordCount, "条"), "记录"))
         }
         return style.setCriticalMetric(0)
+    }
+
+    /** 进度段：已走的一段用品牌橙（休息为绿），未走的一段同色但更淡，两段粗细一样 */
+    @androidx.annotation.RequiresApi(36)
+    private fun segments(total: Int, done: Int, color: Int): List<android.app.Notification.ProgressStyle.Segment> {
+        val rest = (color and 0x00FFFFFF) or 0x55000000
+        val d = done.coerceIn(0, total)
+        return buildList {
+            if (d > 0) add(android.app.Notification.ProgressStyle.Segment(d).setColor(color))
+            if (total - d > 0) add(android.app.Notification.ProgressStyle.Segment(total - d).setColor(rest))
+        }
+    }
+
+    /** 一条记录在进度条上的标记点：白色（语义里的「信息蓝」不好看，不用） */
+    @androidx.annotation.RequiresApi(36)
+    private fun recordPoint(sec: Int): android.app.Notification.ProgressStyle.Point {
+        return android.app.Notification.ProgressStyle.Point(sec).setColor(0xFFFFFFFF.toInt())
     }
 
     /** 进度条上的进度头：一颗带彩色描边的白色圆点 */
@@ -375,6 +394,7 @@ class FocusNotifier(private val context: Context) {
         ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
     private fun ensureChannels(nm: NotificationManager) {
+        if (nm.getNotificationChannel(OLD_RUNNING_CHANNEL) != null) nm.deleteNotificationChannel(OLD_RUNNING_CHANNEL)
         nm.createNotificationChannel(
             NotificationChannel(RUNNING_CHANNEL, "专注计时", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) },
         )
@@ -439,7 +459,12 @@ class FocusNotifier(private val context: Context) {
 
         /** 桌面小部件：点圆环进入选时长，左 / 右半边减 / 加，一会儿没开始就恢复 */
 
-        private const val RUNNING_CHANNEL = "focus_running"
+        /**
+         * 常驻计时通知的渠道。旧渠道 focus_running 的重要性被系统 / 用户调到了「高」（渠道一旦建好，应用改不回来），
+         * 高重要性会让每次刷新都像新提醒一样弹开；换个新 id 重新建成「低」。
+         */
+        private const val RUNNING_CHANNEL = "focus_running_v2"
+        private const val OLD_RUNNING_CHANNEL = "focus_running"
         private const val DONE_CHANNEL = "focus_done"
         private const val QUIET_DONE_CHANNEL = "focus_record"
         private const val RUNNING_ID = NotificationIds.FOCUS_RUNNING

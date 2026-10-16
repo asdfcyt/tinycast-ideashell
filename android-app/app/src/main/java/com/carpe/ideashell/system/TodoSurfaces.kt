@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -91,7 +92,23 @@ class TodoSurfaces(
         for (id in ids) {
             runCatching { manager.updateAppWidget(id, buildWidget(manager, id, connected, snap)) }
         }
+        // 生成式预览：桌面「添加小部件」里显示真实的今日待办，而不是一张静态图（Android 15+；系统限制调用频率，我们自己也限一下）
+        if (Build.VERSION.SDK_INT >= 35 && connected && snap != null) {
+            val now = System.currentTimeMillis()
+            if (now - lastPreviewAt > 15 * 60_000L) {
+                lastPreviewAt = now
+                runCatching {
+                    manager.setWidgetPreview(
+                        ComponentName(context, TodoWidgetProvider::class.java),
+                        AppWidgetProviderInfo.WIDGET_CATEGORY_HOME_SCREEN,
+                        buildWidget(manager, ids.first(), connected, snap),
+                    )
+                }
+            }
+        }
     }
+
+    private var lastPreviewAt = 0L
 
     private fun buildWidget(manager: AppWidgetManager, widgetId: Int, connected: Boolean, snap: Snapshot?): RemoteViews {
         val rv = RemoteViews(context.packageName, R.layout.widget_todo)

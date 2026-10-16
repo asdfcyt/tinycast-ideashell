@@ -111,6 +111,8 @@ private sealed interface Dialog {
     data object DailyFolder : Dialog
     data object Theme : Dialog
     data object FocusGoal : Dialog
+    data object ShortBreak : Dialog
+    data object LongBreak : Dialog
     data object AddWidget : Dialog
     data object Ocr : Dialog
     data object RevisitLimit : Dialog
@@ -484,6 +486,27 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                         onClick = { dialog = Dialog.FocusGoal },
                     )
                     SettingsItem(
+                        icon = Icons.Filled.Refresh,
+                        title = "专注完成后自动休息",
+                        summary = "番茄走完立刻开始休息倒计时；关闭时只在通知和专注页上提供「开始休息」",
+                        onClick = { container.settings.setAutoBreak(!settings.autoBreak) },
+                        trailing = {
+                            Switch(checked = settings.autoBreak, onCheckedChange = { container.settings.setAutoBreak(it) })
+                        },
+                    )
+                    SettingsItem(
+                        icon = Icons.Filled.Refresh,
+                        title = "短休息时长",
+                        summary = "${settings.shortBreakMin} 分钟 · 每个番茄之后",
+                        onClick = { dialog = Dialog.ShortBreak },
+                    )
+                    SettingsItem(
+                        icon = Icons.Filled.Refresh,
+                        title = "长休息时长",
+                        summary = "${settings.longBreakMin} 分钟 · 每完成 4 个番茄之后",
+                        onClick = { dialog = Dialog.LongBreak },
+                    )
+                    SettingsItem(
                         icon = Icons.Filled.Notifications,
                         title = "常驻通知",
                         summary = "通知栏显示「今天 N · 逾期 M」，可直接回复快记、点完成。系统可能允许你划掉它，下次刷新会重新出现",
@@ -727,6 +750,24 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
             onDismiss = { dialog = null },
         )
 
+        Dialog.ShortBreak -> ChoiceDialog(
+            title = "短休息时长",
+            options = (SHORT_BREAK_PRESETS + settings.shortBreakMin).distinct().sorted(),
+            current = settings.shortBreakMin,
+            label = { "$it 分钟" + if (it == 5) "（默认）" else "" },
+            onSelect = { container.settings.setShortBreakMin(it) },
+            onDismiss = { dialog = null },
+        )
+
+        Dialog.LongBreak -> ChoiceDialog(
+            title = "长休息时长",
+            options = (LONG_BREAK_PRESETS + settings.longBreakMin).distinct().sorted(),
+            current = settings.longBreakMin,
+            label = { "$it 分钟" + if (it == 15) "（默认）" else "" },
+            onSelect = { container.settings.setLongBreakMin(it) },
+            onDismiss = { dialog = null },
+        )
+
         Dialog.RevisitLimit -> ChoiceDialog(
             title = "每天最多重温",
             options = (REVISIT_LIMIT_PRESETS + settings.revisitDailyLimit).distinct().sorted(),
@@ -851,6 +892,8 @@ private fun AddWidgetDialog(onPick: (PinnableWidget) -> Unit, onDismiss: () -> U
 }
 
 private val REVISIT_LIMIT_PRESETS = listOf(3, 5, 8, 10, 15, 20)
+private val SHORT_BREAK_PRESETS = listOf(3, 5, 8, 10, 15)
+private val LONG_BREAK_PRESETS = listOf(10, 15, 20, 25, 30)
 private val REVISIT_RETENTION_PRESETS = listOf(80, 85, 90, 95)
 
 private fun formatDateTime(ms: Long): String =
