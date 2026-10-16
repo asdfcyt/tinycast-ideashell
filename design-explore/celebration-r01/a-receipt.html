@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A 专注小票</title>
+<style>
+:root{--bg0:#1b120c;--bg1:#3a261a;--paper:#fbf6ec;--ink:#241912;--mute:#6b5c4f;--line:#d9ccba;--orange:#e8743b;--deep:#b2441b}
+*{box-sizing:border-box;margin:0}
+html,body{width:390px;height:640px;overflow:hidden}
+body{background:radial-gradient(120% 70% at 50% 18%,var(--bg1),var(--bg0));font-family:"PingFang SC","Noto Sans SC",system-ui,sans-serif;color:var(--ink);display:flex;justify-content:center;padding-top:30px}
+.ticket{width:322px;background:var(--paper);position:relative;padding:26px 22px 26px;filter:drop-shadow(0 18px 28px rgba(0,0,0,.45));
+ --t:radial-gradient(circle at 7px 0,#0000 5px,#000 5.5px) -7px 0/14px 100% repeat-x;
+ -webkit-mask:radial-gradient(circle at 7px 0,#0000 5px,#000 5.5px) 0 0/14px 51% repeat-x,radial-gradient(circle at 7px 100%,#0000 5px,#000 5.5px) 0 100%/14px 51% repeat-x;mask:radial-gradient(circle at 7px 0,#0000 5px,#000 5.5px) 0 0/14px 51% repeat-x,radial-gradient(circle at 7px 100%,#0000 5px,#000 5.5px) 0 100%/14px 51% repeat-x}
+.top{display:flex;justify-content:space-between;align-items:center}
+.brand{font-weight:800;font-size:15px;letter-spacing:.04em}
+.brand i{font-style:normal;color:var(--mute);font-weight:600;margin:0 6px}
+.when{font:600 12px/1 "SF Mono",Menlo,monospace;color:var(--ink);background:#efe6d6;padding:6px 9px;border-radius:7px}
+.sub{margin-top:18px;font-size:13px;font-weight:700;color:var(--deep)}
+h1{text-wrap:balance;margin-top:6px;font-size:26px;line-height:1.28;font-weight:900;letter-spacing:-.01em}
+.stamp{position:absolute;right:20px;bottom:18px;width:70px;height:70px;border-radius:50%;border:2.5px solid var(--deep);color:var(--deep);display:grid;place-items:center;text-align:center;transform:rotate(-14deg);font-weight:900;font-size:16px;line-height:1.1}
+.stamp::before{content:"";position:absolute;inset:4px;border:1px dashed var(--deep);border-radius:50%}
+.stats{margin-top:20px;display:grid;grid-template-columns:repeat(4,1fr);background:#f1e8d8;border-radius:12px;padding:12px 0}
+.stats div{text-align:center;border-left:1px solid var(--line)}
+.stats div:first-child{border-left:0}
+.stats b{display:block;font:800 18px/1.1 "SF Mono",Menlo,monospace}
+.stats div:first-child b{color:var(--deep)}
+.stats span{display:block;margin-top:5px;font-size:11.5px;color:var(--mute);font-weight:600}
+.cut{margin:20px 0 4px;display:flex;align-items:center;gap:8px;color:var(--mute);font-size:12px;font-weight:700}
+.cut::before,.cut::after{content:"";flex:1;border-top:1.5px dashed var(--line)}
+.rec{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid #eadfcc;font-size:14px;line-height:1.5}
+.rec:last-of-type{border-bottom:0}
+.rec em{font-style:normal;flex:none;font-size:11.5px;font-weight:800;color:#8f3513;background:#f6e0d2;border-radius:6px;padding:2px 7px;height:21px;margin-top:2px}
+.rec p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.bar{margin-top:14px;width:196px;height:42px;display:flex;align-items:stretch;gap:0}
+.bar i{display:block;background:var(--ink)}
+.no{margin-top:8px;text-align:left;font:600 11px/1 "SF Mono",Menlo,monospace;color:var(--mute);letter-spacing:.14em}
+</style></head><body>
+<main class="ticket">
+  <div class="top"><div class="brand">拾忆<i>·</i>专注小票</div><div class="when">10-16 10:46</div></div>
+  <div class="sub">番茄完成</div>
+  <h1>阅读第二章《像经济学家一样思考》</h1>
+  <div class="stamp">已<br>完成</div>
+  <div class="stats">
+    <div><b>30′</b><span>时长</span></div>
+    <div><b>#1</b><span>本轮番茄</span></div>
+    <div><b>2</b><span>条记录</span></div>
+    <div><b>30′</b><span>今日累计</span></div>
+  </div>
+  <div class="cut">期间记录</div>
+  <div class="rec"><em>快记</em><p>这个记录到任务中感觉还是可以借用快捷输入，这样可以通过拍照识别来快速输入</p></div>
+  <div class="rec"><em>快记</em><p>在快速输入中也可以增加一个追加的按钮，放在模板按钮的右侧，可以快速追加</p></div>
+  <div class="bar" id="bar"></div>
+  <div class="no">20261016 · 1046 · 0001</div>
+</main>
+<script>
+let s=7,w=[];function r(){s=(s*9301+49297)%233280;return s/233280}
+const bar=document.getElementById('bar');let x=0;
+while(x<196){const k=1+Math.floor(r()*3.2);const g=1+Math.floor(r()*2.2);bar.insertAdjacentHTML('beforeend',`<i style="width:${k}px"></i><i style="width:${g}px;background:transparent"></i>`);x+=k+g}
+</script></body></html>

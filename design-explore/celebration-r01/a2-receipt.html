@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A2 专注小票</title>
+<style>
+:root{--bg:#0e0b09;--amber:#ffb14a;--paper:#fcf9f1;--ink:#1f1610;--mute:#6d6256;--line:#ddd2c0;--orange:#e8743b;--deep:#b2441b;--green:#2f8f5b}
+*{box-sizing:border-box;margin:0}
+html,body{width:390px;height:790px;overflow:hidden}
+body{font-family:"PingFang SC","Noto Sans SC",system-ui,sans-serif;color:var(--ink);
+ background:radial-gradient(70% 38% at 50% 62%,#3d281b 0,transparent 72%),linear-gradient(#1a1410,#0b0908 70%);position:relative}
+/* 终端面板 */
+.term{margin:0 12px;height:196px;border-radius:0 0 34px 34px;background:linear-gradient(#1d1814,var(--bg));border:1px solid #2c241d;border-top:0;box-shadow:0 18px 30px -12px #000c,inset 0 -1px 0 #ffffff10;position:relative;padding:40px 22px 0}
+.row{display:flex;justify-content:space-between;align-items:center;font:600 11px/1 "SF Mono",Menlo,monospace;color:#9b8c7c;letter-spacing:.06em}
+.row b{color:#6fdc9a;font-weight:700;display:flex;align-items:center;gap:6px}
+.row b::before{content:"";width:6px;height:6px;border-radius:50%;background:#6fdc9a;box-shadow:0 0 8px #6fdc9a}
+.led{position:relative;margin:20px auto 0;width:max-content;font:900 62px/1 "SF Mono",Menlo,monospace;color:var(--amber);letter-spacing:.04em;text-shadow:0 0 14px #ffa42e88}
+.led::after{content:"";position:absolute;inset:-4px;background:radial-gradient(circle,#0000 1.15px,#13100d 1.75px) 0 0/4px 4px}
+.cap{position:absolute;left:0;right:0;bottom:30px;text-align:center;font-size:11.5px;color:#7d6f61;letter-spacing:.08em}
+.slot{position:absolute;left:18px;right:18px;bottom:12px;height:5px;border-radius:9px;background:#050403;box-shadow:inset 0 1px 2px #000,0 1px 0 #ffffff14}
+/* 小票 */
+.ticket{position:relative;margin:-6px auto 0;width:342px;background:linear-gradient(var(--paper),#f6f1e4);padding:18px 22px 22px;border-radius:0 0 12px 12px;
+ filter:drop-shadow(0 20px 22px rgba(0,0,0,.55));
+ -webkit-mask:radial-gradient(circle at 0 7px,#0000 4px,#000 4.5px) left/51% 14px repeat-y,radial-gradient(circle at 100% 7px,#0000 4px,#000 4.5px) right/51% 14px repeat-y;
+ mask:radial-gradient(circle at 0 7px,#0000 4px,#000 4.5px) left/51% 14px repeat-y,radial-gradient(circle at 100% 7px,#0000 4px,#000 4.5px) right/51% 14px repeat-y}
+.tear{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--mute);font-weight:600;margin-bottom:14px}
+.tear::before,.tear::after{content:"";flex:1;border-top:1.5px dashed var(--line)}
+.top{display:flex;justify-content:space-between;align-items:center}
+.brand{font:800 14px/1 "SF Mono",Menlo,"PingFang SC",monospace;letter-spacing:.02em}
+.sum{font:600 12px/1 "PingFang SC",sans-serif;color:var(--mute);background:#ece5d6;border-radius:7px;padding:6px 10px}
+.meta{margin-top:16px;display:flex;justify-content:space-between;align-items:center}
+.tag{background:var(--ink);color:#fff;font-size:11.5px;font-weight:800;border-radius:6px;padding:4px 9px}
+.date{font:600 12px/1 "SF Mono",Menlo,monospace;color:var(--mute)}
+h1{margin-top:8px;font-size:23px;line-height:1.3;font-weight:900;text-wrap:balance;letter-spacing:-.005em}
+.stats{margin-top:16px;display:grid;grid-template-columns:repeat(4,1fr);background:#efe8d9;border-radius:12px;padding:11px 0 10px}
+.stats div{text-align:center;border-left:1px solid var(--line)}
+.stats div:first-child{border-left:0}
+.stats small{display:block;font-size:11.5px;color:var(--mute);font-weight:600}
+.stats b{display:block;margin:5px 0 4px;font-size:18px;line-height:1.1;font-weight:900}
+.stats em{display:block;font:600 9px/1 "SF Mono",Menlo,monospace;color:#6a5e53;font-style:normal;letter-spacing:.08em}
+.c1{color:#964b02}.c4{color:#3236b0}
+.sec{margin:18px 0 8px;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--mute)}
+.sec::before,.sec::after{content:"";flex:1;border-top:1px solid var(--line)}
+.rec{display:flex;align-items:flex-start;gap:10px;background:#f2ecdf;border-radius:10px;padding:10px 12px;margin-bottom:7px;font-size:13.5px;line-height:1.5}
+.rec i{flex:none;width:15px;height:15px;border-radius:50%;border:2px solid var(--green);margin-top:3px;position:relative}
+.rec i::after{content:"";position:absolute;left:3px;top:0.5px;width:3px;height:6px;border:solid var(--green);border-width:0 2px 2px 0;transform:rotate(40deg)}
+.rec p{flex:1;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rec u{flex:none;text-decoration:none;font-size:11px;font-weight:800;color:#1f6a40;background:#d9efe0;border-radius:5px;padding:2px 6px;margin-top:2px}
+.foot{margin-top:16px;display:flex;align-items:flex-end;justify-content:space-between}
+.bars{height:40px;display:flex}
+.bars i{display:block;background:var(--ink)}
+.sn{margin-top:7px;font:600 10px/1 "SF Mono",Menlo,monospace;color:var(--mute);letter-spacing:.12em}
+.stamp{width:78px;height:78px;border-radius:50%;border:2.5px solid var(--deep);color:var(--deep);display:grid;place-items:center;text-align:center;font-weight:900;font-size:17px;line-height:1.15;transform:rotate(-12deg);position:relative;margin-bottom:-4px;mix-blend-mode:multiply}
+.stamp::before{content:"";position:absolute;inset:4px;border:1px dashed var(--deep);border-radius:50%}
+.stamp small{display:block;font-size:10px;font-weight:700;letter-spacing:.06em;margin-top:2px}
+</style></head><body>
+<section class="term">
+  <div class="row"><span>拾忆 × 专注终端</span><span>第 1 个番茄</span><b>已完成</b></div>
+  <div class="led">30:00</div>
+  <div class="cap">今天累计专注 30 分钟</div>
+  <div class="slot"></div>
+</section>
+<main class="ticket">
+  <div class="tear">撕下这张成果小票</div>
+  <div class="top"><div class="brand">拾忆 · 专注小票</div><div class="sum">1 个任务 · 30 分钟</div></div>
+  <div class="meta"><span class="tag">已完成任务</span><span class="date">10-16 10:46</span></div>
+  <h1>阅读第二章《像经济学家一样思考》</h1>
+  <div class="stats">
+    <div><small>时长</small><b class="c1">30 分</b><em>MIN</em></div>
+    <div><small>番茄</small><b>第 1 个</b><em>ROUND</em></div>
+    <div><small>记录</small><b>2 条</b><em>NOTES</em></div>
+    <div><small>今日累计</small><b class="c4">30 分</b><em>TODAY</em></div>
+  </div>
+  <div class="sec">期间记录</div>
+  <div class="rec"><i></i><p>这个记录到任务中感觉还是可以借用快捷输入，这样可以通过拍照识别来快速输入</p><u>快记</u></div>
+  <div class="rec"><i></i><p>在快速输入中也可以增加一个追加的按钮，放在模板按钮的右侧，可以快速追加</p><u>快记</u></div>
+  <div class="foot">
+    <div><div class="bars" id="bars"></div><div class="sn">◆ 拾忆 · 3FEEC4 ◆</div></div>
+    <div class="stamp"><div>已完成<small>10·16</small></div></div>
+  </div>
+</main>
+<script>
+let s=11;function r(){s=(s*9301+49297)%233280;return s/233280}
+const b=document.getElementById('bars');let x=0;
+while(x<176){const k=1+Math.floor(r()*3);const g=1+Math.floor(r()*2.4);b.insertAdjacentHTML('beforeend',`<i style="width:${k}px"></i><i style="width:${g}px;background:transparent"></i>`);x+=k+g}
+</script></body></html>

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>V1 紧凑单列</title>
+<style>
+:root{--bg:#0e0b09;--amber:#ffb14a;--paper:#fcf9f1;--ink:#1f1610;--mute:#6a5e53;--line:#ddd2c0;--deep:#b2441b;--green:#2f8f5b}
+*{box-sizing:border-box;margin:0}
+html,body{width:390px;height:470px;overflow:hidden}
+body{font-family:"PingFang SC","Noto Sans SC",system-ui,sans-serif;color:var(--ink);position:relative;
+ background:radial-gradient(70% 40% at 50% 55%,#3d281b 0,transparent 72%),linear-gradient(#1a1410,#0b0908 75%)}
+.mono{font-family:"SF Mono",Menlo,monospace}
+.notch{-webkit-mask:radial-gradient(circle at 0 7px,#0000 4px,#000 4.5px) left/51% 14px repeat-y,radial-gradient(circle at 100% 7px,#0000 4px,#000 4.5px) right/51% 14px repeat-y;mask:radial-gradient(circle at 0 7px,#0000 4px,#000 4.5px) left/51% 14px repeat-y,radial-gradient(circle at 100% 7px,#0000 4px,#000 4.5px) right/51% 14px repeat-y}
+.led{position:relative;width:max-content;font:900 40px/1 "SF Mono",Menlo,monospace;color:var(--amber);letter-spacing:.04em;text-shadow:0 0 12px #ffa42e88}
+.led::after{content:"";position:absolute;inset:-3px;background:radial-gradient(circle,#0000 1.05px,#13100d 1.65px) 0 0/3.4px 3.4px}
+.rec{display:flex;align-items:center;gap:9px;background:#f2ecdf;border-radius:9px;padding:8px 11px;margin-bottom:6px;font-size:13px;line-height:1.3}
+.rec i{flex:none;width:14px;height:14px;border-radius:50%;border:2px solid var(--green);position:relative}
+.rec i::after{content:"";position:absolute;left:3px;top:0;width:3px;height:6px;border:solid var(--green);border-width:0 2px 2px 0;transform:rotate(40deg)}
+.rec p{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rec u{flex:none;text-decoration:none;font-size:11px;font-weight:800;color:#1f6a40;background:#d9efe0;border-radius:5px;padding:2px 6px}
+.sec{margin:12px 0 7px;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--mute)}
+.sec::before,.sec::after{content:"";flex:1;border-top:1px solid var(--line)}
+.sn{font:600 9.5px/1.4 "SF Mono",Menlo,"PingFang SC",monospace;color:var(--mute);letter-spacing:.01em;white-space:nowrap}
+.bars{display:flex}.bars i{display:block;background:var(--ink)}
+.stamp{border-radius:50%;border:2.5px solid var(--deep);color:var(--deep);display:grid;place-items:center;text-align:center;font-weight:900;line-height:1.15;transform:rotate(-12deg);position:relative;mix-blend-mode:multiply;flex:none}
+.stamp::before{content:"";position:absolute;inset:3.5px;border:1px dashed var(--deep);border-radius:50%}
+.stamp small{display:block;font-size:9.5px;font-weight:700;letter-spacing:.06em;margin-top:2px}
+
+.term{margin:0 12px;height:92px;border-radius:0 0 26px 26px;background:linear-gradient(#1d1814,var(--bg));border:1px solid #2c241d;border-top:0;box-shadow:0 14px 24px -10px #000c;padding:34px 20px 0;display:flex;justify-content:space-between;align-items:center;position:relative}
+.term .st{font-size:12px;line-height:1.7;color:#9b8c7c;text-align:right}
+.term .st b{display:block;color:#6fdc9a;font-weight:700}
+.term .st b::before{content:"● ";font-size:9px}
+.ticket{position:relative;margin:-4px auto 0;width:342px;background:linear-gradient(var(--paper),#f6f1e4);padding:14px 20px 16px;border-radius:0 0 12px 12px;filter:drop-shadow(0 18px 20px rgba(0,0,0,.55))}
+.tear{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--mute);font-weight:600;margin-bottom:10px}
+.tear::before,.tear::after{content:"";flex:1;border-top:1.5px dashed var(--line)}
+h1{font-size:17px;line-height:1.35;font-weight:900;text-wrap:balance}
+.stats{margin-top:11px;display:grid;grid-template-columns:repeat(4,1fr);background:#efe8d9;border-radius:11px;padding:9px 0}
+.stats div{text-align:center;border-left:1px solid var(--line)}.stats div:first-child{border-left:0}
+.stats small{display:block;font-size:11px;color:var(--mute);font-weight:600}
+.stats b{display:block;margin-top:3px;font-size:16px;line-height:1.1;font-weight:900}
+.c1{color:#964b02}.c4{color:#3236b0}
+.foot{margin-top:12px;display:flex;align-items:flex-end;justify-content:space-between;gap:8px}
+.foot .bars{height:30px;margin-bottom:5px}
+.stamp{width:62px;height:62px;font-size:14px;margin-bottom:-2px}
+
+.ticket .stamp{position:absolute;right:16px;bottom:30px;width:50px;height:50px;font-size:11.5px}
+
+</style></head><body>
+<section class="term"><div class="led">30:00</div><div class="st">拾忆 × 专注终端<b>已完成</b></div></section>
+<main class="ticket notch">
+ <div class="tear">撕下这张成果小票</div>
+ <h1>阅读第二章《像经济学家一样思考》</h1>
+ <div class="stats"><div><small>时长</small><b class="c1">30 分</b></div><div><small>番茄</small><b>第 1 个</b></div><div><small>记录</small><b>2 条</b></div><div><small>今日累计</small><b class="c4">30 分</b></div></div>
+ <div class="sec">期间记录</div><div class="rec"><i></i><p>这个记录到任务中感觉还是可以借用快捷输入，这样可以通过拍照识别来快速输入</p><u>快记</u></div><div class="rec"><i></i><p>在快速输入中也可以增加一个追加的按钮，放在模板按钮的右侧，可以快速追加</p><u>快记</u></div>
+ <div class="foot"><div><div class="bars" data-w="150"></div><div class="sn">◆ 拾忆 · 已完成任务 · 10-16 10:46 · 3FEEC4 ◆</div></div></div>
+<div class="stamp"><div>已完成<small>10·16</small></div></div>
+</main>
+<script>
+let s=11;function r(){s=(s*9301+49297)%233280;return s/233280}
+document.querySelectorAll('.bars').forEach(b=>{const W=+b.dataset.w;let x=0;while(x<W){const k=1+Math.floor(r()*3);const g=1+Math.floor(r()*2.4);b.insertAdjacentHTML('beforeend','<i style="width:'+k+'px"></i><i style="width:'+g+'px;background:transparent"></i>');x+=k+g}});
+</script></body></html>

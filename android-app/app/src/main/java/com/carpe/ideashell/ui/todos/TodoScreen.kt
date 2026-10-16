@@ -199,6 +199,9 @@ fun TodoScreen(
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
+    // 最近完成里的任务如果有成果小票，点开先看小票（里面还能进任务详情）
+    val tickets = remember { (context.applicationContext as com.carpe.ideashell.IdeashellApp).container.tickets }
+    var ticket by remember { mutableStateOf<com.carpe.ideashell.data.focus.Celebration?>(null) }
     var addingProject by remember { mutableStateOf(false) }
     var overdueOpen by rememberSaveable { mutableStateOf(false) }
     val overview = data.overview
@@ -605,7 +608,10 @@ fun TodoScreen(
                                                 today = today,
                                                 badges = badgesOf(t, workspace),
                                                 onToggle = { if (g.done) viewModel.undoComplete(t) else viewModel.complete(t) },
-                                                onOpen = { selectedId = t.id },
+                                                onOpen = {
+                                                    val tk = if (g.done) tickets.forTask(t.id) else null
+                                                    if (tk != null) ticket = tk else selectedId = t.id
+                                                },
                                                 trailing = quickDate,
                                             )
                                         },
@@ -650,6 +656,14 @@ fun TodoScreen(
                 addingProject = false
                 viewModel.addProject(keyword, tags)
             },
+        )
+    }
+
+    ticket?.let { tk ->
+        com.carpe.ideashell.ui.components.TicketDialog(
+            c = tk,
+            onDismiss = { ticket = null },
+            onDetail = tk.taskId?.let { id -> { selectedId = id } },
         )
     }
 

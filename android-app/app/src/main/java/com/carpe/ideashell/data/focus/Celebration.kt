@@ -3,9 +3,11 @@ package com.carpe.ideashell.data.focus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.serialization.Serializable
 import kotlin.random.Random
 
-/** 完成一个番茄 / 一个任务时给用户的反馈：数据、过程中记下的内容、一句鼓励 */
+/** 完成一个番茄 / 一个任务时给用户的反馈：数据、过程中记下的内容、一句鼓励（也是成果小票的数据，会存一份在本机） */
+@Serializable
 data class Celebration(
     val kind: Kind,
     /** 任务名（没有就空） */
@@ -18,9 +20,25 @@ data class Celebration(
     val records: List<Entry>,
     val postedAt: Long = System.currentTimeMillis(),
     val id: Long = System.nanoTime(),
+    /** 番茄：这次专注的分钟数（0 = 没有） */
+    val minutes: Int = 0,
+    /** 番茄：本轮第几个（0 = 不显示） */
+    val round: Int = 0,
+    /** 番茄：是不是走完了（false = 提前结束） */
+    val completed: Boolean = true,
+    /** 任务：近 7 天在这个任务上的专注分钟数 */
+    val weekMinutes: Int = 0,
+    /** 任务：完成的任务 id（事后凭它找回小票） */
+    val taskId: String? = null,
+    /** 番茄：实际开始 / 结束时刻（事后凭它找回小票） */
+    val startMs: Long = 0L,
+    val endMs: Long = 0L,
+    /** 生成小票时已知的「今天累计专注」分钟数 */
+    val todayMin: Int = 0,
 ) {
     enum class Kind { POMODORO, TASK }
 
+    @Serializable
     data class Entry(val tag: String, val text: String)
 }
 
@@ -29,7 +47,14 @@ class CelebrationCenter {
     private val _current = MutableStateFlow<Celebration?>(null)
     val current: StateFlow<Celebration?> = _current.asStateFlow()
 
+    /** 今天累计专注的分钟数（成果小票用；由 AppContainer 接上滴答读回来的数据） */
+    var todayMinutes: () -> Int = { 0 }
+
+    /** 每条反馈发出时回调一次（用来把小票存下来） */
+    var onPost: ((Celebration) -> Unit)? = null
+
     fun post(c: Celebration) {
+        onPost?.invoke(c)
         _current.value = c
     }
 

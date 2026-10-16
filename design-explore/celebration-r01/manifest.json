@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "project": "拾忆 · 番茄/任务成果图",
+  "brief": "完成番茄或任务后生成一张可保存、可分享的成果图：做了什么、专注多久、第几个番茄、期间的记录",
+  "round": "01",
+  "nativeViewport": "390x640",
+  "candidates": [
+    {"id":"receipt","name":"专注小票","concept":"像刚打印出来的一张小票：成果是一张被撕下来的纸，而不是一条通知","typography":"标题 PingFang SC 900；数据 SF Mono 等宽 800；标签 600","palette":["#FBF6EC","#241912","#E8743B","#3A261A"],"traits":["锯齿撕边","四格数据条","圆形已完成印章","条形码与单号"],"source":"a-receipt.html"},
+    {"id":"poster","name":"成果海报","concept":"把「30 分钟」这个数字放大成画面主角，成果一眼读完","typography":"数字 PingFang SC 900 / 104px；标题 800；正文 500","palette":["#22150E","#F2793F","#F8EFE3","#B9A591"],"traits":["超大橙色数字","进度环包住数字","记录用引号 + 细线分隔","深棕底"],"source":"b-poster.html"},
+    {"id":"scrap","name":"手账贴纸","concept":"成果像贴在手账本上的一页：温暖、手作、有一点随意","typography":"圆体 Yuanti SC 900 / 25px；胶囊标签 700","palette":["#F6ECDD","#FFFDF8","#E8743B","#FBE7A6","#D9E4C4"],"traits":["微倾斜卡片","胶带","圆形日期印章","彩色便签记录"],"source":"c-scrap.html"}
+  ]
+}

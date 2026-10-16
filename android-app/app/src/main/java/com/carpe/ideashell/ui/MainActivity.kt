@@ -360,7 +360,7 @@ private fun AppRoot(
         CelebrationHost(appContainer.celebrations, Modifier.align(Alignment.TopCenter))
 
         AnimatedVisibility(
-            visible = !subpage,
+            visible = !subpage && !com.carpe.ideashell.ui.glass.NavBarOverlay.hidden,
             modifier = Modifier.align(Alignment.BottomCenter),
             enter = slideInVertically(tween(240)) { it } + fadeIn(tween(200)),
             exit = slideOutVertically(tween(180)) { it } + fadeOut(tween(140)),
@@ -372,10 +372,12 @@ private fun AppRoot(
                 fab = {
                     AddFab(
                         onClick = {
-                            // 在待办页的「任务」视图里选了今天或以后的某一天：新待办直接带上这一天；
-                            // 其他情况不预设类型：由输入内容自动判断，也可以在面板上方手动指定
-                            val picked = todo.day
-                                ?.takeIf { tab == TAB_TODOS && todo.view == TodoView.LIST && it >= java.time.LocalDate.now() }
+                            // 在待办页点「+」：直接按待办处理，排在今天；「任务」视图里选了今天以后的某一天则排在那一天。
+                            // 其他页面不预设类型：由输入内容自动判断，也可以在面板上方手动指定
+                            val today = java.time.LocalDate.now()
+                            val picked = if (tab == TAB_TODOS) {
+                                todo.day?.takeIf { todo.view == TodoView.LIST && it >= today } ?: today
+                            } else null
                             context.startActivity(QuickCaptureActivity.intent(context, picked))
                         },
                     )

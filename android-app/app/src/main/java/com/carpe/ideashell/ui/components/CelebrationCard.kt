@@ -1,7 +1,37 @@
 package com.carpe.ideashell.ui.components
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.zIndex
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -64,7 +94,7 @@ fun CelebrationHost(center: CelebrationCenter, modifier: Modifier = Modifier) {
             center.dismiss(c.id)
             return@LaunchedEffect
         }
-        delay((8_000L + c.records.size.coerceAtMost(5) * 1_500L))
+        delay(14_000L)
         center.dismiss(c.id)
     }
 
@@ -74,93 +104,157 @@ fun CelebrationHost(center: CelebrationCenter, modifier: Modifier = Modifier) {
             enter = slideInVertically(tween(280)) { -it } + fadeIn(tween(220)),
             exit = slideOutVertically(tween(220)) { -it } + fadeOut(tween(160)),
         ) {
-            last?.let { CelebrationCard(it) { center.dismiss(it.id) } }
+            last?.let { c ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    // 终端压在上层，小票从它底部的出纸口里「打」出来
+                    CelebrationCard(c, Modifier.zIndex(1f)) { center.dismiss(c.id) }
+                    CelebrationTicket(c, center.todayMinutes, Modifier.offset(y = (-18).dp)) { center.dismiss(c.id) }
+                }
+            }
         }
     }
 }
 
+private val TermTop = Color(0xFF1F1915)
+private val TermBottom = Color(0xFF0E0B09)
+private val TermEdge = Color(0xFF2C241D)
+private val LedAmber = Color(0xFFFFB14A)
+private val TermGreen = Color(0xFF6FDC9A)
+private val TermMute = Color(0xFFA39382)
+private val TermCream = Color(0xFFF3E7D7)
+
+/**
+ * 完成番茄 / 任务时顶部弹出的「专注终端」：深色小面板，琥珀色点阵屏显示时长（任务完成显示「任务完成」）。
+ * 具体的成果在下面「打印」出来的小票上。
+ */
 @Composable
-private fun CelebrationCard(c: Celebration, onDismiss: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    val shown = c.records.takeLast(5)
-    val hidden = c.records.size - shown.size
+private fun CelebrationCard(c: Celebration, modifier: Modifier = Modifier, onDismiss: () -> Unit) {
+    val isPomo = c.kind == Celebration.Kind.POMODORO
+    val led = when {
+        !isPomo -> "任务完成"
+        c.minutes in 1..99 -> "%02d:00".format(c.minutes)
+        c.minutes > 99 -> "${c.minutes}′"
+        else -> "00:00"
+    }
+    val status = if (c.completed) "已完成" else "已记录"
+    val shape = RoundedCornerShape(24.dp)
     Column(
-        modifier = Modifier
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+        modifier = modifier
+            .padding(horizontal = 14.dp, vertical = 6.dp)
             .fillMaxWidth()
-            .shadow(10.dp, RoundedCornerShape(24.dp), clip = false)
-            .clip(RoundedCornerShape(24.dp))
-            .background(scheme.surfaceContainerHighest)
+            .shadow(12.dp, shape, clip = false)
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(TermTop, TermBottom)))
+            .border(1.dp, TermEdge, shape)
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 10.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(
-                Modifier.size(30.dp).clip(CircleShape).background(Brand.Orange),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Filled.Check, contentDescription = null, tint = Brand.Brown, modifier = Modifier.size(18.dp))
-            }
-            Column(Modifier.weight(1f)) {
-                Text(c.headline, fontSize = 17.sp, fontWeight = FontWeight.Black, color = scheme.onSurface)
-                if (c.title.isNotBlank()) {
-                    Text(c.title, fontSize = 12.sp, color = scheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
-        if (c.stats.isNotEmpty()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                c.stats.joinToString("  ·  "),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = Brand.OrangeDeep,
+                "拾忆 × 专注终端",
+                modifier = Modifier.weight(1f),
+                fontSize = 11.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+                color = TermMute,
+            )
+            Box(Modifier.size(6.dp).clip(CircleShape).background(TermGreen))
+            Text(status, modifier = Modifier.padding(start = 6.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TermGreen)
+        }
+        Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
+            DotMatrixText(led, if (isPomo) 34.sp else 26.sp, scanlines = !isPomo)
+        }
+        // 出纸口
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp, start = 6.dp, end = 6.dp)
+                .height(6.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF030202))
+                .border(0.5.dp, Color(0xFF3A3028), CircleShape),
+        )
+    }
+}
+
+/**
+ * 终端下面「打印」出来的成果小票：纸从出纸口一点点推出来——先露出纸的下沿，整张慢慢往下滑，
+ * 最后停稳。上沿始终藏在终端出纸口后面。
+ */
+@Composable
+private fun CelebrationTicket(c: Celebration, todayMinutes: () -> Int, modifier: Modifier = Modifier, onDismiss: () -> Unit) {
+    val today = remember(c.id) { maxOf(todayMinutes(), c.todayMin, c.minutes) }
+    val bmp = rememberTicketBitmap(c, today)
+    // 终端先亮起来，停一下再开始出纸
+    var print by remember(c.id) { mutableStateOf(false) }
+    LaunchedEffect(c.id) {
+        delay(450)
+        print = true
+    }
+    AnimatedVisibility(
+        visible = bmp != null && print,
+        modifier = modifier,
+        enter = expandVertically(tween(1100, easing = LinearOutSlowInEasing), expandFrom = Alignment.Bottom),
+    ) {
+        bmp?.let {
+            Image(
+                it,
+                contentDescription = "成果小票",
+                contentScale = ContentScale.FillWidth,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
             )
         }
-        Text(c.message, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurface)
-        if (shown.isNotEmpty()) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(scheme.onSurface.copy(alpha = 0.06f))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    if (c.kind == Celebration.Kind.POMODORO) "这个番茄里你记录了" else "这个任务一路记下的",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = scheme.onSurfaceVariant,
-                )
-                shown.forEach { e ->
-                    // 标签是固定宽度的小胶囊、与正文第一行同高同基线，不同长度的标签（进展 / 复盘 / 专注记录 / 快记）也能对齐
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-                        Box(
-                            Modifier
-                                .width(54.dp)
-                                .height(20.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Brand.Orange.copy(alpha = 0.18f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(e.tag, fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold, color = Brand.OrangeDeep, maxLines = 1)
+    }
+}
+
+/** 点阵屏文字：先画琥珀色的字，再把「点与点之间的缝」擦掉，剩下一颗颗发光的点 */
+@Composable
+private fun DotMatrixText(text: String, size: TextUnit, scanlines: Boolean = false) {
+    Text(
+        text,
+        style = TextStyle(
+            color = LedAmber,
+            fontSize = size,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 2.sp,
+            shadow = Shadow(LedAmber.copy(alpha = 0.55f), Offset.Zero, 18f),
+        ),
+        modifier = Modifier
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithCache {
+                val step = 3.4.dp.toPx()
+                val r = 1.15.dp.toPx()
+                val gaps = Path().apply {
+                    if (scanlines) {
+                        // 汉字笔画细，点阵会把字擦碎：改成一道道细扫描线，仍有屏幕的感觉但字是实的
+                        val lineStep = 3.dp.toPx()
+                        val lineH = 0.7.dp.toPx()
+                        var y = lineStep - lineH
+                        while (y < this@drawWithCache.size.height) {
+                            addRect(androidx.compose.ui.geometry.Rect(0f, y, this@drawWithCache.size.width, y + lineH))
+                            y += lineStep
                         }
-                        Text(
-                            e.text.replace(Regex("\\s+"), " "),
-                            fontSize = 13.sp,
-                            lineHeight = 20.sp,
-                            color = scheme.onSurface,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
+                    } else {
+                        fillType = PathFillType.EvenOdd
+                        addRect(androidx.compose.ui.geometry.Rect(0f, 0f, this@drawWithCache.size.width, this@drawWithCache.size.height))
+                        var y = step / 2
+                        while (y < this@drawWithCache.size.height) {
+                            var x = step / 2
+                            while (x < this@drawWithCache.size.width) {
+                                addOval(androidx.compose.ui.geometry.Rect(x - r, y - r, x + r, y + r))
+                                x += step
+                            }
+                            y += step
+                        }
                     }
                 }
-                if (hidden > 0) {
-                    Text("还有更早的 $hidden 条", fontSize = 11.sp, color = scheme.onSurfaceVariant, modifier = Modifier.padding(start = 64.dp))
+                onDrawWithContent {
+                    drawContent()
+                    drawPath(gaps, Color.Black, blendMode = BlendMode.DstOut)
                 }
-            }
-        }
-    }
+            },
+    )
 }

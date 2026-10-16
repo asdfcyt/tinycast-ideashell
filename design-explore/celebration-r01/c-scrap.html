@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>C 手账贴纸</title>
+<style>
+:root{--paper:#f6ecdd;--ink:#3a2a1f;--mute:#6f5d4c;--orange:#e8743b;--deep:#b2441b;--sage:#d9e4c4;--butter:#fbe7a6;--rose:#f7d4c4}
+*{box-sizing:border-box;margin:0}
+html,body{width:390px;height:640px;overflow:hidden}
+body{background:radial-gradient(#d9c9b2 1.1px,transparent 1.3px) 0 0/18px 18px,var(--paper);font-family:"Yuanti SC","PingFang SC","Noto Sans SC",system-ui,sans-serif;color:var(--ink);position:relative}
+.card{position:absolute;left:30px;top:118px;width:330px;background:#fffdf8;border-radius:10px;padding:34px 24px 24px;transform:rotate(-1.8deg);box-shadow:0 1px 0 #e9dcc8,0 14px 26px -10px rgba(80,50,20,.35)}
+.tape{position:absolute;width:92px;height:26px;background:#f1d98a99;top:-12px;box-shadow:0 1px 2px #0002}
+.t1{left:20px;transform:rotate(-5deg)}.t2{right:26px;transform:rotate(4deg);background:#f4b79a99}
+.day{font-size:13px;color:var(--mute);font-weight:600}
+h1{text-wrap:balance;margin-top:6px;font-size:25px;line-height:1.3;font-weight:900;padding-right:56px}
+.line{margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}
+.line span{font-size:13px;font-weight:700;background:#f4eadb;border-radius:999px;padding:5px 12px}
+.line span:first-child{background:var(--deep);color:#fff}
+.stamp{position:absolute;right:-8px;top:-30px;width:88px;height:88px;border-radius:50%;border:3px solid var(--deep);color:var(--deep);display:grid;place-items:center;text-align:center;font-weight:900;font-size:19px;line-height:1.15;transform:rotate(14deg);background:#fffdf8d9}
+.stamp small{display:block;font-size:11px;font-weight:700;letter-spacing:.04em}
+.notes{margin-top:22px;display:grid;gap:12px}
+.note{padding:13px 15px;font-size:14.5px;line-height:1.55;border-radius:3px 3px 12px 3px;box-shadow:0 5px 8px -5px #0003}
+.note p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.n1{background:var(--butter);transform:rotate(1.4deg)}
+.n2{background:var(--sage);transform:rotate(-1deg);margin-right:14px}
+.sign{margin-top:20px;text-align:right;font-size:13px;color:var(--mute);font-weight:700}
+.sign b{color:var(--deep)}
+</style></head><body>
+<main class="card">
+  <i class="tape t1"></i><i class="tape t2"></i>
+  <div class="stamp"><div>完成<small>10 · 16</small></div></div>
+  <div class="day">周五 · 上午 10:46</div>
+  <h1>阅读第二章《像经济学家一样思考》</h1>
+  <div class="line"><span>30 分钟</span><span>第 1 个番茄</span><span>2 条记录</span></div>
+  <div class="notes">
+    <div class="note n1"><p>这个记录到任务中感觉还是可以借用快捷输入，这样可以通过拍照识别来快速输入</p></div>
+    <div class="note n2"><p>在快速输入中也可以增加一个追加的按钮，放在模板按钮的右侧，可以快速追加</p></div>
+  </div>
+  <div class="sign">今天的第 <b>1</b> 个番茄，继续保持</div>
+</main>
+</body></html>

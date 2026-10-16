@@ -120,24 +120,31 @@ class FocusNotifier(private val context: Context) {
         val isBreak = run.kind.isBreak
         val label = run.kind.label
         val taskPart = if (isBreak) label else run.title.ifBlank { "自由专注" }
+        if (Build.VERSION.SDK_INT >= 36) {
+            if (NotificationManagerCompat.from(context).areNotificationsEnabled()) nm.notify(RUNNING_ID, buildProgressStyle(run, now, hint, taskPart))
+            return
+        }
         val builder = NotificationCompat.Builder(context, RUNNING_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_shiyi)
             .setColor(ACCENT)
-            .setContentTitle(if (run.paused) "${label}已暂停" else "${label}中")
+            .setContentTitle(taskPart)
             .setContentIntent(openFocus())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .addExtras(promotedExtras())
+        val line: String
         if (run.paused) {
             val left = Math.ceil(run.remainingMs(now) / 60_000.0).toInt().coerceAtLeast(1)
-            builder.setContentText(hint ?: "$taskPart · 还剩 $left 分钟")
+            line = hint ?: "${label}已暂停 · 还剩 $left 分钟"
+            builder.setContentText(line)
                 .setShowWhen(false)
                 .addAction(0, "继续", action(ACTION_RESUME, 22))
         } else {
             // 系统自己倒计时到 endAt，不用每秒更新通知
-            builder.setContentText(hint ?: "$taskPart · ${run.plannedMin} 分钟 · ${clock(run.endAtMs)} 结束")
+            line = hint ?: "${label}中 · ${run.plannedMin} 分钟 · ${clock(run.endAtMs)} 结束"
+            builder.setContentText(line)
                 .setUsesChronometer(true)
                 .setChronometerCountDown(true)
                 .setShowWhen(true)
@@ -148,19 +155,173 @@ class FocusNotifier(private val context: Context) {
         // 休息和既没绑任务、也不是从项目发起的自由专注没有这个按钮
         if (!isBreak && (!run.taskId.isNullOrBlank() || !run.project.isNullOrBlank())) builder.addAction(recordAction())
         builder.addAction(0, if (isBreak) "跳过" else "结束", action(ACTION_FINISH, 23))
+        // 这次专注里记过东西：展开后多一张文字小票（标准 BigTextStyle，不影响实时通知胶囊）
+        val records = if (isBreak) emptyList() else run.records
+        if (records.isNotEmpty()) {
+            val ticket = buildString {
+                append(line)
+                append("\n┈┈┈ 小票 · 期间记录 ${records.size} 条 ┈┈┈")
+                records.takeLast(3).forEach { append("\n✓ ").append(it.replace(Regex("\\s+"), " ")) }
+            }
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(ticket))
+        }
         if (NotificationManagerCompat.from(context).areNotificationsEnabled()) nm.notify(RUNNING_ID, builder.build())
     }
 
     /** 「记录」：普通按钮，点开一个小输入面板（见 FocusRecordActivity）。有明确的文字，不依赖系统怎么渲染「回复」图标 */
-    private fun recordAction(): NotificationCompat.Action {
-        val pi = PendingIntent.getActivity(
-            context, 26,
-            Intent(context, com.carpe.ideashell.ui.focus.FocusRecordActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        return NotificationCompat.Action.Builder(0, "记录", pi).build()
+    private fun recordAction(): NotificationCompat.Action = NotificationCompat.Action.Builder(0, "记录", recordIntent()).build()
+
+    private fun recordIntent(): PendingIntent = PendingIntent.getActivity(
+        context, 26,
+        Intent(context, com.carpe.ideashell.ui.focus.FocusRecordActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        },
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    /**
+     * Android 16+：标准的「进度条样式」实时通知——分段圆角进度条、进度头上的图标、每条记录一个标记点，
+     * 右侧是画好的圆环大图标。全是系统标准能力，所以状态栏胶囊（实时通知）照常工作。
+     */
+    @androidx.annotation.RequiresApi(36)
+    private fun buildProgressStyle(run: FocusRun, now: Long, hint: String?, taskPart: String): android.app.Notification {
+        val isBreak = run.kind.isBreak
+        val label = run.kind.label
+        val color = if (isBreak) BREAK_GREEN else ACCENT
+        val totalSec = (run.plannedMs / 1000L).toInt().coerceAtLeast(1)
+        val doneSec = (run.elapsedMs(now) / 1000L).toInt().coerceIn(0, totalSec)
+        val records = if (isBreak) emptyList() else run.records
+
+        val useMetric = USE_METRIC_STYLE && Build.VERSION.SDK_INT >= 37
+        val progress = android.app.Notification.ProgressStyle()
+            .setStyledByProgress(true)
+            .setProgressSegments(listOf(android.app.Notification.ProgressStyle.Segment(totalSec).setColor(color)))
+            .setProgress(doneSec)
+            .setProgressTrackerIcon(android.graphics.drawable.Icon.createWithBitmap(dotIcon(color)))
+        if (records.isNotEmpty()) {
+            progress.setProgressPoints(
+                run.recordAtSec.take(records.size).map { it.coerceIn(1, (totalSec - 1).coerceAtLeast(1)) }.distinct().map { sec ->
+                    android.app.Notification.ProgressStyle.Point(sec).setColor(0xFFFFFFFF.toInt())
+                }
+            )
+        }
+
+        val plan = if (run.paused) "还剩 ${Math.ceil(run.remainingMs(now) / 60_000.0).toInt().coerceAtLeast(1)} 分钟"
+        else "${run.plannedMin} 分钟 · ${clock(run.endAtMs)} 结束"
+        val text = hint ?: if (records.isNotEmpty()) "$plan　✓ ${records.size} 条记录" else plan
+        val b = android.app.Notification.Builder(context, RUNNING_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_shiyi)
+            .setColor(color)
+            .setContentTitle(taskPart)
+            .setContentText(text)
+            .setSubText("拾忆 · " + if (run.paused) "${label}已暂停" else "${label}中")
+            .setContentIntent(openFocus())
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            // 平台 Builder 默认是普通优先级：不显式压成「低」，部分系统每分钟刷新时会把实时通知弹开
+            .setPriority(android.app.Notification.PRIORITY_LOW)
+            .setGroupAlertBehavior(android.app.Notification.GROUP_ALERT_SUMMARY)
+            .setCategory(android.app.Notification.CATEGORY_PROGRESS)
+            .addExtras(promotedExtras())
+        if (useMetric && Build.VERSION.SDK_INT >= 37) {
+            b.setStyle(metricStyle(run, now, records.size))
+            b.setSubText("拾忆 · " + (if (run.paused) "${label}已暂停" else "${label}中") + " · " + clock(run.endAtMs) + " 结束")
+        } else {
+            b.setStyle(progress).setLargeIcon(ringIcon(run, color))
+        }
+        if (run.paused) {
+            b.setShowWhen(false)
+            b.addAction(android.app.Notification.Action.Builder(0, "继续", action(ACTION_RESUME, 22)).build())
+        } else {
+            // 系统自己倒计时到 endAt，不用每秒更新通知
+            b.setUsesChronometer(true).setChronometerCountDown(true).setShowWhen(true).setWhen(run.endAtMs)
+            b.addAction(android.app.Notification.Action.Builder(0, "暂停", action(ACTION_PAUSE, 21)).build())
+        }
+        if (!isBreak && (!run.taskId.isNullOrBlank() || !run.project.isNullOrBlank())) {
+            b.addAction(android.app.Notification.Action.Builder(0, "记录", recordIntent()).build())
+        }
+        b.addAction(android.app.Notification.Action.Builder(0, if (isBreak) "跳过" else "结束", action(ACTION_FINISH, 23)).build())
+        return b.build()
+    }
+
+    /**
+     * Android 17 的「指标样式」：最多 3 个大指标——剩余时间（系统自己倒计时，暂停时冻结）、时长、记录条数；
+     * 状态栏胶囊里直接显示那个倒计时。
+     */
+    @androidx.annotation.RequiresApi(37)
+    private fun metricStyle(run: FocusRun, now: Long, recordCount: Int): android.app.Notification.MetricStyle {
+        val isBreak = run.kind.isBreak
+        val tone = if (isBreak) android.app.Notification.SEMANTIC_STYLE_SAFE else android.app.Notification.SEMANTIC_STYLE_CAUTION
+        val fmt = android.app.Notification.Metric.TimeDifference.FORMAT_CHRONOMETER
+        val remain = if (run.paused) {
+            android.app.Notification.Metric.TimeDifference.forPausedTimer(java.time.Duration.ofMillis(run.remainingMs(now)), fmt)
+        } else {
+            android.app.Notification.Metric.TimeDifference.forTimer(Instant.ofEpochMilli(run.endAtMs), fmt)
+        }
+        val style = android.app.Notification.MetricStyle()
+            .addMetric(android.app.Notification.Metric(remain, if (run.paused) "已暂停" else "还剩", tone))
+            .addMetric(android.app.Notification.Metric(android.app.Notification.Metric.FixedInt(run.plannedMin, "分钟"), "时长"))
+        if (!isBreak) {
+            style.addMetric(android.app.Notification.Metric(android.app.Notification.Metric.FixedInt(recordCount, "条"), "记录"))
+        }
+        return style.setCriticalMetric(0)
+    }
+
+    /** 进度条上的进度头：一颗带彩色描边的白色圆点 */
+    private fun dotIcon(color: Int): android.graphics.Bitmap {
+        // 系统把整张图缩放到固定大小：圆点占画布的 83%：越满，系统留的空隙显得越小
+        val size = 36
+        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        val half = size / 2f
+        p.color = color
+        c.drawCircle(half, half, 15f, p)
+        p.color = 0xFFFFFFFF.toInt()
+        c.drawCircle(half, half, 12f, p)
+        return bmp
+    }
+
+    /**
+     * 右侧大图标：倒计时圆环。深色圆底 + 一圈「还剩多少」的弧（越走越短）+ 圆心里还剩的分钟数。
+     * 每分钟随 [scheduleTick] 刷新一次；暂停时变灰并显示「暂停」。
+     */
+    private fun ringIcon(run: FocusRun, color: Int): android.graphics.Bitmap {
+        val now = System.currentTimeMillis()
+        val size = 192
+        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        val half = size / 2f
+        p.color = 0xFF1B1713.toInt()
+        c.drawCircle(half, half, half, p)
+        val stroke = 16f
+        val rect = android.graphics.RectF(stroke + 6f, stroke + 6f, size - stroke - 6f, size - stroke - 6f)
+        p.style = android.graphics.Paint.Style.STROKE
+        p.strokeWidth = stroke
+        p.strokeCap = android.graphics.Paint.Cap.ROUND
+        p.color = 0x33FFFFFF
+        c.drawArc(rect, 0f, 360f, false, p)
+        val leftFrac = (run.remainingMs(now).toFloat() / run.plannedMs.coerceAtLeast(1L)).coerceIn(0f, 1f)
+        p.color = if (run.paused) 0xFF8C8478.toInt() else color
+        if (leftFrac > 0f) c.drawArc(rect, -90f, 360f * leftFrac, false, p)
+        p.style = android.graphics.Paint.Style.FILL
+        p.textAlign = android.graphics.Paint.Align.CENTER
+        p.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        p.color = 0xFFF3E7D7.toInt()
+        if (run.paused) {
+            p.textSize = 44f
+            c.drawText("暂停", half, half + 15f, p)
+        } else {
+            val leftMin = Math.ceil(run.remainingMs(now) / 60_000.0).toInt().coerceAtLeast(0)
+            p.textSize = if (leftMin >= 100) 52f else 64f
+            c.drawText(leftMin.toString(), half, half + 14f, p)
+            p.textSize = 26f
+            p.typeface = android.graphics.Typeface.DEFAULT
+            p.color = 0xFFA39382.toInt()
+            c.drawText("分钟", half, half + 48f, p)
+        }
+        return bmp
     }
 
     /** 休息走完的提醒 */
@@ -285,5 +446,8 @@ class FocusNotifier(private val context: Context) {
         private const val DONE_ID = NotificationIds.FOCUS_DONE
         private const val RECORD_ID = NotificationIds.FOCUS_RECORD
         private const val ACCENT = 0xFFE0703F.toInt()
+        /** Android 17 起用「指标样式」（大号倒计时）；false 则用进度条 + 倒计时圆环 */
+        private const val USE_METRIC_STYLE = false
+        private const val BREAK_GREEN = 0xFF3FA66B.toInt()
     }
 }

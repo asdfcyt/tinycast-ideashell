@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "project": "拾忆 · 成果小票（纯小票版）",
+  "brief": "成果图只有小票本身；终端是完成时顶部弹出的实时通知，不放进图里。标题缩小、无英文小字、记录单行截断、尽量压低高度",
+  "round": "03",
+  "nativeViewport": "390x392",
+  "candidates": [
+    {"id":"classic","name":"T1 经典竖票","concept":"最紧凑的一张票：品牌行、标题、四格数据、记录、条形码","typography":"标题 PingFang SC 900 / 17px；数据 900 / 16px","palette":["#FCF9F1","#1F1610","#964B02","#B2441B"],"traits":["四格数据条","单行记录","两侧锯齿","底部合并信息行"],"source":"t1.html"},
+    {"id":"big","name":"T2 大数字票","concept":"把「30 分钟」做成票面主角，标题和三项数据挨着它","typography":"数字 SF Mono 900 / 54px；标题 900 / 16px","palette":["#FCF9F1","#1F1610","#B25A05","#B2441B"],"traits":["橙色大数字","数据一行文字","虚线分隔","两侧锯齿"],"source":"t2.html"},
+    {"id":"stub","name":"T3 票根分区","concept":"虚线撕口把票分成内容区和票根，条形码和印章在票根上","typography":"标题 900 / 17px；数据 900 / 15px","palette":["#FCF9F1","#1F1610","#964B02","#3236B0"],"traits":["四个独立小块","两侧圆形撕口","票根含条形码和印章","圆角整张票"],"source":"t3.html"}
+  ]
+}

@@ -28,6 +28,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,6 +58,11 @@ import com.carpe.ideashell.ui.theme.Brand
 
 /** 底部导航占用的高度（含系统导航栏），各页面据此给列表留出底部空白 */
 val LocalBottomBarPadding = compositionLocalOf { 24.dp }
+
+/** 全屏面板（比如日历里点一天弹出的任务面板）打开时要盖住底部导航：用它临时把导航收起来 */
+object NavBarOverlay {
+    var hidden: Boolean by androidx.compose.runtime.mutableStateOf(false)
+}
 
 @Composable
 fun isDarkSurface(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f

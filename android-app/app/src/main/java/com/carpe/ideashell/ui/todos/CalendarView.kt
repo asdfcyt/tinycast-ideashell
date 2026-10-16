@@ -2,6 +2,8 @@ package com.carpe.ideashell.ui.todos
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.Orientation
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -105,15 +108,12 @@ internal fun chipColor(task: DidaTask): Color =
 
 private fun dayOf(task: DidaTask, zone: ZoneId): LocalDate? {
     val planned = task.date?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-    return if (task.done) {
-        task.completedAt?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() } ?: planned
-    } else {
-        planned
-    }
+    // 和滴答一致：已完成的任务仍然画在计划的那天（改期到 17 号、16 号提前点完成，它还在 17 号）；没有计划日期的才按完成那天
+    return planned ?: if (task.done) task.completedAt?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() } else null
 }
 
 /**
- * 日历上每天的任务：概览里的未完成任务为准，再补上日历自己读到的更远日期的；已完成的画在完成那天。
+ * 日历上每天的任务：概览里的未完成任务为准，再补上日历自己读到的更远日期的；已完成的仍画在计划那天（没有计划日期的才画在完成那天）。
  * 同一天里：未完成的在前（按时间、优先级），已完成的在后。
  */
 internal fun tasksByDay(overview: DidaOverview?, ranged: Map<String, DidaTask>): Map<LocalDate, List<DidaTask>> {
@@ -174,15 +174,14 @@ internal fun CalendarPage(
         }
     }
     val hoverNow by rememberUpdatedState(hover)
+    // 点某一天（或「+N」）浮出的当天任务面板：面板里的任务也能长按拖到别的日期
     var sheetDay by remember { mutableStateOf<LocalDate?>(null) }
-    // 点「+N」浮出的「当天全部任务」小卡片：卡片里的任务也能长按拖到别的日期
-    var expandedDay by remember { mutableStateOf<LocalDate?>(null) }
 
     fun endDrag(drop: Boolean) {
         val task = dragging
         val target = hoverNow
         dragging = null
-        expandedDay = null
+        sheetDay = null
         if (!drop || task == null || target == null) return
         when {
             target < today -> viewModel.notice("不能把任务安排到过去")
@@ -202,7 +201,7 @@ internal fun CalendarPage(
         onMove = { dragPos += it },
         onEnd = { endDrag(true) },
         onCancel = { endDrag(false) },
-        onMore = { expandedDay = it },
+        onMore = { sheetDay = it },
     )
 
     Box(
@@ -300,24 +299,24 @@ internal fun CalendarPage(
             }
         }
 
-        // 点「+N」：当天全部任务浮在日历下方；拖起一条时卡片透明（不挡住格子，但手势还在它上面继续），松手后收起
-        expandedDay?.let { day ->
-            val list = byDay[day].orEmpty()
-            if (list.isEmpty()) {
-                expandedDay = null
-            } else {
-                ExpandedDayCard(
-                    day = day,
-                    tasks = list,
-                    hidden = dragging != null,
-                    drag = chipDrag,
-                    onOpenTask = { expandedDay = null; onOpenTask(it) },
-                    onClose = { expandedDay = null },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(start = 12.dp, end = 12.dp, bottom = LocalBottomBarPadding.current + 12.dp),
-                )
-            }
+        // 点某一天：当天任务面板浮在日历下方；拖起一条时面板透明（不挡住格子，但手势还在它上面继续），松手后收起
+        sheetDay?.let { day ->
+            DaySheet(
+                day = day,
+                tasks = byDay[day].orEmpty(),
+                today = today,
+                overview = overview,
+                workspace = workspace,
+                canOpenTimeline = day >= today.minusDays(PAST_DAYS.toLong()) && day <= today.plusDays(6),
+                hidden = dragging != null,
+                drag = chipDrag,
+                onDismiss = { sheetDay = null },
+                onToggle = { t -> if (t.done) viewModel.undoComplete(t) else viewModel.complete(t) },
+                onOpenTask = onOpenTask,
+                onAdd = { sheetDay = null; onAddOnDay(day) },
+                onTimeline = { sheetDay = null; onOpenDay(day) },
+                modifier = Modifier.matchParentSize(),
+            )
         }
 
         // 被拖着走的任务：浮在手指上方一点，手指下面的那天会高亮
@@ -348,22 +347,6 @@ internal fun CalendarPage(
                 )
             }
         }
-    }
-
-    sheetDay?.let { day ->
-        DaySheet(
-            day = day,
-            tasks = byDay[day].orEmpty(),
-            today = today,
-            overview = overview,
-            workspace = workspace,
-            canOpenTimeline = day >= today.minusDays(PAST_DAYS.toLong()) && day <= today.plusDays(6),
-            onDismiss = { sheetDay = null },
-            onToggle = { t -> if (t.done) viewModel.undoComplete(t) else viewModel.complete(t) },
-            onOpenTask = onOpenTask,
-            onAdd = { sheetDay = null; onAddOnDay(day) },
-            onTimeline = { sheetDay = null; onOpenDay(day) },
-        )
     }
 }
 
@@ -643,107 +626,6 @@ private fun TaskChip(task: DidaTask, fade: Float, drag: ChipDrag) {
     )
 }
 
-// ───────────────────────── 当天全部任务（点「+N」展开） ─────────────────────────
-
-@Composable
-private fun ExpandedDayCard(
-    day: LocalDate,
-    tasks: List<DidaTask>,
-    hidden: Boolean,
-    drag: ChipDrag,
-    onOpenTask: (DidaTask) -> Unit,
-    onClose: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val scheme = MaterialTheme.colorScheme
-    Column(
-        modifier
-            .fillMaxWidth()
-            // 拖着走的时候卡片透明，露出下面的格子；仍在组合里，所以手势不会中断
-            .graphicsLayer { alpha = if (hidden) 0f else 1f }
-            .shadow(12.dp, RoundedCornerShape(24.dp))
-            .clip(RoundedCornerShape(24.dp))
-            .background(scheme.surface)
-            .padding(top = 12.dp, bottom = 8.dp),
-    ) {
-        Row(Modifier.padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "${day.monthValue}月${day.dayOfMonth}日 · ${tasks.size} 项",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.ExtraBold,
-                )
-                Text("长按任务，拖到上面的日期改期", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
-            }
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onClose),
-                contentAlignment = Alignment.Center,
-            ) { Text("✕", fontSize = 15.sp, color = scheme.onSurfaceVariant) }
-        }
-        Column(
-            Modifier
-                .heightIn(max = 240.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            tasks.forEach { task -> ExpandedTaskRow(task, drag, onOpenTask) }
-        }
-    }
-}
-
-@Composable
-private fun ExpandedTaskRow(task: DidaTask, drag: ChipDrag, onOpen: (DidaTask) -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    val origin = remember { floatArrayOf(0f, 0f) }
-    val latest = rememberUpdatedState(drag)
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(42.dp)
-            .onGloballyPositioned {
-                val p = it.positionInRoot()
-                origin[0] = p.x
-                origin[1] = p.y
-            }
-            .graphicsLayer { alpha = if (drag.draggingId == task.id) 0.25f else 1f }
-            .clip(RoundedCornerShape(14.dp))
-            .background(scheme.surfaceContainerHigh)
-            .clickable { onOpen(task) }
-            .then(
-                if (task.done) Modifier else Modifier.pointerInput(task.id, task.date) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { local -> latest.value.onStart(task, Offset(origin[0] + local.x, origin[1] + local.y)) },
-                        onDrag = { change, amount ->
-                            change.consume()
-                            latest.value.onMove(amount)
-                        },
-                        onDragEnd = { latest.value.onEnd() },
-                        onDragCancel = { latest.value.onCancel() },
-                    )
-                },
-            )
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(chipColor(task)))
-        Text(
-            TodoMeta.cleanTitle(task.title),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textDecoration = if (task.done) TextDecoration.LineThrough else null,
-            color = scheme.onSurface.copy(alpha = if (task.done) 0.5f else 1f),
-            modifier = Modifier.padding(start = 10.dp).weight(1f),
-        )
-        task.time?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant) }
-    }
-}
-
 // ───────────────────────── 无日期托盘（拖拽的起点） ─────────────────────────
 
 @Composable
@@ -856,7 +738,7 @@ private fun UndatedChip(
 
 // ───────────────────────── 点某一天：当天的任务 ─────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** 不用 ModalBottomSheet（它是另一个窗口，手指拖不到下面的日期格子），而是浮在日历上的一块面板 */
 @Composable
 private fun DaySheet(
     day: LocalDate,
@@ -865,67 +747,103 @@ private fun DaySheet(
     overview: DidaOverview?,
     workspace: Workspace,
     canOpenTimeline: Boolean,
+    hidden: Boolean,
+    drag: ChipDrag,
     onDismiss: () -> Unit,
     onToggle: (DidaTask) -> Unit,
     onOpenTask: (DidaTask) -> Unit,
     onAdd: () -> Unit,
     onTimeline: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
     val info = remember(day) { DayInfo.of(day) }
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = scheme.surface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+    val maxBody = (LocalConfiguration.current.screenHeightDp * 0.5f).dp
+    androidx.activity.compose.BackHandler(onBack = onDismiss)
+    // 面板像系统底部抽屉一样盖住底部导航：打开时收起导航，关掉（或离开）时放回来
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        com.carpe.ideashell.ui.glass.NavBarOverlay.hidden = true
+        onDispose { com.carpe.ideashell.ui.glass.NavBarOverlay.hidden = false }
+    }
+    Box(
+        modifier
+            // 拖着走的时候整块透明，露出下面的格子；仍在组合里，所以手势不会中断
+            .graphicsLayer { alpha = if (hidden) 0f else 1f }
+            .background(Color.Black.copy(alpha = 0.32f))
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+        contentAlignment = Alignment.BottomCenter,
     ) {
         Column(
             Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp)
-                .padding(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                .background(scheme.surface)
+                .navigationBarsPadding()
+                // 吃掉面板上的点击，免得穿到下面的遮罩把面板关掉
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {}),
         ) {
-            Column(Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
-                Text(
-                    "${day.monthValue}月${day.dayOfMonth}日 周${WEEK_HEAD[day.dayOfWeek.value - 1]}" +
-                        if (day == today) " · 今天" else "",
-                    style = MaterialTheme.typography.titleLarge,
-                )
-                Text(
-                    info.detail() + if (tasks.isNotEmpty()) " · ${tasks.size} 项" else "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = scheme.onSurfaceVariant,
-                )
-            }
-            if (tasks.isEmpty()) {
-                Text(
-                    "这天没有安排",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-                )
-            } else {
-                tasks.forEach { t ->
-                    TaskRow(
-                        task = t,
-                        tone = when {
-                            t.done -> Tone.NORMAL
-                            day < today -> Tone.OVERDUE
-                            day == today -> Tone.TODAY
-                            else -> Tone.NORMAL
-                        },
-                        done = t.done,
-                        project = overview?.let { listNameOf(it, t.projectId) }.orEmpty(),
-                        today = today,
-                        badges = badgesOf(t, workspace),
-                        onToggle = { onToggle(t) },
-                        onOpen = { onOpenTask(t) },
-                        showWhen = true,
+            Column(
+                Modifier
+                    .heightIn(max = maxBody)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 18.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
+                    Text(
+                        "${day.monthValue}月${day.dayOfMonth}日 周${WEEK_HEAD[day.dayOfWeek.value - 1]}" +
+                            if (day == today) " · 今天" else "",
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                    Text(
+                        info.detail() + if (tasks.isNotEmpty()) " · ${tasks.size} 项" else "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = scheme.onSurfaceVariant,
                     )
                 }
+                if (tasks.isEmpty()) {
+                    Text(
+                        "这天没有安排",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                    )
+                } else {
+                    tasks.forEach { t ->
+                        DraggableTaskRow(task = t, drag = drag) {
+                            TaskRow(
+                                task = t,
+                                tone = when {
+                                    t.done -> Tone.NORMAL
+                                    day < today -> Tone.OVERDUE
+                                    day == today -> Tone.TODAY
+                                    else -> Tone.NORMAL
+                                },
+                                done = t.done,
+                                project = overview?.let { listNameOf(it, t.projectId) }.orEmpty(),
+                                today = today,
+                                badges = badgesOf(t, workspace),
+                                onToggle = { onToggle(t) },
+                                onOpen = { onOpenTask(t) },
+                                showWhen = true,
+                            )
+                        }
+                    }
+                    if (tasks.any { !it.done }) {
+                        Text(
+                            "长按任务，拖到上面的日期就能改期",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+                        )
+                    }
+                }
             }
-            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 if (canOpenTimeline) {
                     OutlinedButton(onClick = onTimeline, modifier = Modifier.weight(1f)) { Text("时间轴查看") }
                 }
@@ -935,4 +853,33 @@ private fun DaySheet(
             }
         }
     }
+}
+
+/** 给一行任务套上「长按拖走」：没完成的才能拖；拖起时这一行淡出，手指上跟着一颗小胶囊 */
+@Composable
+private fun DraggableTaskRow(task: DidaTask, drag: ChipDrag, content: @Composable () -> Unit) {
+    val origin = remember { floatArrayOf(0f, 0f) }
+    val latest = rememberUpdatedState(drag)
+    Box(
+        Modifier
+            .onGloballyPositioned {
+                val p = it.positionInRoot()
+                origin[0] = p.x
+                origin[1] = p.y
+            }
+            .graphicsLayer { alpha = if (drag.draggingId == task.id) 0.25f else 1f }
+            .then(
+                if (task.done) Modifier else Modifier.pointerInput(task.id, task.date) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { local -> latest.value.onStart(task, Offset(origin[0] + local.x, origin[1] + local.y)) },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            latest.value.onMove(amount)
+                        },
+                        onDragEnd = { latest.value.onEnd() },
+                        onDragCancel = { latest.value.onCancel() },
+                    )
+                },
+            ),
+    ) { content() }
 }

@@ -51,6 +51,8 @@ data class FocusRun(
     val project: String? = null,
     /** 这一次专注中通过通知「记录」写下的内容（结束时拿来做反馈） */
     val records: List<String> = emptyList(),
+    /** 与 [records] 一一对应：每条记录写下时已专注了多少秒（实时通知进度条上的标记点位置） */
+    val recordAtSec: List<Int> = emptyList(),
 ) {
     val paused: Boolean get() = pausedAtMs != null
     val plannedMs: Long get() = plannedMin * 60_000L
@@ -195,7 +197,10 @@ class FocusRepository(
     fun addRecord(text: String) {
         val s = _session.value ?: return
         if (s.kind.isBreak || text.isBlank()) return
-        setSession(s.copy(records = s.records + text.trim()))
+        setSession(s.copy(
+            records = s.records + text.trim(),
+            recordAtSec = s.recordAtSec + (s.elapsedMs(System.currentTimeMillis()) / 1000L).toInt(),
+        ))
     }
 
     /**
@@ -231,7 +236,8 @@ class FocusRepository(
             val captured = runCatching { capturedBetween(s.startMs, System.currentTimeMillis()) }.getOrDefault(emptyList())
             val entries = s.records.map { Celebration.Entry("专注记录", it) } + captured.map { Celebration.Entry("快记", it) }
             notifier.showDone(s.title, minutes, completed, synced, next, next?.let { lastMinutes(it) } ?: 0, entries.map { it.text })
-            if (completed || entries.isNotEmpty()) {
+            // 提前结束并记录也出小票（没走完、没有记录也一样）
+            run {
                 val stats = buildList {
                     add("$minutes 分钟")
                     if (completed) add(if (_cycle.value > 0) "本轮第 ${_cycle.value} 个番茄" else "番茄完成")
@@ -245,6 +251,12 @@ class FocusRepository(
                         message = Cheer.pomodoro(entries.isNotEmpty(), completed),
                         stats = stats,
                         records = entries,
+                        minutes = minutes,
+                        round = if (completed && _cycle.value > 0) _cycle.value else 0,
+                        completed = completed,
+                        taskId = s.taskId,
+                        startMs = s.startMs,
+                        endMs = s.startMs + elapsed,
                     ),
                 )
             }
@@ -272,7 +284,8 @@ class FocusRepository(
     /** 每分钟的心跳：约好下一次（通知圆环与小部件的进度弧靠它前进） */
     fun tick() {
         val s = _session.value ?: return
-        notifier.scheduleTick(s)
+        // 每分钟重发一次常驻通知：倒计时圆环、进度条跟着走（同时排下一次）
+        notifier.onSessionChanged(s)
     }
 
     /** 一个番茄走完：计数 +1，该短休息还是长休息 */

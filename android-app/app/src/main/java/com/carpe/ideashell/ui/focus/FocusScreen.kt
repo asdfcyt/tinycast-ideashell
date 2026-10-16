@@ -137,6 +137,10 @@ fun FocusScreen(
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
 
+    // 最近专注里的记录如果有成果小票，点一下就能看
+    val tickets = remember { (context.applicationContext as com.carpe.ideashell.IdeashellApp).container.tickets }
+    var ticket by remember { mutableStateOf<com.carpe.ideashell.data.focus.Celebration?>(null) }
+
     var pickTask by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -249,13 +253,19 @@ fun FocusScreen(
                 )
 
                 val recent = remember(summary) { summary?.sessions.orEmpty().asReversed().take(RECENT_LIMIT) }
-                if (recent.isNotEmpty()) RecentCard(recent)
+                if (recent.isNotEmpty()) RecentCard(
+                    sessions = recent,
+                    ticketOf = { s -> tickets.forFocus(s.startMs, s.taskId) },
+                    onOpenTicket = { ticket = it },
+                )
 
                 Spacer(Modifier.height(LocalBottomBarPadding.current))
             }
             }
         }
     }
+
+    ticket?.let { com.carpe.ideashell.ui.components.TicketDialog(it, onDismiss = { ticket = null }) }
 
     if (pickTask) {
         TaskPicker(
@@ -841,7 +851,11 @@ private fun TodayCard(connected: Boolean, todayMin: Int?, todayPomos: Int, weekM
 }
 
 @Composable
-private fun RecentCard(sessions: List<FocusSession>) {
+private fun RecentCard(
+    sessions: List<FocusSession>,
+    ticketOf: (FocusSession) -> com.carpe.ideashell.data.focus.Celebration?,
+    onOpenTicket: (com.carpe.ideashell.data.focus.Celebration) -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
     Text(
         "最近专注",
@@ -852,8 +866,13 @@ private fun RecentCard(sessions: List<FocusSession>) {
         Column {
             sessions.forEachIndexed { i, s ->
                 if (i > 0) RowDivider()
+                val tk = ticketOf(s)
                 Row(
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 18.dp, vertical = 8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (tk != null) Modifier.clickable { onOpenTicket(tk) } else Modifier)
+                        .heightIn(min = 56.dp)
+                        .padding(horizontal = 18.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {

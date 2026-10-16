@@ -1,0 +1,20 @@
+[
+  {
+    "file": "page.png",
+    "state": null,
+    "size": "390x640",
+    "zoom": 1,
+    "animationWaitMs": 0,
+    "issues": [],
+    "lint": [
+      {
+        "rule": "headingSpacing",
+        "label": "标题离上文比离下文还近",
+        "count": 1,
+        "examples": [
+          "h1「阅读第二章《像经济学家一样思考》」（上 6px，下 356px）"
+        ]
+      }
+    ]
+  }
+]

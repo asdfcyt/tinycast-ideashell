@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "com.carpe.ideashell"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.carpe.ideashell"

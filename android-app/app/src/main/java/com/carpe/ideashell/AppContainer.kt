@@ -185,7 +185,15 @@ class AppContainer(context: Context) {
     )
 
     /** 完成番茄 / 任务时的反馈（界面根布局显示） */
-    val celebrations = com.carpe.ideashell.data.focus.CelebrationCenter()
+    /** 成果小票：每次完成番茄 / 任务的数据留一份在本机，事后点「最近完成」/「最近专注」还能看 */
+    val tickets = com.carpe.ideashell.data.focus.TicketStore(java.io.File(context.filesDir, "tickets.json"))
+
+    val celebrations = com.carpe.ideashell.data.focus.CelebrationCenter().also { center ->
+        center.todayMinutes = {
+            daySummary.todayFocus.value?.takeIf { it.first == java.time.LocalDate.now() }?.second ?: 0
+        }
+        center.onPost = { c -> tickets.add(c.copy(todayMin = maxOf(center.todayMinutes(), c.minutes))) }
+    }
 
     /** 专注：应用内倒计时，结束后写进滴答（create_focus），并把滴答里的专注读回来 */
     val focus = FocusRepository(
@@ -268,6 +276,8 @@ class AppContainer(context: Context) {
                     message = com.carpe.ideashell.data.focus.Cheer.task(records.isNotEmpty()),
                     stats = stats,
                     records = records,
+                    weekMinutes = focusMin,
+                    taskId = task.id,
                 ),
             )
         }

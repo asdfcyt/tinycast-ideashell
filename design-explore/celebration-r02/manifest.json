@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "project": "拾忆 · 专注小票（紧凑版）",
+  "brief": "完成番茄/任务后的成果小票：标题缩小自适应换行，去掉英文小字，记录单行截断，把占用的竖向空间压下来",
+  "round": "02",
+  "nativeViewport": "390x470",
+  "candidates": [
+    {"id":"slim","name":"V1 薄终端","concept":"终端压成一条薄带，点阵时间放在左边，标题单行，整体就是一条短小票","typography":"标题 PingFang SC 900 / 17px；数据 900 / 16px；点阵 SF Mono 40px","palette":["#FCF9F1","#1F1610","#FFB14A","#0E0B09"],"traits":["终端薄带 92px","标题单行","四格数据条","底部条形码与合并信息行"],"source":"v1.html"},
+    {"id":"lcd","name":"V2 票头点阵牌","concept":"去掉独立终端，点阵牌直接嵌在票头左侧，标题挨着它，最省高度","typography":"标题 900 / 16px；点阵 SF Mono 32px","palette":["#FCF9F1","#1F1610","#FFB14A","#B2441B"],"traits":["票头左点阵牌右标题","数据压成一行","圆角整张票","条形码加印章同一行"],"source":"v2.html","nativeViewport":"390x440"},
+    {"id":"band","name":"V3 黑带加票根","concept":"票头是一条黑色点阵带，下面是内容，虚线撕口把条形码票根单独分出来","typography":"标题 900 / 16px；点阵 SF Mono 30px","palette":["#FCF9F1","#1F1610","#FFB14A","#B2441B"],"traits":["黑色点阵票头带","四个独立小块数据","两侧圆形撕口虚线","票根含条形码与印章"],"source":"v3.html","nativeViewport":"390x430"}
+  ]
+}
