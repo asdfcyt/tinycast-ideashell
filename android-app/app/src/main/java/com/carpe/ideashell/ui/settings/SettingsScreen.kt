@@ -579,7 +579,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                     SettingsItem(
                         icon = Icons.Filled.Create,
                         title = "摘录后写想法",
-                        summary = if (settings.excerptWriteNote) "开启 · 摘录后从底部升起抽屉，写下想法、确认来源和标签；同一个 App 里来源和标签自动延续，连续摘录写进同一篇笔记"
+                        summary = if (settings.excerptWriteNote) "开启 · 摘录后从底部升起抽屉，写下想法、填书名或文章标题和标签；同一个 App 里标题和标签自动延续，连续摘录写进同一篇笔记"
                         else "关闭 · 不弹抽屉，摘录直接存进笔记（原文 + 来源），同样追加进同一篇",
                         onClick = { container.settings.setExcerptWriteNote(!settings.excerptWriteNote) },
                         trailing = {

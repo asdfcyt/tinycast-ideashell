@@ -65,27 +65,193 @@ class ExcerptService : AccessibilityService() {
     private var shownActive = false
 
     /** 最近一次选中的内容（选区事件或扫描得到）；null 表示没有 */
-    private var pending: Selection? = null
+    @Volatile private var pending: Selection? = null
     private val clearPending = Runnable { pending = null; refreshStyle() }
 
     /** 屏幕上是否有选区菜单（带「复制」按钮）：App 不上报选区事件时，用它判断「有选中的文字」 */
-    private var menuUp = false
+    @Volatile private var menuUp = false
     private var menuCheckQueued = false
+    private var menuScanning = false
+    private var tapBusy = false
+
+    /** 上一次扫描「复制」菜单结束的时间：没菜单时扫描不能一个接一个（界面一直在刷新的 App 会被我们拖慢） */
+    private var lastScanEnd = 0L
+
+    /** 最近一次找到的「复制」按钮：菜单在时用它做廉价的复查，点胶囊时直接点它，不用再遍历界面树 */
+    @Volatile private var copyNode: AccessibilityNodeInfo? = null
+
+    /** 选中后在后台提前识别书名 / 文章标题：点胶囊时已经备好，不用现扫 */
+    private var titleJob: java.util.concurrent.Future<String?>? = null
+
     private val menuCheck: Runnable = object : Runnable {
       override fun run() {
         menuCheckQueued = false
-        if (sheetOpen) return
-        val up = hasCopyMenu()
-        if (up != menuUp) {
-            menuUp = up
-            refreshStyle()
-        }
-        // 菜单在时每半秒复查一次：有的 App 菜单消失时不一定发窗口事件
-        if (menuUp && capsule != null) {
+        if (sheetOpen || capsule == null) return
+        // 找「复制」要跨进程等别的 App 响应，放在后台线程；上一次还没扫完就等一会儿
+        if (menuScanning) {
             menuCheckQueued = true
-            main.postDelayed(this, 500)
+            main.postDelayed(this, 150)
+            return
+        }
+        menuScanning = true
+        scanExec.execute {
+            // 菜单已经在：只确认缓存的那个「复制」按钮还在（一次调用）；不在了或没菜单才遍历
+            val up = runCatching { menuStillUp() || hasCopyMenu() }.getOrDefault(false)
+            main.post {
+                menuScanning = false
+                lastScanEnd = android.os.SystemClock.uptimeMillis()
+                if (capsule == null) return@post
+                if (up != menuUp) {
+                    menuUp = up
+                    refreshStyle()
+                }
+                // 菜单在时每 0.4 秒复查一次（很便宜）：有的 App 菜单消失时不一定发窗口事件
+                if (menuUp && !menuCheckQueued) {
+                    menuCheckQueued = true
+                    main.postDelayed(this, 400)
+                }
+            }
         }
       }
+    }
+
+    /** 安排一次菜单检查：菜单已在 → 很快复查；没菜单 → 和上一次扫描隔开一点 */
+    private fun queueMenuCheck() {
+        if (menuCheckQueued || capsule == null) return
+        menuCheckQueued = true
+        val gap = if (menuUp) 120L
+        else maxOf(120L, 320L - (android.os.SystemClock.uptimeMillis() - lastScanEnd))
+        main.postDelayed(menuCheck, gap)
+    }
+
+    /** 缓存的「复制」按钮是否还在屏幕上 */
+    private fun menuStillUp(): Boolean {
+        val n = copyNode ?: return false
+        val ok = runCatching { n.refresh() && n.isVisibleToUser }.getOrDefault(false)
+        if (!ok) copyNode = null
+        return ok
+    }
+
+    // ───────────── 财新等「复制不写剪贴板、认不出选区工具条」的 App：走它的「分享」 ─────────────
+    // 财新工具条里的「复制」不会更新系统剪贴板，界面又一直在刷新（滚动广告、热点条），事件一多、扫界面树就卡。
+    // 但它的「分享」能把选中的文字交给系统分享菜单。所以：
+    //   用户点「分享」（或点胶囊，由我们替他点「⋮ → 分享」）→ 系统分享菜单弹出 → 从分享菜单的内容预览里读出文字
+    //   → 返回键关掉分享菜单 → 弹摘录抽屉。
+    // 只在这一次点击之后读一次界面（后台线程），平时不做任何事件驱动的扫描。
+
+    /** 最近一个前台 App 的包名（取自无障碍事件，不遍历界面） */
+    @Volatile private var lastPkg: String? = null
+    /** 三条互不排队的后台线程：扫描菜单 / 处理点击 / 识别标题（点胶囊时不能排在一次慢扫描后面） */
+    private val scanExec = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val tapExec = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val titleExec = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var shareBusy = false
+
+    /** 点胶囊（财新这类 App）：有没提交的想法就重开抽屉；否则替用户点「⋮ → 分享」，再从分享菜单里取文字 */
+    private fun onClipboardAppTap(pkg: String) {
+        val draft = ExcerptDrafts.alive()
+        if (draft != null) {
+            runCatching {
+                startActivity(
+                    ExcerptSheetActivity.intent(this, draft.pkg, draft.appName, draft.docTitle, draft.quote)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
+                )
+            }
+            return
+        }
+        if (shareBusy) return
+        shareBusy = true
+        tapExec.execute {
+            val clicked = runCatching {
+                clickLabel("分享") || (clickLabel("更多选项") && run { Thread.sleep(450); clickLabel("分享") })
+            }.getOrDefault(false)
+            if (clicked) {
+                captureFromShareSheet(pkg)
+            } else {
+                main.post { shareBusy = false; toast("先选中文字，再点这里") }
+            }
+        }
+    }
+
+    /** 用户自己点了「分享」：同样从弹出的分享菜单里取文字 */
+    private fun onShareClicked(pkg: String) {
+        if (shareBusy) return
+        shareBusy = true
+        tapExec.execute { captureFromShareSheet(pkg) }
+    }
+
+    /** （后台线程）等分享菜单出来，读出里面的文字，关掉分享菜单，回主线程弹抽屉 */
+    private fun captureFromShareSheet(pkg: String) {
+        var text: String? = null
+        try {
+            val deadline = android.os.SystemClock.uptimeMillis() + 3000
+            var last: String? = null
+            while (text == null && android.os.SystemClock.uptimeMillis() < deadline) {
+                Thread.sleep(80)
+                val t = runCatching { readShareSheetText(pkg) }.getOrNull()
+                // 长文字一读到就用（分享菜单里的 App 名都很短）；短的要连续两次读到一样，防止拿到半截
+                if (t != null && (t.length >= 12 || t == last)) text = t
+                last = t
+            }
+            // 读到就马上关掉分享菜单、弹抽屉，不再多等
+            if (text != null) performGlobalAction(GLOBAL_ACTION_BACK)
+        } finally {
+            val result = text
+            main.post {
+                shareBusy = false
+                if (result != null) {
+                    tapDocTitle = null
+                    saveExcerpt(Selection(result.take(2000), pkg))
+                } else {
+                    toast("没读到分享的文字")
+                }
+            }
+        }
+    }
+
+    /** 在别的窗口（分享菜单）里找最长的一段文字，当作分享内容（分享内容的预览，比应用名之类的标签都长得多） */
+    private fun readShareSheetText(pkg: String): String? {
+        var best: String? = null
+        for (w in windows.orEmpty()) {
+            if (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue
+            val root = w.root ?: continue
+            val p = root.packageName?.toString() ?: continue
+            if (p == pkg || p == packageName || p.contains("systemui", ignoreCase = true)) continue
+            val budget = Budget()
+            fun walk(n: AccessibilityNodeInfo, depth: Int) {
+                if (depth > 30 || budget.spent()) return
+                val t = n.text?.toString()?.trim()
+                if (t != null && t.length >= 4 && t.length > (best?.length ?: 0)) best = t
+                for (i in 0 until n.childCount) n.getChild(i)?.let { walk(it, depth + 1) }
+            }
+            walk(root, 0)
+        }
+        return best
+    }
+
+    /** 点一下界面里标签恰好是 [label] 的按钮（往上找几层能点的）；找不到返回 false */
+    private fun clickLabel(label: String): Boolean {
+        val roots = buildList {
+            rootInActiveWindow?.let { add(it) }
+            windows?.forEach { w ->
+                if (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) return@forEach
+                w.root?.takeIf { it.packageName != packageName }?.let { add(it) }
+            }
+        }
+        for (root in roots) {
+            for (hit in root.findAccessibilityNodeInfosByText(label)) {
+                val t = (hit.text ?: hit.contentDescription)?.toString()?.trim()
+                if (t != label || !hit.isVisibleToUser) continue
+                var n: AccessibilityNodeInfo? = hit
+                var depth = 0
+                while (n != null && depth < 5) {
+                    if (n.isClickable && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+                    n = n.parent
+                    depth++
+                }
+            }
+        }
+        return false
     }
 
     /** 未提交的想法（[ExcerptDrafts]）过期时刷新胶囊：缩回边缘 */
@@ -102,7 +268,7 @@ class ExcerptService : AccessibilityService() {
     }
 
     /** 点胶囊那一刻识别到的书名 / 文章标题（识别不到为 null） */
-    private var tapDocTitle: String? = null
+    @Volatile private var tapDocTitle: String? = null
 
     private data class Selection(val text: String, val pkg: String)
 
@@ -122,13 +288,23 @@ class ExcerptService : AccessibilityService() {
         // 摘录抽屉开着（正在打字）：键盘每按一下都会发窗口事件，这里再去遍历所有窗口会把主线程占住，输入就卡；抽屉开着时什么都不做
         if (sheetOpen) return
         val pkg = event.packageName?.toString() ?: return
-        if (pkg == packageName || isSensitive(pkg)) return
+        if (pkg == packageName || pkg == "com.android.systemui" || isSensitive(pkg)) return
+        lastPkg = pkg
+        // 财新这类 App：不做事件驱动的扫描（见上面的说明）；只看「点了分享」这一个点击事件（点击很少，几乎不花时间）
+        if (pkg in CLIPBOARD_DRIVEN) {
+            if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+                val label = (event.text?.joinToString("") ?: event.contentDescription?.toString()).orEmpty().trim()
+                if (label == "分享") onShareClicked(pkg)
+            }
+            return
+        }
         if (event.eventType != AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED) {
             // 窗口变化：App 不上报选区时（微信、微信读书…），靠「选区菜单（复制）出现 / 消失」判断有没有选中文字
-            if (capsule != null && !menuCheckQueued) {
-                menuCheckQueued = true
-                main.postDelayed(menuCheck, 350)
-            }
+            // 只是文字在变（计时、滚动里的文案）不可能冒出选区菜单，没菜单时不理它，省得白扫
+            if (!menuUp && event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+                event.contentChangeTypes == AccessibilityEvent.CONTENT_CHANGE_TYPE_TEXT
+            ) return
+            queueMenuCheck()
             return
         }
         if (event.isPassword) return
@@ -171,6 +347,7 @@ class ExcerptService : AccessibilityService() {
 
     private fun teardown() {
         if (instance === this) instance = null
+        scanExec.shutdownNow(); tapExec.shutdownNow(); titleExec.shutdownNow()
         main.removeCallbacksAndMessages(null)
         hideAll()
         scope.cancel()
@@ -314,6 +491,8 @@ class ExcerptService : AccessibilityService() {
     /** 有没有选中的文字，决定胶囊是滑出来（描上主题色）还是缩回边缘；位置和描边都是渐变过去的 */
     private fun refreshStyle() {
         val box = capsule ?: return
+        // 刚选中文字：趁用户还没点胶囊，后台把书名 / 标题识别好；选区没了就作废
+        if (pending != null || menuUp) kickTitleJob() else titleJob = null
         val active = pending != null || menuUp || ExcerptDrafts.alive() != null
         if (active != shownActive) {
             shownActive = active
@@ -408,8 +587,9 @@ class ExcerptService : AccessibilityService() {
 
         val h = resources.displayMetrics.heightPixels
         val rect = android.graphics.Rect()
+        val budget = Budget(1200, 700L)
         fun walk(n: AccessibilityNodeInfo, depth: Int): String? {
-            if (depth > 30) return null
+            if (depth > 30 || budget.spent()) return null
             val id = n.viewIdResourceName?.substringAfter('/')?.lowercase()
             val text = n.text?.toString()?.trim()
             if (id != null && text != null && text.length in 4..80 && n.isVisibleToUser &&
@@ -426,76 +606,118 @@ class ExcerptService : AccessibilityService() {
         return walk(root, 0)
     }
 
-    /** 点胶囊：取当前选中的文字直接摘录；读不到选区时走剪贴板兜底 */
-    private fun onCapsuleTap() {
-        tapDocTitle = detectDocTitle()
-        val sel = pending ?: scanSelection()
-        // 没有新的划线、但有没提交的想法：重新打开抽屉，接着写
-        val draft = ExcerptDrafts.alive()
-        if (sel == null && !menuUp && draft != null) {
-            runCatching {
-                startActivity(
-                    ExcerptSheetActivity.intent(this, draft.pkg, draft.appName, draft.docTitle, draft.quote)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
-                )
-            }
-            return
-        }
-        if (sel == null) {
-            fromClipboard()
-            return
-        }
-        saveExcerpt(sel)
+    /** 遍历别人界面树的预算：最多看 [maxNodes] 个节点、[maxMs] 毫秒，超了就放弃（界面很大的 App 不能把我们拖死） */
+    private class Budget(private val maxNodes: Int = MAX_NODES, private val maxMs: Long = MAX_MS) {
+        private val start = android.os.SystemClock.uptimeMillis()
+        private var nodes = 0
+        fun spent(): Boolean = ++nodes > maxNodes || android.os.SystemClock.uptimeMillis() - start > maxMs
     }
 
     /**
-     * 兜底：App 不上报选区时（微信、小红书），借剪贴板：
-     * 先替用户点一下选区菜单里的「复制」（找得到才点），再读剪贴板；读不到「刚复制」的文字就提示先复制。
+     * 点胶囊：取当前选中的文字直接摘录；读不到选区时走剪贴板兜底。
+     * 读界面树要跨进程等别的 App 响应（微信、小红书这类界面大的 App 很慢），全部放到后台线程；
+     * 选区菜单已经在时（微信、小红书）什么都不扫，直接点缓存的「复制」→ 读剪贴板 → 开抽屉；书名 / 标题早在选中时就在后台识别好了。
      */
-    private fun fromClipboard() {
-        val pkg = rootInActiveWindow?.packageName?.toString()
+    private fun onCapsuleTap() {
+        lastPkg?.takeIf { it in CLIPBOARD_DRIVEN }?.let { onClipboardAppTap(it); return }
+        if (tapBusy) return
+        tapBusy = true
+        tapExec.execute {
+            try {
+                val menu = menuUp
+                // 有选区菜单时不去扫选区：直接走「复制」
+                val sel = pending ?: if (menu) null else runCatching { scanSelection() }.getOrNull()
+                val draft = ExcerptDrafts.alive()
+                when {
+                    // 没有新的划线、但有没提交的想法：重新打开抽屉，接着写
+                    sel == null && !menu && draft != null -> runCatching {
+                        startActivity(
+                            ExcerptSheetActivity.intent(this, draft.pkg, draft.appName, draft.docTitle, draft.quote)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION),
+                        )
+                    }
+                    sel != null -> {
+                        val title = readyTitle(titleJob, 300)
+                        main.post { tapDocTitle = title; saveExcerpt(sel) }
+                    }
+                    else -> viaClipboard()
+                }
+            } finally {
+                main.post { tapBusy = false }
+            }
+        }
+    }
+
+    /** 借剪贴板：先替用户点一下选区菜单里的「复制」（找得到才点），马上拉起读剪贴板的透明页 */
+    private fun viaClipboard() {
+        val pkg = lastPkg ?: runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull()
         if (pkg == null || pkg == packageName || isSensitive(pkg)) {
             toast("先选中一段文字，再点这里")
             return
         }
-        val clicked = clickCopyButton()
-        main.postDelayed({
-            runCatching {
-                startActivity(
-                    Intent(this, ExcerptClipActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
-                        .putExtra(ExcerptClipActivity.EXTRA_PKG, pkg)
-                        .putExtra(ExcerptClipActivity.EXTRA_FRESH_ONLY, !clicked),
-                )
-            }.onFailure { toast("先选中一段文字，再点这里") }
-        }, if (clicked) 350L else 0L)
+        val job = titleJob
+        val since = System.currentTimeMillis()
+        val clicked = runCatching { clickCopyFast() }.getOrDefault(false)
+        // 标题先用已经识别好的；还没好的话，等它一小会儿，赶在读到文字之前填上
+        tapDocTitle = readyTitle(job, 0)
+        runCatching {
+            startActivity(
+                Intent(this, ExcerptClipActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                    .putExtra(ExcerptClipActivity.EXTRA_PKG, pkg)
+                    .putExtra(ExcerptClipActivity.EXTRA_FRESH_ONLY, !clicked)
+                    .putExtra(ExcerptClipActivity.EXTRA_SINCE, if (clicked) since else 0L),
+            )
+        }.onFailure { toast("先选中一段文字，再点这里") }
+        if (tapDocTitle == null) tapDocTitle = readyTitle(job, 500)
+    }
+
+    /** 选中后在后台识别标题（每次选中只识别一次） */
+    private fun kickTitleJob() {
+        if (titleJob != null) return
+        titleJob = titleExec.submit<String?> { runCatching { detectDocTitle() }.getOrNull() }
+    }
+
+    /** 取识别好的标题；最多等 [waitMs] 毫秒（后台线程调用）；没有就 null */
+    private fun readyTitle(job: java.util.concurrent.Future<String?>?, waitMs: Long): String? {
+        job ?: return null
+        return runCatching {
+            if (waitMs <= 0) (if (job.isDone) job.get() else null) else job.get(waitMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        }.getOrNull()
     }
 
     /** 在所有窗口（除了自己的悬浮窗）里找选区菜单上的「复制」按钮 */
     private fun findCopyNode(): AccessibilityNodeInfo? {
         val roots = buildList {
-            // 键盘窗口的节点树又大又不会有「复制」菜单，跳过
             windows?.forEach { w ->
-                if (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) return@forEach
+                // 键盘、状态栏 / 导航栏这类系统窗口、自己的悬浮窗：不会有「复制」菜单，连根节点都不用去取
+                if (w.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD || w.type == AccessibilityWindowInfo.TYPE_SYSTEM ||
+                    w.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY
+                ) return@forEach
                 w.root?.takeIf { it.packageName != packageName }?.let { add(it) }
             }
-            rootInActiveWindow?.let { add(it) }
+            if (isEmpty()) rootInActiveWindow?.let { add(it) }
         }
         for (root in roots) {
-            val hits = root.findAccessibilityNodeInfosByText("复制") + root.findAccessibilityNodeInfosByText("Copy")
-            for (hit in hits) {
-                val label = (hit.text ?: hit.contentDescription)?.toString()?.trim()
-                if ((label == "复制" || label == "Copy") && hit.isVisibleToUser) return hit
+            for (key in COPY_LABELS) {
+                for (hit in root.findAccessibilityNodeInfosByText(key)) {
+                    val label = (hit.text ?: hit.contentDescription)?.toString()?.trim()
+                    if ((label == "复制" || label == "Copy") && hit.isVisibleToUser) return hit
+                }
             }
         }
         return null
     }
 
-    private fun hasCopyMenu(): Boolean = findCopyNode() != null
+    private fun hasCopyMenu(): Boolean {
+        val n = findCopyNode()
+        copyNode = n
+        return n != null
+    }
 
-    /** 点一下选区菜单里的「复制」；找不到返回 false */
-    private fun clickCopyButton(): Boolean {
-        var n: AccessibilityNodeInfo? = findCopyNode()
+    /** 点一下选区菜单里的「复制」：优先用缓存的按钮（只多一次刷新），没有才遍历；找不到返回 false */
+    private fun clickCopyFast(): Boolean {
+        var n: AccessibilityNodeInfo? = copyNode?.takeIf { menuStillUp() } ?: findCopyNode()
         while (n != null) {
             if (n.isClickable && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
             n = n.parent
@@ -518,8 +740,9 @@ class ExcerptService : AccessibilityService() {
         val root = rootInActiveWindow ?: return null
         val pkg = root.packageName?.toString() ?: return null
         if (pkg == packageName || isSensitive(pkg)) return null
+        val budget = Budget(1000, 600L)
         fun walk(n: AccessibilityNodeInfo, depth: Int): Selection? {
-            if (depth > 40) return null
+            if (depth > 40 || budget.spent()) return null
             val text = n.text?.toString()
             val a = n.textSelectionStart
             val b = n.textSelectionEnd
@@ -544,6 +767,8 @@ class ExcerptService : AccessibilityService() {
         main.removeCallbacks(draftExpire)
         menuCheckQueued = false
         menuUp = false
+        copyNode = null
+        titleJob = null
         xAnim?.cancel()
         xAnim = null
         capsule?.let { runCatching { it.animate().cancel(); wm.removeView(it) } }
@@ -556,6 +781,13 @@ class ExcerptService : AccessibilityService() {
         private const val CAPSULE_W = 30
         private const val CAPSULE_H = 46
         private const val CAPSULE_ANIM_MS = 260
+        private const val MAX_NODES = 3000
+        private const val MAX_MS = 1500L
+        /** 中文界面只搜「复制」，其他语言再加搜「Copy」：每多搜一个词，就多跨一次进程 */
+        private val COPY_LABELS = if (java.util.Locale.getDefault().language == "zh") listOf("复制") else listOf("Copy", "复制")
+
+        /** 复制不写剪贴板、界面一直刷新的 App：走「分享」取文字，不扫界面树 */
+        private val CLIPBOARD_DRIVEN = setOf("com.caing.news")
 
         /** 摘录抽屉是否在前台：开着时服务不去遍历窗口，免得打字时主线程被占住而卡顿 */
         @Volatile var sheetOpen = false

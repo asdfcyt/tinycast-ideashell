@@ -124,8 +124,8 @@ fun ExcerptSheetScreen(
                             CompactField(
                                 value = source,
                                 onChange = { source = it },
-                                label = "来源",
-                                placeholder = appName,
+                                label = "标题",
+                                placeholder = "书名 / 文章标题",
                                 modifier = Modifier.weight(1.25f),
                                 onSend = send,
                             )

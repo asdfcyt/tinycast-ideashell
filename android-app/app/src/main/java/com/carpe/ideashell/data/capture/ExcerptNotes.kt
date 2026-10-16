@@ -31,7 +31,7 @@ class ExcerptNotes(
     /** 打开抽屉时预填的来源和标签 */
     data class Suggestion(val source: String, val tags: List<String>)
 
-    /** 一次摘录：[source] 是来源（书名 / 文章 / 站点），[thought] 是用户写的想法（可为空） */
+    /** 一次摘录：[source] 是内容标题（书名 / 文章标题，可为空），[thought] 是用户写的想法（可为空）；来自哪个 App 由 [appName] 带着 */
     data class Entry(
         val pkg: String,
         val appName: String,
@@ -54,20 +54,27 @@ class ExcerptNotes(
         data class Queued(val title: String) : Result
     }
 
-    /** 这个 App 里上一次用的来源 / 标签（[SESSION_MS] 内）；没有就用识别到的标题，再没有就用 App 名 */
+    /**
+     * 这个 App 里上一次用的标题 / 标签（[SESSION_MS] 内）；没有就用识别到的书名 / 文章标题，再没有就留空让用户填。
+     * App 名是内置的，不放在这里。
+     */
     fun suggest(pkg: String, docTitle: String?, appName: String): Suggestion {
         val last = synchronized(lastUsed) { lastUsed[pkg] }
-        if (last != null && System.currentTimeMillis() - last.at < SESSION_MS) return Suggestion(last.source, last.tags)
-        return Suggestion(docTitle?.takeIf { it.isNotBlank() } ?: appName, emptyList())
+        val detected = docTitle?.trim().orEmpty()
+        if (last != null && System.currentTimeMillis() - last.at < SESSION_MS) {
+            return Suggestion(last.source.ifBlank { detected }, last.tags)
+        }
+        return Suggestion(detected, emptyList())
     }
 
     /** 写入一段摘录；写不进去时退回离线队列（另存一篇），不会丢 */
     suspend fun write(e: Entry): Result = lock.withLock {
         val now = System.currentTimeMillis()
-        val source = e.source.trim().ifEmpty { e.appName }
+        // source 是书名 / 文章标题（可为空）；来自哪个 App 是内置信息，不需要用户填
+        val source = e.source.trim()
         val tags = e.tags.map(::cleanTag).filter { it.isNotEmpty() }.distinct()
         synchronized(lastUsed) { lastUsed[e.pkg] = Last(source, tags, now) }
-        val title = truncate(source, 30)
+        val title = truncate(source.ifEmpty { e.appName }, 30)
         try {
             val key = "${e.pkg}|$source"
             val current = if (e.append) session?.takeIf { it.key == key && now - it.updatedAt < SESSION_MS } else null
@@ -86,7 +93,7 @@ class ExcerptNotes(
                     // 读不到 / 笔记被删了：往下重新建一篇
                 }
             }
-            val sourceLine = "来源：" + if (source == e.appName) source else "$source（${e.appName}）"
+            val sourceLine = "来源：" + if (source.isEmpty()) e.appName else "$source（${e.appName}）"
             val created = api.createNote(
                 title = title,
                 body = "$sourceLine\n\n${block(e.quote, e.thought)}",
