@@ -45,6 +45,8 @@ import com.carpe.ideashell.ui.focus.FocusScreen
 import com.carpe.ideashell.ui.glass.AddFab
 import com.carpe.ideashell.ui.glass.AppNavBar
 import com.carpe.ideashell.ui.glass.AuroraBackground
+import com.carpe.ideashell.ui.glass.GlassSupported
+import com.carpe.ideashell.ui.glass.LocalGlassBackdrop
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
 import com.carpe.ideashell.ui.glass.NavBarGap
 import com.carpe.ideashell.ui.glass.NavBarHeight
@@ -65,6 +67,8 @@ import com.carpe.ideashell.ui.theme.isDark
 import com.carpe.ideashell.ui.todos.TodoScreen
 import com.carpe.ideashell.ui.todos.TodoView
 import com.carpe.ideashell.ui.todos.TodoViewModel
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.delay
 
 private const val PAGE_TABS = 0
@@ -248,107 +252,112 @@ private fun AppRoot(
     // 导航胶囊和右侧的「+」在同一行，列表只需要避开这一行
     val bottomPadding = if (subpage) systemNav + 16.dp else systemNav + NavBarHeight + NavBarGap + 12.dp
     val context = LocalContext.current
+    val glassBackdrop = rememberLayerBackdrop()
 
     Box(Modifier.fillMaxSize()) {
-        AuroraBackground()
-        CompositionLocalProvider(LocalBottomBarPadding provides bottomPadding) {
-            AnimatedContent(
-                targetState = when {
-                    noteId != null -> PAGE_NOTE
-                    connection -> PAGE_CONNECTION
-                    search -> PAGE_SEARCH
-                    focus -> PAGE_FOCUS
-                    revisit -> PAGE_REVISIT
-                    else -> PAGE_TABS
-                },
-                transitionSpec = {
-                    if (targetState != PAGE_TABS) {
-                        (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(220))) togetherWith fadeOut(tween(120))
-                    } else {
-                        fadeIn(tween(200)) togetherWith (slideOutHorizontally(tween(220)) { it / 4 } + fadeOut(tween(160)))
-                    }
-                },
-                label = "page",
-            ) { page ->
-                when (page) {
-                    PAGE_CONNECTION -> DiagnosticsScreen(onBack = { connection = false })
-                    PAGE_FOCUS -> FocusScreen(
-                        onBack = { focus = false },
-                        onOpenConnection = { connection = true },
-                    )
-                    PAGE_REVISIT -> RevisitScreen(
-                        onBack = { revisit = false },
-                        onOpenNote = { noteId = it },
-                    )
-                    PAGE_SEARCH -> SearchScreen(
-                        viewModel = searchVm,
-                        onBack = { search = false },
-                        onOpenConnection = { connection = true },
-                        onOpenNote = { noteId = it },
-                        onOpenProject = { keyword ->
-                            search = false
-                            todo.openProject = keyword
-                            tab = TAB_TODOS
-                        },
-                        onOpenTask = { id ->
-                            search = false
-                            todo.pendingTask = id
-                            tab = TAB_TODOS
-                        },
-                    )
-                    PAGE_NOTE -> NoteDetailScreen(
-                        noteId = lastNoteId[0].orEmpty(),
-                        onBack = { noteId = null },
-                        onOpenTag = { tag ->
-                            // 标签是项目 → 进项目页；不是 → 打开搜索并直接搜这个词（可展开「提及概览」）
-                            val project = searchVm.workspace.value.projects
-                                .firstOrNull { it.keyword.equals(tag, ignoreCase = true) }
-                            noteId = null
-                            revisit = false
-                            if (project != null) {
+        // 背景光晕 + 当前页面一起录进 backdrop，浮动层（导航、「记一条」）从这里取背后的画面做液态玻璃折射。
+        // 注意：只有浮动层能取 backdrop；被录进去的页面内容里再取它会形成环路。
+        Box(Modifier.fillMaxSize().then(if (GlassSupported) Modifier.layerBackdrop(glassBackdrop) else Modifier)) {
+            AuroraBackground()
+            CompositionLocalProvider(LocalBottomBarPadding provides bottomPadding) {
+                AnimatedContent(
+                    targetState = when {
+                        noteId != null -> PAGE_NOTE
+                        connection -> PAGE_CONNECTION
+                        search -> PAGE_SEARCH
+                        focus -> PAGE_FOCUS
+                        revisit -> PAGE_REVISIT
+                        else -> PAGE_TABS
+                    },
+                    transitionSpec = {
+                        if (targetState != PAGE_TABS) {
+                            (slideInHorizontally(tween(260)) { it / 4 } + fadeIn(tween(220))) togetherWith fadeOut(tween(120))
+                        } else {
+                            fadeIn(tween(200)) togetherWith (slideOutHorizontally(tween(220)) { it / 4 } + fadeOut(tween(160)))
+                        }
+                    },
+                    label = "page",
+                ) { page ->
+                    when (page) {
+                        PAGE_CONNECTION -> DiagnosticsScreen(onBack = { connection = false })
+                        PAGE_FOCUS -> FocusScreen(
+                            onBack = { focus = false },
+                            onOpenConnection = { connection = true },
+                        )
+                        PAGE_REVISIT -> RevisitScreen(
+                            onBack = { revisit = false },
+                            onOpenNote = { noteId = it },
+                        )
+                        PAGE_SEARCH -> SearchScreen(
+                            viewModel = searchVm,
+                            onBack = { search = false },
+                            onOpenConnection = { connection = true },
+                            onOpenNote = { noteId = it },
+                            onOpenProject = { keyword ->
                                 search = false
-                                todo.openProject = project.keyword
+                                todo.openProject = keyword
                                 tab = TAB_TODOS
-                            } else {
-                                search = true
-                                searchVm.submit(tag)
-                            }
-                        },
-                    )
-
-                    else -> stateHolder.SaveableStateProvider(tab) {
-                        when (tab) {
-                            TAB_REVIEW -> ReviewScreen(
-                                viewModel = review,
-                                onOpenSearch = { search = true },
-                                onOpenConnection = { connection = true },
-                                onOpenNote = { noteId = it },
-                                onOpenProject = { keyword ->
-                                    todo.openProject = keyword
+                            },
+                            onOpenTask = { id ->
+                                search = false
+                                todo.pendingTask = id
+                                tab = TAB_TODOS
+                            },
+                        )
+                        PAGE_NOTE -> NoteDetailScreen(
+                            noteId = lastNoteId[0].orEmpty(),
+                            onBack = { noteId = null },
+                            onOpenTag = { tag ->
+                                // 标签是项目 → 进项目页；不是 → 打开搜索并直接搜这个词（可展开「提及概览」）
+                                val project = searchVm.workspace.value.projects
+                                    .firstOrNull { it.keyword.equals(tag, ignoreCase = true) }
+                                noteId = null
+                                revisit = false
+                                if (project != null) {
+                                    search = false
+                                    todo.openProject = project.keyword
                                     tab = TAB_TODOS
-                                },
-                                onOpenFocus = { focus = true },
-                            )
+                                } else {
+                                    search = true
+                                    searchVm.submit(tag)
+                                }
+                            },
+                        )
 
-                            TAB_TODOS -> TodoScreen(
-                                onOpenSearch = { search = true },
-                                onOpenConnection = { connection = true },
-                                onOpenNote = { noteId = it },
-                                onOpenFocus = { focus = true },
-                            )
+                        else -> stateHolder.SaveableStateProvider(tab) {
+                            when (tab) {
+                                TAB_REVIEW -> ReviewScreen(
+                                    viewModel = review,
+                                    onOpenSearch = { search = true },
+                                    onOpenConnection = { connection = true },
+                                    onOpenNote = { noteId = it },
+                                    onOpenProject = { keyword ->
+                                        todo.openProject = keyword
+                                        tab = TAB_TODOS
+                                    },
+                                    onOpenFocus = { focus = true },
+                                )
 
-                            TAB_SETTINGS -> SettingsScreen(
-                                onOpenConnection = { connection = true },
-                                onOpenRevisit = { revisit = true },
-                            )
-                            else -> HomeScreen(
-                                onOpenSearch = { search = true },
-                                onOpenConnection = { connection = true },
-                                onOpenTodos = { tab = TAB_TODOS },
-                                onOpenFocus = { focus = true },
-                                onOpenNote = { noteId = it },
-                                onOpenRevisit = { revisit = true },
-                            )
+                                TAB_TODOS -> TodoScreen(
+                                    onOpenSearch = { search = true },
+                                    onOpenConnection = { connection = true },
+                                    onOpenNote = { noteId = it },
+                                    onOpenFocus = { focus = true },
+                                )
+
+                                TAB_SETTINGS -> SettingsScreen(
+                                    onOpenConnection = { connection = true },
+                                    onOpenRevisit = { revisit = true },
+                                )
+                                else -> HomeScreen(
+                                    onOpenSearch = { search = true },
+                                    onOpenConnection = { connection = true },
+                                    onOpenTodos = { tab = TAB_TODOS },
+                                    onOpenFocus = { focus = true },
+                                    onOpenNote = { noteId = it },
+                                    onOpenRevisit = { revisit = true },
+                                )
+                            }
                         }
                     }
                 }
@@ -359,30 +368,33 @@ private fun AppRoot(
         val appContainer = (context.applicationContext as IdeashellApp).container
         CelebrationHost(appContainer.celebrations, Modifier.align(Alignment.TopCenter))
 
-        AnimatedVisibility(
-            visible = !subpage && !com.carpe.ideashell.ui.glass.NavBarOverlay.hidden,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            enter = slideInVertically(tween(240)) { it } + fadeIn(tween(200)),
-            exit = slideOutVertically(tween(180)) { it } + fadeOut(tween(140)),
-        ) {
-            AppNavBar(
-                items = NAV_ITEMS,
-                selected = tab,
-                onSelect = { tab = it },
-                fab = {
-                    AddFab(
-                        onClick = {
-                            // 在待办页点「+」：直接按待办处理，排在今天；「任务」视图里选了今天以后的某一天则排在那一天。
-                            // 其他页面不预设类型：由输入内容自动判断，也可以在面板上方手动指定
-                            val today = java.time.LocalDate.now()
-                            val picked = if (tab == TAB_TODOS) {
-                                todo.day?.takeIf { todo.view == TodoView.LIST && it >= today } ?: today
-                            } else null
-                            context.startActivity(QuickCaptureActivity.intent(context, picked))
-                        },
-                    )
-                },
-            )
+        // 浮动导航：取上面录好的 backdrop 做液态玻璃（API < 31 时为 null，退回半透明实心面）
+        CompositionLocalProvider(LocalGlassBackdrop provides if (GlassSupported) glassBackdrop else null) {
+            AnimatedVisibility(
+                visible = !subpage && !com.carpe.ideashell.ui.glass.NavBarOverlay.hidden,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = slideInVertically(tween(240)) { it } + fadeIn(tween(200)),
+                exit = slideOutVertically(tween(180)) { it } + fadeOut(tween(140)),
+            ) {
+                AppNavBar(
+                    items = NAV_ITEMS,
+                    selected = tab,
+                    onSelect = { tab = it },
+                    fab = {
+                        AddFab(
+                            onClick = {
+                                // 在待办页点「+」：直接按待办处理，排在今天；「任务」视图里选了今天以后的某一天则排在那一天。
+                                // 其他页面不预设类型：由输入内容自动判断，也可以在面板上方手动指定
+                                val today = java.time.LocalDate.now()
+                                val picked = if (tab == TAB_TODOS) {
+                                    todo.day?.takeIf { todo.view == TodoView.LIST && it >= today } ?: today
+                                } else null
+                                context.startActivity(QuickCaptureActivity.intent(context, picked))
+                            },
+                        )
+                    },
+                )
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.carpe.ideashell.ui.focus
 
+import com.carpe.ideashell.ui.glass.GlassSheet
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -620,12 +621,7 @@ internal fun TaskPicker(
     onSelect: (DidaTask?, String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-    ) {
+    GlassSheet(onDismiss = onDismiss) {
         Text(
             "这次专注做什么",
             style = MaterialTheme.typography.titleLarge,

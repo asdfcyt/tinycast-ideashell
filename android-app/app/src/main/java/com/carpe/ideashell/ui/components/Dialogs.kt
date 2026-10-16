@@ -1,5 +1,6 @@
 package com.carpe.ideashell.ui.components
 
+import com.carpe.ideashell.ui.glass.GlassSheet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -54,12 +55,7 @@ fun InputSheet(
     hint: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-    ) {
+    GlassSheet(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
                 .imePadding()

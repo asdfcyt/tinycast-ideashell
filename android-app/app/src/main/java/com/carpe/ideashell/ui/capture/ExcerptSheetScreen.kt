@@ -1,5 +1,8 @@
 package com.carpe.ideashell.ui.capture
 
+import com.carpe.ideashell.ui.glass.BlurBehindWindow
+import com.carpe.ideashell.ui.glass.isDarkSurface
+import com.carpe.ideashell.ui.glass.rememberCrossWindowBlur
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -92,10 +95,13 @@ fun ExcerptSheetScreen(
     val focus = remember { FocusRequester() }
     LaunchedEffect(visible) { if (visible) runCatching { focus.requestFocus() } }
 
+    // 玻璃：面半透明 + 整个窗口背后磨砂；系统不允许跨窗口模糊时保持实心
+    val blurOk = rememberCrossWindowBlur()
+    if (blurOk && visible) BlurBehindWindow(radiusPx = com.carpe.ideashell.ui.glass.SheetBlurPx)
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = scrim))
+            .background(Color.Black.copy(alpha = if (blurOk) scrim * 0.6f else scrim))
             .clickable(interactionSource = noRipple, indication = null, onClick = dismiss),
     ) {
         AnimatedVisibility(
@@ -110,7 +116,9 @@ fun ExcerptSheetScreen(
                         .fillMaxWidth()
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                         .clip(RoundedCornerShape(28.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerLowest),
+                        .background(
+                            MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = if (blurOk) (if (isDarkSurface()) 0.80f else 0.84f) else 1f),
+                        ),
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),

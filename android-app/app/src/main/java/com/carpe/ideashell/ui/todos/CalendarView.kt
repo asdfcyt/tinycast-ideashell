@@ -1,5 +1,7 @@
 package com.carpe.ideashell.ui.todos
 
+import androidx.compose.animation.core.tween
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -44,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -78,6 +81,7 @@ import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.dida.DidaOverview
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.project.Workspace
+import com.carpe.ideashell.ui.glass.GlassSupported
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
 import com.carpe.ideashell.ui.theme.Brand
 import java.time.Instant
@@ -135,6 +139,20 @@ internal fun tasksByDay(overview: DidaOverview?, ranged: Map<String, DidaTask>):
     }
 }
 
+/** 日历里「当天任务面板」的挂载点：面板内容由 CalendarPage 提供，由 TodoScreen 画在整页最上层 */
+internal class CalSheetHost {
+    var content by mutableStateOf<(@Composable () -> Unit)?>(null)
+    var blurred by mutableStateOf(false)
+
+    /** 面板升起的进度 0..1（磨砂强度跟着它走，面板落下时磨砂同步退掉） */
+    var progress by mutableFloatStateOf(0f)
+}
+
+@Composable
+internal fun CalSheetLayer(host: CalSheetHost) {
+    host.content?.invoke()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun CalendarPage(
@@ -146,6 +164,7 @@ internal fun CalendarPage(
     onOpenDay: (LocalDate) -> Unit,
     onAddOnDay: (LocalDate) -> Unit,
     onCollapse: () -> Unit,
+    sheetHost: CalSheetHost,
     onDragStart: () -> Unit,
     onDragBy: (Float) -> Unit,
     onDragStop: (Float) -> Unit,
@@ -204,6 +223,42 @@ internal fun CalendarPage(
         onMore = { sheetDay = it },
     )
 
+    // 点某一天：当天任务面板浮在整页上面（交给外层 TodoScreen 画，这样标题栏和日历能被同一次磨砂盖住，
+    // 和底部弹出面板一个效果）；拖起一条时面板透明（不挡住格子，但手势还在它上面继续），松手后收起
+    val sheetContent: (@Composable () -> Unit)? = sheetDay?.let { day ->
+        {
+            DaySheet(
+                day = day,
+                tasks = byDay[day].orEmpty(),
+                today = today,
+                overview = overview,
+                workspace = workspace,
+                canOpenTimeline = day >= today.minusDays(PAST_DAYS.toLong()) && day <= today.plusDays(6),
+                hidden = dragging != null,
+                drag = chipDrag,
+                onDismiss = { sheetDay = null },
+                onToggle = { t -> if (t.done) viewModel.undoComplete(t) else viewModel.complete(t) },
+                onOpenTask = onOpenTask,
+                onAdd = { sheetDay = null; onAddOnDay(day) },
+                onTimeline = { sheetDay = null; onOpenDay(day) },
+                host = sheetHost,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+    val pageBlurred = GlassSupported && sheetDay != null && dragging == null
+    androidx.compose.runtime.SideEffect {
+        sheetHost.content = sheetContent
+        sheetHost.blurred = pageBlurred
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            sheetHost.content = null
+            sheetHost.blurred = false
+            sheetHost.progress = 0f
+        }
+    }
+
     Box(
         modifier = modifier.onGloballyPositioned {
             val p = it.positionInRoot()
@@ -211,7 +266,11 @@ internal fun CalendarPage(
             pageOrigin[1] = p.y
         },
     ) {
-        Column(Modifier.fillMaxSize().padding(bottom = LocalBottomBarPadding.current)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(bottom = LocalBottomBarPadding.current),
+        ) {
             // 顶上的小横条：往上拖一小段或点一下，回到任务视图（和任务视图里往下拖进来对应）
             PullHandle(
                 onClick = onCollapse,
@@ -297,26 +356,6 @@ internal fun CalendarPage(
                     onCancel = { endDrag(false) },
                 )
             }
-        }
-
-        // 点某一天：当天任务面板浮在日历下方；拖起一条时面板透明（不挡住格子，但手势还在它上面继续），松手后收起
-        sheetDay?.let { day ->
-            DaySheet(
-                day = day,
-                tasks = byDay[day].orEmpty(),
-                today = today,
-                overview = overview,
-                workspace = workspace,
-                canOpenTimeline = day >= today.minusDays(PAST_DAYS.toLong()) && day <= today.plusDays(6),
-                hidden = dragging != null,
-                drag = chipDrag,
-                onDismiss = { sheetDay = null },
-                onToggle = { t -> if (t.done) viewModel.undoComplete(t) else viewModel.complete(t) },
-                onOpenTask = onOpenTask,
-                onAdd = { sheetDay = null; onAddOnDay(day) },
-                onTimeline = { sheetDay = null; onOpenDay(day) },
-                modifier = Modifier.matchParentSize(),
-            )
         }
 
         // 被拖着走的任务：浮在手指上方一点，手指下面的那天会高亮
@@ -754,12 +793,29 @@ private fun DaySheet(
     onOpenTask: (DidaTask) -> Unit,
     onAdd: () -> Unit,
     onTimeline: () -> Unit,
+    host: CalSheetHost,
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
     val info = remember(day) { DayInfo.of(day) }
     val maxBody = (LocalConfiguration.current.screenHeightDp * 0.5f).dp
-    androidx.activity.compose.BackHandler(onBack = onDismiss)
+    // 和底部抽屉一样：从下面升起来、遮罩渐显；关的时候落回去再真正移除
+    val rise = remember { androidx.compose.animation.core.Animatable(0f) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var closing by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        rise.animateTo(1f, tween(320, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+    }
+    LaunchedEffect(Unit) { androidx.compose.runtime.snapshotFlow { rise.value }.collect { host.progress = it } }
+    fun closeThen(then: () -> Unit) {
+        if (closing) return
+        closing = true
+        scope.launch {
+            rise.animateTo(0f, tween(220, easing = androidx.compose.animation.core.FastOutLinearInEasing))
+            then()
+        }
+    }
+    androidx.activity.compose.BackHandler(onBack = { closeThen(onDismiss) })
     // 面板像系统底部抽屉一样盖住底部导航：打开时收起导航，关掉（或离开）时放回来
     androidx.compose.runtime.DisposableEffect(Unit) {
         com.carpe.ideashell.ui.glass.NavBarOverlay.hidden = true
@@ -769,25 +825,37 @@ private fun DaySheet(
         modifier
             // 拖着走的时候整块透明，露出下面的格子；仍在组合里，所以手势不会中断
             .graphicsLayer { alpha = if (hidden) 0f else 1f }
-            .background(Color.Black.copy(alpha = 0.32f))
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss),
+            .drawBehind { drawRect(Color.Black.copy(alpha = (if (GlassSupported) 0.22f else 0.32f) * rise.value)) }
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = { closeThen(onDismiss) }),
         contentAlignment = Alignment.BottomCenter,
     ) {
+        // 和底部弹出面板（GlassSheet）同一个样子：半透明的奶油面、28dp 顶部圆角、顶部拖动条；背后的日历已经磨砂
         Column(
             Modifier
                 .fillMaxWidth()
+                // 从屏幕底下升起：位移 = (1 - 进度) × 面板自身高度
+                .graphicsLayer { translationY = (1f - rise.value) * size.height }
                 .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-                .background(scheme.surface)
+                .background(scheme.surface.copy(alpha = if (GlassSupported) 0.82f else 1f))
                 .navigationBarsPadding()
                 // 吃掉面板上的点击，免得穿到下面的遮罩把面板关掉
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {}),
         ) {
+            // 拖动条：和 Material 底部面板的 DragHandle 同尺寸同间距
+            Box(
+                Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(vertical = 22.dp)
+                    .size(width = 32.dp, height = 4.dp)
+                    .clip(CircleShape)
+                    .background(scheme.onSurfaceVariant.copy(alpha = 0.4f)),
+            )
             Column(
                 Modifier
                     .heightIn(max = maxBody)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp)
-                    .padding(top = 18.dp, bottom = 8.dp),
+                    .padding(bottom = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Column(Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
@@ -845,10 +913,10 @@ private fun DaySheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (canOpenTimeline) {
-                    OutlinedButton(onClick = onTimeline, modifier = Modifier.weight(1f)) { Text("时间轴查看") }
+                    OutlinedButton(onClick = { closeThen(onTimeline) }, modifier = Modifier.weight(1f)) { Text("时间轴查看") }
                 }
                 if (day >= today) {
-                    Button(onClick = onAdd, modifier = Modifier.weight(1f)) { Text("添加待办") }
+                    Button(onClick = { closeThen(onAdd) }, modifier = Modifier.weight(1f)) { Text("添加待办") }
                 }
             }
         }

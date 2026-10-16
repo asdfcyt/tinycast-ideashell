@@ -1,16 +1,23 @@
 package com.carpe.ideashell.ui.glass
 
+import android.os.Build
+import android.view.View
+import android.view.WindowManager
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,46 +25,82 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogWindowProvider
 import com.carpe.ideashell.R
 import com.carpe.ideashell.ui.theme.Brand
+import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.LayerBackdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.colorControls
+import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.highlight.Highlight
+import com.kyant.backdrop.shadow.Shadow
 
 /*
- * 全应用共用的「面」（设计系统「环」）：奶油底上的白色圆角块，没有描边、没有阴影、没有模糊。
+ * 全应用共用的「面」与「玻璃」（设计系统「环」）。
  *
- * 早期版本这里是「液态玻璃」（Haze 实时模糊 + 光晕背景 + 渐变描边 + 投影 + 按压弹性缩放），
- * 切页签时整页内容都在模糊源里，每帧重算，低端和中端机上明显卡顿。现在是：
- * - 背景：纯色（跟随主题），没有逐帧重绘的渐变；
- * - 卡片：surfaceContainerLowest 白 / 深棕，靠与奶油底的明度差分层，圆角 24dp；
- * - 底部导航：深棕悬浮胶囊，选中项是一块贝壳橙，右边是同一行的橙色「记一条」圆钮。
+ * 分两层：
+ * - 内容层：奶油底上的白色圆角块，没有描边、没有阴影、没有模糊——页面里成百上千的卡片都是这种实心面，保证滚动不掉帧；
+ * - 浮动层（底部导航胶囊、「记一条」按钮、底部弹出面板）：液态玻璃。
+ *   导航和按钮用 Kyant0 的 Backdrop 库做真折射：把「背景光晕 + 当前页面」录进一个 [LayerBackdrop]（[LocalGlassBackdrop]），
+ *   玻璃元素把它取回来做 模糊 + 饱和度增强 + 透镜折射（API 33+，AGSL）+ 高光描边 + 投影。
+ *   只有这两个小元素在每帧重新采样背景，内容卡片不参与，不会再出现早期 Haze 整页模糊的卡顿。
+ *   API 31 以下没有 RenderEffect，[LocalGlassBackdrop] 为 null，浮动层退回半透明实心面。
+ *   底部弹出面板是独立窗口，没法共享 backdrop，改用「窗口背后模糊 + 半透明面」（系统不允许跨窗口模糊时保持实心）。
+ * - 背景：奶油底 + 三团静态光晕（只画一次，不随滚动重绘）。玻璃要折射的就是它们和页面卡片。
  * 为了不大面积改调用点，类名与包名沿用 Glass 前缀（GlassSurface / GlassBadge / AuroraBackground）。
  */
 
 /** 底部导航占用的高度（含系统导航栏），各页面据此给列表留出底部空白 */
 val LocalBottomBarPadding = compositionLocalOf { 24.dp }
+
+/**
+ * 玻璃要折射的「背后画面」。由根布局提供；为 null 表示当前系统不支持（API < 31），玻璃元素退回实心半透明面。
+ * 注意：被录进 backdrop 的内容里不能再取这个 backdrop（会形成环路导致原生崩溃），所以只在根布局的「浮动层」里使用。
+ */
+val LocalGlassBackdrop = staticCompositionLocalOf<LayerBackdrop?> { null }
+
+/** 系统是否支持玻璃所需的 RenderEffect 模糊（Android 12+）；折射（lens）另需 Android 13+，低一档时自动只有模糊 */
+val GlassSupported: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
 /** 全屏面板（比如日历里点一天弹出的任务面板）打开时要盖住底部导航：用它临时把导航收起来 */
 object NavBarOverlay {
@@ -67,14 +110,106 @@ object NavBarOverlay {
 @Composable
 fun isDarkSurface(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
-/** 页面底色：纯色。名字沿用旧的「光晕背景」，现在不再绘制渐变。 */
+/**
+ * 页面底色：奶油底 + 三团静态光晕（右上橙、左中琥珀、右下浅橙）。
+ * 光晕在 drawWithCache 里只构建一次渐变，页面滚动不会重绘它；它的作用是给上面的玻璃「可折射的颜色」。
+ */
 @Composable
 fun AuroraBackground(modifier: Modifier = Modifier.fillMaxSize()) {
-    Box(modifier.background(MaterialTheme.colorScheme.background))
+    Box(modifier.aurora())
 }
 
 /**
- * 卡片面板。
+ * 同 [AuroraBackground]，但是修饰符形式：给一块区域画上奶油底 + 光晕（不透明）。
+ * 光晕的位置是按这块区域自己的大小算的，所以只适合铺满整个页面，不要用在页面的局部区域上（会和整页的光晕出现接缝）。
+ */
+@Composable
+fun Modifier.aurora(): Modifier {
+    val base = MaterialTheme.colorScheme.background
+    val dark = isDarkSurface()
+    val orange = Brand.Orange
+    val amber = Brand.Amber
+    val soft = Brand.OrangeMid
+    return this
+        .background(base)
+        .drawWithCache {
+            val w = size.width
+            val h = size.height
+            val strength = if (dark) 0.30f else 0.36f
+            val top = Brush.radialGradient(
+                listOf(orange.copy(alpha = strength), Color.Transparent),
+                center = Offset(w * 0.95f, h * 0.04f),
+                radius = w * 0.95f,
+            )
+            val mid = Brush.radialGradient(
+                listOf(amber.copy(alpha = strength * 0.85f), Color.Transparent),
+                center = Offset(w * 0.0f, h * 0.50f),
+                radius = w * 0.85f,
+            )
+            val bottom = Brush.radialGradient(
+                listOf(soft.copy(alpha = strength * 0.9f), Color.Transparent),
+                center = Offset(w * 0.85f, h * 0.98f),
+                radius = w * 1.0f,
+            )
+            onDrawBehind {
+                drawRect(top)
+                drawRect(mid)
+                drawRect(bottom)
+            }
+        }
+}
+
+/**
+ * 液态玻璃修饰符：折射 [LocalGlassBackdrop] 里的背后画面（模糊 + 饱和度 + 透镜 + 高光描边 + 投影），再叠 [onDrawSurface] 的表面色。
+ * 没有 backdrop（API < 31）时退回 [fallback] 色的实心面。
+ *
+ * @param backdrop 指定要折射的背后画面；不传就用根布局提供的 [LocalGlassBackdrop]。
+ *   被它录进去的内容里不能再取同一个 backdrop（环路 → 原生崩溃），所以局部浮层（日历面板）传自己的兄弟 backdrop
+ * @param lensHeight 透镜边缘宽度，不能超过元素短边的一半
+ * @param lensAmount 折射位移量
+ * @param saturation 背后画面的饱和度（1 = 不变）。增强太多会把背后的橙色卡片染成发黄的荧光色
+ * @param rim 玻璃边缘的高光描边；null 表示不画
+ * @param layerBlock 会移动 / 缩放的玻璃要用它（graphicsLayer 的变换）而不是布局 offset：
+ *   这样折射、高光、投影才会跟着一起动；用 offset 移动会在原位留下一圈高光「鬼影」
+ */
+@Composable
+fun Modifier.liquidGlass(
+    shape: Shape,
+    fallback: Color,
+    backdrop: Backdrop? = null,
+    lensHeight: Dp = 16.dp,
+    lensAmount: Dp = 32.dp,
+    blurRadius: Dp = 4.dp,
+    saturation: Float = 1.5f,
+    dropShadow: Shadow? = Shadow.Default,
+    rim: Highlight? = Highlight.Default,
+    layerBlock: (GraphicsLayerScope.() -> Unit)? = null,
+    onDrawSurface: DrawScope.() -> Unit,
+): Modifier {
+    val source = backdrop ?: LocalGlassBackdrop.current
+    if (source == null) {
+        return this
+            .shadow(8.dp, shape, clip = false)
+            .clip(shape)
+            .background(fallback)
+    }
+    return this.drawBackdrop(
+        backdrop = source,
+        shape = { shape },
+        effects = {
+            colorControls(saturation = saturation)
+            blur(blurRadius.toPx())
+            lens(lensHeight.toPx(), lensAmount.toPx())
+        },
+        highlight = if (rim != null) ({ rim }) else null,
+        shadow = if (dropShadow != null) ({ dropShadow }) else null,
+        layerBlock = layerBlock,
+        onDrawSurface = onDrawSurface,
+    )
+}
+
+/**
+ * 卡片面板（内容层，实心）。
  * @param tint 给卡片染一点颜色（提示 / 警告用），仍然是不透明底 + 淡色叠加
  * @param onClick 不为空时可点击，带 Material 水波纹
  */
@@ -138,8 +273,17 @@ val NavBarHeight = 64.dp
 val NavBarGap = 12.dp
 
 /**
- * 底部悬浮导航：左边一颗深棕胶囊，右边是同一行的橙色圆形「记一条」（[fab]）。
- * 每项是图标 + 12sp 粗体小字：选中项整块变贝壳橙、内容是深棕；其余项是奶油色。
+ * 玻璃表面色：浅色下是偏白的乳白，深色下是偏暖的深棕。
+ * 要透：背后是白色卡片 + 奶油底，白色叠得太多就成了一块实心白板，折射 / 模糊看不出来。
+ * 图标和 11sp 小字靠 onSurface 的深色保证对比度，不靠表面不透明度。
+ * 需要更不透明的大面板（日历面板）自己再 copy(alpha)。
+ */
+fun glassSurfaceColor(dark: Boolean): Color =
+    if (dark) Color(0xFF33200F).copy(alpha = 0.44f) else Color.White.copy(alpha = 0.34f)
+
+/**
+ * 底部悬浮导航：左边一颗玻璃胶囊，右边是同一行的玻璃「记一条」圆钮（[fab]）。
+ * 每项是图标 + 小字；选中项下面有一块贝壳橙的高光胶囊，切换时像水滴一样滑过去。
  */
 @Composable
 fun AppNavBar(
@@ -150,9 +294,13 @@ fun AppNavBar(
     fab: (@Composable () -> Unit)? = null,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val dark = isDarkSurface()
     val capsule = RoundedCornerShape(32.dp)
-    val container = if (isDarkSurface()) scheme.surfaceContainerHigh else Brand.Brown
-    val idle = if (isDarkSurface()) scheme.onSurface else Brand.Cream
+    val idle = scheme.onSurface.copy(alpha = 0.78f)
+    // 选中项的强调色：浅色用加深的品牌橙（#A9441C，橙色当文字对比度够），深色用品牌橙
+    val accent = if (dark) Brand.Orange else Brand.OrangeDeep
+    val surface = glassSurfaceColor(dark)
+    val itemShape = RoundedCornerShape(26.dp)
     Row(
         modifier
             .fillMaxWidth()
@@ -160,45 +308,89 @@ fun AppNavBar(
             .padding(start = 16.dp, end = 16.dp, bottom = NavBarGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
+        BoxWithConstraints(
             Modifier
                 .weight(1f)
                 .height(NavBarHeight)
-                .clip(capsule)
-                .background(container)
+                .liquidGlass(
+                    shape = capsule,
+                    fallback = if (dark) scheme.surfaceContainerHigh else scheme.surfaceContainerLowest.copy(alpha = 0.96f),
+                    // 折射集中在胶囊最外一圈；中间靠模糊 + 饱和度出「玻璃」的通透感
+                    lensHeight = 12.dp,
+                    lensAmount = 22.dp,
+                    blurRadius = 10.dp,
+                    saturation = 1.12f,
+                    onDrawSurface = { drawRect(surface) },
+                )
                 .padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
-            items.forEachIndexed { index, item ->
-                val active = index == selected
-                val color = if (active) Brand.Brown else idle
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(52.dp)
-                        .clip(RoundedCornerShape(26.dp))
-                        .background(if (active) Brand.Orange else Color.Transparent)
-                        .selectable(
-                            selected = active,
-                            role = Role.Tab,
-                            onClick = { onSelect(index) },
-                        ),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Icon(
-                        painterResource(if (active) item.selectedIcon else item.icon),
-                        contentDescription = null,
-                        tint = color,
-                        modifier = Modifier.size(22.dp),
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        item.label,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = color,
-                        maxLines = 1,
-                    )
+            val itemWidth = maxWidth / items.size.coerceAtLeast(1)
+            val indicatorX by animateDpAsState(
+                targetValue = itemWidth * selected,
+                animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow),
+                label = "navIndicator",
+            )
+            // 选中指示：一块更清晰的玻璃「透镜」——背后的画面只轻模糊、折射更强，带一圈很淡的高光轮廓和一点投影；
+            // 比胶囊本体更透亮，也比它更暗一点，所以在任何背景（包括大块橙色卡片）上都能分出来。
+            // 不用实色橙块：扁平的橙在橙色卡片上会发黄，也没有玻璃的感觉。强调色交给图标和文字。
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .width(itemWidth)
+                    .height(52.dp)
+                    .liquidGlass(
+                        shape = itemShape,
+                        fallback = Brand.OrangeSoft,
+                        lensHeight = 14.dp,
+                        lensAmount = 26.dp,
+                        blurRadius = 5.dp,
+                        saturation = 1.0f,
+                        dropShadow = Shadow(radius = 8.dp, color = Color.Black.copy(alpha = 0.10f)),
+                        // 轮廓只是淡淡一圈：太亮会抢过图标和文字
+                        rim = Highlight(width = 0.5.dp, blurRadius = 0.5.dp, alpha = 0.4f),
+                        // 水平滑动用图形层平移（在绘制阶段读动画值，滑动时不触发重组）
+                        layerBlock = { translationX = indicatorX.toPx() },
+                        onDrawSurface = {
+                            if (dark) {
+                                drawRect(Color.White.copy(alpha = 0.14f))
+                            } else {
+                                drawRect(Color.White.copy(alpha = 0.30f))
+                                drawRect(Brand.Brown.copy(alpha = 0.07f))
+                            }
+                        },
+                    ),
+            )
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                items.forEachIndexed { index, item ->
+                    val active = index == selected
+                    val color = if (active) accent else idle
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp)
+                            .clip(itemShape)
+                            .selectable(
+                                selected = active,
+                                role = Role.Tab,
+                                onClick = { onSelect(index) },
+                            ),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Icon(
+                            painterResource(if (active) item.selectedIcon else item.icon),
+                            contentDescription = null,
+                            tint = color,
+                            modifier = Modifier.size(22.dp),
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            item.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = color,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
         }
@@ -209,21 +401,33 @@ fun AppNavBar(
     }
 }
 
-/** 底部导航右侧的橙色圆钮「记一条」：全应用的万能输入入口，右上角带一颗星光（来自贝壳图标） */
+/**
+ * 底部导航右侧的玻璃「记一条」圆钮：全应用的万能输入入口。
+ * 玻璃里染了贝壳橙（用 Hue 混合让背后的色相跟着橙色走），右上角带一颗星光（来自贝壳图标）。
+ */
 @Composable
 fun AddFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val orange = Brand.Orange
     Box(modifier = modifier.size(NavBarHeight)) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .shadow(
-                    8.dp,
-                    CircleShape,
-                    ambientColor = Brand.Orange.copy(alpha = 0.35f),
-                    spotColor = Brand.Orange.copy(alpha = 0.35f),
+                .liquidGlass(
+                    shape = CircleShape,
+                    fallback = orange,
+                    lensHeight = 10.dp,
+                    lensAmount = 18.dp,
+                    blurRadius = 2.dp,
+                    dropShadow = Shadow(
+                        radius = 14.dp,
+                        color = orange.copy(alpha = 0.40f),
+                    ),
+                    onDrawSurface = {
+                        drawRect(orange, blendMode = BlendMode.Hue)
+                        drawRect(orange.copy(alpha = 0.88f))
+                    },
                 )
                 .clip(CircleShape)
-                .background(Brand.Orange)
                 .clickable(role = Role.Button, onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
@@ -238,5 +442,110 @@ fun AddFab(onClick: () -> Unit, modifier: Modifier = Modifier) {
                 .offset(x = 4.dp, y = (-8).dp)
                 .size(20.dp),
         )
+    }
+}
+
+// ───────────────────────── 底部弹出面板：毛玻璃 ─────────────────────────
+
+/** 系统当前是否允许「窗口背后模糊」（Android 12+，且没开省电 / 厂商没关闭）。只在面板打开时读一次 */
+@Composable
+fun rememberCrossWindowBlur(): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
+    val view = LocalView.current
+    return remember(view) {
+        runCatching {
+            view.context.getSystemService(WindowManager::class.java)?.isCrossWindowBlurEnabled == true
+        }.getOrDefault(false)
+    }
+}
+
+/** 所有底部抽屉背后的磨砂强度（像素）：窗口级模糊和日历里的页面内模糊共用这一个值 */
+const val SheetBlurPx = 24
+
+/**
+ * 给当前组合所在的窗口打开「背后模糊」：底下的页面变成磨砂。找不到窗口就什么也不做。
+ * 三种窗口都认：对话框 / 底部面板（Dialog 窗口）、半透明 Activity（快速输入）、Popup（下拉菜单）。
+ * Popup 的模糊范围是整个弹窗矩形（不跟随圆角），圆角外会有一小块模糊，所以菜单只适合用在浅色大面积背景上。
+ */
+@Composable
+fun BlurBehindWindow(radiusPx: Int) {
+    val view = LocalView.current
+    DisposableEffect(view, radiusPx) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching {
+                fun applyToWindow(window: android.view.Window) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+                    val attrs = window.attributes
+                    attrs.blurBehindRadius = radiusPx
+                    window.attributes = attrs
+                }
+                val root = view.rootView
+                val dialogWindow = findDialogWindowProvider(view)?.window
+                val activityWindow = view.context.findActivity()?.window
+                when {
+                    dialogWindow != null -> applyToWindow(dialogWindow)
+                    activityWindow != null && activityWindow.decorView === root -> applyToWindow(activityWindow)
+                    else -> {
+                        // Popup 等直接用 WindowManager 添加的窗口：改它的布局参数
+                        val params = root.layoutParams as? WindowManager.LayoutParams
+                        if (params != null) {
+                            params.flags = params.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+                            params.blurBehindRadius = radiusPx
+                            view.context.getSystemService(WindowManager::class.java)?.updateViewLayout(root, params)
+                        }
+                    }
+                }
+            }
+        }
+        onDispose { }
+    }
+}
+
+private fun android.content.Context.findActivity(): android.app.Activity? {
+    var c: android.content.Context? = this
+    while (c is android.content.ContextWrapper) {
+        if (c is android.app.Activity) return c
+        c = c.baseContext
+    }
+    return null
+}
+
+private fun findDialogWindowProvider(view: View): DialogWindowProvider? {
+    var current: Any? = view
+    var depth = 0
+    while (current != null && depth < 4) {
+        if (current is DialogWindowProvider) return current
+        current = (current as? View)?.parent
+        depth++
+    }
+    return null
+}
+
+/**
+ * 底部弹出面板（和任务详情同一套样式）的玻璃版：半透明的面 + 窗口背后模糊。
+ * 面板是独立窗口，不能共享 backdrop 做折射，所以这里是「磨砂」而不是「折射」；
+ * 系统不允许跨窗口模糊时，面保持实心，保证文字可读。
+ * 面板里的输入行、白色圆角块仍然是实心的。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun GlassSheet(
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    topRadius: Dp = 28.dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val blurOk = rememberCrossWindowBlur()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        modifier = modifier,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = if (blurOk) scheme.surface.copy(alpha = 0.82f) else scheme.surface,
+        shape = RoundedCornerShape(topStart = topRadius, topEnd = topRadius),
+        scrimColor = Color.Black.copy(alpha = if (blurOk) 0.22f else 0.32f),
+    ) {
+        if (blurOk) BlurBehindWindow(radiusPx = SheetBlurPx)
+        content()
     }
 }

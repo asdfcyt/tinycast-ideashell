@@ -1,5 +1,6 @@
 package com.carpe.ideashell.ui.todos
 
+import com.carpe.ideashell.ui.glass.GlassSheet
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
@@ -103,12 +104,7 @@ internal fun TaskSheet(
     val baseDate = task.date ?: today.toString()
     val title = TodoMeta.cleanTitle(task.title)
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-    ) {
+    GlassSheet(onDismiss = onDismiss) {
         Column(
             modifier = Modifier
                 .verticalScroll(rememberScrollState())

@@ -1,5 +1,7 @@
 package com.carpe.ideashell.ui.capture
 
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.border
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.text.KeyboardActions
@@ -88,6 +90,9 @@ import com.carpe.ideashell.ui.home.TemplateSheet
 import com.carpe.ideashell.ui.components.SubmitCorner
 import com.carpe.ideashell.ui.components.resolveKind
 import com.carpe.ideashell.ui.components.InfoPill
+import com.carpe.ideashell.ui.glass.BlurBehindWindow
+import com.carpe.ideashell.ui.glass.isDarkSurface
+import com.carpe.ideashell.ui.glass.rememberCrossWindowBlur
 import com.carpe.ideashell.ui.theme.Brand
 import kotlinx.coroutines.delay
 
@@ -144,10 +149,13 @@ fun QuickCaptureScreen(
         }
     }
 
+    // 玻璃：面半透明 + 整个窗口背后磨砂；系统不允许跨窗口模糊时保持实心
+    val blurOk = rememberCrossWindowBlur()
+    if (blurOk && visible) BlurBehindWindow(radiusPx = com.carpe.ideashell.ui.glass.SheetBlurPx)
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = scrim))
+            .background(Color.Black.copy(alpha = if (blurOk) scrim * 0.6f else scrim))
             .clickable(interactionSource = noRipple, indication = null, onClick = onClose),
     ) {
         AnimatedVisibility(
@@ -168,6 +176,7 @@ fun QuickCaptureScreen(
                         append = viewModel.append,
                         onSelect = viewModel::selectKind,
                         onAppend = viewModel::toggleAppend,
+                        glass = blurOk,
                     )
                 }
                 Box(
@@ -176,7 +185,9 @@ fun QuickCaptureScreen(
                         // 吃掉点击，避免点到卡片时误触发「点遮罩关闭」
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                         .clip(sheetShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainerLowest),
+                        .background(
+                            MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = if (blurOk) (if (isDarkSurface()) 0.80f else 0.84f) else 1f),
+                        ),
                 ) {
                     Column(
                         modifier = Modifier
@@ -232,7 +243,19 @@ private fun KindSelector(
     append: Boolean,
     onSelect: (CaptureKind?) -> Unit,
     onAppend: () -> Unit,
+    glass: Boolean = false,
 ) {
+    // 玻璃态：背后是磨砂的浅色页面，按钮是半透明白底 + 渐变亮边，文字用主题色；否则是深色遮罩上的「白字淡白圆」
+    val dark = isDarkSurface()
+    val idleBg = if (glass) Color.White.copy(alpha = if (dark) 0.16f else 0.55f) else Color.White.copy(alpha = 0.28f)
+    val idleFg = if (glass) MaterialTheme.colorScheme.onSurface else Color.White
+    val rim = if (glass) {
+        Modifier.border(
+            0.8.dp,
+            Brush.verticalGradient(listOf(Color.White.copy(alpha = if (dark) 0.35f else 0.95f), Color.White.copy(alpha = if (dark) 0.06f else 0.2f))),
+            CircleShape,
+        )
+    } else Modifier
     Row(
         modifier = Modifier.padding(start = 16.dp, bottom = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -253,11 +276,12 @@ private fun KindSelector(
                 Box(
                     modifier = Modifier
                         .size(38.dp)
+                        .then(rim)
                         .clip(CircleShape)
-                        .background(if (lit) Brand.Orange else Color.White.copy(alpha = 0.28f)),
+                        .background(if (lit) Brand.Orange else idleBg),
                     contentAlignment = Alignment.Center,
                 ) {
-                    val tint = if (lit) Brand.Brown else Color.White
+                    val tint = if (lit) Brand.Brown else idleFg
                     if (kind == null) {
                         Icon(painterResource(R.drawable.ic_auto), contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
                     } else {
@@ -265,7 +289,7 @@ private fun KindSelector(
                     }
                 }
                 Spacer(Modifier.height(3.dp))
-                Text(label, style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp), color = Color.White)
+                Text(label, style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp), color = idleFg)
             }
         }
         // 追加：开着时保存成「追加到上一篇快记笔记」（类型固定为笔记）；亮起表示已开启，再点一次关闭
@@ -283,14 +307,15 @@ private fun KindSelector(
             Box(
                 modifier = Modifier
                     .size(38.dp)
+                    .then(rim)
                     .clip(CircleShape)
-                    .background(if (append) Brand.Orange else Color.White.copy(alpha = 0.28f)),
+                    .background(if (append) Brand.Orange else idleBg),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(painterResource(R.drawable.ic_append), contentDescription = null, tint = if (append) Brand.Brown else Color.White, modifier = Modifier.size(20.dp))
+                Icon(painterResource(R.drawable.ic_append), contentDescription = null, tint = if (append) Brand.Brown else idleFg, modifier = Modifier.size(20.dp))
             }
             Spacer(Modifier.height(3.dp))
-            Text("追加", style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp), color = Color.White)
+            Text("追加", style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp), color = idleFg)
         }
     }
 }

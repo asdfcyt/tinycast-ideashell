@@ -1,5 +1,6 @@
 package com.carpe.ideashell.ui.home
 
+import com.carpe.ideashell.ui.glass.GlassSheet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -55,12 +56,7 @@ fun TemplateSheet(
 ) {
     var step by remember { mutableStateOf<Step>(Step.Pick) }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
-    ) {
+    GlassSheet(onDismiss = onDismiss, topRadius = 32.dp) {
         Column(
             modifier = Modifier
                 .verticalScroll(rememberScrollState())

@@ -53,6 +53,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
@@ -302,11 +303,20 @@ fun TodoScreen(
         if (open) viewModel.view = TodoView.CALENDAR else if (viewModel.view == TodoView.CALENDAR) viewModel.view = TodoView.LIST
     }
 
+    // 日历里点某一天浮出面板时，标题栏跟着日历一起磨砂（和底部弹出面板一样整页变糊）
+    val calSheetHost = remember { CalSheetHost() }
+    // 磨砂强度 = 统一强度 × 面板升起进度 × （拖任务改期时淡出）
+    val dragFade by animateFloatAsState(if (calSheetHost.blurred) 1f else 0f, label = "pageBlurFade")
+    val pageBlur = with(LocalDensity.current) {
+        (com.carpe.ideashell.ui.glass.SheetBlurPx * calSheetHost.progress * dragFade).toDp()
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets.statusBars,
         snackbarHost = { AppSnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
         if (openedProject != null) {
             Box(Modifier.padding(padding)) {
                 ProjectPage(
@@ -330,7 +340,12 @@ fun TodoScreen(
                     onProgress = { task, noteId, text -> viewModel.addProgress(task, noteId, text) },
                 )
             }
-        } else Column(Modifier.padding(padding)) {
+        } else Column(
+            // 整页（标题栏 + 日历）一起磨砂，面板画在它外面（CalSheetLayer），所以面板自己不会糊
+            Modifier
+                .then(if (pageBlur > 0.dp) Modifier.blur(pageBlur) else Modifier)
+                .padding(padding),
+        ) {
             ScreenHeader(
                 title = if (view == TodoView.LIST) "待办" else view.label,
                 action = {
@@ -637,6 +652,7 @@ fun TodoScreen(
                 },
                 onAddOnDay = { d -> context.startActivity(QuickCaptureActivity.intent(context, d)) },
                 onCollapse = { viewModel.view = TodoView.LIST },
+                sheetHost = calSheetHost,
                 onDragStart = { reveal.dragStart() },
                 onDragBy = { reveal.dragBy(it) },
                 onDragStop = { v -> finishReveal(reveal.release(v)) },
@@ -646,6 +662,8 @@ fun TodoScreen(
                     .graphicsLayer { alpha = (reveal.progress * 1.6f).coerceIn(0f, 1f) },
             )
             }
+        }
+        CalSheetLayer(calSheetHost)
         }
     }
 
