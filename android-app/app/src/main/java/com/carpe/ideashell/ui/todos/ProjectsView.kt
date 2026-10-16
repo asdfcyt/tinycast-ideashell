@@ -96,11 +96,23 @@ private val STALE_CHOICES = listOf(3, 7, 14, 30, 60)
 
 private fun relatedOpen(p: Project, ctx: TodoCtx?): List<DidaTask> {
     val o = ctx?.overview ?: return emptyList()
-    return (o.overdue + o.upcoming + o.undated).filter { p.matches(it.title, it.tags) }
+    // 概览只有逾期 + 未来 7 天；再并上日历视图缓存里更远日期的未完成任务（和日历是同一份数据）
+    val open = LinkedHashMap<String, DidaTask>()
+    (o.overdue + o.upcoming + o.undated).forEach { open.putIfAbsent(it.id, it) }
+    ctx.ranged.values.forEach { if (!it.done && it.date != null) open.putIfAbsent(it.id, it) }
+    return open.values.filter { p.matches(it.title, it.tags) }.sortedWith(compareBy({ it.date ?: "9999-99-99" }, { it.time ?: "99:99" }))
 }
 
-private fun relatedDone(p: Project, ctx: TodoCtx?): List<DidaTask> =
-    ctx?.overview?.done.orEmpty().filter { p.matches(it.title, it.tags) }
+private fun relatedDone(p: Project, ctx: TodoCtx?): List<DidaTask> {
+    val o = ctx?.overview ?: return emptyList()
+    // 概览只有最近 3 天完成的；再并上日历缓存里更早完成的。重复任务每次完成 id 相同，所以按「任务 + 完成那天」去重
+    val zone = java.time.ZoneId.systemDefault()
+    fun key(t: DidaTask): String =
+        t.id + "|" + (t.completedAt?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate().toString() } ?: t.date.orEmpty())
+    val done = LinkedHashMap<String, DidaTask>()
+    (o.done + ctx.ranged.values.filter { it.done }).forEach { done.putIfAbsent(key(it), it) }
+    return done.values.filter { p.matches(it.title, it.tags) }.sortedByDescending { it.completedAt ?: 0L }
+}
 
 // ───────────────────────── 项目的一句话概况 ─────────────────────────
 
@@ -898,6 +910,9 @@ internal fun ProjectPage(
                 project = project,
                 stats = stats,
                 monthlyFocus = monthlyFocus[project.keyword],
+                doneTasks = doneTasks,
+                openTasks = tasks,
+                progress = progressView,
                 onOpenNote = onOpenNote,
                 onDismiss = { sheet = null },
             )

@@ -64,6 +64,12 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carpe.ideashell.R
@@ -129,6 +135,8 @@ fun CaptureComposer(
     /** 调用闪念贝壳 App 的语音录音 / AI 对话（AI 会带上输入框里已有的文字） */
     onVoice: (() -> Unit)? = null,
     onAskAi: (() -> Unit)? = null,
+    /** 还没输入内容时，占位文字末尾的「选择模板」下划线链接；为 null 时不显示 */
+    onTemplates: (() -> Unit)? = null,
 ) {
     // 识别结果（日期 / 标签 / 重要 / 文件夹）显示在底部工具栏上，与保存时用的是同一份计划
     val plan = remember(text, override, folders, schedule) { CapturePlanner.plan(text, override, folders, schedule = schedule) }
@@ -189,6 +197,9 @@ fun CaptureComposer(
                 target = dropTarget,
             ),
     ) {
+        Box(Modifier.fillMaxWidth()) {
+        // 空的时候：占位文字后面跟一个下划线的「选择模板」链接（点开选模板录入）；链接要能点，所以画在输入框上面一层
+        val showTemplateLink = onTemplates != null && field.text.isEmpty()
         TextField(
             value = field,
             onValueChange = {
@@ -201,7 +212,9 @@ fun CaptureComposer(
                 .padding(end = 36.dp)
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
             placeholder = {
-                Text(placeholder, style = inputStyle, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
+                if (!showTemplateLink) {
+                    Text(placeholder, style = inputStyle, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
+                }
             },
             textStyle = inputStyle,
             minLines = minLines,
@@ -218,6 +231,26 @@ fun CaptureComposer(
                 disabledIndicatorColor = Color.Transparent,
             ),
         )
+        if (showTemplateLink) {
+            val hint = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
+            val linkColor = MaterialTheme.colorScheme.onSurfaceVariant
+            Text(
+                text = buildAnnotatedString {
+                    append(placeholder + "或")
+                    withLink(
+                        LinkAnnotation.Clickable(
+                            tag = "template",
+                            styles = TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)),
+                            linkInteractionListener = { onTemplates?.invoke() },
+                        ),
+                    ) { append("选择模板") }
+                },
+                style = inputStyle,
+                color = hint,
+                modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 52.dp),
+            )
+        }
+        }
 
         if (images.isNotEmpty()) {
             Row(

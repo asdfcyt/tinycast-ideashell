@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -174,14 +175,35 @@ internal fun CalendarPage(
     }
     val hoverNow by rememberUpdatedState(hover)
     var sheetDay by remember { mutableStateOf<LocalDate?>(null) }
+    // 点「+N」浮出的「当天全部任务」小卡片：卡片里的任务也能长按拖到别的日期
+    var expandedDay by remember { mutableStateOf<LocalDate?>(null) }
 
     fun endDrag(drop: Boolean) {
         val task = dragging
         val target = hoverNow
         dragging = null
+        expandedDay = null
         if (!drop || task == null || target == null) return
-        if (target < today) viewModel.notice("不能把任务安排到过去") else viewModel.scheduleByDrag(task, target)
+        when {
+            target < today -> viewModel.notice("不能把任务安排到过去")
+            // 有日期的任务拖到别的天：保留原来的时间点，只改日期；拖回原来那天什么都不做
+            task.date != null -> if (task.date != target.toString()) viewModel.moveByDrag(task, target)
+            else -> viewModel.scheduleByDrag(task, target)
+        }
     }
+
+    val chipDrag = ChipDrag(
+        draggingId = dragging?.id,
+        onStart = { task, pos ->
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            dragging = task
+            dragPos = pos
+        },
+        onMove = { dragPos += it },
+        onEnd = { endDrag(true) },
+        onCancel = { endDrag(false) },
+        onMore = { expandedDay = it },
+    )
 
     Box(
         modifier = modifier.onGloballyPositioned {
@@ -257,6 +279,7 @@ internal fun CalendarPage(
                         hover = hover?.takeIf { it >= today },
                         bounds = bounds,
                         onDay = { sheetDay = it },
+                        chipDrag = chipDrag,
                     )
                 }
             }
@@ -273,6 +296,26 @@ internal fun CalendarPage(
                     onMove = { dragPos += it },
                     onEnd = { endDrag(true) },
                     onCancel = { endDrag(false) },
+                )
+            }
+        }
+
+        // 点「+N」：当天全部任务浮在日历下方；拖起一条时卡片透明（不挡住格子，但手势还在它上面继续），松手后收起
+        expandedDay?.let { day ->
+            val list = byDay[day].orEmpty()
+            if (list.isEmpty()) {
+                expandedDay = null
+            } else {
+                ExpandedDayCard(
+                    day = day,
+                    tasks = list,
+                    hidden = dragging != null,
+                    drag = chipDrag,
+                    onOpenTask = { expandedDay = null; onOpenTask(it) },
+                    onClose = { expandedDay = null },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(start = 12.dp, end = 12.dp, bottom = LocalBottomBarPadding.current + 12.dp),
                 )
             }
         }
@@ -398,12 +441,13 @@ private fun MonthGrid(
     hover: LocalDate?,
     bounds: HashMap<LocalDate, Rect>,
     onDay: (LocalDate) -> Unit,
+    chipDrag: ChipDrag,
 ) {
     val weeks = (ChronoUnit.DAYS.between(gridStart, gridEnd).toInt() + 1) / 7
     // 每格能放几个色块只在这里算一次（每个格子各自用 BoxWithConstraints 量高度，一屏 35~42 个，进入时会明显卡）
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val capacity = ((maxHeight / weeks - DATE_ROW) / CHIP_PITCH).toInt().coerceAtLeast(0)
-        MonthRows(month, gridStart, weeks, today, byDay, hover, bounds, capacity, onDay)
+        MonthRows(month, gridStart, weeks, today, byDay, hover, bounds, capacity, onDay, chipDrag)
     }
 }
 
@@ -418,6 +462,7 @@ private fun MonthRows(
     bounds: HashMap<LocalDate, Rect>,
     capacity: Int,
     onDay: (LocalDate) -> Unit,
+    chipDrag: ChipDrag,
 ) {
     val line = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)
     Column(Modifier.fillMaxSize()) {
@@ -441,6 +486,7 @@ private fun MonthRows(
                         hovered = hover == day,
                         tasks = byDay[day].orEmpty(),
                         capacity = capacity,
+                        chipDrag = chipDrag,
                         onClick = { onDay(day) },
                         modifier = Modifier
                             .weight(1f)
@@ -462,6 +508,7 @@ private fun DayCell(
     hovered: Boolean,
     tasks: List<DidaTask>,
     capacity: Int,
+    chipDrag: ChipDrag,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -505,14 +552,18 @@ private fun DayCell(
                 )
             }
             Box(Modifier.height(2.dp))
-            shown.forEach { TaskChip(it, fade) }
+            shown.forEach { TaskChip(it, fade, chipDrag) }
             if (hidden > 0) {
                 Text(
                     "+$hidden",
-                    fontSize = 9.sp,
+                    fontSize = 10.sp,
                     lineHeight = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = scheme.onSurfaceVariant.copy(alpha = fade),
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Brand.OrangeDeep.copy(alpha = fade),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { chipDrag.onMore(day) }
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
                 )
             }
         }
@@ -536,11 +587,25 @@ private fun DayCell(
     }
 }
 
-/** 一条任务：方方正正的淡色块（颜色按清单），字不加粗；已完成的更淡、加删除线 */
+/** 月格子里的色块拖拽：长按有日期的任务，拖到别的日子改期（和无日期托盘共用同一套浮层 / 落点） */
+internal class ChipDrag(
+    val draggingId: String?,
+    val onStart: (DidaTask, Offset) -> Unit,
+    val onMove: (Offset) -> Unit,
+    val onEnd: () -> Unit,
+    val onCancel: () -> Unit,
+    /** 点格子里的「+N」：展开这一天的全部任务 */
+    val onMore: (LocalDate) -> Unit = {},
+)
+
+/** 一条任务：方方正正的淡色块（颜色按清单），字不加粗；已完成的更淡、加删除线。未完成的可以长按拖到别的日子 */
 @Composable
-private fun TaskChip(task: DidaTask, fade: Float) {
+private fun TaskChip(task: DidaTask, fade: Float, drag: ChipDrag) {
     val scheme = MaterialTheme.colorScheme
     val bg = chipColor(task).copy(alpha = (if (task.done) 0.12f else 0.26f) * fade)
+    // 色块自己在屏幕上的位置：长按起点是色块内的坐标，加上它才是屏幕坐标
+    val origin = remember { floatArrayOf(0f, 0f) }
+    val latest = rememberUpdatedState(drag)
     Text(
         TodoMeta.cleanTitle(task.title),
         fontSize = 8.sp,
@@ -554,9 +619,129 @@ private fun TaskChip(task: DidaTask, fade: Float) {
             .fillMaxWidth()
             .padding(vertical = 1.dp)
             .height(CHIP_HEIGHT - 2.dp)
+            .onGloballyPositioned {
+                val p = it.positionInRoot()
+                origin[0] = p.x
+                origin[1] = p.y
+            }
+            .graphicsLayer { alpha = if (drag.draggingId == task.id) 0.25f else 1f }
             .background(bg)
+            .then(
+                if (task.done) Modifier else Modifier.pointerInput(task.id, task.date) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { local -> latest.value.onStart(task, Offset(origin[0] + local.x, origin[1] + local.y)) },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            latest.value.onMove(amount)
+                        },
+                        onDragEnd = { latest.value.onEnd() },
+                        onDragCancel = { latest.value.onCancel() },
+                    )
+                },
+            )
             .padding(horizontal = 3.dp),
     )
+}
+
+// ───────────────────────── 当天全部任务（点「+N」展开） ─────────────────────────
+
+@Composable
+private fun ExpandedDayCard(
+    day: LocalDate,
+    tasks: List<DidaTask>,
+    hidden: Boolean,
+    drag: ChipDrag,
+    onOpenTask: (DidaTask) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Column(
+        modifier
+            .fillMaxWidth()
+            // 拖着走的时候卡片透明，露出下面的格子；仍在组合里，所以手势不会中断
+            .graphicsLayer { alpha = if (hidden) 0f else 1f }
+            .shadow(12.dp, RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(24.dp))
+            .background(scheme.surface)
+            .padding(top = 12.dp, bottom = 8.dp),
+    ) {
+        Row(Modifier.padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "${day.monthValue}月${day.dayOfMonth}日 · ${tasks.size} 项",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+                Text("长按任务，拖到上面的日期改期", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+            }
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onClose),
+                contentAlignment = Alignment.Center,
+            ) { Text("✕", fontSize = 15.sp, color = scheme.onSurfaceVariant) }
+        }
+        Column(
+            Modifier
+                .heightIn(max = 240.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            tasks.forEach { task -> ExpandedTaskRow(task, drag, onOpenTask) }
+        }
+    }
+}
+
+@Composable
+private fun ExpandedTaskRow(task: DidaTask, drag: ChipDrag, onOpen: (DidaTask) -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val origin = remember { floatArrayOf(0f, 0f) }
+    val latest = rememberUpdatedState(drag)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(42.dp)
+            .onGloballyPositioned {
+                val p = it.positionInRoot()
+                origin[0] = p.x
+                origin[1] = p.y
+            }
+            .graphicsLayer { alpha = if (drag.draggingId == task.id) 0.25f else 1f }
+            .clip(RoundedCornerShape(14.dp))
+            .background(scheme.surfaceContainerHigh)
+            .clickable { onOpen(task) }
+            .then(
+                if (task.done) Modifier else Modifier.pointerInput(task.id, task.date) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { local -> latest.value.onStart(task, Offset(origin[0] + local.x, origin[1] + local.y)) },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            latest.value.onMove(amount)
+                        },
+                        onDragEnd = { latest.value.onEnd() },
+                        onDragCancel = { latest.value.onCancel() },
+                    )
+                },
+            )
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(chipColor(task)))
+        Text(
+            TodoMeta.cleanTitle(task.title),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textDecoration = if (task.done) TextDecoration.LineThrough else null,
+            color = scheme.onSurface.copy(alpha = if (task.done) 0.5f else 1f),
+            modifier = Modifier.padding(start = 10.dp).weight(1f),
+        )
+        task.time?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant) }
+    }
 }
 
 // ───────────────────────── 无日期托盘（拖拽的起点） ─────────────────────────

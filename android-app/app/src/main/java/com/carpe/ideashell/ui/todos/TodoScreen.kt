@@ -254,7 +254,7 @@ fun TodoScreen(
         }
     }
 
-    val ctx = remember(overview, today, workspace) {
+    val ctx = remember(overview, today, workspace, ranged) {
         overview?.let {
             TodoCtx(
                 overview = it,
@@ -263,6 +263,7 @@ fun TodoScreen(
                 onToggle = { t -> if (t.done) viewModel.undoComplete(t) else viewModel.complete(t) },
                 onOpen = { t -> selectedId = t.id },
                 onReschedule = { t, date, time -> viewModel.reschedule(t, date, time) },
+                ranged = ranged,
             )
         }
     }

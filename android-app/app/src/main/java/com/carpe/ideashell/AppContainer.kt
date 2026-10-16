@@ -180,6 +180,7 @@ class AppContainer(context: Context) {
     val daySummary = DaySummaryService(
         api = didaApi,
         dailyNotes = dailyNotes,
+        ideashell = ideashellApi,
         hasDida = { !credentials.didaToken.isNullOrBlank() },
     )
 

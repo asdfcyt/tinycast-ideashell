@@ -192,6 +192,15 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** 把有日期的任务拖到另一天：只改日期，原来的时间点保留 */
+    fun moveByDrag(task: DidaTask, date: java.time.LocalDate) {
+        viewModelScope.launch {
+            container.todos.reschedule(task, date.toString(), task.time)
+                .onSuccess { message("已改到 ${date.monthValue}月${date.dayOfMonth}日") }
+                .onFailure { fail("改期失败", it) }
+        }
+    }
+
     fun notice(text: String) = message(text)
 
     /** 当前视图（留在 ViewModel 里：打开笔记再回来仍在原处） */

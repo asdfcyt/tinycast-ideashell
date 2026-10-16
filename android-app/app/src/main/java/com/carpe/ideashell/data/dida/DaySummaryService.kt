@@ -1,6 +1,8 @@
 package com.carpe.ideashell.data.dida
 
 import com.carpe.ideashell.data.ideashell.DailyNoteService
+import com.carpe.ideashell.data.ideashell.IdeashellApi
+import com.carpe.ideashell.domain.MemoryLane
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -17,18 +19,21 @@ data class DaySummary(
     val focusMin: Int,
     val focusPomos: Int,
     val focusByTask: List<FocusItem>,
+    /** 今天记录的笔记标题（不含 Daily Note） */
+    val notes: List<String> = emptyList(),
 ) {
-    val hasContent: Boolean get() = tasks.isNotEmpty() || focusMin > 0
+    val hasContent: Boolean get() = tasks.isNotEmpty() || focusMin > 0 || notes.isNotEmpty()
 }
 
 /**
- * 今日小结：把今天完成的任务、专注时长（按任务拆分）以引用格式插到今天 Daily Note 的最前面。
+ * 今日小结：把今天完成的任务、今天记录的笔记标题、专注时长（按任务拆分）以引用格式插到今天 Daily Note 的最前面。
  * 全部是滴答里的精确数据，不推测、不需要打字。重复生成会替换开头那一块，不会堆叠。
  * 滴答 MCP 只能读 / 写专注记录，不能启动计时：计时在滴答里进行，这里读回来显示。
  */
 class DaySummaryService(
     private val api: DidaApi,
     private val dailyNotes: DailyNoteService,
+    private val ideashell: IdeashellApi,
     private val hasDida: () -> Boolean,
 ) {
     private val _todayFocus = MutableStateFlow<Pair<LocalDate, Int>?>(null)
@@ -66,7 +71,9 @@ class DaySummaryService(
         if (!hasDida()) throw IllegalStateException("还没有连接滴答清单，无法汇总今天完成的任务和专注")
         val doneJob = async { api.completedOn(today) }
         val focusJob = async { attempt { focus(today) }.getOrNull() }
+        val notesJob = async { attempt { notesOn(today) }.getOrDefault(emptyList()) }
         val done = doneJob.await()
+        val notes = notesJob.await()
         val focus = focusJob.await()
 
         val titles = HashMap<String, String>(focus?.titles.orEmpty())
@@ -82,7 +89,20 @@ class DaySummaryService(
             focusMin = focus?.todayMin ?: 0,
             focusPomos = focus?.todayPomos ?: 0,
             focusByTask = byTask,
+            notes = notes,
         )
+    }
+
+    /** 今天（本地时区的 0 点到次日 0 点）创建的笔记标题，按创建时间先后；Daily Note 本身不算 */
+    private suspend fun notesOn(day: LocalDate): List<String> {
+        val zone = ZoneId.systemDefault()
+        val range = ideashell.notesInRange(day.atStartOfDay(zone).toInstant(), day.plusDays(1).atStartOfDay(zone).toInstant())
+        return range.notes
+            .filterNot(MemoryLane::isDailyNote)
+            .sortedBy { it.createdAt.orEmpty() }
+            .map { it.title.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
     }
 
     /** 引用格式：整块每行以 `> ` 开头，细项缩进成子列表，不带时间戳 */
@@ -92,6 +112,11 @@ class DaySummaryService(
             lines += "- 完成 ${s.tasks.size} 项任务"
             s.tasks.take(MAX_TASKS).forEach { lines += "  - $it" }
             if (s.tasks.size > MAX_TASKS) lines += "  - ……还有 ${s.tasks.size - MAX_TASKS} 项"
+        }
+        if (s.notes.isNotEmpty()) {
+            lines += "- 记录 ${s.notes.size} 篇笔记"
+            s.notes.take(MAX_NOTES).forEach { lines += "  - $it" }
+            if (s.notes.size > MAX_NOTES) lines += "  - ……还有 ${s.notes.size - MAX_NOTES} 篇"
         }
         if (s.focusMin > 0) {
             val pomo = if (s.focusPomos > 0) "（${s.focusPomos} 个番茄）" else ""
@@ -110,8 +135,8 @@ class DaySummaryService(
     }
 
     fun hud(s: DaySummary?): String =
-        if (s != null) "今日小结已插到 Daily Note 最前面：完成 ${s.tasks.size} 项 · 专注 ${FocusParser.formatMinutes(s.focusMin)}"
-        else "今天还没有完成的任务或专注记录"
+        if (s != null) "今日小结已插到 Daily Note 最前面：完成 ${s.tasks.size} 项 · 笔记 ${s.notes.size} 篇 · 专注 ${FocusParser.formatMinutes(s.focusMin)}"
+        else "今天还没有完成的任务、笔记或专注记录"
 
     private inline fun <T> attempt(block: () -> T): Result<T> = try {
         Result.success(block())
@@ -123,6 +148,7 @@ class DaySummaryService(
 
     private companion object {
         const val MAX_TASKS = 20
+        const val MAX_NOTES = 20
         const val MAX_FOCUS_TASKS = 10
 
         /** 开头引用块的标记：重复生成时靠它识别并替换 */

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -139,6 +140,10 @@ internal fun StatDetailSheet(
     project: Project,
     stats: ProjectStats,
     monthlyFocus: ProjectMonthlyFocus?,
+    /** 相关的已完成任务（概览 + 日历缓存）：按月统计完成数 */
+    doneTasks: List<DidaTask>,
+    openTasks: List<DidaTask>,
+    progress: ProgressView,
     onOpenNote: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -166,9 +171,9 @@ internal fun StatDetailSheet(
 
         StatKind.MONTHS -> DetailSheet(
             title = "近 12 个月",
-            subtitle = "每个月提及「${project.keyword}」的笔记数和专注时长，点一个月可以展开那个月的笔记",
+            subtitle = "「${project.keyword}」的进展，以及每个月记的笔记、完成的任务和专注；没有动静的月份不显示",
             onDismiss = onDismiss,
-        ) { MonthBreakdown(stats, monthlyFocus, today, onOpenNote, onDismiss) }
+        ) { MonthBreakdown(stats, monthlyFocus, doneTasks, openTasks, progress, today, onOpenNote, onDismiss) }
     }
 }
 
@@ -401,113 +406,248 @@ private fun tagLine(project: Project, list: List<DossierNote>): String {
     return if (top.isEmpty()) "" else "常一起出现：" + top.joinToString("　") { "#${it.key} ${it.value}" }
 }
 
+/** 一个月里某一类数据的一行：色条（相对最大月）+ 数值 */
+@Composable
+private fun MetricLine(color: Color, fraction: Float, text: String, active: Boolean) {
+    val scheme = MaterialTheme.colorScheme
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(
+            Modifier
+                .weight(1f)
+                .height(7.dp)
+                .clip(CircleShape)
+                .background(scheme.onSurface.copy(alpha = 0.08f)),
+        ) {
+            if (fraction > 0f) Box(Modifier.fillMaxWidth(fraction.coerceIn(0.04f, 1f)).fillMaxHeight().clip(CircleShape).background(color))
+        }
+        Text(
+            text,
+            modifier = Modifier.width(64.dp),
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+            color = if (active) color else scheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * 近 12 个月：顶上一张汇总（项目进展 + 笔记 / 完成任务 / 专注合计），下面按月列出「有动静的月份」
+ * （笔记、完成任务、专注任一不为 0），全是 0 的月份不显示；点一个月展开那个月的笔记和完成的任务。
+ */
 @Composable
 private fun ColumnScope.MonthBreakdown(
     stats: ProjectStats,
     monthlyFocus: ProjectMonthlyFocus?,
+    doneTasks: List<DidaTask>,
+    openTasks: List<DidaTask>,
+    progress: ProgressView,
     today: LocalDate,
     onOpenNote: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val noteColor = Brand.Orange
+    val doneColor = Color(0xFF3FA37C)
     val focusColor = Color(0xFF3E8BFF)
     val (labels, counts) = remember(stats) { Dossier.monthlySeries(stats.mentions.mapNotNull { it.day }, today) }
-    val max = (counts.maxOrNull() ?: 0).coerceAtLeast(1)
+    val zone = remember { java.time.ZoneId.systemDefault() }
+    // 每个月完成的任务：按完成那天归月，没有完成时刻的用计划日期
+    val doneByMonth = remember(doneTasks) {
+        doneTasks.groupBy { t ->
+            val d = t.completedAt?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+                ?: t.date?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            d?.let { "%04d-%02d".format(it.year, it.monthValue) }.orEmpty()
+        }
+    }
+    val dones = labels.map { doneByMonth[it]?.size ?: 0 }
     val mins = labels.map { monthlyFocus?.minutes?.get(it) ?: 0 }
+    val maxNote = (counts.maxOrNull() ?: 0).coerceAtLeast(1)
+    val maxDone = (dones.maxOrNull() ?: 0).coerceAtLeast(1)
     val maxMin = (mins.maxOrNull() ?: 0).coerceAtLeast(1)
     var open by remember { mutableStateOf<String?>(null) }
+
+    // 汇总卡：进展环 + 三个合计
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(scheme.surfaceContainerLowest)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            ProgressRing(progress.progress, 60.dp, 7.dp) {
+                Text(
+                    progress.progress?.let { "${(it * 100).roundToInt()}%" } ?: "—",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("项目进展", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
+                Text(
+                    listOfNotNull(progress.caption?.let { "已交付 $it" }, progress.basis).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                )
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MiniStat("${dones.sum()} 项", "近 12 月完成", Modifier.weight(1f))
+            MiniStat("${openTasks.size} 项", "未完成", Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MiniStat("${counts.sum()} 篇", "笔记", Modifier.weight(1f))
+            MiniStat(
+                if (monthlyFocus == null) "…" else if (mins.sum() > 0) compactMin(mins.sum()) else "—",
+                "专注",
+                Modifier.weight(1f),
+            )
+        }
+    }
+
+    // 未完成任务：已逾期 / 每个月（本月起）/ 未排期
+    if (openTasks.isNotEmpty()) {
+        val amber = Color(0xFFE59A1F)
+        val dated = openTasks.mapNotNull { t -> t.date?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }?.let { it to t } }
+        val overdue = dated.filter { it.first < today }.sortedBy { it.first }
+        val byMonth = dated.filter { it.first >= today }.groupBy { "%04d-%02d".format(it.first.year, it.first.monthValue) }.toSortedMap()
+        val undated = openTasks.filter { t -> dated.none { it.second.id == t.id } }
+        data class Group(val key: String, val label: String, val tasks: List<Pair<LocalDate?, DidaTask>>, val color: Color)
+        val groups = buildList {
+            if (overdue.isNotEmpty()) add(Group("o:overdue", "已逾期", overdue, Color(0xFFD9534F)))
+            byMonth.forEach { (k, v) ->
+                val m = k.substringAfter('-').toInt()
+                val y = k.substringBefore('-').toInt()
+                add(Group("o:$k", if (y == today.year) "${m} 月" else "${y} 年 ${m} 月", v.sortedBy { it.first }, amber))
+            }
+            if (undated.isNotEmpty()) add(Group("o:undated", "未排期", undated.map { null to it }, scheme.onSurfaceVariant))
+        }
+        val maxOpen = groups.maxOf { it.tasks.size }.coerceAtLeast(1)
+        SheetHint("未完成的 ${openTasks.size} 项任务，按计划日期分到各月（来自待办概览和日历里翻过的月份，没翻到的月份可能偏少）。")
+        ListGroup {
+            for ((pos, g) in groups.withIndex()) {
+                val isOpen = open == g.key
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { open = if (isOpen) null else g.key }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(g.label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(64.dp))
+                    Column(Modifier.weight(1f)) {
+                        MetricLine(g.color, g.tasks.size.toFloat() / maxOpen, "${g.tasks.size} 项", true)
+                    }
+                }
+                if (isOpen) {
+                    RowDivider()
+                    g.tasks.forEach { (d, t) ->
+                        Text(
+                            (d?.let { "${it.monthValue}/${it.dayOfMonth}  " } ?: "") +
+                                com.carpe.ideashell.core.parse.TodoMeta.cleanTitle(t.title),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = scheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 3.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                if (pos < groups.lastIndex) RowDivider()
+            }
+        }
+        Text(
+            "过去的月份",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = scheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 6.dp, top = 6.dp),
+        )
+    }
+
+    val shown = labels.indices.reversed().filter { counts[it] > 0 || dones[it] > 0 || mins[it] > 0 }
+    if (shown.isEmpty()) {
+        SheetHint(if (monthlyFocus == null) "专注时长统计中…" else "近 12 个月没有笔记、完成的任务或专注记录。")
+        return
+    }
     SheetHint(
         buildString {
-            append("12 个月共 ${counts.sum()} 篇")
-            append(
-                when {
-                    monthlyFocus == null -> "，专注时长统计中…"
-                    mins.sum() > 0 -> "，专注 ${compactMin(mins.sum())}"
-                    else -> "，没有专注记录"
-                },
-            )
+            append("有动静的月份 ${shown.size} 个")
+            if (monthlyFocus == null) append("，专注时长统计中…")
+            append("。完成任务来自待办概览和日历里翻过的月份，没翻到的月份可能偏少。")
         },
     )
     ListGroup {
-        for (i in labels.indices.reversed()) {
+        for ((pos, i) in shown.withIndex()) {
             val label = labels[i]
             val n = counts[i]
+            val d = dones[i]
             val min = mins[i]
             val isOpen = open == label
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = n > 0) { open = if (isOpen) null else label }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                    .clickable(enabled = n > 0 || d > 0) { open = if (isOpen) null else label }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(
-                    label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (n > 0) scheme.onSurface else scheme.onSurfaceVariant,
-                    modifier = Modifier.width(64.dp),
-                )
-                // 上面一条：提及的笔记数（橙）；下面一条：当月专注时长（蓝）
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(CircleShape)
-                            .background(scheme.onSurface.copy(alpha = 0.08f)),
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth(n.toFloat() / max)
-                                .fillMaxHeight()
-                                .clip(CircleShape)
-                                .background(Brand.Orange),
-                        )
-                    }
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(CircleShape)
-                            .background(scheme.onSurface.copy(alpha = 0.08f)),
-                    ) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth(min.toFloat() / maxMin)
-                                .fillMaxHeight()
-                                .clip(CircleShape)
-                                .background(focusColor),
-                        )
-                    }
-                }
-                Column(Modifier.width(76.dp), horizontalAlignment = Alignment.End) {
-                    Text(
-                        "$n 篇",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (n > 0) FontWeight.Bold else FontWeight.Normal,
-                        color = if (n > 0) scheme.onSurface else scheme.onSurfaceVariant,
-                    )
-                    Text(
-                        if (monthlyFocus == null) "…" else if (min > 0) compactMin(min) else "—",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (min > 0) FontWeight.Bold else FontWeight.Normal,
-                        color = if (min > 0) focusColor else scheme.onSurfaceVariant,
+                Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(64.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    MetricLine(noteColor, n.toFloat() / maxNote, "$n 篇", n > 0)
+                    MetricLine(doneColor, d.toFloat() / maxDone, "$d 项", d > 0)
+                    MetricLine(
+                        focusColor, min.toFloat() / maxMin,
+                        if (monthlyFocus == null) "…" else if (min > 0) compactMin(min) else "—", min > 0,
                     )
                 }
             }
             if (isOpen) {
                 val notes = stats.mentions.filter { m -> m.day?.let { "%04d-%02d".format(it.year, it.monthValue) } == label }
+                val tasks = doneByMonth[label].orEmpty().sortedByDescending { it.completedAt ?: 0L }
                 RowDivider()
-                DividedRows(notes) { m ->
-                    NoteRow(
-                        m.note,
-                        onClick = { onDismiss(); onOpenNote(m.note.id) },
-                        snippet = (if (m.viaSpeaker && m.mentions == 0) "有其发言　" else "") + m.snippet,
+                if (tasks.isNotEmpty()) {
+                    Text(
+                        "完成任务 · ${tasks.size} 项",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = doneColor,
+                        modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 4.dp),
                     )
+                    tasks.forEach { t ->
+                        Text(
+                            "✓ " + com.carpe.ideashell.core.parse.TodoMeta.cleanTitle(t.title),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = scheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 3.dp),
+                        )
+                    }
+                }
+                if (notes.isNotEmpty()) {
+                    Text(
+                        "笔记 · ${notes.size} 篇",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = noteColor,
+                        modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 2.dp),
+                    )
+                    DividedRows(notes) { m ->
+                        NoteRow(
+                            m.note,
+                            onClick = { onDismiss(); onOpenNote(m.note.id) },
+                            snippet = (if (m.viaSpeaker && m.mentions == 0) "有其发言　" else "") + m.snippet,
+                        )
+                    }
                 }
             }
-            if (i > 0) RowDivider()
+            if (pos < shown.lastIndex) RowDivider()
         }
     }
 }

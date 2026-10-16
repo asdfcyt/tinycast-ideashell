@@ -146,7 +146,8 @@ class DidaApi(private val mcp: McpClient) {
         )
         return DidaParser.extractTasks(text, zone)
             .filter { it.done }
-            .filter { t -> t.completedAt?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate() == day } ?: true }
+            // 只要「当天完成」的：有完成时刻按完成时刻；没有完成时刻的，只有计划日期恰好是这一天才算（不再一律放行）
+            .filter { t -> t.completedAt?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate() == day } ?: (t.date == day.toString()) }
             .sortedBy { it.completedAt ?: 0L }
     }
 

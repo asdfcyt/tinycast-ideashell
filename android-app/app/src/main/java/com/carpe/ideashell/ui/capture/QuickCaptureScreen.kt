@@ -167,7 +167,6 @@ fun QuickCaptureScreen(
                         override = viewModel.override,
                         append = viewModel.append,
                         onSelect = viewModel::selectKind,
-                        onTemplates = { viewModel.showTemplates = true },
                         onAppend = viewModel::toggleAppend,
                     )
                 }
@@ -232,7 +231,6 @@ private fun KindSelector(
     override: CaptureKind?,
     append: Boolean,
     onSelect: (CaptureKind?) -> Unit,
-    onTemplates: () -> Unit,
     onAppend: () -> Unit,
 ) {
     Row(
@@ -269,30 +267,6 @@ private fun KindSelector(
                 Spacer(Modifier.height(3.dp))
                 Text(label, style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp), color = Color.White)
             }
-        }
-        // 模板：不是类型，点开选模板录入，所以永远是未选中的样子
-        Column(
-            modifier = Modifier
-                .widthIn(min = 44.dp)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    role = Role.Button,
-                    onClick = onTemplates,
-                ),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.28f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(painterResource(R.drawable.ic_template), contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.height(3.dp))
-            Text("模板", style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp), color = Color.White)
         }
         // 追加：开着时保存成「追加到上一篇快记笔记」（类型固定为笔记）；亮起表示已开启，再点一次关闭
         Column(
@@ -407,6 +381,7 @@ private fun ComposingContent(
                 onCamera = onOpenCamera,
                 onVoice = onVoice,
                 onAskAi = onAskAi,
+                onTemplates = { viewModel.showTemplates = true },
             )
         }
 

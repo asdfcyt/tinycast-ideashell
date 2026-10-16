@@ -42,6 +42,8 @@ internal class TodoCtx(
     val onToggle: (DidaTask) -> Unit,
     val onOpen: (DidaTask) -> Unit,
     val onReschedule: (DidaTask, String, String?) -> Unit,
+    /** 日历视图读到的任务缓存（更远日期的未完成 / 已完成任务）：项目主页的相关任务也要用 */
+    val ranged: Map<String, DidaTask> = emptyMap(),
 )
 
 internal fun toneOf(task: DidaTask, today: LocalDate): Tone {

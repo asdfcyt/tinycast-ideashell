@@ -517,13 +517,14 @@ private fun Dashboard(
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // 一行放不下时只在「·」处换行（每一段内部用不换行空格连着），不再被右边的「专注中」挤成省略号
                 Text(
                     buildAnnotatedString {
-                        append("待办 ")
+                        append("待办\u00A0")
                         withStyle(SpanStyle(fontWeight = FontWeight.ExtraBold, color = scheme.onSurface)) {
                             append(if (loaded) "$todoDone/$todoTotal" else "–")
                         }
-                        append(" · 项目进展 ")
+                        append("\u00A0· 项目进展\u00A0")
                         withStyle(SpanStyle(fontWeight = FontWeight.ExtraBold, color = scheme.onSurface)) {
                             append(projectProgress?.let { "${(it * 100).toInt()}%" } ?: "–")
                         }
@@ -532,7 +533,7 @@ private fun Dashboard(
                     lineHeight = 17.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = scheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
