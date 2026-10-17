@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.carpe.ideashell.ui.glass.GlassSurface
+import com.carpe.ideashell.ui.glass.glassChip
 
 /*
  * 全应用共用的积木（设计系统「环」）：
@@ -190,34 +191,49 @@ fun RowPill(
     dark: Boolean = false,
     onClick: (() -> Unit)? = null,
     content: @Composable () -> Unit,
+) = RowPill(modifier, dark, onClick, glass = false, content = content)
+
+/** [glass] 为 true：横幅类（今日重温、下一件）用静态玻璃；列表里成排的行保持实心 */
+@Composable
+fun RowPill(
+    modifier: Modifier = Modifier,
+    dark: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    glass: Boolean,
+    content: @Composable () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(24.dp)
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(if (dark) scheme.inverseSurface else scheme.surfaceContainerLowest)
+            .then(
+                if (glass) Modifier.glassChip(shape, tint = if (dark) scheme.inverseSurface else Color.Unspecified)
+                else Modifier.clip(shape).background(if (dark) scheme.inverseSurface else scheme.surfaceContainerLowest),
+            )
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
     ) {
         content()
     }
 }
 
-/** 页面顶部的圆形图标按钮（白底圆形；放在橙色色场上时传 [container] 换成半透明深棕） */
+/** 页面顶部的圆形图标按钮（默认是静态玻璃；放在橙色色场上时传 [container] 换成半透明深棕） */
 @Composable
 fun CircleIconButton(
     icon: ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    container: Color = MaterialTheme.colorScheme.surfaceContainerLowest,
+    container: Color = Color.Unspecified,
     content: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     Box(
         modifier = modifier
             .size(44.dp)
-            .clip(CircleShape)
-            .background(container)
+            .then(
+                if (container == Color.Unspecified) Modifier.glassChip(CircleShape)
+                else Modifier.clip(CircleShape).background(container),
+            )
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -230,7 +246,7 @@ fun CircleIconButton(
 fun SearchButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    container: Color = MaterialTheme.colorScheme.surfaceContainerLowest,
+    container: Color = Color.Unspecified,
     content: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     CircleIconButton(Icons.Filled.Search, "搜索", onClick, modifier, container, content)

@@ -1,5 +1,8 @@
 package com.carpe.ideashell.ui.review
 
+import com.carpe.ideashell.ui.glass.GlassButton
+import com.carpe.ideashell.ui.glass.glassChip
+import com.carpe.ideashell.ui.glass.GlassOutlinedButton
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -105,7 +108,7 @@ fun ConnectIdeashellCard(onOpenConnection: () -> Unit) {
     EmptyNote(
         title = "先连接闪念贝壳",
         text = "笔记来自闪念贝壳。填入 API Key 后，这里会出现按时间排开的笔记与日记，以及这段时间的时间去向。",
-        action = { Button(onClick = onOpenConnection) { Text("去连接") } },
+        action = { GlassButton(onClick = onOpenConnection) { Text("去连接") } },
     )
 }
 
@@ -115,7 +118,7 @@ fun InfoCard(title: String, text: String, action: String? = null, onAction: () -
     EmptyNote(
         title = title,
         text = text,
-        action = if (action != null) ({ OutlinedButton(onClick = onAction) { Text(action) } }) else null,
+        action = if (action != null) ({ GlassOutlinedButton(onClick = onAction) { Text(action) } }) else null,
     )
 }
 
@@ -135,12 +138,11 @@ fun GlassSearchField(
     onSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // iOS 搜索框：浅灰底圆角矩形，没有描边
+    // 胶囊形液态玻璃搜索框：半透明玻璃底 + 白色细边（静态绘制，不占资源）
     Box(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            .glassChip(androidx.compose.foundation.shape.CircleShape),
     ) {
         TextField(
             value = value,

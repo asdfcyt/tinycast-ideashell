@@ -95,6 +95,10 @@ fun TicketDialog(c: Celebration, onDismiss: () -> Unit, onDetail: (() -> Unit)? 
     val today = c.todayMin
     val bmp = rememberTicketBitmap(c, today)
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        // 小票后面的页面磨砂，和底部抽屉同一个强度
+        if (com.carpe.ideashell.ui.glass.rememberCrossWindowBlur()) {
+            com.carpe.ideashell.ui.glass.BlurBehindWindow(radiusPx = com.carpe.ideashell.ui.glass.SheetBlurPx)
+        }
         Column(
             Modifier
                 .fillMaxWidth()

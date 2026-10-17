@@ -63,6 +63,25 @@ object IdeashellBridge {
         return shortcut(context, Action.ASK_AI)
     }
 
+    /**
+     * 把一条笔记 / 日记发给闪念贝壳 AI 聊：[title] 和 [meta]（日期等）是上下文，[body] 是内容，
+     * 末尾带一句默认问题（开了「自动发送」就直接问；没开则留在输入框里，用户可以改成自己的问题）。
+     * 链接长度有限，正文超过 [MAX_BODY] 字时截断。
+     */
+    fun askAboutNote(context: Context, title: String?, meta: String?, body: String): Boolean {
+        val text = body.trim()
+        val clipped = if (text.length > MAX_BODY) text.take(MAX_BODY) + "……（内容较长，已截取前 $MAX_BODY 字）" else text
+        val head = buildString {
+            append("这是我记下的一条")
+            if (!meta.isNullOrBlank()) append("（$meta）")
+            append("：\n")
+            if (!title.isNullOrBlank()) append("《${title.trim()}》\n")
+        }
+        return askAi(context, head + clipped + "\n\n请帮我梳理要点，并指出值得继续追问或深入的地方。")
+    }
+
+    private const val MAX_BODY = 1500
+
     private fun shortcut(context: Context, action: Action): Boolean {
         val v = installed(context) ?: return notInstalled(context)
         val intent = Intent(Intent.ACTION_VIEW).setClassName(v.pkg, v.shortcutClass).putExtra("from_shortcut", action.extra)

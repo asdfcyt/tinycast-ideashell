@@ -1,5 +1,6 @@
 package com.carpe.ideashell.ui.home
 
+import com.carpe.ideashell.ui.glass.GlassButton
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -89,6 +90,7 @@ import com.carpe.ideashell.ui.components.GroupCard
 import com.carpe.ideashell.ui.components.kindIcon
 import com.carpe.ideashell.ui.components.relativeTime
 import com.carpe.ideashell.ui.glass.GlassBadge
+import com.carpe.ideashell.ui.glass.glassButton
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
 import com.carpe.ideashell.ui.glass.isDarkSurface
@@ -384,7 +386,7 @@ private fun Header(today: LocalDate, loaded: Boolean, remaining: Int, onOpenSear
 @Composable
 private fun RevisitEntry(remaining: Int, done: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
-    RowPill(modifier = modifier, onClick = onClick) {
+    RowPill(modifier = modifier, onClick = onClick, glass = true) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -409,7 +411,7 @@ private fun RevisitEntry(remaining: Int, done: Int, onClick: () -> Unit, modifie
                 )
             }
             Box(
-                Modifier.height(36.dp).clip(CircleShape).background(scheme.inverseSurface).padding(horizontal = 16.dp),
+                Modifier.height(36.dp).glassButton(CircleShape, scheme.inverseSurface).padding(horizontal = 16.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text("开始", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold, color = scheme.inverseOnSurface)
@@ -803,7 +805,7 @@ private fun NextRow(
     } else {
         task.time.orEmpty()
     }
-    RowPill(modifier, onClick = onOpen) {
+    RowPill(modifier, onClick = onOpen, glass = true) {
         Row(
             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 4.dp, end = 18.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1018,7 +1020,7 @@ private fun ConnectCard(onOpenConnection: () -> Unit, modifier: Modifier = Modif
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            Button(onClick = onOpenConnection) { Text("去连接") }
+            GlassButton(onClick = onOpenConnection) { Text("去连接") }
         }
     }
 }

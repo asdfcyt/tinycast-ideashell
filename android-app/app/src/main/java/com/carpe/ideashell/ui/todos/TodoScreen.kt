@@ -1,5 +1,7 @@
 package com.carpe.ideashell.ui.todos
 
+import com.carpe.ideashell.ui.glass.GlassButton
+import com.carpe.ideashell.ui.glass.GlassOutlinedButton
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
@@ -418,7 +420,7 @@ fun TodoScreen(
                             EmptyNote(
                                 title = "先连接滴答清单",
                                 text = "待办来自滴答清单。填入滴答 API 口令后，这里会显示逾期、今天和未来 7 天的任务，点一下就能完成。",
-                                action = { Button(onClick = onOpenConnection) { Text("去连接") } },
+                                action = { GlassButton(onClick = onOpenConnection) { Text("去连接") } },
                             )
                         }
 
@@ -433,7 +435,7 @@ fun TodoScreen(
                                 EmptyNote(
                                     title = "没能加载待办",
                                     text = data.error.orEmpty(),
-                                    action = { OutlinedButton(onClick = { viewModel.refresh(force = true) }) { Text("重试") } },
+                                    action = { GlassOutlinedButton(onClick = { viewModel.refresh(force = true) }) { Text("重试") } },
                                 )
                             } else {
                                 Box(Modifier.fillMaxWidth().padding(vertical = 56.dp), contentAlignment = Alignment.Center) {
@@ -484,7 +486,7 @@ fun TodoScreen(
                                         list == null && state?.error != null -> EmptyNote(
                                             title = "没能读到这一天",
                                             text = state.error.orEmpty(),
-                                            action = { OutlinedButton(onClick = { viewModel.loadPast(day, force = true) }) { Text("重试") } },
+                                            action = { GlassOutlinedButton(onClick = { viewModel.loadPast(day, force = true) }) { Text("重试") } },
                                         )
 
                                         list == null -> Box(Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) {

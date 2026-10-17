@@ -1,5 +1,7 @@
 package com.carpe.ideashell.ui.todos
 
+import com.carpe.ideashell.ui.theme.Brand
+import com.carpe.ideashell.ui.glass.GlassButton
 import com.carpe.ideashell.ui.glass.GlassSheet
 import android.content.Intent
 import android.net.Uri
@@ -14,7 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.carpe.ideashell.ui.glass.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -53,7 +55,6 @@ import com.carpe.ideashell.data.project.didaTaskUrl
 import com.carpe.ideashell.system.openInApp
 import androidx.compose.ui.text.font.FontWeight
 import com.carpe.ideashell.ui.components.ConfirmDialog
-import com.carpe.ideashell.ui.components.brandButtonColors
 import com.carpe.ideashell.ui.components.FormDialog
 import com.carpe.ideashell.ui.components.FormField
 import com.carpe.ideashell.ui.components.ListGroup
@@ -203,9 +204,10 @@ internal fun TaskSheet(
             }
 
             // 操作：一个主按钮，其余收进文字按钮和「更多」菜单
-            Button(
+            GlassButton(
                 onClick = actions.onComplete,
-                colors = brandButtonColors(),
+                tint = Brand.Orange,
+                contentColor = Brand.Brown,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) {
                 Text(if (task.done) "恢复为未完成" else "完成", fontWeight = FontWeight.Bold)

@@ -1,5 +1,6 @@
 package com.carpe.ideashell.ui.review
 
+import com.carpe.ideashell.ui.glass.GlassOutlinedButton
 import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -253,7 +254,7 @@ fun NoteDetailScreen(
                         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("没能打开这条笔记", style = MaterialTheme.typography.titleMedium)
                             Text(state.error.orEmpty(), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            OutlinedButton(onClick = { attempt++ }) { Text("重试") }
+                            GlassOutlinedButton(onClick = { attempt++ }) { Text("重试") }
                         }
                     }
 

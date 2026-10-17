@@ -3,6 +3,8 @@ package com.carpe.ideashell.ui.todos
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import com.carpe.ideashell.ui.glass.glassButton
+import com.carpe.ideashell.ui.glass.glassChip
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -226,8 +228,7 @@ internal fun OverdueBanner(
         modifier = modifier
             .fillMaxWidth()
             .height(54.dp)
-            .clip(CircleShape)
-            .background(scheme.inverseSurface)
+            .glassChip(CircleShape, tint = scheme.inverseSurface)
             .clickable(onClick = onToggle)
             .padding(start = 20.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -248,8 +249,7 @@ internal fun OverdueBanner(
         Box(
             modifier = Modifier
                 .height(38.dp)
-                .clip(CircleShape)
-                .background(Brand.Orange)
+                .glassButton(CircleShape, Brand.Orange)
                 .clickable(onClick = onReschedule)
                 .padding(horizontal = 16.dp),
             contentAlignment = Alignment.Center,
@@ -397,8 +397,7 @@ internal fun TodayButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .height(44.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+            .glassChip(CircleShape)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center,

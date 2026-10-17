@@ -102,6 +102,8 @@ import com.carpe.ideashell.ui.components.ConfirmDialog
 import com.carpe.ideashell.ui.components.RowDivider
 import com.carpe.ideashell.ui.components.ScreenHeader
 import com.carpe.ideashell.ui.glass.GlassSurface
+import com.carpe.ideashell.ui.glass.glassButton
+import com.carpe.ideashell.ui.glass.glassChip
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
 import com.carpe.ideashell.ui.glass.isDarkSurface
 import com.carpe.ideashell.ui.theme.Brand
@@ -771,8 +773,7 @@ private fun PrimaryButton(text: String, modifier: Modifier = Modifier, onClick: 
         modifier = modifier
             .fillMaxWidth()
             .height(56.dp)
-            .clip(CircleShape)
-            .background(Brand.Orange)
+            .glassButton(CircleShape, Brand.Orange)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -787,8 +788,7 @@ private fun SecondaryButton(text: String, modifier: Modifier = Modifier, onClick
         modifier = modifier
             .fillMaxWidth()
             .height(56.dp)
-            .clip(CircleShape)
-            .background(scheme.surfaceContainerHigh)
+            .glassChip(CircleShape)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

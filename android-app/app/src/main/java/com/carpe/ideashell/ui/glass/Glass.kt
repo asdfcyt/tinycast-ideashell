@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,10 +32,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -109,6 +113,37 @@ object NavBarOverlay {
 
 @Composable
 fun isDarkSurface(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
+/**
+ * 「静态玻璃」小件：标题栏按钮、小胶囊这类放在页面内容里的小东西用它。
+ * 它们在被 layerBackdrop 录制的页面里面，不能再去采样背景（会形成循环崩溃），
+ * 所以这里不做实时折射，只用「半透明渐变 + 上亮下暗的细边」画出玻璃的质感；
+ * 没有 RenderEffect、没有离屏层、也没有阴影，几乎没有绘制开销，滚动不会受影响。
+ */
+@Composable
+fun Modifier.glassChip(shape: Shape = CircleShape, tint: Color = Color.Unspecified): Modifier {
+    val dark = isDarkSurface()
+    // tint 不为空：深色玻璃（如深棕横幅），用 tint 当底，细边是上亮下淡的白光
+    val tinted = tint != Color.Unspecified
+    val fill = Brush.verticalGradient(
+        when {
+            tinted -> listOf(tint.copy(alpha = 0.90f), tint.copy(alpha = 0.72f))
+            dark -> listOf(Color.White.copy(alpha = 0.20f), Color.White.copy(alpha = 0.08f))
+            else -> listOf(Color.White.copy(alpha = 0.78f), Color.White.copy(alpha = 0.44f))
+        },
+    )
+    val rim = Brush.verticalGradient(
+        when {
+            tinted -> listOf(Color.White.copy(alpha = 0.34f), Color.White.copy(alpha = 0.05f))
+            dark -> listOf(Color.White.copy(alpha = 0.40f), Color.White.copy(alpha = 0.06f))
+            else -> listOf(Color.White.copy(alpha = 0.95f), Color(0x2E7A4A22))
+        },
+    )
+    return this
+        .clip(shape)
+        .background(fill)
+        .border(0.8.dp, rim, shape)
+}
 
 /**
  * 页面底色：奶油底 + 三团静态光晕（右上橙、左中琥珀、右下浅橙）。
@@ -537,15 +572,153 @@ fun GlassSheet(
 ) {
     val scheme = MaterialTheme.colorScheme
     val blurOk = rememberCrossWindowBlur()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // 开始往下收（目标是 Hidden，但还没落到底）：磨砂跟着一起退，不等窗口被移除
+    val closing = sheetState.targetValue == SheetValue.Hidden && sheetState.currentValue != SheetValue.Hidden
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         modifier = modifier,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = sheetState,
         containerColor = if (blurOk) scheme.surface.copy(alpha = 0.82f) else scheme.surface,
         shape = RoundedCornerShape(topStart = topRadius, topEnd = topRadius),
         scrimColor = Color.Black.copy(alpha = if (blurOk) 0.22f else 0.32f),
     ) {
-        if (blurOk) BlurBehindWindow(radiusPx = SheetBlurPx)
+        if (blurOk) SheetBlurBehind(closing = closing)
         content()
     }
+}
+
+/** 抽屉刚弹出时的磨砂峰值（像素）：一上来就够糊，然后回落到 [SheetBlurPx] */
+const val SheetBlurPeakPx = 44
+
+/**
+ * 抽屉的背后磨砂，带起落节奏：弹出时从峰值回落到常态；开始收起时在 140ms 内迅速退到 0，
+ * 这样磨砂不会比抽屉本身多停留一会儿（系统窗口模糊自己的淡出偏慢，所以主动先退掉）。
+ */
+@Composable
+fun SheetBlurBehind(closing: Boolean = false) {
+    val radius = remember { androidx.compose.animation.core.Animatable(SheetBlurPeakPx.toFloat()) }
+    androidx.compose.runtime.LaunchedEffect(closing) {
+        if (closing) {
+            radius.animateTo(0f, androidx.compose.animation.core.tween(140))
+        } else {
+            radius.animateTo(
+                SheetBlurPx.toFloat(),
+                androidx.compose.animation.core.tween(420, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            )
+        }
+    }
+    BlurBehindWindow(radiusPx = radius.value.toInt())
+}
+
+/**
+ * 确认 / 选择对话框的玻璃版：和 [GlassSheet] 一样，窗口背后磨砂 + 半透明的面。
+ * 只在弹出时生效一次，不影响页面滚动；系统不允许跨窗口模糊时保持实心。
+ * 参数只保留项目里用到的几个，调用处用 `import ...GlassAlertDialog as AlertDialog` 直接替换。
+ */
+@Composable
+fun GlassAlertDialog(
+    onDismissRequest: () -> Unit,
+    confirmButton: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    dismissButton: (@Composable () -> Unit)? = null,
+    title: (@Composable () -> Unit)? = null,
+    text: (@Composable () -> Unit)? = null,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val blurOk = rememberCrossWindowBlur()
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismissRequest,
+        confirmButton = {
+            if (blurOk) BlurBehindWindow(radiusPx = SheetBlurPx)
+            confirmButton()
+        },
+        modifier = modifier,
+        dismissButton = dismissButton,
+        title = title,
+        text = text,
+        containerColor = if (blurOk) scheme.surfaceContainerHigh.copy(alpha = 0.86f) else scheme.surfaceContainerHigh,
+    )
+}
+
+/**
+ * 有颜色的玻璃按钮（开始 / 暂停 / 改到今天 / 追加 亮起…）：[tint] 色的半透明渐变底，
+ * 上半部一层白色「天光」，再加上亮下淡的白色细边，看起来像一粒有色的玻璃。
+ * 和 [glassChip] 一样是静态绘制：没有模糊、阴影和离屏层，开销可以忽略。
+ */
+@Composable
+fun Modifier.glassButton(shape: Shape = CircleShape, tint: Color): Modifier {
+    val fill = Brush.verticalGradient(listOf(tint.copy(alpha = tint.alpha * 0.96f), tint.copy(alpha = tint.alpha * 0.80f)))
+    val sheen = Brush.verticalGradient(
+        0f to Color.White.copy(alpha = 0.26f),
+        0.55f to Color.White.copy(alpha = 0.02f),
+        1f to Color.Transparent,
+    )
+    val rim = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.50f), Color.White.copy(alpha = 0.08f)))
+    return this
+        .clip(shape)
+        .background(fill)
+        .background(sheen)
+        .border(0.8.dp, rim, shape)
+}
+
+/** 提示条的玻璃版：半透明深色面 + 上亮下暗的细边（静态玻璃，不采样背景） */
+@Composable
+fun Modifier.glassSnackbar(shape: Shape): Modifier {
+    val rim = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.38f), Color.White.copy(alpha = 0.06f)))
+    return this.border(0.8.dp, rim, shape)
+}
+
+/**
+ * 玻璃实心按钮：Material [Button] 的行为（点击、禁用、无障碍）不变，外观换成有色玻璃（见 [glassButton]）。
+ * [tint] 默认主题主色；品牌橙色的主按钮传 `Brand.Orange` + `Brand.Brown`。
+ */
+@Composable
+fun GlassButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    tint: Color = MaterialTheme.colorScheme.primary,
+    contentColor: Color = MaterialTheme.colorScheme.onPrimary,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.glassButton(CircleShape, tint.copy(alpha = if (enabled) 0.88f else 0.32f)),
+        enabled = enabled,
+        shape = CircleShape,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.Transparent,
+            contentColor = contentColor,
+            disabledContainerColor = Color.Transparent,
+            disabledContentColor = contentColor.copy(alpha = 0.5f),
+        ),
+        elevation = null,
+        content = content,
+    )
+}
+
+/** 玻璃描边按钮：通透的浅玻璃底 + 白色细边，替代 `OutlinedButton`（次要操作）。 */
+@Composable
+fun GlassOutlinedButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    Button(
+        onClick = onClick,
+        modifier = modifier.glassChip(CircleShape),
+        enabled = enabled,
+        shape = CircleShape,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = Color.Transparent,
+            contentColor = primary,
+            disabledContainerColor = Color.Transparent,
+            disabledContentColor = primary.copy(alpha = 0.4f),
+        ),
+        elevation = null,
+        content = content,
+    )
 }

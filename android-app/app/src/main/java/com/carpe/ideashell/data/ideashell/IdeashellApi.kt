@@ -131,9 +131,9 @@ class IdeashellApi(private val mcp: McpClient) {
         val memosIdx = text.indexOf("## Memos")
         if (memosIdx != -1) {
             val memosText = text.substring(memosIdx + "## Memos".length).trim()
-            // note_search / note_detail 会在 memo 开头重复一行 summary，去掉；没有 memo 标题行时整段都算正文，
+            // 多条 memo 内容重复（长文常见）会去重；没有 memo 标题行时整段都算正文，
             // 不能当成空（追加时会拿它覆盖整篇笔记）
-            content = (RE_MEMO.find(memosText)?.groupValues?.get(1) ?: memosText).replace(RE_SUMMARY_LINE, "").trim()
+            content = NoteParser.memoContent(memosText)
         }
         return NoteContent(id = noteId, title = title, content = content)
     }
@@ -262,9 +262,6 @@ class IdeashellApi(private val mcp: McpClient) {
         private val RE_FOLDER = Regex("-\\s*(\\S*)\\s*(.+?)\\s*\\[folder_id:\\s*([a-f0-9]+)\\]", RegexOption.IGNORE_CASE)
         private val RE_FOLDER_NOTE = Regex("^-\\s+(.+?)\\s*\\[note_id:\\s*([a-f0-9]+)\\]\\s*\$", RegexOption.MULTILINE)
         private val RE_TITLE = Regex("^#\\s+(.+)", RegexOption.MULTILINE)
-        private val RE_MEMO = Regex("\\*\\*Memo [0-9]+:.*?\\*\\*\\n?([\\s\\S]*)")
-        private val RE_SUMMARY_LINE = Regex("^summary:.*\\n?", RegexOption.IGNORE_CASE)
-
         /** 标签名里不能有空白，否则 App 会把它拆成多个 */
         fun cleanTag(tag: String): String = tag.replace(Regex("^#+"), "").replace(Regex("[\\s#]+"), "")
 

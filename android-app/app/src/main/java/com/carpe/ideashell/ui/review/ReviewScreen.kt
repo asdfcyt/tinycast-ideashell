@@ -57,6 +57,7 @@ import com.carpe.ideashell.domain.Insights
 import com.carpe.ideashell.ui.components.ScreenHeader
 import com.carpe.ideashell.ui.components.SearchButton
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
+import com.carpe.ideashell.ui.glass.glassChip
 import com.carpe.ideashell.ui.todos.TaskSheet
 import com.carpe.ideashell.ui.todos.TaskSheetActions
 import com.carpe.ideashell.ui.todos.listNameOf
@@ -267,8 +268,7 @@ private fun RangeMenu(
         Row(
             modifier = Modifier
                 .height(44.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+                .glassChip(CircleShape)
                 .clickable { open = true }
                 .padding(start = 16.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,

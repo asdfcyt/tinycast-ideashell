@@ -1,5 +1,6 @@
 package com.carpe.ideashell.ui.components
 
+import com.carpe.ideashell.ui.glass.GlassButton
 import com.carpe.ideashell.ui.glass.GlassSheet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,7 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.carpe.ideashell.ui.glass.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -71,10 +72,11 @@ fun InputSheet(
                 }
             }
             content()
-            Button(
+            GlassButton(
                 onClick = onConfirm,
                 enabled = confirmEnabled,
-                colors = brandButtonColors(),
+                tint = Brand.Orange,
+                contentColor = Brand.Brown,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) { Text(confirmLabel, fontWeight = FontWeight.Bold) }
         }

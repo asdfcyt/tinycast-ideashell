@@ -1,5 +1,6 @@
 package com.carpe.ideashell.ui.todos
 
+import com.carpe.ideashell.ui.glass.GlassButton
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -103,7 +104,7 @@ internal fun LazyListScope.habitsSection(
                                 Text("已打卡", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                             }
                         } else {
-                            FilledTonalButton(onClick = { onCheckin(h) }) { Text("打卡") }
+                            GlassButton(onClick = { onCheckin(h) }) { Text("打卡") }
                         }
                     }
                 }

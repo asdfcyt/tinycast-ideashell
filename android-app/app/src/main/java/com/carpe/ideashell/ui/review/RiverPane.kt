@@ -32,7 +32,9 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import com.carpe.ideashell.R
 import com.carpe.ideashell.data.revisit.RevisitRepository
+import com.carpe.ideashell.system.IdeashellBridge
 import com.carpe.ideashell.system.openIdeaShellNote
+import kotlinx.coroutines.launch
 import com.carpe.ideashell.ui.components.AppMenu
 import com.carpe.ideashell.ui.components.ConfirmDialog
 import com.carpe.ideashell.ui.components.AppMenuItem
@@ -391,6 +393,7 @@ private fun DailyLine(
     val inRevisit = RevisitRepository.snippetKey(row.noteId, row.entry.text) in revisit.keys
     var menu by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
     TimelineRow(
         clock = row.entry.time,
         kind = Kind.DAILY,
@@ -411,7 +414,12 @@ private fun DailyLine(
             )
             if (inRevisit) RevisitMark()
         }
-        RevisitMenu(menu, inRevisit, onDismiss = { menu = false }, onDelete = { confirmDelete = true }) {
+        RevisitMenu(
+            menu, inRevisit,
+            onDismiss = { menu = false },
+            onDelete = { confirmDelete = true },
+            onAskAi = { IdeashellBridge.askAboutNote(context, null, "日记 · $date ${row.entry.time}", row.entry.text) },
+        ) {
             revisit.onDaily(row.entry, row.noteId, date, inRevisit)
         }
         if (confirmDelete) {
@@ -449,6 +457,8 @@ private fun RevisitMenu(
     onDelete: (() -> Unit)? = null,
     deleteText: String = "删除",
     deleteIcon: Int? = null,
+    /** 「问问 AI」：把这条内容发给闪念贝壳 AI；没有就不显示 */
+    onAskAi: (() -> Unit)? = null,
     onToggle: () -> Unit,
 ) {
     AppMenu(expanded = expanded, onDismissRequest = onDismiss) {
@@ -460,6 +470,16 @@ private fun RevisitMenu(
                 onToggle()
             },
         )
+        if (onAskAi != null) {
+            AppMenuItem(
+                text = { Text("问问 AI") },
+                leadingIcon = { Icon(painterResource(R.drawable.ic_sparkle), contentDescription = null) },
+                onClick = {
+                    onDismiss()
+                    onAskAi()
+                },
+            )
+        }
         if (onDelete != null) {
             AppMenuItem(
                 text = { Text(deleteText) },
@@ -481,6 +501,7 @@ private fun NoteLine(note: NoteInfo, first: Boolean, last: Boolean, onOpenNote: 
     val scheme = MaterialTheme.colorScheme
     val inRevisit = RevisitRepository.noteKey(note.id) in revisit.keys
     val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
     TimelineRow(
         clock = note.localClock.orEmpty(),
@@ -517,6 +538,15 @@ private fun NoteLine(note: NoteInfo, first: Boolean, last: Boolean, onOpenNote: 
             onDelete = { openIdeaShellNote(context, note.id) },
             deleteText = "在闪念贝壳中删除",
             deleteIcon = R.drawable.ic_open_in_new,
+            onAskAi = {
+                // 列表里只有摘要，取一下全文再发；取不到就退回摘要
+                scope.launch {
+                    val container = (context.applicationContext as com.carpe.ideashell.IdeashellApp).container
+                    val body = runCatching { container.notes.note(note.id).content }.getOrNull()
+                        ?.takeIf { it.isNotBlank() } ?: note.summary.orEmpty()
+                    IdeashellBridge.askAboutNote(context, note.title, note.localClock?.let { "笔记 · $it" }, body)
+                }
+            },
         ) { revisit.onNote(note, inRevisit) }
     }
 }

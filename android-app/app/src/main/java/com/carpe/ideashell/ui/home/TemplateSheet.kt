@@ -1,5 +1,8 @@
 package com.carpe.ideashell.ui.home
 
+import com.carpe.ideashell.ui.glass.GlassOutlinedButton
+import com.carpe.ideashell.ui.theme.Brand
+import com.carpe.ideashell.ui.glass.GlassButton
 import com.carpe.ideashell.ui.glass.GlassSheet
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,7 +19,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import com.carpe.ideashell.ui.components.AppTextField
-import com.carpe.ideashell.ui.components.brandButtonColors
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -123,7 +125,7 @@ private fun PickStep(templates: List<Template>, onPick: (Template) -> Unit, onNe
             }
         }
     }
-    OutlinedButton(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("新建模板") }
+    GlassOutlinedButton(onClick = onNew, modifier = Modifier.fillMaxWidth()) { Text("新建模板") }
 }
 
 @Composable
@@ -171,9 +173,10 @@ private fun FillStep(
             )
         }
     }
-    Button(
+    GlassButton(
         onClick = { onSubmit(values) },
-        colors = brandButtonColors(),
+        tint = Brand.Orange,
+        contentColor = Brand.Brown,
         modifier = Modifier.fillMaxWidth().height(48.dp),
     ) { Text("保存") }
     if (confirmDelete) {
@@ -231,10 +234,11 @@ private fun EditStep(template: Template?, onBack: () -> Unit, onSave: (Template)
             singleLine = true,
         )
     }
-    Button(
+    GlassButton(
         onClick = { built?.let(onSave) },
         enabled = built != null,
-        colors = brandButtonColors(),
+        tint = Brand.Orange,
+        contentColor = Brand.Brown,
         modifier = Modifier.fillMaxWidth().height(52.dp),
     ) { Text("保存模板") }
 }

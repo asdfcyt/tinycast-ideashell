@@ -1,5 +1,7 @@
 package com.carpe.ideashell.ui.diagnostics
 
+import com.carpe.ideashell.ui.glass.GlassButton
+import com.carpe.ideashell.ui.glass.GlassOutlinedButton
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,7 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.AlertDialog
+import com.carpe.ideashell.ui.glass.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -105,7 +107,7 @@ fun DiagnosticsScreen(
                 )
             }
 
-            OutlinedButton(
+            GlassOutlinedButton(
                 onClick = { clipboard.setText(AnnotatedString(viewModel.buildReport())) },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("复制诊断报告（不含凭证）") }
@@ -170,10 +172,10 @@ private fun QueueCard(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (failed > 0) {
-                        Button(onClick = onRetryAll) { Text("全部重试") }
+                        GlassButton(onClick = onRetryAll) { Text("全部重试") }
                         TextButton(onClick = { confirm = ALL }) { Text("丢弃失败的") }
                     } else {
-                        OutlinedButton(onClick = onSyncNow) { Text("立即同步") }
+                        GlassOutlinedButton(onClick = onSyncNow) { Text("立即同步") }
                     }
                 }
             }
@@ -254,7 +256,7 @@ private fun TargetCard(
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = onRun, enabled = !section.running && (section.saved || section.input.isNotBlank())) {
+                GlassButton(onClick = onRun, enabled = !section.running && (section.saved || section.input.isNotBlank())) {
                     Text("测试连接")
                 }
                 if (section.saved) {

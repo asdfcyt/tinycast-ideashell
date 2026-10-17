@@ -54,10 +54,13 @@ class FocusPickActivity : ComponentActivity() {
             var pickTask by remember { mutableStateOf(false) }
             IdeashellTheme(settings.themeMode) {
                 ApplyEdgeToEdge(isDark(settings.themeMode))
+                // 和其它抽屉一样：整个窗口背后磨砂，遮罩相应变淡
+                val blurOk = com.carpe.ideashell.ui.glass.rememberCrossWindowBlur()
+                if (blurOk) com.carpe.ideashell.ui.glass.SheetBlurBehind()
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.40f))
+                        .background(Color.Black.copy(alpha = if (blurOk) 0.24f else 0.40f))
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { finish() }
                         .safeDrawingPadding(),
                     contentAlignment = Alignment.Center,

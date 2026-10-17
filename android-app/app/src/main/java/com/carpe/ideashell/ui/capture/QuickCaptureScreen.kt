@@ -1,5 +1,6 @@
 package com.carpe.ideashell.ui.capture
 
+import com.carpe.ideashell.ui.glass.GlassButton
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.border
 import android.widget.Toast
@@ -29,6 +30,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import com.carpe.ideashell.ui.glass.GlassSurface
+import com.carpe.ideashell.ui.glass.glassButton
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
@@ -151,7 +153,7 @@ fun QuickCaptureScreen(
 
     // 玻璃：面半透明 + 整个窗口背后磨砂；系统不允许跨窗口模糊时保持实心
     val blurOk = rememberCrossWindowBlur()
-    if (blurOk && visible) BlurBehindWindow(radiusPx = com.carpe.ideashell.ui.glass.SheetBlurPx)
+    if (blurOk && visible) com.carpe.ideashell.ui.glass.SheetBlurBehind()
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -276,9 +278,7 @@ private fun KindSelector(
                 Box(
                     modifier = Modifier
                         .size(38.dp)
-                        .then(rim)
-                        .clip(CircleShape)
-                        .background(if (lit) Brand.Orange else idleBg),
+                        .then(if (lit) Modifier.glassButton(CircleShape, Brand.Orange) else Modifier.then(rim).clip(CircleShape).background(idleBg)),
                     contentAlignment = Alignment.Center,
                 ) {
                     val tint = if (lit) Brand.Brown else idleFg
@@ -307,9 +307,7 @@ private fun KindSelector(
             Box(
                 modifier = Modifier
                     .size(38.dp)
-                    .then(rim)
-                    .clip(CircleShape)
-                    .background(if (append) Brand.Orange else idleBg),
+                    .then(if (append) Modifier.glassButton(CircleShape, Brand.Orange) else Modifier.then(rim).clip(CircleShape).background(idleBg)),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(painterResource(R.drawable.ic_append), contentDescription = null, tint = if (append) Brand.Brown else idleFg, modifier = Modifier.size(20.dp))
@@ -435,7 +433,7 @@ private fun NotConnected(onOpenApp: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Button(onClick = onOpenApp) { Text("去连接") }
+            GlassButton(onClick = onOpenApp) { Text("去连接") }
         }
     }
 }

@@ -11,6 +11,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.carpe.ideashell.ui.glass.glassSnackbar
 import com.carpe.ideashell.ui.theme.Brand
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -22,9 +23,9 @@ fun AppSnackbarHost(state: SnackbarHostState, modifier: Modifier = Modifier) {
     SnackbarHost(state, modifier) { data ->
         Snackbar(
             snackbarData = data,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).glassSnackbar(RoundedCornerShape(20.dp)),
             shape = RoundedCornerShape(20.dp),
-            containerColor = MaterialTheme.colorScheme.inverseSurface,
+            containerColor = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.82f),
             contentColor = MaterialTheme.colorScheme.inverseOnSurface,
             actionColor = Brand.Orange,
             dismissActionContentColor = MaterialTheme.colorScheme.inverseOnSurface,

@@ -82,7 +82,77 @@ object NoteParser {
     private val RE_DETAIL_TITLE = Regex("^#\\s+(.+)", RegexOption.MULTILINE)
     private val RE_DETAIL_ID = Regex("^note_id:\\s*([a-f0-9]+)", setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE))
     private val RE_MEMO_HEAD = Regex("^\\*\\*Memo \\d+:[^*]*\\*\\*[ \\t]*$", RegexOption.MULTILINE)
-    private val RE_SUMMARY_LINE = Regex("^summary:.*$", setOf(RegexOption.MULTILINE, RegexOption.IGNORE_CASE))
+    private val RE_LEADING_SUMMARY = Regex("^[ \\t]*summary:[ \\t]*", RegexOption.IGNORE_CASE)
+    private val RE_BLANKS = Regex("\\n{3,}")
+    private val RE_WS = Regex("\\s+")
+
+    /**
+     * `## Memos` 之后的正文 → 干净的笔记内容。
+     * - 按 `**Memo N: …**` 切成若干条 memo；长文 / 语音笔记的接口输出里，同一份内容常常以多条 memo 原样重复，
+     *   按「去空白后的文本」去重，被另一条完整包含的也丢掉；
+     * - memo 开头的 `summary:` 前缀只去掉前缀：它可能是重复的摘要（正文里已有同样文字则整行丢弃），
+     *   也可能就是正文的第一行（长文的标题行），不能连内容一起删。
+     */
+    fun memoContent(body: String): String {
+        val heads = RE_MEMO_HEAD.findAll(body).toList()
+        val raw: List<String> = if (heads.isEmpty()) {
+            listOf(body)
+        } else {
+            heads.mapIndexed { i, m ->
+                body.substring(m.range.last + 1, if (i + 1 < heads.size) heads[i + 1].range.first else body.length)
+            }
+        }
+        val cleaned = raw.map(::stripLeadingSummary).filter { it.isNotBlank() }
+        val keys = cleaned.map { it.replace(RE_WS, "") }
+        val kept = cleaned.filterIndexed { i, _ ->
+            keys.indices.none { j ->
+                j != i && (keys[j].length > keys[i].length && keys[j].contains(keys[i]) ||
+                    keys[j] == keys[i] && j < i)
+            }
+        }
+        return kept.joinToString("\n\n").replace(RE_BLANKS, "\n\n").trim()
+    }
+
+    private fun stripLeadingSummary(memo: String): String {
+        val text = memo.trim('\n', '\r')
+        val first = text.lineSequence().firstOrNull { it.isNotBlank() } ?: return ""
+        if (!RE_LEADING_SUMMARY.containsMatchIn(first)) return collapseRepeatedPrefix(text)
+        val firstEnd = text.indexOf(first) + first.length
+        val rest = text.substring(firstEnd)
+        val summary = first.replace(RE_LEADING_SUMMARY, "").trim()
+        if (summary.isEmpty()) return rest.trim()
+        // 先按「开头一整段在后面又原样出现」折叠（长文：summary 回显 + 正文 + 正文再来一遍）
+        val joined = (summary + rest).trim()
+        val collapsed = collapseRepeatedPrefix(joined)
+        if (collapsed != joined) return collapsed
+        val duplicated = rest.replace(RE_WS, "").contains(summary.replace(RE_WS, ""))
+        return (if (duplicated) rest else joined).trim()
+    }
+
+    /**
+     * 文本开头那一段（到第一行再次出现之前）如果被后面的内容完整重复，就只保留后面那份（后一份通常更完整，
+     * 比如多出末尾的标签行）；可连续折叠多层。
+     */
+    private fun collapseRepeatedPrefix(text: String): String {
+        var cur = text.trim()
+        repeat(4) {
+            val lines = cur.split('\n')
+            val firstLine = lines.firstOrNull { it.isNotBlank() }?.trim() ?: return cur
+            var offset = 0
+            var cut = -1
+            for (line in lines) {
+                if (offset > 0 && line.trim() == firstLine) { cut = offset; break }
+                offset += line.length + 1
+            }
+            if (cut <= 0) return cur
+            val head = cur.substring(0, cut).replace(RE_WS, "")
+            val tail = cur.substring(cut)
+            // 太短的重复多半是正常内容（如两行相同的短句），只处理整段长文重复
+            if (head.length < 80 || !tail.replace(RE_WS, "").startsWith(head)) return cur
+            cur = tail.trim()
+        }
+        return cur
+    }
 
     /** 解析 note_detail（scope=full）：头部是元信息，`## Memos` 之后是正文 */
     fun parseDetail(noteId: String, text: String): NoteDetail {
@@ -90,11 +160,7 @@ object NoteParser {
         val memosIdx = source.indexOf("## Memos")
         val head = if (memosIdx >= 0) source.substring(0, memosIdx) else source
         val body = if (memosIdx >= 0) source.substring(memosIdx + "## Memos".length) else ""
-        val content = body
-            .replace(RE_MEMO_HEAD, "")
-            .replace(RE_SUMMARY_LINE, "")
-            .replace(Regex("\\n{3,}"), "\n\n")
-            .trim()
+        val content = memoContent(body)
         return NoteDetail(
             id = RE_DETAIL_ID.find(head)?.groupValues?.get(1) ?: noteId,
             title = RE_DETAIL_TITLE.find(head)?.groupValues?.get(1)?.trim().orEmpty(),

@@ -69,6 +69,9 @@ import com.carpe.ideashell.data.capture.CaptureImages
 import com.carpe.ideashell.ui.capture.CameraCaptureContract
 import com.carpe.ideashell.ui.components.SubmitCorner
 import com.carpe.ideashell.ui.components.ToolIcon
+import com.carpe.ideashell.ui.glass.SheetBlurBehind
+import com.carpe.ideashell.ui.glass.isDarkSurface
+import com.carpe.ideashell.ui.glass.rememberCrossWindowBlur
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -183,10 +186,13 @@ private fun RecordPanel(
         runCatching { focus.requestFocus() }
     }
 
+    // 玻璃：面半透明 + 整个窗口背后磨砂（和快记、摘录面板一致）；系统不允许跨窗口模糊时保持实心
+    val blurOk = rememberCrossWindowBlur()
+    if (blurOk && visible) SheetBlurBehind()
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = scrim))
+            .background(Color.Black.copy(alpha = if (blurOk) scrim * 0.6f else scrim))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onClose),
     ) {
         AnimatedVisibility(
@@ -205,7 +211,9 @@ private fun RecordPanel(
                     // 吃掉点击，避免点到卡片时误触发「点遮罩关闭」
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                     .clip(RoundedCornerShape(28.dp))
-                    .background(scheme.surfaceContainerLowest),
+                    .background(
+                        scheme.surfaceContainerLowest.copy(alpha = if (blurOk) (if (isDarkSurface()) 0.80f else 0.84f) else 1f),
+                    ),
             ) {
                 Column(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp)) {
                     Column(

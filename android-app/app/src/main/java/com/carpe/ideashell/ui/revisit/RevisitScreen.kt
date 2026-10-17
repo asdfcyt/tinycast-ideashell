@@ -80,6 +80,8 @@ import com.carpe.ideashell.ui.components.CircleIconButton
 import com.carpe.ideashell.ui.components.MarkdownText
 import com.carpe.ideashell.ui.components.TextPromptDialog
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
+import com.carpe.ideashell.ui.glass.glassButton
+import com.carpe.ideashell.ui.glass.glassChip
 import com.carpe.ideashell.ui.theme.Brand
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
@@ -326,8 +328,7 @@ private fun UndoButton(onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(40.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+            .glassChip(CircleShape)
             .clickable(role = Role.Button, onClickLabel = "撤销", onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -340,8 +341,7 @@ private fun PillAction(text: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .height(40.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+            .glassChip(CircleShape)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
@@ -635,8 +635,7 @@ private fun RateButton(
                 .fillMaxWidth()
                 .height(56.dp)
                 .graphicsLayer { scaleX = scale; scaleY = scale }
-                .clip(CircleShape)
-                .background(if (primary) scheme.inverseSurface else scheme.surfaceContainerLowest)
+                .then(if (primary) Modifier.glassButton(CircleShape, scheme.inverseSurface) else Modifier.glassChip(CircleShape))
                 .clickable(interactionSource = source, indication = null, enabled = enabled, role = Role.Button, onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {

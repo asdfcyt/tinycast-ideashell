@@ -1,7 +1,10 @@
 package com.carpe.ideashell.ui.todos
 
+import com.carpe.ideashell.ui.glass.GlassButton
+import com.carpe.ideashell.ui.glass.GlassOutlinedButton
 import androidx.compose.animation.core.tween
 import kotlinx.coroutines.launch
+import com.carpe.ideashell.ui.glass.glassChip
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -442,8 +445,7 @@ private fun NavArrow(text: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(36.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+            .glassChip(CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -913,10 +915,10 @@ private fun DaySheet(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (canOpenTimeline) {
-                    OutlinedButton(onClick = { closeThen(onTimeline) }, modifier = Modifier.weight(1f)) { Text("时间轴查看") }
+                    GlassOutlinedButton(onClick = { closeThen(onTimeline) }, modifier = Modifier.weight(1f)) { Text("时间轴查看") }
                 }
                 if (day >= today) {
-                    Button(onClick = { closeThen(onAdd) }, modifier = Modifier.weight(1f)) { Text("添加待办") }
+                    GlassButton(onClick = { closeThen(onAdd) }, modifier = Modifier.weight(1f)) { Text("添加待办") }
                 }
             }
         }

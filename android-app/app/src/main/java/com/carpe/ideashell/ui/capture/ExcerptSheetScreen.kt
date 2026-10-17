@@ -66,6 +66,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.carpe.ideashell.ui.components.SubmitCorner
 import com.carpe.ideashell.ui.glass.GlassSurface
+import com.carpe.ideashell.ui.glass.glassButton
+import com.carpe.ideashell.ui.glass.glassChip
 
 /** 摘录抽屉：遮罩 + 从底部升起的卡片（摘录原文、想法、来源、标签），键盘弹出时整体上移 */
 @Composable
@@ -97,7 +99,7 @@ fun ExcerptSheetScreen(
 
     // 玻璃：面半透明 + 整个窗口背后磨砂；系统不允许跨窗口模糊时保持实心
     val blurOk = rememberCrossWindowBlur()
-    if (blurOk && visible) BlurBehindWindow(radiusPx = com.carpe.ideashell.ui.glass.SheetBlurPx)
+    if (blurOk && visible) com.carpe.ideashell.ui.glass.SheetBlurBehind()
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -275,8 +277,7 @@ private fun CompactField(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(36.dp)
-                    .clip(CircleShape)
-                    .background(scheme.surfaceContainerHigh)
+                    .glassChip(CircleShape)
                     .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -310,8 +311,7 @@ private fun AppendToggle(append: Boolean, onToggle: () -> Unit) {
     Box(
         modifier = Modifier
             .height(36.dp)
-            .clip(CircleShape)
-            .background(if (append) scheme.primary else scheme.surfaceContainerHigh)
+            .then(if (append) Modifier.glassButton(CircleShape, scheme.primary) else Modifier.glassChip(CircleShape))
             .clickable(role = Role.Switch, onClick = onToggle)
             .semantics { contentDescription = if (append) "追加进同一篇，点一下改为新建" else "新建一篇，点一下改为追加" }
             .padding(horizontal = 12.dp),

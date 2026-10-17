@@ -1,5 +1,6 @@
 package com.carpe.ideashell.ui.todos
 
+import com.carpe.ideashell.ui.glass.GlassButton
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -86,6 +87,7 @@ import com.carpe.ideashell.ui.components.PillChip
 import com.carpe.ideashell.ui.components.RowPill
 import com.carpe.ideashell.ui.components.TextPromptDialog
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
+import com.carpe.ideashell.ui.glass.glassButton
 import com.carpe.ideashell.ui.glass.isDarkSurface
 import com.carpe.ideashell.ui.review.NoteRow
 import com.carpe.ideashell.ui.theme.Brand
@@ -328,7 +330,7 @@ internal fun LazyListScope.projectsSection(
                 title = "还没有项目",
                 text = "项目是用关键词（和标签）钉住的一件事：笔记里出现关键词、或带这些标签，都算一次提及；" +
                     "待办标题含关键词、或带该标签，就归入这个项目。久不提及会提醒你「该记一条了」。",
-                action = { Button(onClick = onAdd) { Text("新增项目") } },
+                action = { GlassButton(onClick = onAdd) { Text("新增项目") } },
             )
         }
         return
@@ -449,8 +451,7 @@ private fun HeroButton(text: String, filled: Boolean, modifier: Modifier = Modif
     Box(
         modifier = modifier
             .height(36.dp)
-            .clip(CircleShape)
-            .background(if (filled) Brand.Brown else Color.White.copy(alpha = 0.38f))
+            .glassButton(CircleShape, if (filled) Brand.Brown else Color.White.copy(alpha = 0.42f))
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp),
         contentAlignment = Alignment.Center,
