@@ -584,41 +584,20 @@ private fun RecognizeStage(viewModel: CameraOcrViewModel, onConfirm: () -> Unit,
         }
 
         // 右下角的工具：旋转（识别前后都能用，转完会重新识别）；识别后还有保留图片 / 全选 / 重选
-        // 两行放不下一行：上面是识别后的保留图片 / 全选 / 重选，下面是向左 / 向右旋转
+        // 全选 / 重选（识别后）和向左 / 向右旋转放在同一行；「保留」在下面一行的右侧
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             horizontalAlignment = Alignment.End,
         ) {
-            if (!cropping && lines.isNotEmpty()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Pill("保留图片", active = viewModel.keepImage) { viewModel.keepImage = !viewModel.keepImage }
-                    Pill("全选", active = false, onClick = viewModel::selectAll)
-                    Pill("重选", active = false, onClick = viewModel::clearSelection)
-                }
-            }
-            // 向左 / 向右各转 90°（图标是顺时针箭头，向左转时水平镜像）
+            // 全选 / 重选 / 向左 / 向右旋转：同一行，全是图标（向左转时顺时针箭头水平镜像）
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                listOf("向左旋转" to false, "向右旋转" to true).forEach { (label, clockwise) ->
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(Color.White.copy(alpha = if (busy) 0.1f else 0.2f))
-                            .clickable(enabled = !busy, role = Role.Button) { viewModel.rotate(clockwise) }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        val tint = Color.White.copy(alpha = if (busy) 0.4f else 1f)
-                        Icon(
-                            painterResource(R.drawable.ic_rotate),
-                            contentDescription = null,
-                            tint = tint,
-                            modifier = Modifier.size(18.dp).graphicsLayer { scaleX = if (clockwise) 1f else -1f },
-                        )
-                        Text(label, color = tint, fontSize = 13.sp)
-                    }
+                if (!cropping && lines.isNotEmpty()) {
+                    IconPill(R.drawable.ic_select_all, "全选", enabled = true, onClick = viewModel::selectAll)
+                    IconPill(R.drawable.ic_select_clear, "重选", enabled = true, onClick = viewModel::clearSelection)
                 }
+                IconPill(R.drawable.ic_rotate, "向左旋转", enabled = !busy, mirror = true) { viewModel.rotate(false) }
+                IconPill(R.drawable.ic_rotate, "向右旋转", enabled = !busy) { viewModel.rotate(true) }
             }
         }
 
@@ -643,23 +622,48 @@ private fun RecognizeStage(viewModel: CameraOcrViewModel, onConfirm: () -> Unit,
                     disabledContentColor = Color.White.copy(alpha = 0.4f),
                 ),
             ) { Text(if (cropping) "识别" else "确定", style = MaterialTheme.typography.titleMedium) }
-            Spacer(Modifier.width(88.dp))
+            // 右侧：识别后可选「保留」原图——和左边的「重拍」同样式的文字按钮，开启时变成品牌橙色
+            Box(Modifier.width(88.dp), contentAlignment = Alignment.CenterEnd) {
+                if (!cropping && lines.isNotEmpty()) {
+                    TextButton(
+                        onClick = { viewModel.keepImage = !viewModel.keepImage },
+                        modifier = Modifier.width(88.dp),
+                    ) {
+                        Text(
+                            "保留",
+                            color = if (viewModel.keepImage) Brand.Orange else Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun Pill(label: String, active: Boolean, onClick: () -> Unit) {
-    Text(
-        label,
-        color = if (active) Brand.Brown else Color.White,
-        fontSize = 13.sp,
+private fun IconPill(
+    icon: Int,
+    label: String,
+    enabled: Boolean,
+    mirror: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Box(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
-            .background(if (active) Brand.Orange else Color.White.copy(alpha = 0.2f))
-            .clickable(role = Role.Button, onClick = onClick)
+            .background(Color.White.copy(alpha = if (enabled) 0.2f else 0.1f))
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painterResource(icon),
+            contentDescription = label,
+            tint = Color.White.copy(alpha = if (enabled) 1f else 0.4f),
+            modifier = Modifier.size(18.dp).graphicsLayer { scaleX = if (mirror) -1f else 1f },
+        )
+    }
 }
 
 /** 从 [from] 到 [to] 的线段上，每隔 [step] 取一点，落在（外扩 [pad] 的）文字框里的行 */

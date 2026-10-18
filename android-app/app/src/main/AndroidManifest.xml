@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 语音输入：没有网络时直接改用本地识别，不等云端超时 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- 快记面板的相机页（拍照 / 识别文字）；没有相机的设备仍可从相册选图 -->
     <uses-permission android:name="android.permission.CAMERA" />

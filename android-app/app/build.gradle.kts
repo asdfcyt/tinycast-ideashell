@@ -40,6 +40,10 @@ android {
     }
 
     packaging {
+        // 本地语音识别（sherpa-onnx）的原生库只带 arm64-v8a：压缩进 APK，安装时解出
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
@@ -82,6 +86,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
+    implementation(libs.commons.compress)
 
     testImplementation(libs.junit)
 }

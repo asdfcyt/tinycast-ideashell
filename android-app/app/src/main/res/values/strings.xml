@@ -7,6 +7,8 @@
     <string name="process_text_label">记到拾忆</string>
     <string name="shortcut_note_short">记一条</string>
     <string name="shortcut_note_long">快速记一条</string>
+    <string name="shortcut_voice_note_short">语音记一条</string>
+    <string name="shortcut_voice_note_long">语音记一条</string>
     <string name="shortcut_todo_short">记待办</string>
     <string name="shortcut_todo_long">快速记待办</string>
     <string name="ai_auto_send_label">拾忆 · 问 AI 自动发送</string>

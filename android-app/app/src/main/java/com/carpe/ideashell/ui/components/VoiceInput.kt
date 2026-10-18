@@ -73,6 +73,8 @@ import com.carpe.ideashell.core.voice.VoiceIntent
 import com.carpe.ideashell.core.voice.VoiceIntents
 import com.carpe.ideashell.core.voice.VoiceResult
 import com.carpe.ideashell.data.asr.AsrException
+import com.carpe.ideashell.data.asr.CODE_NETWORK
+import com.carpe.ideashell.data.asr.LocalSenseVoice
 import com.carpe.ideashell.data.asr.Lexicon
 import com.carpe.ideashell.data.asr.TencentAsr
 import com.carpe.ideashell.data.llm.LlmClient
@@ -109,6 +111,8 @@ class VoiceInputController(
     private val scope: CoroutineScope,
     private val settings: SettingsStore,
     private val asr: TencentAsr,
+    /** 本地 SenseVoice：没网 / 云端识别失败 / 没填腾讯云密钥时兜底（设置里开启并下载了模型才会用） */
+    private val local: LocalSenseVoice,
     private val llm: LlmClient,
     private val lexicon: Lexicon,
     /** 额外的热词来源（闪念贝壳文件夹 / 项目名） */
@@ -134,8 +138,11 @@ class VoiceInputController(
     /** 设置里的总开关 */
     val enabled: Boolean get() = settings.current.voiceEnabled
 
-    /** 语音输入开着、并且已经填了腾讯云密钥 */
-    val available: Boolean get() = settings.current.voiceEnabled && asr.configured
+    /** 本地识别已开启且模型就绪 */
+    private val localReady: Boolean get() = settings.current.voiceLocal && local.ready
+
+    /** 语音输入开着、并且有能用的识别方式（腾讯云密钥或本地模型） */
+    val available: Boolean get() = settings.current.voiceEnabled && (asr.configured || localReady)
 
     /** 开始录音；没开 / 没配密钥 / 打不开麦克风时通过 [onError] 说明原因并返回 false。调用前要先拿到录音权限。 */
     fun start(): Boolean {
@@ -144,8 +151,8 @@ class VoiceInputController(
             onError("语音输入已关闭，可在 设置 → 语音输入 里打开")
             return false
         }
-        if (!asr.configured) {
-            onError("语音输入需要腾讯云密钥：设置 → 语音输入（和文字识别共用，并开通「语音识别」）")
+        if (!asr.configured && !localReady) {
+            onError("语音输入需要腾讯云密钥（和文字识别共用，并开通「语音识别」），或开启本地识别：设置 → 语音输入")
             return false
         }
         val ok = recorder.start(scope, onLevel = { level = it }, onLimit = { scope.launch { finish() } })
@@ -219,7 +226,8 @@ class VoiceInputController(
             }
             val hot = lexicon.hotwordsFor(extraHotwords())
             // 词库里的替换规则先改一遍：总是听错的词不用每次都纠
-            val raw = lexicon.apply(asr.recognize(pcm, hot))
+            val heard = recognize(pcm, hot)
+            val raw = lexicon.apply(heard.text)
             if (raw.isBlank()) {
                 onError("没有听清，再说一次试试")
                 return
@@ -238,7 +246,7 @@ class VoiceInputController(
                     polishError = (e.message ?: "AI 整理失败") + "，已使用原始转写"
                 }
             }
-            onResult(VoiceResult(raw, cleaned, intents, polishError))
+            onResult(VoiceResult(raw, cleaned, intents, listOfNotNull(heard.note, polishError).joinToString("；").ifBlank { null }))
         } catch (e: CancellationException) {
             throw e
         } catch (e: AsrException) {
@@ -247,6 +255,30 @@ class VoiceInputController(
             onError("语音处理出错：${e.message ?: e.javaClass.simpleName}")
         } finally {
             phase = VoicePhase.IDLE
+        }
+    }
+
+    /** 一次识别的结果；[note] 是走了本地识别时给用户的一句说明 */
+    private class Heard(val text: String, val note: String? = null)
+
+    /**
+     * 识别：云端（腾讯云）优先；没网、云端出错或没填密钥时，本地识别可用就改用本地。
+     * 本地识别没有热词，识别后词库里的替换规则仍然会生效。
+     */
+    private suspend fun recognize(pcm: ByteArray, hot: List<String>): Heard {
+        if (!asr.configured) return Heard(local.recognize(pcm))
+        if (localReady && local.offline) return Heard(local.recognize(pcm), "当前没有网络，已用本地识别")
+        return try {
+            Heard(asr.recognize(pcm, hot))
+        } catch (e: AsrException) {
+            if (localReady) {
+                val reason = if (e.code == CODE_NETWORK) "网络不可用" else (e.message ?: "云端识别失败")
+                Heard(local.recognize(pcm), "$reason，已用本地识别")
+            } else if (e.code == CODE_NETWORK && local.supported) {
+                throw AsrException((e.message ?: "网络不可用") + "（设置 → 语音输入 里开启「本地识别」后，断网也能用）", e.code)
+            } else {
+                throw e
+            }
         }
     }
 

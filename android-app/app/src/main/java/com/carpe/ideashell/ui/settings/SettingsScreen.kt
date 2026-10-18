@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.carpe.ideashell.data.asr.LocalAsrState
 import com.carpe.ideashell.BuildConfig
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.R
@@ -137,6 +138,8 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
     val ocrConfigured by container.credentials.ocrConfigured.collectAsStateWithLifecycle()
     val llmConfigured by container.credentials.llmConfigured.collectAsStateWithLifecycle()
     val lexicon by container.lexicon.state.collectAsStateWithLifecycle()
+    val localAsr by container.localAsr.state.collectAsStateWithLifecycle()
+    var confirmDeleteLocalAsr by remember { mutableStateOf(false) }
     val revisitToday by container.revisit.today.collectAsStateWithLifecycle()
 
     var dialog by remember { mutableStateOf<Dialog?>(null) }
@@ -745,6 +748,55 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                             else "未配置 · 填入腾讯云 SecretId / SecretKey",
                             onClick = { dialog = Dialog.Ocr },
                         )
+                        // 本地 SenseVoice：没网 / 云端识别失败时自动改用；打开时才下载模型
+                        val localDownloading = localAsr is LocalAsrState.Downloading
+                        val localOn = settings.voiceLocal && (localAsr is LocalAsrState.Ready || localDownloading)
+                        fun toggleLocalAsr(on: Boolean) {
+                            if (on) {
+                                container.settings.setVoiceLocal(true)
+                                container.localAsr.download()
+                            } else {
+                                container.settings.setVoiceLocal(false)
+                                if (localDownloading) container.localAsr.cancelDownload()
+                            }
+                        }
+                        SettingsItem(
+                            icon = Icons.Filled.Refresh,
+                            title = "本地识别（断网兜底）",
+                            summary = when (val s = localAsr) {
+                                LocalAsrState.Unsupported -> "这台设备不支持（仅支持 64 位 ARM 手机）"
+                                LocalAsrState.Missing -> "没有网络或云端识别失败时，改用手机本地的 SenseVoice 识别，录音不出手机。首次开启要下载约 160 MB 的模型，建议连 Wi-Fi"
+                                is LocalAsrState.Downloading ->
+                                    if (s.unpacking) "正在保存模型…"
+                                    else "正在下载模型" + (if (s.percent >= 0) " ${s.percent}%" else "") + "，请先别关掉应用 · 点一下取消"
+                                is LocalAsrState.Ready ->
+                                    if (settings.voiceLocal) "已开启 · 没有网络或云端识别失败时自动改用本地识别（中 / 英 / 日 / 韩 / 粤）"
+                                    else "已关闭 · 模型已下载（${s.sizeMb} MB），打开即可使用"
+                                is LocalAsrState.Failed -> "下载失败：${s.message} · 点一下重试"
+                            },
+                            onClick = {
+                                when (localAsr) {
+                                    LocalAsrState.Unsupported -> toast(context, "这台设备不支持本地识别")
+                                    is LocalAsrState.Failed -> toggleLocalAsr(true)
+                                    else -> toggleLocalAsr(!localOn)
+                                }
+                            },
+                            trailing = {
+                                Switch(
+                                    checked = localOn,
+                                    enabled = localAsr != LocalAsrState.Unsupported,
+                                    onCheckedChange = { toggleLocalAsr(it) },
+                                )
+                            },
+                        )
+                        if (localAsr is LocalAsrState.Ready) {
+                            SettingsItem(
+                                icon = Icons.Filled.Info,
+                                title = "删除本地识别模型",
+                                summary = "释放 ${(localAsr as LocalAsrState.Ready).sizeMb} MB 空间，需要时可以重新下载",
+                                onClick = { confirmDeleteLocalAsr = true },
+                            )
+                        }
                         SettingsItem(
                             icon = Icons.Filled.Star,
                             title = "词库",
@@ -754,6 +806,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                             onClick = { dialog = Dialog.Lexicon },
                         )
                     }
+                    if (localAsr is LocalAsrState.Downloading) LinearProgressIndicator(Modifier.fillMaxWidth())
                     Group("AI 整理") {
                         SettingsItem(
                             icon = Icons.Filled.Star,
@@ -794,6 +847,22 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
             }
             }
         }
+    }
+
+    if (confirmDeleteLocalAsr) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteLocalAsr = false },
+            title = { Text("删除本地识别模型？") },
+            text = { Text("删除后「本地识别」会关闭，之后想用要重新下载（约 160 MB）。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeleteLocalAsr = false
+                    container.settings.setVoiceLocal(false)
+                    container.localAsr.delete()
+                }) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteLocalAsr = false }) { Text("取消") } },
+        )
     }
 
     pendingRestore?.let { file ->

@@ -38,6 +38,8 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serializationJson" }
 junit = { module = "junit:junit", version.ref = "junit" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+# 本地语音识别：解压模型包（tar.bz2）
+commons-compress = { module = "org.apache.commons:commons-compress", version = "1.27.1" }
 kyant-backdrop = { module = "io.github.kyant0:backdrop", version.ref = "backdrop" }
 
 [plugins]

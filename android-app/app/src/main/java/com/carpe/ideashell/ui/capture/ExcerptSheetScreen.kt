@@ -64,16 +64,6 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.widget.Toast
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import com.carpe.ideashell.R
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.launch
 import com.carpe.ideashell.ui.components.SubmitCorner
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.glass.glassButton
@@ -91,8 +81,6 @@ fun ExcerptSheetScreen(
     onSave: (source: String, tags: String, thought: String, append: Boolean) -> Unit,
     /** 点遮罩 / 返回键放弃：带上已写的内容，由调用方暂存成草稿 */
     onClose: (source: String, tags: String, thought: String, append: Boolean) -> Unit,
-    /** AI 整理：传入当前想法，返回整理后的文字；失败抛异常（message 作为提示）。null = 不显示按钮 */
-    onPolish: (suspend (thought: String) -> String)? = null,
 ) {
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
@@ -102,11 +90,6 @@ fun ExcerptSheetScreen(
     var source by rememberSaveable { mutableStateOf(initialSource) }
     var tags by rememberSaveable { mutableStateOf(initialTags) }
     var append by rememberSaveable { mutableStateOf(initialAppend) }
-    // AI 整理：整理前的原文留一份，点「还原」退回；自己再改动就不再提供还原
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    var polishing by remember { mutableStateOf(false) }
-    var beforePolish by rememberSaveable { mutableStateOf<String?>(null) }
     val send = { onSave(source, tags, thought, append) }
     val dismiss = { onClose(source, tags, thought, append) }
     // 返回键（键盘收起之后的那一下）和点遮罩一样：放弃，但想法暂存
@@ -169,56 +152,13 @@ fun ExcerptSheetScreen(
                         QuoteCard(quote)
                         Field(
                             value = thought,
-                            onChange = { thought = it; beforePolish = null },
+                            onChange = { thought = it },
                             placeholder = "写下你的想法（可选）",
                             minLines = 2,
                             maxLines = 5,
                             modifier = Modifier.focusRequester(focus),
                             onSend = send,
                         )
-                        if (onPolish != null) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(end = 52.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                PolishChip(
-                                    label = if (polishing) "整理中…" else "AI 整理",
-                                    busy = polishing,
-                                    withIcon = true,
-                                    onClick = {
-                                        if (!polishing) {
-                                            val before = thought
-                                            scope.launch {
-                                                polishing = true
-                                                try {
-                                                    thought = onPolish(before)
-                                                    beforePolish = before
-                                                } catch (e: CancellationException) {
-                                                    throw e
-                                                } catch (e: Exception) {
-                                                    Toast.makeText(context, e.message ?: "AI 整理失败", Toast.LENGTH_SHORT).show()
-                                                } finally {
-                                                    polishing = false
-                                                }
-                                            }
-                                        }
-                                    },
-                                )
-                                val undo = beforePolish
-                                if (undo != null && !polishing) {
-                                    PolishChip(label = "还原", busy = false, withIcon = false, onClick = { thought = undo; beforePolish = null })
-                                }
-                                Text(
-                                    if (thought.isBlank()) "没写想法时，概括这段原文的要点" else "整理口语、错字和条理，不改原意",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                        }
                     }
                     SubmitCorner(
                         enabled = true,
@@ -362,28 +302,6 @@ private fun CompactField(
             }
         },
     )
-}
-
-/** 想法下面的小胶囊（AI 整理 / 还原）：玻璃底，进行中显示转圈 */
-@Composable
-private fun PolishChip(label: String, busy: Boolean, withIcon: Boolean, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Row(
-        modifier = Modifier
-            .height(32.dp)
-            .glassChip(CircleShape)
-            .clickable(enabled = !busy, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        if (busy) {
-            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = scheme.primary)
-        } else if (withIcon) {
-            Icon(painterResource(R.drawable.ic_sparkle), contentDescription = null, tint = scheme.primary, modifier = Modifier.size(14.dp))
-        }
-        Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = scheme.primary)
-    }
 }
 
 /** 「追加 / 新建」开关：开 = 接着同一来源上一篇写（橙色），关 = 这条另起一篇 */

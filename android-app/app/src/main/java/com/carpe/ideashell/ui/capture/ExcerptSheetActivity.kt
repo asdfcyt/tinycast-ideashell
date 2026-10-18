@@ -13,7 +13,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.data.capture.ExcerptDrafts
 import com.carpe.ideashell.data.capture.ExcerptNotes
-import com.carpe.ideashell.data.llm.polishExcerptThought
 import com.carpe.ideashell.system.ExcerptService
 import com.carpe.ideashell.ui.theme.ApplyEdgeToEdge
 import com.carpe.ideashell.ui.theme.IdeashellTheme
@@ -54,11 +53,6 @@ class ExcerptSheetActivity : ComponentActivity() {
                     initialTags = draft?.tags ?: suggestion.tags.joinToString(" ") { "#$it" },
                     initialThought = draft?.thought.orEmpty(),
                     initialAppend = draft?.append ?: true,
-                    // AI 整理：用设置里配的大模型整理想法（没填 Key 时会提示去设置里填）
-                    onPolish = { thought ->
-                        if (!container.llm.configured) throw IllegalStateException("请先到「设置」里填写大模型 API Key")
-                        container.llm.polishExcerptThought(quote, thought)
-                    },
                     onSave = { source, tagsText, thought, append ->
                         val entry = ExcerptNotes.Entry(pkg, appName, source, ExcerptNotes.parseTags(tagsText), quote, thought, append)
                         val app = applicationContext

@@ -92,6 +92,9 @@ class AppContainer(context: Context) {
     /** 腾讯云一句话识别：快记面板「按住说话」的转写 */
     val asr = com.carpe.ideashell.data.asr.TencentAsr(http = http, credentials = credentials)
 
+    /** 本地 SenseVoice（断网兜底）：模型在设置里开启时才下载 */
+    val localAsr = com.carpe.ideashell.data.asr.LocalSenseVoice(context = context, http = http, scope = appScope)
+
     /** 语音词库：热词 + 替换规则（纠错学习的结果也存在这里） */
     val lexicon = com.carpe.ideashell.data.asr.Lexicon(context)
 

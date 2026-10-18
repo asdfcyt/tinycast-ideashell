@@ -114,6 +114,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         scope = viewModelScope,
         settings = container.settings,
         asr = container.asr,
+        local = container.localAsr,
         llm = container.llm,
         lexicon = container.lexicon,
         extraHotwords = { container.folders.folders.value.map { it.name } },

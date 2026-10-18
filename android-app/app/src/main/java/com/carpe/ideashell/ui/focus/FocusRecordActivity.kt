@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.carpe.ideashell.IdeashellApp
+import com.carpe.ideashell.data.llm.polishRecord
 import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.ui.theme.ApplyEdgeToEdge
 import com.carpe.ideashell.ui.theme.Brand
@@ -116,6 +118,11 @@ class FocusRecordActivity : ComponentActivity() {
                     taskTitle = taskTitle,
                     initial = initial,
                     onTextChange = { t -> if (t.isBlank()) prefs.edit().remove(draftKey).apply() else prefs.edit().putString(draftKey, t).apply() },
+                    // AI 整理：用设置里配的大模型把写下的内容整理通顺（没填 Key 时提示去设置里填）
+                    onPolish = { text ->
+                        if (!container.llm.configured) throw IllegalStateException("请先到「设置」里填写大模型 API Key")
+                        container.llm.polishRecord(taskTitle, text)
+                    },
                     onClose = { finish() },
                     onSubmit = { text ->
                         prefs.edit().remove(draftKey).apply()
@@ -123,10 +130,8 @@ class FocusRecordActivity : ComponentActivity() {
                             try {
                                 val synced = container.projects.recordFocus(taskId, project, text)
                                 container.focus.addRecord(text)
-                                // 刷新通知时不再往正文里塞「已记录：…」：它让这一次刷新和每分钟的心跳不一样，
-                                // 荣耀 MagicOS 会把它当成新提醒弹开并追问「不允许 / 始终允许」。
-                                // 记录成功已有 Toast 和进度条上新增的记录点；评论没同步的情况改用 Toast 说明
-                                container.focus.refreshNotification(null)
+                                // addRecord 已经刷新过通知（进度条上多一个记录点），不再补发第二次。
+                                // 评论没同步的情况用 Toast 说明
                                 if (!synced) {
                                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                                         Toast.makeText(applicationContext, "滴答评论没能同步，已保存在任务笔记里", Toast.LENGTH_LONG).show()
@@ -159,6 +164,7 @@ private fun RecordPanel(
     taskTitle: String,
     initial: String,
     onTextChange: (String) -> Unit,
+    onPolish: suspend (String) -> String,
     onClose: () -> Unit,
     onSubmit: (String) -> Unit,
 ) {
@@ -168,6 +174,10 @@ private fun RecordPanel(
     val text = field.text
     val focus = remember { FocusRequester() }
     val canSave = text.isNotBlank()
+    // AI 整理：整理前的原文留一份，点「还原」退回；自己再改动就不再提供还原
+    val scope = rememberCoroutineScope()
+    var polishing by remember { mutableStateOf(false) }
+    var beforePolish by remember { mutableStateOf<String?>(null) }
 
     // 和快记面板一样的样式与相机入口：半透明遮罩 + 从底部升起的卡片，键盘弹出时整体上移
     var visible by remember { mutableStateOf(false) }
@@ -233,7 +243,7 @@ private fun RecordPanel(
                     val inputStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, lineHeight = 24.sp)
                     TextField(
                         value = field,
-                        onValueChange = { field = it; onTextChange(it.text) },
+                        onValueChange = { field = it; onTextChange(it.text); beforePolish = null },
                         modifier = Modifier
                             .fillMaxWidth()
                             .focusRequester(focus),
@@ -260,6 +270,44 @@ private fun RecordPanel(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         ToolIcon(R.drawable.ic_camera, "拍照、相册与文字识别", { cameraLauncher.launch(-1) })
+                        // 相机右边：AI 整理（需要先有内容）；整理后出现「还原」
+                        ToolIcon(
+                            R.drawable.ic_sparkle,
+                            "AI 整理",
+                            onClick = {
+                                val before = text
+                                scope.launch {
+                                    polishing = true
+                                    try {
+                                        val polished = onPolish(before)
+                                        field = TextFieldValue(polished, TextRange(polished.length))
+                                        onTextChange(polished)
+                                        beforePolish = before
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, e.message ?: "AI 整理失败", Toast.LENGTH_SHORT).show()
+                                    } finally {
+                                        polishing = false
+                                    }
+                                }
+                            },
+                            label = if (polishing) "整理中…" else "AI 整理",
+                            enabled = canSave && !polishing,
+                        )
+                        val undo = beforePolish
+                        if (undo != null && !polishing) {
+                            ToolIcon(
+                                R.drawable.ic_rotate,
+                                "还原",
+                                onClick = {
+                                    field = TextFieldValue(undo, TextRange(undo.length))
+                                    onTextChange(undo)
+                                    beforePolish = null
+                                },
+                                label = "还原",
+                            )
+                        }
                     }
                 }
                 SubmitCorner(

@@ -17,6 +17,9 @@ import java.util.UUID
 
 class AsrException(message: String, val code: String = "") : Exception(message)
 
+/** [AsrException.code]：网络不通（区别于云端返回的错误码） */
+const val CODE_NETWORK = "Network"
+
 /**
  * 腾讯云「一句话识别」（SentenceRecognition，60 秒以内的短语音，松手后一次返回）。
  * 和文字识别共用同一对 SecretId / SecretKey，但需要在腾讯云控制台单独开通「语音识别」。
@@ -75,7 +78,7 @@ class TencentAsr(
                 payload = payload,
             )
         } catch (_: IOException) {
-            throw AsrException("网络不可用，无法识别语音")
+            throw AsrException("网络不可用，无法识别语音", CODE_NETWORK)
         }
 
         val root = try {

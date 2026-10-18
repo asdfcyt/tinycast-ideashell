@@ -505,34 +505,44 @@ const val SheetBlurPx = 24
 @Composable
 fun BlurBehindWindow(radiusPx: Int) {
     val view = LocalView.current
-    DisposableEffect(view, radiusPx) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            runCatching {
-                fun applyToWindow(window: android.view.Window) {
-                    window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-                    val attrs = window.attributes
-                    attrs.blurBehindRadius = radiusPx
-                    window.attributes = attrs
-                }
-                val root = view.rootView
-                val dialogWindow = findDialogWindowProvider(view)?.window
-                val activityWindow = view.context.findActivity()?.window
-                when {
-                    dialogWindow != null -> applyToWindow(dialogWindow)
-                    activityWindow != null && activityWindow.decorView === root -> applyToWindow(activityWindow)
-                    else -> {
-                        // Popup 等直接用 WindowManager 添加的窗口：改它的布局参数
-                        val params = root.layoutParams as? WindowManager.LayoutParams
-                        if (params != null) {
-                            params.flags = params.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
-                            params.blurBehindRadius = radiusPx
-                            view.context.getSystemService(WindowManager::class.java)?.updateViewLayout(root, params)
-                        }
-                    }
+    // 窗口刚创建时，首次组合发生在它挂上 WindowManager 之前：这时改窗口参数会落空，
+    // 如果半径之后不再变化就一直是清晰的（要等别的操作触发窗口刷新才变糊）。所以立即应用一次，再在挂载后补几次。
+    androidx.compose.runtime.LaunchedEffect(view, radiusPx) {
+        applyBlurBehind(view, radiusPx)
+        for (wait in longArrayOf(16, 60, 150, 300)) {
+            kotlinx.coroutines.delay(wait)
+            applyBlurBehind(view, radiusPx)
+        }
+    }
+}
+
+private fun applyBlurBehind(view: View, radiusPx: Int) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+    runCatching {
+        fun applyToWindow(window: android.view.Window) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
+            val attrs = window.attributes
+            if (attrs.blurBehindRadius != radiusPx) {
+                attrs.blurBehindRadius = radiusPx
+                window.attributes = attrs
+            }
+        }
+        val root = view.rootView
+        val dialogWindow = findDialogWindowProvider(view)?.window
+        val activityWindow = view.context.findActivity()?.window
+        when {
+            dialogWindow != null -> applyToWindow(dialogWindow)
+            activityWindow != null && activityWindow.decorView === root -> applyToWindow(activityWindow)
+            else -> {
+                // Popup / 底部面板等直接用 WindowManager 添加的窗口：改它的布局参数（还没挂上时 layoutParams 不是 WindowManager 的，下次再试）
+                val params = root.layoutParams as? WindowManager.LayoutParams ?: return@runCatching
+                if (root.isAttachedToWindow && params.blurBehindRadius != radiusPx) {
+                    params.flags = params.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+                    params.blurBehindRadius = radiusPx
+                    view.context.getSystemService(WindowManager::class.java)?.updateViewLayout(root, params)
                 }
             }
         }
-        onDispose { }
     }
 }
 
@@ -598,7 +608,7 @@ const val SheetBlurPeakPx = 44
  * 这样磨砂不会比抽屉本身多停留一会儿（系统窗口模糊自己的淡出偏慢，所以主动先退掉）。
  */
 @Composable
-fun SheetBlurBehind(closing: Boolean = false, restPx: Int = SheetBlurPx, peakPx: Int = maxOf(SheetBlurPeakPx, restPx)) {
+fun SheetBlurBehind(closing: Boolean = false, restPx: Int = SheetBlurPx, peakPx: Int = maxOf(SheetBlurPeakPx, restPx + 16)) {
     val radius = remember { androidx.compose.animation.core.Animatable(peakPx.toFloat()) }
     androidx.compose.runtime.LaunchedEffect(closing) {
         if (closing) {
@@ -684,16 +694,19 @@ fun GlassButton(
     contentColor: Color = MaterialTheme.colorScheme.onPrimary,
     content: @Composable RowScope.() -> Unit,
 ) {
+    // 不可用时不能沿用「品牌色 × 深棕字」：深色模式下是一块暗褐色上的暗字，几乎看不见。
+    // 改成跟随主题的中性灰玻璃 + onSurface 的淡字（浅色 / 深色都清楚，且明显是「不可点」）
+    val onSurface = MaterialTheme.colorScheme.onSurface
     Button(
         onClick = onClick,
-        modifier = modifier.glassButton(CircleShape, tint.copy(alpha = if (enabled) 0.88f else 0.32f)),
+        modifier = modifier.glassButton(CircleShape, if (enabled) tint.copy(alpha = 0.88f) else onSurface.copy(alpha = 0.16f)),
         enabled = enabled,
         shape = CircleShape,
         colors = ButtonDefaults.buttonColors(
             containerColor = Color.Transparent,
             contentColor = contentColor,
             disabledContainerColor = Color.Transparent,
-            disabledContentColor = contentColor.copy(alpha = 0.5f),
+            disabledContentColor = onSurface.copy(alpha = 0.45f),
         ),
         elevation = null,
         content = content,
