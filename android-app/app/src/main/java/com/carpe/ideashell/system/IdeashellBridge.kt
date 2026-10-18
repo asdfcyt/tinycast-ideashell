@@ -46,15 +46,17 @@ object IdeashellBridge {
     fun newTextNote(context: Context): Boolean = shortcut(context, Action.TEXT)
 
     /**
-     * 打开闪念贝壳 AI 对话。[query] 不为空时填进输入框（需要用户点发送：它的链接不支持自动发送）。
+     * 打开闪念贝壳 AI 对话。[query] 不为空时填进输入框（需要用户点发送：它的链接不支持自动发送；
+     * 无障碍服务开着并且开启了「自动发送」或 [preferAutoSend] 时由服务代点）。
      * 链接不认时退回到打开 AI 对话页。
      */
-    fun askAi(context: Context, query: String? = null): Boolean {
+    fun askAi(context: Context, query: String? = null, preferAutoSend: Boolean = false): Boolean {
         val v = installed(context) ?: return notInstalled(context)
         val q = query?.trim().orEmpty()
         // 开启了「自动发送」且无障碍服务在运行：转交后由服务点发送键（见 AiAutoSendService）
+        // [preferAutoSend]（语音里说「帮我查一下」）：只要无障碍服务开着就自动发送，不看设置里的开关
         val autoSend = q.isNotEmpty() && AiAutoSendService.isEnabled(context) &&
-            (context.applicationContext as? IdeashellApp)?.container?.settings?.state?.value?.aiAutoSend == true
+            (preferAutoSend || (context.applicationContext as? IdeashellApp)?.container?.settings?.state?.value?.aiAutoSend == true)
         if (autoSend) AiAutoSendService.arm(q)
         if (q.isNotEmpty() && start(context, Intent(Intent.ACTION_VIEW, Uri.parse("${v.scheme}://app/askai?query=${Uri.encode(q)}")).setPackage(v.pkg))) {
             return true

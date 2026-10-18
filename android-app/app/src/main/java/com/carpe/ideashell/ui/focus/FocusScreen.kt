@@ -623,7 +623,8 @@ internal fun TaskPicker(
     onSelect: (DidaTask?, String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    GlassSheet(onDismiss = onDismiss) {
+    // 专注页背后是大号倒计时和卡片，磨砂要比别的抽屉更重一些才不抢眼
+    GlassSheet(onDismiss = onDismiss, blurPx = 56) {
         Text(
             "这次专注做什么",
             style = MaterialTheme.typography.titleLarge,

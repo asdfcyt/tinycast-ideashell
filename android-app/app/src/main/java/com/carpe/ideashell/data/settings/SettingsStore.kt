@@ -57,6 +57,15 @@ data class AppSettings(
     val excerptMode: Boolean = false,
     /** 摘录后是否弹出抽屉写想法（来源 / 标签在同一个 App 里延续）；关闭则直接存原文 + 来源 */
     val excerptWriteNote: Boolean = true,
+    /** 快记面板的「按住说话」（需要腾讯云密钥，并开通语音识别） */
+    val voiceEnabled: Boolean = true,
+    /** 语音识别后用大模型去口语、判断类型、推算日期时间（需要填大模型 Key；失败自动退回原始转写） */
+    val voicePolish: Boolean = true,
+    /** 松手识别完直接保存，不再等你确认（语音误识别比打字风险高，默认关） */
+    val voiceAutoSend: Boolean = false,
+    /** 大模型接口（OpenAI 兼容）：地址和模型名；Key 在 CredentialStore 里 */
+    val llmBaseUrl: String = DEFAULT_LLM_BASE_URL,
+    val llmModel: String = DEFAULT_LLM_MODEL,
 ) {
     val defaultTags: List<String>
         get() = defaultTagsText.split(',', '，').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }
@@ -71,6 +80,9 @@ data class AppSettings(
         const val DEFAULT_CLOZE_MAX = 25
         const val DEFAULT_REVISIT_LIMIT = 5
         const val DEFAULT_REVISIT_MINUTES = 20 * 60
+        /** 通义千问（阿里云百炼）的 OpenAI 兼容接口；换成 DeepSeek 等只需改地址和模型名 */
+        const val DEFAULT_LLM_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        const val DEFAULT_LLM_MODEL = "qwen-plus"
     }
 }
 
@@ -132,6 +144,19 @@ class SettingsStore(context: Context) {
 
     fun setAutoCloudBackup(enabled: Boolean) = update { it.copy(autoCloudBackup = enabled) }
 
+    fun setVoiceEnabled(enabled: Boolean) = update { it.copy(voiceEnabled = enabled) }
+
+    fun setVoicePolish(enabled: Boolean) = update { it.copy(voicePolish = enabled) }
+
+    fun setVoiceAutoSend(enabled: Boolean) = update { it.copy(voiceAutoSend = enabled) }
+
+    fun setLlm(baseUrl: String, model: String) = update {
+        it.copy(
+            llmBaseUrl = baseUrl.trim().trimEnd('/').ifEmpty { AppSettings.DEFAULT_LLM_BASE_URL },
+            llmModel = model.trim().ifEmpty { AppSettings.DEFAULT_LLM_MODEL },
+        )
+    }
+
     private fun update(transform: (AppSettings) -> AppSettings) {
         val next = transform(_state.value)
         prefs.edit()
@@ -158,6 +183,11 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_AI_AUTO_SEND, next.aiAutoSend)
             .putBoolean(KEY_EXCERPT_MODE, next.excerptMode)
             .putBoolean(KEY_EXCERPT_WRITE_NOTE, next.excerptWriteNote)
+            .putBoolean(KEY_VOICE_ENABLED, next.voiceEnabled)
+            .putBoolean(KEY_VOICE_POLISH, next.voicePolish)
+            .putBoolean(KEY_VOICE_AUTO_SEND, next.voiceAutoSend)
+            .putString(KEY_LLM_BASE_URL, next.llmBaseUrl)
+            .putString(KEY_LLM_MODEL, next.llmModel)
             .apply()
         _state.value = next
     }
@@ -187,6 +217,11 @@ class SettingsStore(context: Context) {
         aiAutoSend = prefs.getBoolean(KEY_AI_AUTO_SEND, false),
         excerptMode = prefs.getBoolean(KEY_EXCERPT_MODE, false),
         excerptWriteNote = prefs.getBoolean(KEY_EXCERPT_WRITE_NOTE, true),
+        voiceEnabled = prefs.getBoolean(KEY_VOICE_ENABLED, true),
+        voicePolish = prefs.getBoolean(KEY_VOICE_POLISH, true),
+        voiceAutoSend = prefs.getBoolean(KEY_VOICE_AUTO_SEND, false),
+        llmBaseUrl = prefs.getString(KEY_LLM_BASE_URL, null)?.ifBlank { null } ?: AppSettings.DEFAULT_LLM_BASE_URL,
+        llmModel = prefs.getString(KEY_LLM_MODEL, null)?.ifBlank { null } ?: AppSettings.DEFAULT_LLM_MODEL,
     )
 
     // ── 文件夹缓存 ──
@@ -282,6 +317,11 @@ class SettingsStore(context: Context) {
         const val KEY_AI_AUTO_SEND = "ai_auto_send"
         const val KEY_EXCERPT_MODE = "excerpt_mode"
         const val KEY_EXCERPT_WRITE_NOTE = "excerpt_write_note"
+        const val KEY_VOICE_ENABLED = "voice_enabled"
+        const val KEY_VOICE_POLISH = "voice_polish"
+        const val KEY_VOICE_AUTO_SEND = "voice_auto_send"
+        const val KEY_LLM_BASE_URL = "llm_base_url"
+        const val KEY_LLM_MODEL = "llm_model"
         const val KEY_AUTO_CLOUD_BACKUP = "auto_cloud_backup"
         const val KEY_AUTO_BACKUP_ERROR = "auto_backup_error"
         const val KEY_SYNC_ALERTED = "sync_alerted"

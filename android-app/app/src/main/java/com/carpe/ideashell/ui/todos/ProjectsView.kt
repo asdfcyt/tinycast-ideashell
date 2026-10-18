@@ -430,7 +430,56 @@ internal fun AddProjectDialog(onDismiss: () -> Unit, onConfirm: (keyword: String
 private enum class PageDialog { NEXT, LOG, TAGS, REMOVE }
 
 /** 项目页上从底部弹出的详情 / 发起抽屉 */
-private enum class PageSheet { RECENT, DAYS30, MONTHS, PROGRESS, FOCUS_DETAIL, FOCUS_START }
+private enum class PageSheet { RECENT, DAYS30, MONTHS, PROGRESS, FOCUS_DETAIL, FOCUS_START, POSTPONE }
+
+/** 相关任务默认显示几项，其余收起 */
+private const val TASK_PREVIEW = 5
+
+/** 「推迟排期」可选的天数：（名称, 天数） */
+private val POSTPONE_CHOICES = listOf("1 天" to 1, "2 天" to 2, "3 天" to 3, "1 周" to 7, "2 周" to 14)
+
+/**
+ * 一键推迟排期：把项目里「有日期的未完成任务」整体往后顺延。
+ * 已经逾期的从今天起算（顺延后不会还是逾期），未来的任务保持相互间隔；原来的时间点保留，重复任务不动。
+ */
+@Composable
+private fun PostponeSheet(tasks: List<DidaTask>, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val movable = tasks.count { it.date != null && it.repeatFlag.isNullOrBlank() }
+    com.carpe.ideashell.ui.glass.GlassSheet(onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("推迟排期", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    if (movable == 0) "没有可以推迟的任务：只推迟有日期、且不是重复的未完成任务。"
+                    else "把 $movable 项有日期的未完成任务整体往后顺延；已逾期的从今天起算，原来的时间点保留，重复任务不动。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurfaceVariant,
+                )
+            }
+            if (movable > 0) {
+                ListGroup {
+                    DividedRows(POSTPONE_CHOICES) { (label, days) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPick(days) }
+                                .heightIn(min = 54.dp)
+                                .padding(horizontal = 18.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("推迟 $label", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            Text("›", style = MaterialTheme.typography.titleLarge, color = scheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun ProjectTaskRow(t: DidaTask, ctx: TodoCtx, done: Boolean) {
@@ -745,14 +794,20 @@ internal fun ProjectPage(
         // 相关任务：可直接勾选；已完成的折叠
         item(key = "tasks") {
             var showDone by remember { mutableStateOf(false) }
+            var showAllOpen by remember { mutableStateOf(false) }
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 GroupLabel(
                     "相关任务",
                     count = tasks.size,
                     trailing = {
-                        if (doneTasks.isNotEmpty()) {
-                            TextButton(onClick = { showDone = !showDone }) {
-                                Text(if (showDone) "收起已完成" else "已完成 ${doneTasks.size} 项 ›")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (tasks.any { it.date != null }) {
+                                TextButton(onClick = { sheet = PageSheet.POSTPONE }) { Text("推迟") }
+                            }
+                            if (doneTasks.isNotEmpty()) {
+                                TextButton(onClick = { showDone = !showDone }) {
+                                    Text(if (showDone) "收起已完成" else "已完成 ${doneTasks.size} 项 ›")
+                                }
                             }
                         }
                     },
@@ -765,7 +820,13 @@ internal fun ProjectPage(
                         modifier = Modifier.padding(start = 8.dp),
                     )
                 } else {
-                    tasks.forEach { t -> ProjectTaskRow(t, ctx, done = false) }
+                    val shownTasks = if (showAllOpen) tasks else tasks.take(TASK_PREVIEW)
+                    shownTasks.forEach { t -> ProjectTaskRow(t, ctx, done = false) }
+                    if (tasks.size > TASK_PREVIEW) {
+                        TextButton(onClick = { showAllOpen = !showAllOpen }, modifier = Modifier.padding(start = 4.dp)) {
+                            Text(if (showAllOpen) "收起" else "还有 ${tasks.size - TASK_PREVIEW} 项 ›")
+                        }
+                    }
                 }
                 if (showDone && ctx != null) doneTasks.forEach { t -> ProjectTaskRow(t, ctx, done = true) }
             }
@@ -942,6 +1003,12 @@ internal fun ProjectPage(
                     onOpenFocus()
                 }
             },
+            onDismiss = { sheet = null },
+        )
+
+        PageSheet.POSTPONE -> PostponeSheet(
+            tasks = tasks,
+            onPick = { days -> sheet = null; viewModel.postponeAll(tasks, days) },
             onDismiss = { sheet = null },
         )
 

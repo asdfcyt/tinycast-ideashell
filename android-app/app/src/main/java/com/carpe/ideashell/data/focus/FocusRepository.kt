@@ -239,8 +239,19 @@ class FocusRepository(
             // 设置了「自动开始休息」时，下面直接开始休息倒计时，完成通知上就不用再给「开始休息」按钮
             val autoStartBreak = completed && autoBreak() && _pendingBreak.value != null
             val next = if (completed && !autoStartBreak) _pendingBreak.value else null
-            val captured = runCatching { capturedBetween(s.startMs, System.currentTimeMillis()) }.getOrDefault(emptyList())
-            val entries = s.records.map { Celebration.Entry("专注记录", it) } + captured.map { Celebration.Entry("快记", it) }
+            // 小票里的「期间记录」只算这一个番茄：
+            //  · 时间严格限定在 [开始, 结束]——到点后进程被杀、很晚才补结算时，now 会远晚于番茄结束，不能把结束之后的快记算进来；
+            //    暂停中结束的，以暂停那一刻为止
+            //  · 有关联任务：以这个任务的记录（通知「记录」写进任务笔记的内容）为准，不掺无关的快记；
+            //    没关联任务（自由专注 / 只绑项目）才把期间的快记也算上
+            val periodEnd = minOf(now, s.endAtMs, s.pausedAtMs ?: Long.MAX_VALUE)
+            val captured = if (s.taskId.isNullOrBlank()) {
+                runCatching { capturedBetween(s.startMs, periodEnd) }.getOrDefault(emptyList())
+            } else {
+                emptyList()
+            }
+            val entries = s.records.map { Celebration.Entry(if (s.taskId.isNullOrBlank()) "专注记录" else "任务记录", it) } +
+                captured.map { Celebration.Entry("快记", it) }
             notifier.showDone(s.title, minutes, completed, synced, next, next?.let { lastMinutes(it) } ?: 0, entries.map { it.text })
             // 提前结束并记录也出小票（没走完、没有记录也一样）
             run {

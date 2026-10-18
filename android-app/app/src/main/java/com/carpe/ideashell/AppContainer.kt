@@ -89,6 +89,15 @@ class AppContainer(context: Context) {
     /** 腾讯云文字识别：相机页拍照 / 选图后识别文字 */
     val ocr = TencentOcr(http = http, credentials = credentials)
 
+    /** 腾讯云一句话识别：快记面板「按住说话」的转写 */
+    val asr = com.carpe.ideashell.data.asr.TencentAsr(http = http, credentials = credentials)
+
+    /** 语音词库：热词 + 替换规则（纠错学习的结果也存在这里） */
+    val lexicon = com.carpe.ideashell.data.asr.Lexicon(context)
+
+    /** 大模型（OpenAI 兼容）：把转写整理成待办 / 日记 / 笔记，并推算日期时间 */
+    val llm = com.carpe.ideashell.data.llm.LlmClient(http = http, credentials = credentials, settings = settings)
+
     val ideashell = McpClient(
         endpoint = McpEndpoints.IDEASHELL,
         http = http,

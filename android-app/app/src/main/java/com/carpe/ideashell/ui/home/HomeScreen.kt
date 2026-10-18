@@ -199,21 +199,20 @@ fun HomeScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { AppSnackbarHost(snackbar, Modifier.padding(bottom = LocalBottomBarPadding.current)) },
     ) { padding ->
+      Column(Modifier.padding(padding).fillMaxSize()) {
+        // 日期 + 搜索钮固定在顶部，不随列表滚动
+        Header(today = today, loaded = overview != null, remaining = remaining, onOpenSearch = onOpenSearch)
         // 下拉强制刷新：待办、专注、往日回顾、热力图都重新读，不看缓存
         PullToRefreshBox(
             isRefreshing = viewModel.refreshing,
             onRefresh = viewModel::forceRefresh,
-            modifier = Modifier.padding(padding),
+            modifier = Modifier.weight(1f).fillMaxWidth(),
         ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = LocalBottomBarPadding.current),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item(key = "header") {
-                Header(today = today, loaded = overview != null, remaining = remaining, onOpenSearch = onOpenSearch)
-            }
-
             if (fresh != null) {
                 item(key = "fresh") {
                     FreshStrip(
@@ -335,6 +334,7 @@ fun HomeScreen(
             }
         }
         }
+      }
     }
 }
 

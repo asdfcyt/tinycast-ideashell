@@ -298,6 +298,33 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /**
+     * 一键推迟排期（项目页）：把有日期的未完成任务整体顺延 [days] 天，原来的时间点保留。
+     * 已逾期的从今天起算（顺延后不会还是逾期）；重复任务和没有日期的任务不动。
+     */
+    fun postponeAll(tasks: List<DidaTask>, days: Int) {
+        viewModelScope.launch {
+            val today = java.time.LocalDate.now()
+            var moved = 0
+            var failed = 0
+            tasks.forEach { t ->
+                val from = t.date?.let { runCatching { java.time.LocalDate.parse(it.take(10)) }.getOrNull() } ?: return@forEach
+                if (!t.repeatFlag.isNullOrBlank()) return@forEach
+                val target = maxOf(from, today).plusDays(days.toLong())
+                container.todos.reschedule(t, target.toString(), t.time)
+                    .onSuccess { moved++ }
+                    .onFailure { failed++ }
+            }
+            message(
+                when {
+                    moved == 0 && failed == 0 -> "没有可以推迟的任务"
+                    failed == 0 -> "已把 $moved 项任务推迟 $days 天"
+                    else -> "已推迟 $moved 项，有 $failed 项没有改成功"
+                },
+            )
+        }
+    }
+
     fun setPriority(task: DidaTask, priority: Int) {
         viewModelScope.launch {
             container.todos.setPriority(task, priority).onFailure { fail("修改优先级失败", it) }

@@ -119,7 +119,7 @@ fun QuickCaptureScreen(
     val resolvedKind = remember(viewModel.text, viewModel.override, folders, hasImages, viewModel.schedule, viewModel.append) {
         resolveKind(viewModel.text, if (viewModel.append) CaptureKind.NOTE else viewModel.override, folders, hasImages, viewModel.schedule)
     }
-    val canSubmit = viewModel.clip != null || resolvedKind != null
+    val canSubmit = viewModel.clip != null || resolvedKind != null || viewModel.voiceItems.isNotEmpty()
     val composing = connected && viewModel.state == QuickState.Composing
 
     val haptic = LocalHapticFeedback.current
@@ -138,6 +138,39 @@ fun QuickCaptureScreen(
     }
     val openCamera = {
         cameraLauncher.launch((CaptureImages.MAX_COUNT - viewModel.images.size).coerceAtLeast(0))
+    }
+    // 快速设置磁贴「语音记一条」：面板就绪后直接开始录音（锁定模式，说完点「完成」）
+    val micPermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            if (viewModel.voice.start()) viewModel.voice.lock()
+        } else {
+            Toast.makeText(context, "没有麦克风权限，无法语音输入", Toast.LENGTH_SHORT).show()
+        }
+    }
+    LaunchedEffect(viewModel.voiceStartRequest, composing) {
+        if (viewModel.voiceStartRequest && composing) {
+            viewModel.voiceStartRequest = false
+            val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.RECORD_AUDIO,
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                if (viewModel.voice.start()) viewModel.voice.lock()
+            } else {
+                micPermission.launch(android.Manifest.permission.RECORD_AUDIO)
+            }
+        }
+    }
+    // 语音里说了「帮我查一下…」：把整理好的问题交给闪念贝壳 AI（尽量自动发送）；转交失败就把问题放进输入框，不丢
+    LaunchedEffect(viewModel.askRequest) {
+        val question = viewModel.askRequest ?: return@LaunchedEffect
+        viewModel.askRequest = null
+        if (IdeashellBridge.askAi(context, question, preferAutoSend = true)) {
+            onClose()
+        } else {
+            viewModel.text = if (viewModel.text.isBlank()) question else viewModel.text.trimEnd() + "\n" + question
+        }
     }
     // 闪念贝壳的语音录音 / AI：交给它的 App 处理，这里收起面板；问 AI 会把已写的文字带过去，成功转交后清空输入
     val bridgeContext = LocalContext.current
@@ -340,6 +373,14 @@ private fun ComposingContent(
         }
     }
 
+    // 语音识别完且开了「松手直接发送」：等输入框更新后直接保存
+    LaunchedEffect(viewModel.pendingAutoSubmit) {
+        if (viewModel.pendingAutoSubmit) {
+            viewModel.pendingAutoSubmit = false
+            viewModel.submit(readClipboard)
+        }
+    }
+
     // 普通输入时输入区自己带边距，铺满整个面板；分享 / 未连接时才加外边距
     val plain = clip == null && connected
     Column(
@@ -405,6 +446,13 @@ private fun ComposingContent(
                 onVoice = onVoice,
                 onAskAi = onAskAi,
                 onTemplates = { viewModel.showTemplates = true },
+                voice = viewModel.voice,
+                voiceUndo = viewModel.voiceUndo,
+                voiceItems = viewModel.voiceItems,
+                onVoiceItemRemove = viewModel::removeVoiceItem,
+                onVoiceRevert = viewModel::revertVoice,
+                onVoiceCorrect = viewModel::correctVoice,
+                onVoiceUndoDismiss = viewModel::dismissVoiceUndo,
             )
         }
 

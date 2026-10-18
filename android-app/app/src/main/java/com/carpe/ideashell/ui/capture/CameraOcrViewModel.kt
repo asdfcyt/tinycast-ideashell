@@ -139,8 +139,8 @@ class CameraOcrViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** 顺时针旋转 90°。选择框阶段只转图；已经识别过的重新识别（文字框的位置变了） */
-    fun rotate() {
+    /** 旋转 90°：[clockwise] 为 true 向右（顺时针），false 向左（逆时针）。选择框阶段只转图；已经识别过的重新识别（文字框的位置变了） */
+    fun rotate(clockwise: Boolean = true) {
         val path = imagePath ?: return
         if (importing) return
         viewModelScope.launch {
@@ -148,7 +148,7 @@ class CameraOcrViewModel(private val container: AppContainer) : ViewModel() {
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
                     val source = BitmapFactory.decodeFile(path) ?: throw IllegalStateException("decode")
-                    val turned = Bitmap.createBitmap(source, 0, 0, source.width, source.height, Matrix().apply { postRotate(90f) }, true)
+                    val turned = Bitmap.createBitmap(source, 0, 0, source.width, source.height, Matrix().apply { postRotate(if (clockwise) 90f else -90f) }, true)
                     writeJpeg(turned, path)
                     if (turned !== source) source.recycle()
                     turned.recycle()

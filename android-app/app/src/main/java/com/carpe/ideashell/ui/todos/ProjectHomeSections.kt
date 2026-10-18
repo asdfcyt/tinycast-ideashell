@@ -465,23 +465,48 @@ private fun MilestoneCard(e: MilestoneEntry.Done, onOpenNote: (String) -> Unit) 
     }
 }
 
-/** 一句单独的记录：日期在前、文字接在后面，整行铺满，不再分成窄窄的两列 */
+/** 一句单独的记录：日期在前、文字接在后面，整行铺满；太长时收起成 [FOLD_LINES] 行，点一下展开 / 收起 */
 @Composable
 private fun NoteLine(e: MilestoneEntry.Note) {
     val scheme = MaterialTheme.colorScheme
-    Text(
-        buildAnnotatedString {
-            if (e.stamp.isNotEmpty()) {
-                withStyle(SpanStyle(color = scheme.primary, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)) { append(shortStamp(e.stamp)) }
-                append("  ")
-            }
-            append(plain(e.text))
-        },
-        style = MaterialTheme.typography.bodyMedium,
-        color = scheme.onSurface,
-        modifier = Modifier.fillMaxWidth(),
-    )
+    var open by remember(e.stamp, e.text) { mutableStateOf(false) }
+    var overflow by remember(e.stamp, e.text) { mutableStateOf(false) }
+    val foldable = overflow || open
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (foldable) Modifier.clickable { open = !open } else Modifier),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            buildAnnotatedString {
+                if (e.stamp.isNotEmpty()) {
+                    withStyle(SpanStyle(color = scheme.primary, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)) { append(shortStamp(e.stamp)) }
+                    append("  ")
+                }
+                append(plain(e.text))
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = scheme.onSurface,
+            maxLines = if (open) Int.MAX_VALUE else FOLD_LINES,
+            overflow = TextOverflow.Ellipsis,
+            // 只在收起状态下判断是不是被截断；展开后保持「可收起」
+            onTextLayout = { if (!open) overflow = it.hasVisualOverflow },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (foldable) {
+            Text(
+                if (open) "收起" else "展开",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = scheme.primary,
+            )
+        }
+    }
 }
+
+/** 长内容收起时显示的行数 */
+private const val FOLD_LINES = 3
 
 @Composable
 private fun LinkRow(line: String, onOpenNote: (String) -> Unit) {
@@ -509,7 +534,14 @@ private fun LinkRow(line: String, onOpenNote: (String) -> Unit) {
 private fun ReviewBlock(para: String) {
     val scheme = MaterialTheme.colorScheme
     val m = STAMPED.find(para)
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    val bodyText = m?.groupValues?.get(4)?.ifEmpty { para } ?: para
+    // 太长的复盘：收起时只显示开头几行（纯文字），点一下展开成完整的 Markdown
+    val long = bodyText.length > 120 || bodyText.count { it == '\n' } >= FOLD_LINES
+    var open by remember(para) { mutableStateOf(false) }
+    Column(
+        modifier = if (long) Modifier.clickable { open = !open } else Modifier,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
         if (m != null) {
             Text(
                 "${m.groupValues[1]}-${m.groupValues[2]}" + m.groupValues[3].takeIf { it.isNotEmpty() }?.let { " $it" }.orEmpty(),
@@ -518,6 +550,23 @@ private fun ReviewBlock(para: String) {
                 color = scheme.primary,
             )
         }
-        MarkdownText(m?.groupValues?.get(4)?.ifEmpty { para } ?: para)
+        if (long && !open) {
+            Text(
+                plain(bodyText).replace(Regex("\\s*\\n\\s*"), " "),
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = FOLD_LINES,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            MarkdownText(bodyText)
+        }
+        if (long) {
+            Text(
+                if (open) "收起" else "展开",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = scheme.primary,
+            )
+        }
     }
 }

@@ -21,8 +21,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -105,6 +108,7 @@ private const val SEC_TODO = "todo"
 private const val SEC_QUICK = "quick"
 private const val SEC_BACKGROUND = "background"
 private const val SEC_BACKUP = "backup"
+private const val SEC_VOICE = "voice"
 
 private sealed interface Dialog {
     data object Tags : Dialog
@@ -115,6 +119,8 @@ private sealed interface Dialog {
     data object LongBreak : Dialog
     data object AddWidget : Dialog
     data object Ocr : Dialog
+    data object Llm : Dialog
+    data object Lexicon : Dialog
     data object RevisitLimit : Dialog
     data object RevisitRetention : Dialog
     data object ClozeRange : Dialog
@@ -129,6 +135,8 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
     val ideashellConnected by container.credentials.ideashellConnected.collectAsStateWithLifecycle()
     val didaConnected by container.credentials.didaConnected.collectAsStateWithLifecycle()
     val ocrConfigured by container.credentials.ocrConfigured.collectAsStateWithLifecycle()
+    val llmConfigured by container.credentials.llmConfigured.collectAsStateWithLifecycle()
+    val lexicon by container.lexicon.state.collectAsStateWithLifecycle()
     val revisitToday by container.revisit.today.collectAsStateWithLifecycle()
 
     var dialog by remember { mutableStateOf<Dialog?>(null) }
@@ -269,9 +277,8 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
         Column(
             modifier = Modifier
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = LocalBottomBarPadding.current + 8.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+                .fillMaxSize()
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp),
         ) {
             val sectionTitle = when (section) {
                 SEC_RECORD -> "记录"
@@ -280,18 +287,29 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                 SEC_QUICK -> "快速入口"
                 SEC_BACKGROUND -> "后台同步"
                 SEC_BACKUP -> "备份与迁移"
+                SEC_VOICE -> "语音输入"
                 else -> null
             }
+            // 标题栏固定在顶部，只有下面的设置项滚动
             if (sectionTitle == null) {
                 Text(
                     "设置",
                     style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.padding(start = 4.dp, top = 16.dp),
+                    modifier = Modifier.padding(start = 4.dp, top = 16.dp, bottom = 12.dp),
                 )
             } else {
                 SubPageHeader(sectionTitle, onBack = { section = null })
+                Spacer(Modifier.height(12.dp))
             }
 
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = LocalBottomBarPadding.current + 8.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
             when (section) {
                 null -> {
                     Group("连接") {
@@ -339,8 +357,20 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                         SettingsItem(
                             icon = Icons.Filled.Create,
                             title = "腾讯云文字识别",
-                            summary = if (ocrConfigured) "已配置 · 记一条里点相机，开启「识别文字」后拍照录入笔记" else "未配置 · 填入腾讯云 SecretId / SecretKey 后，可拍照识别文字快速录入",
+                            summary = if (ocrConfigured) "已配置 · 记一条里点相机，开启「识别文字」后拍照录入笔记；语音输入也用这对密钥" else "未配置 · 填入腾讯云 SecretId / SecretKey 后，可拍照识别文字、按住说话录入",
                             onClick = { dialog = Dialog.Ocr },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "语音输入",
+                            summary = when {
+                                !settings.voiceEnabled -> "已关闭"
+                                !ocrConfigured -> "未配置 · 需要腾讯云密钥，并开通「语音识别」"
+                                settings.voicePolish && llmConfigured -> "按住说话 · AI 整理并推算日期时间（${settings.llmModel}）"
+                                else -> "按住说话 · 本地规则识别日期时间（填大模型 Key 可让 AI 整理）"
+                            },
+                            onClick = { section = SEC_VOICE },
+                            trailing = { Chevron() },
                         )
                     }
 
@@ -697,7 +727,71 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                     if (backupBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
 
+                SEC_VOICE -> {
+                    Group(null) {
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "按住说话",
+                            summary = if (settings.voiceEnabled) "记一条里按住输入框说话，松手识别；上滑取消、下滑锁定" else "已关闭",
+                            onClick = { container.settings.setVoiceEnabled(!settings.voiceEnabled) },
+                            trailing = {
+                                Switch(checked = settings.voiceEnabled, onCheckedChange = { container.settings.setVoiceEnabled(it) })
+                            },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Lock,
+                            title = "腾讯云密钥",
+                            summary = if (ocrConfigured) "已配置 · 与文字识别共用，需要在腾讯云开通「语音识别」（每月免费 5000 次）"
+                            else "未配置 · 填入腾讯云 SecretId / SecretKey",
+                            onClick = { dialog = Dialog.Ocr },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Star,
+                            title = "词库",
+                            summary = if (lexicon.hotwords.isEmpty() && lexicon.replacements.isEmpty())
+                                "项目名、人名等专有名词，和总是被听错的词；识别后点「纠错」也会记到这里"
+                            else "${lexicon.hotwords.size} 个热词 · ${lexicon.replacements.size} 条替换规则",
+                            onClick = { dialog = Dialog.Lexicon },
+                        )
+                    }
+                    Group("AI 整理") {
+                        SettingsItem(
+                            icon = Icons.Filled.Star,
+                            title = "AI 整理口语",
+                            summary = if (settings.voicePolish) "去掉嗯啊重复，判断是待办 / 日记 / 笔记，并由大模型推算日期、时间、重复；失败时退回本地规则"
+                            else "已关闭 · 只做简单清洗，日期时间由本地规则识别",
+                            onClick = { container.settings.setVoicePolish(!settings.voicePolish) },
+                            trailing = {
+                                Switch(checked = settings.voicePolish, onCheckedChange = { container.settings.setVoicePolish(it) })
+                            },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Settings,
+                            title = "大模型接口",
+                            summary = (if (llmConfigured) "已配置" else "未配置 · 需要 API Key") +
+                                " · ${settings.llmModel} · ${settings.llmBaseUrl}",
+                            onClick = { dialog = Dialog.Llm },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Send,
+                            title = "松手直接保存",
+                            summary = if (settings.voiceAutoSend) "识别完立刻保存，不再确认；识别结果可在笔记里修改" else "识别完先放进输入框，确认后再保存",
+                            onClick = { container.settings.setVoiceAutoSend(!settings.voiceAutoSend) },
+                            trailing = {
+                                Switch(checked = settings.voiceAutoSend, onCheckedChange = { container.settings.setVoiceAutoSend(it) })
+                            },
+                        )
+                    }
+                    Text(
+                        "大模型使用 OpenAI 兼容接口，默认通义千问（DashScope）。你说的话会发给腾讯云识别、再把文字发给所选大模型，不经过其他服务器。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
+                }
+
                 else -> Unit
+            }
             }
         }
     }
@@ -805,7 +899,124 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
             onDismiss = { dialog = null },
         )
 
+        Dialog.Lexicon -> LexiconDialog(
+            initialHotwords = lexicon.hotwords.joinToString("\n"),
+            initialReplacements = com.carpe.ideashell.data.asr.Lexicon.formatReplacements(lexicon.replacements),
+            onConfirm = { hot, rep ->
+                container.lexicon.save(
+                    com.carpe.ideashell.data.asr.Lexicon.parseHotwords(hot),
+                    com.carpe.ideashell.data.asr.Lexicon.parseReplacements(rep),
+                )
+            },
+            onDismiss = { dialog = null },
+        )
+
+        Dialog.Llm -> LlmConfigDialog(
+            initialBaseUrl = settings.llmBaseUrl,
+            initialModel = settings.llmModel,
+            initialKey = container.credentials.llmKey.orEmpty(),
+            onConfirm = { url, model, key ->
+                container.settings.setLlm(url, model)
+                container.credentials.llmKey = key
+            },
+            onDismiss = { dialog = null },
+        )
+
         null -> Unit
+    }
+}
+
+/** 语音词库：热词（每行一个）+ 替换规则（每行「错字=正确」） */
+@Composable
+private fun LexiconDialog(
+    initialHotwords: String,
+    initialReplacements: String,
+    onConfirm: (String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var hot by remember { mutableStateOf(initialHotwords) }
+    var rep by remember { mutableStateOf(initialReplacements) }
+    InputSheet(
+        title = "语音词库",
+        hint = "热词：项目名、人名、产品名等专有名词（2–10 个字，每行一个），识别时优先，也会告诉大模型；闪念贝壳的文件夹名会自动当热词。替换规则：总是被听错的词，每行写成「错字=正确」，识别后自动改。",
+        onDismiss = onDismiss,
+        onConfirm = {
+            onConfirm(hot, rep)
+            onDismiss()
+        },
+    ) {
+        ListGroup {
+            AppTextField(
+                value = hot,
+                onValueChange = { hot = it },
+                label = "热词",
+                placeholder = "拾忆\n闪念贝壳",
+                minLines = 2,
+                autoFocus = true,
+            )
+            RowDivider()
+            AppTextField(
+                value = rep,
+                onValueChange = { rep = it },
+                label = "替换规则",
+                placeholder = "是疑=拾忆\n闪年贝壳=闪念贝壳",
+                minLines = 2,
+            )
+        }
+    }
+}
+
+/** 大模型接口：任意 OpenAI 兼容服务（接口地址 + 模型名 + Key）。Key 留空保存即清除 */
+@Composable
+private fun LlmConfigDialog(
+    initialBaseUrl: String,
+    initialModel: String,
+    initialKey: String,
+    onConfirm: (String, String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var url by remember { mutableStateOf(initialBaseUrl) }
+    var model by remember { mutableStateOf(initialModel) }
+    var key by remember { mutableStateOf(initialKey) }
+    InputSheet(
+        title = "大模型接口",
+        hint = "任意 OpenAI 兼容服务都行（通义千问、DeepSeek、智谱、OpenAI…）。接口地址填到 /v1 为止，应用会请求其中的 /chat/completions。Key 只保存在本机（加密）。",
+        onDismiss = onDismiss,
+        onConfirm = {
+            onConfirm(url.trim(), model.trim(), key.trim())
+            onDismiss()
+        },
+    ) {
+        ListGroup {
+            AppTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = "接口地址",
+                placeholder = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                autoFocus = true,
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Next),
+            )
+            RowDivider()
+            AppTextField(
+                value = model,
+                onValueChange = { model = it },
+                label = "模型",
+                placeholder = "qwen-plus",
+                singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Next),
+            )
+            RowDivider()
+            AppTextField(
+                value = key,
+                onValueChange = { key = it },
+                label = "API Key",
+                placeholder = "sk-…",
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Done),
+            )
+        }
     }
 }
 
@@ -820,8 +1031,8 @@ private fun OcrKeyDialog(
     var id by remember { mutableStateOf(initialId) }
     var key by remember { mutableStateOf(initialKey) }
     InputSheet(
-        title = "腾讯云文字识别",
-        hint = "在腾讯云控制台开通「文字识别」，并在「访问管理 → API 密钥管理」创建密钥。密钥只保存在本机（加密）。两项都留空并保存即可清除。",
+        title = "腾讯云密钥",
+        hint = "拍照识别文字、按住说话共用这对密钥：在腾讯云控制台开通「文字识别」「语音识别」，并在「访问管理 → API 密钥管理」创建密钥。密钥只保存在本机（加密）。两项都留空并保存即可清除。",
         onDismiss = onDismiss,
         onConfirm = {
             onConfirm(id, key)

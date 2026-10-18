@@ -21,10 +21,16 @@ class CredentialStore(private val store: SecureStore) {
     /** 是否已填写腾讯云文字识别的 SecretId / SecretKey（相机页的「识别文字」据此决定能不能开） */
     val ocrConfigured: StateFlow<Boolean> = _ocrConfigured.asStateFlow()
 
+    private val _llmConfigured = MutableStateFlow(false)
+
+    /** 是否已填写语音整理用的大模型 API Key（OpenAI 兼容接口） */
+    val llmConfigured: StateFlow<Boolean> = _llmConfigured.asStateFlow()
+
     init {
         _ideashellConnected.value = !ideashellKey.isNullOrBlank()
         _didaConnected.value = !didaToken.isNullOrBlank()
         refreshOcrConfigured()
+        _llmConfigured.value = !llmKey.isNullOrBlank()
     }
 
     var tencentSecretId: String?
@@ -45,6 +51,13 @@ class CredentialStore(private val store: SecureStore) {
     private fun refreshOcrConfigured() {
         _ocrConfigured.value = !tencentSecretId.isNullOrBlank() && !tencentSecretKey.isNullOrBlank()
     }
+
+    var llmKey: String?
+        get() = read(KEY_LLM)
+        set(value) {
+            write(KEY_LLM, value)
+            _llmConfigured.value = !value.isNullOrBlank()
+        }
 
     var ideashellKey: String?
         get() = read(KEY_IDEASHELL)
@@ -83,5 +96,6 @@ class CredentialStore(private val store: SecureStore) {
         const val KEY_DIDA = "dida_api_token"
         const val KEY_TENCENT_ID = "tencent_ocr_secret_id"
         const val KEY_TENCENT_KEY = "tencent_ocr_secret_key"
+        const val KEY_LLM = "voice_llm_api_key"
     }
 }

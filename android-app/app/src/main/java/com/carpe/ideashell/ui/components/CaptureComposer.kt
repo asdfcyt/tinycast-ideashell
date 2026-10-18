@@ -40,6 +40,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -57,7 +59,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.platform.TextToolbar
+import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
@@ -77,6 +84,7 @@ import com.carpe.ideashell.ui.theme.Brand
 import com.carpe.ideashell.core.capture.CapturePlanner
 import com.carpe.ideashell.core.capture.CaptureSchedule
 import com.carpe.ideashell.core.parse.CaptureKind
+import com.carpe.ideashell.core.voice.VoiceIntent
 import com.carpe.ideashell.core.parse.FolderInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -137,7 +145,32 @@ fun CaptureComposer(
     onAskAi: (() -> Unit)? = null,
     /** 还没输入内容时，占位文字末尾的「选择模板」下划线链接；为 null 时不显示 */
     onTemplates: (() -> Unit)? = null,
+    /** 按住说话（腾讯云识别 + 大模型整理）；为 null 时不显示按钮 */
+    voice: VoiceInputController? = null,
+    /** 大模型整理过语音后的「还原」提示；为 null 不显示 */
+    voiceUndo: VoiceUndo? = null,
+    /** 一句话里拆出的多件事（≥2 项）预览；空表示没有 */
+    voiceItems: List<VoiceIntent> = emptyList(),
+    onVoiceItemRemove: (Int) -> Unit = {},
+    onVoiceRevert: () -> Unit = {},
+    /** 点「纠错」：（识别成了, 应该是）记进词库并改掉当前文字 */
+    onVoiceCorrect: (String, String) -> Unit = { _, _ -> },
+    onVoiceUndoDismiss: () -> Unit = {},
 ) {
+    var correcting by remember { mutableStateOf(false) }
+    if (correcting && voiceUndo != null) {
+        VoiceCorrectDialog(
+            raw = voiceUndo.raw,
+            onConfirm = onVoiceCorrect,
+            onDismiss = { correcting = false },
+        )
+    }
+    // 面板收起 / 重组掉时，没锁定的录音直接丢掉，不让麦克风一直开着
+    if (voice != null) {
+        DisposableEffect(voice) {
+            onDispose { if (voice.phase == VoicePhase.RECORDING) voice.cancel() }
+        }
+    }
     // 识别结果（日期 / 标签 / 重要 / 文件夹）显示在底部工具栏上，与保存时用的是同一份计划
     val plan = remember(text, override, folders, schedule) { CapturePlanner.plan(text, override, folders, schedule = schedule) }
     val context = LocalContext.current
@@ -197,9 +230,21 @@ fun CaptureComposer(
                 target = dropTarget,
             ),
     ) {
-        Box(Modifier.fillMaxWidth()) {
+        // 按住输入框说话：长按够时间就开始录音，松手识别（点按、拖动、双击选词不受影响）
+        Box(Modifier.fillMaxWidth().then(if (voice != null) Modifier.voiceHoldGesture(voice, inField = true) else Modifier)) {
         // 空的时候：占位文字后面跟一个下划线的「选择模板」链接（点开选模板录入）；链接要能点，所以画在输入框上面一层
         val showTemplateLink = onTemplates != null && field.text.isEmpty()
+        // 语音输入开着时，占位文字直接说明怎么用，替代「准备做什么？」
+        val voiceOn = voice != null && voice.enabled
+        val hintText = if (voiceOn) "按住说话，松手识别" else placeholder
+        // 录音 / 识别时，输入区让给波形面板
+        val voiceActive = voice != null && voice.phase != VoicePhase.IDLE
+        // 按住输入框说话时，输入框自己的长按菜单（粘贴 / 自动填充）不要弹出来
+        val baseToolbar = LocalTextToolbar.current
+        val toolbar = remember(baseToolbar, voice) {
+            if (voice == null) baseToolbar else VoiceAwareToolbar(baseToolbar) { voice.phase != VoicePhase.IDLE }
+        }
+        CompositionLocalProvider(LocalTextToolbar provides toolbar) {
         TextField(
             value = field,
             onValueChange = {
@@ -210,10 +255,11 @@ fun CaptureComposer(
                 .fillMaxWidth()
                 // 右上角有确认键，第一行右边留出位置
                 .padding(end = 36.dp)
+                .alpha(if (voiceActive) 0f else 1f)
                 .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
             placeholder = {
                 if (!showTemplateLink) {
-                    Text(placeholder, style = inputStyle, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
+                    Text(hintText, style = inputStyle, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
                 }
             },
             textStyle = inputStyle,
@@ -231,12 +277,13 @@ fun CaptureComposer(
                 disabledIndicatorColor = Color.Transparent,
             ),
         )
-        if (showTemplateLink) {
+        }
+        if (showTemplateLink && !voiceActive) {
             val hint = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
             val linkColor = MaterialTheme.colorScheme.onSurfaceVariant
             Text(
                 text = buildAnnotatedString {
-                    append(placeholder + "或")
+                    append(hintText + if (voiceOn) "，或" else "或")
                     withLink(
                         LinkAnnotation.Clickable(
                             tag = "template",
@@ -250,6 +297,7 @@ fun CaptureComposer(
                 modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 52.dp),
             )
         }
+        if (voice != null && voiceActive) VoiceWavePanel(voice, Modifier.matchParentSize())
         }
 
         if (images.isNotEmpty()) {
@@ -265,6 +313,18 @@ fun CaptureComposer(
             ) {
                 images.forEach { path -> ImageThumb(path, onRemove = { onRemoveImage(path) }) }
             }
+        }
+
+        if (voice != null && voiceItems.isNotEmpty() && voice.phase == VoicePhase.IDLE) {
+            VoiceItemsPreview(voiceItems, onRemove = onVoiceItemRemove)
+        }
+        if (voice != null && voiceUndo != null && voice.phase == VoicePhase.IDLE) {
+            VoiceUndoBar(
+                voiceUndo,
+                onRevert = onVoiceRevert,
+                onCorrect = { correcting = true },
+                onDismiss = onVoiceUndoDismiss,
+            )
         }
 
         // 底部一行工具栏（对标滴答）：日期 / 标签 / 重要 / 相机，右边是文件夹。
@@ -522,4 +582,25 @@ internal fun stripDateTime(text: String): String {
     val base = if (a.text.isBlank()) "" else com.carpe.ideashell.core.parse.TodoParser.parse(a.text).content
     val keepTodo = a.forced == CaptureKind.TODO
     return ((if (keepTodo) "待办 " else "") + base).trimEnd()
+}
+
+/** 转发给系统的文字菜单，但在 [blocked] 为 true（正在语音录入）时不弹出 */
+private class VoiceAwareToolbar(
+    private val base: TextToolbar,
+    private val blocked: () -> Boolean,
+) : TextToolbar {
+    override val status: TextToolbarStatus get() = base.status
+
+    override fun showMenu(
+        rect: Rect,
+        onCopyRequested: (() -> Unit)?,
+        onPasteRequested: (() -> Unit)?,
+        onCutRequested: (() -> Unit)?,
+        onSelectAllRequested: (() -> Unit)?,
+    ) {
+        if (blocked()) return
+        base.showMenu(rect, onCopyRequested, onPasteRequested, onCutRequested, onSelectAllRequested)
+    }
+
+    override fun hide() = base.hide()
 }

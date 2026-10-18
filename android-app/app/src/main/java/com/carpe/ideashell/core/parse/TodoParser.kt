@@ -98,9 +98,18 @@ object TodoParser {
     private val RE_EDGE_PUNCT = Regex("^[\\s,，、:：;；\\-—]+|[\\s,，、:：;；\\-—]+\$")
     private val RE_LEADING_PREP = Regex("^(?:在|于|到)\\s*")
 
+    // 今晚 / 明早 / 后天晚上 这类「日期 + 时段」的合写，拆成「今天 晚上」「明天 早上」，交给下面分别识别
+    private val RE_DAY_PERIOD = Regex("(今|明)(?:(晚|夜)(?![上间])|(早|晨)(?![上晨餐饭间]))")
+
+    private fun expandDayPeriod(s: String): String = RE_DAY_PERIOD.replace(s) { m ->
+        val day = if (m.groupValues[1] == "今") "今天" else "明天"
+        val period = if (m.groups[2] != null) "晚上" else "早上"
+        "$day$period"
+    }
+
     fun parse(input: String, now: LocalDateTime = LocalDateTime.now()): ParsedTodo {
         val today = now.toLocalDate()
-        var text = input.trim()
+        var text = expandDayPeriod(input.trim())
         var date: String? = null
         var time: String? = null
 

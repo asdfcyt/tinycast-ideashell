@@ -71,6 +71,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -583,28 +584,41 @@ private fun RecognizeStage(viewModel: CameraOcrViewModel, onConfirm: () -> Unit,
         }
 
         // 右下角的工具：旋转（识别前后都能用，转完会重新识别）；识别后还有保留图片 / 全选 / 重选
-        Row(
+        // 两行放不下一行：上面是识别后的保留图片 / 全选 / 重选，下面是向左 / 向右旋转
+        Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.End,
         ) {
             if (!cropping && lines.isNotEmpty()) {
-                Pill("保留图片", active = viewModel.keepImage) { viewModel.keepImage = !viewModel.keepImage }
-                Pill("全选", active = false, onClick = viewModel::selectAll)
-                Pill("重选", active = false, onClick = viewModel::clearSelection)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Pill("保留图片", active = viewModel.keepImage) { viewModel.keepImage = !viewModel.keepImage }
+                    Pill("全选", active = false, onClick = viewModel::selectAll)
+                    Pill("重选", active = false, onClick = viewModel::clearSelection)
+                }
             }
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(Color.White.copy(alpha = if (busy) 0.1f else 0.2f))
-                    .clickable(enabled = !busy, role = Role.Button, onClick = viewModel::rotate)
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                val tint = Color.White.copy(alpha = if (busy) 0.4f else 1f)
-                Icon(painterResource(R.drawable.ic_rotate), contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
-                Text("旋转", color = tint, fontSize = 13.sp)
+            // 向左 / 向右各转 90°（图标是顺时针箭头，向左转时水平镜像）
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                listOf("向左旋转" to false, "向右旋转" to true).forEach { (label, clockwise) ->
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Color.White.copy(alpha = if (busy) 0.1f else 0.2f))
+                            .clickable(enabled = !busy, role = Role.Button) { viewModel.rotate(clockwise) }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        val tint = Color.White.copy(alpha = if (busy) 0.4f else 1f)
+                        Icon(
+                            painterResource(R.drawable.ic_rotate),
+                            contentDescription = null,
+                            tint = tint,
+                            modifier = Modifier.size(18.dp).graphicsLayer { scaleX = if (clockwise) 1f else -1f },
+                        )
+                        Text(label, color = tint, fontSize = 13.sp)
+                    }
+                }
             }
         }
 

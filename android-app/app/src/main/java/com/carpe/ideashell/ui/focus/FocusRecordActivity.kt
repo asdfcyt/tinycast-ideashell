@@ -123,8 +123,15 @@ class FocusRecordActivity : ComponentActivity() {
                             try {
                                 val synced = container.projects.recordFocus(taskId, project, text)
                                 container.focus.addRecord(text)
-                                val brief = text.take(24) + (if (text.length > 24) "…" else "")
-                                container.focus.refreshNotification("已记录：" + brief + (if (synced) "" else "（滴答评论未同步）"))
+                                // 刷新通知时不再往正文里塞「已记录：…」：它让这一次刷新和每分钟的心跳不一样，
+                                // 荣耀 MagicOS 会把它当成新提醒弹开并追问「不允许 / 始终允许」。
+                                // 记录成功已有 Toast 和进度条上新增的记录点；评论没同步的情况改用 Toast 说明
+                                container.focus.refreshNotification(null)
+                                if (!synced) {
+                                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                        Toast.makeText(applicationContext, "滴答评论没能同步，已保存在任务笔记里", Toast.LENGTH_LONG).show()
+                                    }
+                                }
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {

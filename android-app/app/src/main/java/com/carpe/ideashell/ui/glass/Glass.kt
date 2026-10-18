@@ -568,6 +568,8 @@ fun GlassSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     topRadius: Dp = 28.dp,
+    /** 背后磨砂的常态强度（像素）；默认和其它抽屉一致，要更糊的抽屉（如专注选任务）传大一点 */
+    blurPx: Int = SheetBlurPx,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -583,7 +585,7 @@ fun GlassSheet(
         shape = RoundedCornerShape(topStart = topRadius, topEnd = topRadius),
         scrimColor = Color.Black.copy(alpha = if (blurOk) 0.22f else 0.32f),
     ) {
-        if (blurOk) SheetBlurBehind(closing = closing)
+        if (blurOk) SheetBlurBehind(closing = closing, restPx = blurPx)
         content()
     }
 }
@@ -596,14 +598,14 @@ const val SheetBlurPeakPx = 44
  * 这样磨砂不会比抽屉本身多停留一会儿（系统窗口模糊自己的淡出偏慢，所以主动先退掉）。
  */
 @Composable
-fun SheetBlurBehind(closing: Boolean = false) {
-    val radius = remember { androidx.compose.animation.core.Animatable(SheetBlurPeakPx.toFloat()) }
+fun SheetBlurBehind(closing: Boolean = false, restPx: Int = SheetBlurPx, peakPx: Int = maxOf(SheetBlurPeakPx, restPx)) {
+    val radius = remember { androidx.compose.animation.core.Animatable(peakPx.toFloat()) }
     androidx.compose.runtime.LaunchedEffect(closing) {
         if (closing) {
             radius.animateTo(0f, androidx.compose.animation.core.tween(140))
         } else {
             radius.animateTo(
-                SheetBlurPx.toFloat(),
+                restPx.toFloat(),
                 androidx.compose.animation.core.tween(420, easing = androidx.compose.animation.core.FastOutSlowInEasing),
             )
         }

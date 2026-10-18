@@ -8,6 +8,11 @@
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
+    <!-- 快记面板的「按住说话」：录音后交给腾讯云语音识别；没有麦克风的设备不影响安装 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
     <!-- 设置页里的「后台同步」引导：请求加入电池优化白名单（荣耀 / MagicOS 上建议开启） -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
@@ -319,6 +324,17 @@
             android:exported="true"
             android:icon="@drawable/ic_tile"
             android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <!-- 快速设置磁贴：语音记一条（打开快记面板并直接开始录音） -->
+        <service
+            android:name=".system.VoiceCaptureTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_voice"
+            android:label="@string/tile_voice_label"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
