@@ -12,6 +12,10 @@
         android:required="false" />
     <!-- 快记面板的「按住说话」：录音后交给腾讯云语音识别；没有麦克风的设备不影响安装 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 语音记一条的悬浮录音胶囊：前台服务（麦克风）持有录音，悬浮窗画胶囊 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-feature
         android:name="android.hardware.microphone"
         android:required="false" />
@@ -90,6 +94,20 @@
                     android:scheme="ideashell" />
             </intent-filter>
         </activity>
+
+        <!-- 「语音记一条」的透明跳板：磁贴 / 桌面快捷方式进这里，有权限就开悬浮录音胶囊，没有就退回快记面板 -->
+        <activity
+            android:name=".system.VoiceCapsuleActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay" />
+
+        <service
+            android:name=".system.VoiceCapsuleService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- 透明跳板：转给闪念贝壳 App 的语音录音 / 新建文字笔记 / AI 对话（桌面快捷方式与其他应用、自动化工具都从这里进） -->
         <activity

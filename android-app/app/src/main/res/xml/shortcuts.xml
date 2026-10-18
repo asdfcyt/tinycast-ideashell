@@ -19,13 +19,9 @@
         android:shortcutShortLabel="@string/shortcut_voice_note_short"
         android:shortcutLongLabel="@string/shortcut_voice_note_long">
         <intent
-            android:action="com.carpe.ideashell.action.QUICK_CAPTURE"
+            android:action="android.intent.action.VIEW"
             android:targetPackage="com.carpe.ideashell"
-            android:targetClass="com.carpe.ideashell.ui.capture.QuickCaptureActivity">
-            <extra
-                android:name="start_voice"
-                android:value="true" />
-        </intent>
+            android:targetClass="com.carpe.ideashell.system.VoiceCapsuleActivity" />
     </shortcut>
     <shortcut
         android:shortcutId="toggle_excerpt"

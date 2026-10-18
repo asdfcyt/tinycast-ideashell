@@ -8,6 +8,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
+/** 语音识别用哪个引擎 */
+enum class VoiceEngine(val label: String, val summary: String) {
+    AUTO("自动", "云端优先；没有网络、云端出错时自动改用本地模型（需要先下载模型）"),
+    CLOUD("云端（腾讯云）", "只用腾讯云识别，需要网络和密钥；出错就直接报错"),
+    LOCAL("本地模型（SenseVoice）", "只用手机上的模型识别，不联网、录音不出手机；需要先下载模型"),
+}
+
 enum class ThemeMode(val label: String) {
     SYSTEM("跟随系统"),
     LIGHT("浅色"),
@@ -63,8 +70,8 @@ data class AppSettings(
     val voicePolish: Boolean = true,
     /** 松手识别完直接保存，不再等你确认（语音误识别比打字风险高，默认关） */
     val voiceAutoSend: Boolean = false,
-    /** 本地 SenseVoice 识别（断网 / 云端识别失败时兜底；需要先下载模型） */
-    val voiceLocal: Boolean = false,
+    /** 语音识别引擎：云端 / 本地 SenseVoice / 自动（云端优先，失败时用本地） */
+    val voiceEngine: VoiceEngine = VoiceEngine.AUTO,
     /** 大模型接口（OpenAI 兼容）：地址和模型名；Key 在 CredentialStore 里 */
     val llmBaseUrl: String = DEFAULT_LLM_BASE_URL,
     val llmModel: String = DEFAULT_LLM_MODEL,
@@ -152,7 +159,7 @@ class SettingsStore(context: Context) {
 
     fun setVoiceAutoSend(enabled: Boolean) = update { it.copy(voiceAutoSend = enabled) }
 
-    fun setVoiceLocal(enabled: Boolean) = update { it.copy(voiceLocal = enabled) }
+    fun setVoiceEngine(engine: VoiceEngine) = update { it.copy(voiceEngine = engine) }
 
     fun setLlm(baseUrl: String, model: String) = update {
         it.copy(
@@ -190,7 +197,7 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_VOICE_ENABLED, next.voiceEnabled)
             .putBoolean(KEY_VOICE_POLISH, next.voicePolish)
             .putBoolean(KEY_VOICE_AUTO_SEND, next.voiceAutoSend)
-            .putBoolean(KEY_VOICE_LOCAL, next.voiceLocal)
+            .putString(KEY_VOICE_ENGINE, next.voiceEngine.name)
             .putString(KEY_LLM_BASE_URL, next.llmBaseUrl)
             .putString(KEY_LLM_MODEL, next.llmModel)
             .apply()
@@ -225,7 +232,8 @@ class SettingsStore(context: Context) {
         voiceEnabled = prefs.getBoolean(KEY_VOICE_ENABLED, true),
         voicePolish = prefs.getBoolean(KEY_VOICE_POLISH, true),
         voiceAutoSend = prefs.getBoolean(KEY_VOICE_AUTO_SEND, false),
-        voiceLocal = prefs.getBoolean(KEY_VOICE_LOCAL, false),
+        voiceEngine = runCatching { VoiceEngine.valueOf(prefs.getString(KEY_VOICE_ENGINE, null).orEmpty()) }
+            .getOrDefault(VoiceEngine.AUTO),
         llmBaseUrl = prefs.getString(KEY_LLM_BASE_URL, null)?.ifBlank { null } ?: AppSettings.DEFAULT_LLM_BASE_URL,
         llmModel = prefs.getString(KEY_LLM_MODEL, null)?.ifBlank { null } ?: AppSettings.DEFAULT_LLM_MODEL,
     )
@@ -326,7 +334,7 @@ class SettingsStore(context: Context) {
         const val KEY_VOICE_ENABLED = "voice_enabled"
         const val KEY_VOICE_POLISH = "voice_polish"
         const val KEY_VOICE_AUTO_SEND = "voice_auto_send"
-        const val KEY_VOICE_LOCAL = "voice_local"
+        const val KEY_VOICE_ENGINE = "voice_engine"
         const val KEY_LLM_BASE_URL = "llm_base_url"
         const val KEY_LLM_MODEL = "llm_model"
         const val KEY_AUTO_CLOUD_BACKUP = "auto_cloud_backup"

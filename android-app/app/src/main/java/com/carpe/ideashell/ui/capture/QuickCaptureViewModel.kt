@@ -172,26 +172,9 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         if (container.settings.current.voiceAutoSend) pendingAutoSubmit = true
     }
 
-    /** 一件事的正文：整理后的内容 + 标签 + 优先级标记（和手打的写法一致，保存时再解析） */
-    private fun intentBody(intent: VoiceIntent): String = buildString {
-        append(intent.content)
-        intent.tags.forEach { append(" #").append(it) }
-        when {
-            intent.priority >= 5 -> append(" !高")
-            intent.priority >= 3 -> append(" !中")
-            intent.priority >= 1 -> append(" !低")
-        }
-    }
+    private fun intentBody(intent: VoiceIntent): String = voiceIntentBody(intent)
 
-    /** 待办的日期 / 时间 / 重复（都是大模型推算的）；没有日期就是 null */
-    private fun intentSchedule(intent: VoiceIntent): CaptureSchedule? {
-        val date = intent.date ?: return null
-        return CaptureSchedule(
-            date = date,
-            time = intent.time,
-            repeat = intent.repeat?.let { RepeatParser.find(it)?.rule },
-        )
-    }
+    private fun intentSchedule(intent: VoiceIntent): CaptureSchedule? = voiceIntentSchedule(intent)
 
     /** 多意图：输入框里已有的文字先存一条，再一件事存一条，全部排进离线队列后关闭面板 */
     private fun saveVoiceItems(items: List<VoiceIntent>) {

@@ -86,6 +86,7 @@ import com.carpe.ideashell.R
 import com.carpe.ideashell.system.AiAutoSendService
 import com.carpe.ideashell.system.ExcerptService
 import com.carpe.ideashell.data.settings.ThemeMode
+import com.carpe.ideashell.data.settings.VoiceEngine
 import com.carpe.ideashell.ui.components.AppTextField
 import com.carpe.ideashell.ui.components.CircleIconButton
 import com.carpe.ideashell.ui.components.InputSheet
@@ -122,6 +123,7 @@ private sealed interface Dialog {
     data object Ocr : Dialog
     data object Llm : Dialog
     data object Lexicon : Dialog
+    data object VoiceEngine : Dialog
     data object RevisitLimit : Dialog
     data object RevisitRetention : Dialog
     data object ClozeRange : Dialog
@@ -146,7 +148,9 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
     var batteryIgnored by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
     var autoSendServiceOn by remember { mutableStateOf(AiAutoSendService.isEnabled(context)) }
     var excerptServiceOn by remember { mutableStateOf(ExcerptService.isEnabled(context)) }
+    var overlayOn by remember { mutableStateOf(android.provider.Settings.canDrawOverlays(context)) }
     LifecycleResumeEffect(Unit) {
+        overlayOn = android.provider.Settings.canDrawOverlays(context)
         batteryIgnored = isIgnoringBatteryOptimizations(context)
         autoSendServiceOn = AiAutoSendService.isEnabled(context)
         excerptServiceOn = ExcerptService.isEnabled(context)
@@ -748,51 +752,56 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                             else "未配置 · 填入腾讯云 SecretId / SecretKey",
                             onClick = { dialog = Dialog.Ocr },
                         )
-                        // 本地 SenseVoice：没网 / 云端识别失败时自动改用；打开时才下载模型
-                        val localDownloading = localAsr is LocalAsrState.Downloading
-                        val localOn = settings.voiceLocal && (localAsr is LocalAsrState.Ready || localDownloading)
-                        fun toggleLocalAsr(on: Boolean) {
-                            if (on) {
-                                container.settings.setVoiceLocal(true)
-                                container.localAsr.download()
-                            } else {
-                                container.settings.setVoiceLocal(false)
-                                if (localDownloading) container.localAsr.cancelDownload()
-                            }
-                        }
+                        // 「语音记一条」磁贴 / 快捷方式的悬浮胶囊要「显示在其他应用上层」权限
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "语音记一条 · 悬浮胶囊",
+                            summary = if (overlayOn) "已开启 · 点磁贴 / 桌面快捷方式「语音记一条」会浮出录音胶囊，不打开面板，说完点「完成」直接保存"
+                            else "未开启 · 需要允许「显示在其他应用上层」；没开时「语音记一条」会打开快记面板录音 · 点一下去开启",
+                            onClick = {
+                                if (!overlayOn) {
+                                    context.startActivity(
+                                        Intent(
+                                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                            Uri.parse("package:" + context.packageName),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                        // 识别方式：云端 / 本地 SenseVoice / 自动
                         SettingsItem(
                             icon = Icons.Filled.Refresh,
-                            title = "本地识别（断网兜底）",
+                            title = "识别方式",
+                            summary = settings.voiceEngine.label + " · " + settings.voiceEngine.summary,
+                            onClick = { dialog = Dialog.VoiceEngine },
+                        )
+                        // 本地模型：不随应用安装，在这里下载 / 删除
+                        SettingsItem(
+                            icon = Icons.Filled.Info,
+                            title = "本地模型（SenseVoice）",
                             summary = when (val s = localAsr) {
                                 LocalAsrState.Unsupported -> "这台设备不支持（仅支持 64 位 ARM 手机）"
-                                LocalAsrState.Missing -> "没有网络或云端识别失败时，改用手机本地的 SenseVoice 识别，录音不出手机。首次开启要下载约 160 MB 的模型，建议连 Wi-Fi"
+                                LocalAsrState.Missing -> "未下载 · 约 160 MB，建议连 Wi-Fi；识别在手机上完成，支持中 / 英 / 日 / 韩 / 粤 · 点一下下载"
                                 is LocalAsrState.Downloading ->
                                     if (s.unpacking) "正在保存模型…"
-                                    else "正在下载模型" + (if (s.percent >= 0) " ${s.percent}%" else "") + "，请先别关掉应用 · 点一下取消"
-                                is LocalAsrState.Ready ->
-                                    if (settings.voiceLocal) "已开启 · 没有网络或云端识别失败时自动改用本地识别（中 / 英 / 日 / 韩 / 粤）"
-                                    else "已关闭 · 模型已下载（${s.sizeMb} MB），打开即可使用"
+                                    else "正在下载" + (if (s.percent >= 0) " ${s.percent}%" else "") + "，请先别关掉应用 · 点一下取消"
+                                is LocalAsrState.Ready -> "已下载（${s.sizeMb} MB）"
                                 is LocalAsrState.Failed -> "下载失败：${s.message} · 点一下重试"
                             },
                             onClick = {
                                 when (localAsr) {
                                     LocalAsrState.Unsupported -> toast(context, "这台设备不支持本地识别")
-                                    is LocalAsrState.Failed -> toggleLocalAsr(true)
-                                    else -> toggleLocalAsr(!localOn)
+                                    is LocalAsrState.Downloading -> container.localAsr.cancelDownload()
+                                    LocalAsrState.Missing, is LocalAsrState.Failed -> container.localAsr.download()
+                                    is LocalAsrState.Ready -> Unit
                                 }
-                            },
-                            trailing = {
-                                Switch(
-                                    checked = localOn,
-                                    enabled = localAsr != LocalAsrState.Unsupported,
-                                    onCheckedChange = { toggleLocalAsr(it) },
-                                )
                             },
                         )
                         if (localAsr is LocalAsrState.Ready) {
                             SettingsItem(
                                 icon = Icons.Filled.Info,
-                                title = "删除本地识别模型",
+                                title = "删除本地模型",
                                 summary = "释放 ${(localAsr as LocalAsrState.Ready).sizeMb} MB 空间，需要时可以重新下载",
                                 onClick = { confirmDeleteLocalAsr = true },
                             )
@@ -852,12 +861,12 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
     if (confirmDeleteLocalAsr) {
         AlertDialog(
             onDismissRequest = { confirmDeleteLocalAsr = false },
-            title = { Text("删除本地识别模型？") },
-            text = { Text("删除后「本地识别」会关闭，之后想用要重新下载（约 160 MB）。") },
+            title = { Text("删除本地模型？") },
+            text = { Text("删除后之后想用本地识别要重新下载（约 160 MB）。如果当前选的是「本地模型」，会改回「自动」。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmDeleteLocalAsr = false
-                    container.settings.setVoiceLocal(false)
+                    if (settings.voiceEngine == VoiceEngine.LOCAL) container.settings.setVoiceEngine(VoiceEngine.AUTO)
                     container.localAsr.delete()
                 }) { Text("删除") }
             },
@@ -898,6 +907,24 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
             label = "文件夹名",
             initial = settings.dailyFolder,
             onConfirm = { container.settings.setDailyFolder(it) },
+            onDismiss = { dialog = null },
+        )
+
+        Dialog.VoiceEngine -> VoiceEngineDialog(
+            current = settings.voiceEngine,
+            onSelect = { engine ->
+                container.settings.setVoiceEngine(engine)
+                if (engine != VoiceEngine.CLOUD) {
+                    when (localAsr) {
+                        LocalAsrState.Missing, is LocalAsrState.Failed -> {
+                            container.localAsr.download()
+                            toast(context, "开始下载本地模型（约 160 MB），下载完成前仍用云端")
+                        }
+                        LocalAsrState.Unsupported -> toast(context, "这台设备不支持本地识别")
+                        else -> Unit
+                    }
+                }
+            },
             onDismiss = { dialog = null },
         )
 
@@ -1386,6 +1413,46 @@ private fun TextInputDialog(
             )
         }
     }
+}
+
+@Composable
+private fun VoiceEngineDialog(current: VoiceEngine, onSelect: (VoiceEngine) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("识别方式") },
+        text = {
+            Column {
+                VoiceEngine.entries.forEach { engine ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = engine == current,
+                                role = Role.RadioButton,
+                                onClick = {
+                                    onSelect(engine)
+                                    onDismiss()
+                                },
+                            )
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = engine == current, onClick = null)
+                        Column(Modifier.padding(start = 12.dp)) {
+                            Text(engine.label)
+                            Text(
+                                engine.summary,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable

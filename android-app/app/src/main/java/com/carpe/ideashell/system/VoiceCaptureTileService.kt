@@ -5,9 +5,8 @@ import android.content.Intent
 import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
-import com.carpe.ideashell.ui.capture.QuickCaptureActivity
 
-/** 快速设置磁贴「语音记一条」：点一下打开快记面板并直接开始录音，说完点「完成」 */
+/** 快速设置磁贴「语音记一条」：点一下浮出录音胶囊直接开录，说完点「完成」（没有悬浮窗权限时退回快记面板） */
 class VoiceCaptureTileService : TileService() {
 
     override fun onStartListening() {
@@ -18,9 +17,7 @@ class VoiceCaptureTileService : TileService() {
     }
 
     override fun onClick() {
-        val intent = Intent(this, QuickCaptureActivity::class.java).apply {
-            action = QuickCaptureActivity.ACTION_QUICK_CAPTURE
-            putExtra(QuickCaptureActivity.EXTRA_START_VOICE, true)
+        val intent = Intent(this, VoiceCapsuleActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         if (Build.VERSION.SDK_INT >= 34) {
