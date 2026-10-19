@@ -53,6 +53,17 @@ class Lexicon(context: Context) {
         save(hot, data.replacements.filterNot { it.first == f } + (f to t))
     }
 
+    /**
+     * 从「确认卡片里手改过的文字」学习：把 [original]（整理结果）和 [edited]（用户改后）比一下，
+     * 只有「改动的那一小段」是同音 / 近音错字时才记成替换规则（「京济学」→「经济学」），
+     * 改了意思的（「明天」→「后天」）、整句重写的都不学，免得学坏。返回学到的（错, 对），没学到返回 null。
+     */
+    fun learnFromEdit(original: String, edited: String): Pair<String, String>? {
+        val pair = Correction.diff(original, edited) ?: return null
+        addReplacement(pair.first, pair.second)
+        return pair
+    }
+
     /** 按替换规则改一遍（长的先换，避免短词把长词拆坏） */
     fun apply(text: String): String {
         var out = text
@@ -113,5 +124,92 @@ class Lexicon(context: Context) {
 
         fun formatReplacements(list: List<Pair<String, String>>): String =
             list.joinToString("\n") { "${it.first}=${it.second}" }
+    }
+}
+
+/** 手改前后的差异 → 一对近音词；纯函数，方便单独验证 */
+internal object Correction {
+    private const val MAX_SPAN = 8
+    private const val FUNCTION_CHARS = "的了是在和与吗吧呢啊就都也还把被给"
+
+    /** 取改动的那一段（前后各扩到至少 2 个字）；不是近音的小改动返回 null */
+    fun diff(original: String, edited: String): Pair<String, String>? {
+        if (original == edited || original.isBlank() || edited.isBlank()) return null
+        var start = 0
+        val minLen = minOf(original.length, edited.length)
+        while (start < minLen && original[start] == edited[start]) start++
+        var endO = original.length
+        var endE = edited.length
+        while (endO > start && endE > start && original[endO - 1] == edited[endE - 1]) {
+            endO--
+            endE--
+        }
+        var from = original.substring(start, endO)
+        var to = edited.substring(start, endE)
+        if (from.isEmpty() || to.isEmpty()) return null // 纯增删（补了几个字 / 删了几个字）不是错字
+        // 只改了一个字：向右（不行再向左）借邻字，凑成一个词
+        var left = start
+        var right = endO
+        var rightE = endE
+        var tries = 0
+        while ((from.length < 2 || to.length < 2) && tries < 3) {
+            val canLeft = left > 0
+            val canRight = right < original.length && rightE < edited.length
+            // 优先借右邻字（「京济」比「近京」更像个词）；右邻字是「的 了 是」这类虚词（「曼困的书」）就借左边
+            val leftGood = canLeft && original[left - 1] !in FUNCTION_CHARS
+            val rightGood = canRight && original[right] !in FUNCTION_CHARS
+            val goLeft = when {
+                rightGood -> false
+                leftGood -> true
+                canRight -> false
+                else -> canLeft
+            }
+            if (goLeft) {
+                left--
+                from = original[left] + from
+                to = edited[left] + to
+            } else if (canRight) {
+                from += original[right]
+                to += edited[rightE]
+                right++
+                rightE++
+            } else break
+            tries++
+        }
+        if (from.length !in 2..MAX_SPAN || to.length !in 2..MAX_SPAN) return null
+        if (!from.all(::isWordChar) || !to.all(::isWordChar)) return null
+        if (from.none(::isHan)) return null
+        if (!soundsAlike(from, to)) return null
+        return from to to
+    }
+
+    private fun isHan(c: Char) = c in '\u4e00'..'\u9fff'
+    private fun isWordChar(c: Char) = isHan(c) || c.isLetterOrDigit()
+
+    private val transliterator by lazy {
+        runCatching { android.icu.text.Transliterator.getInstance("Han-Latin; NFD; [:Nonspacing Mark:] Remove; NFC; Lower") }.getOrNull()
+    }
+
+    /** 拼音（不带声调）相差不超过 30%（编辑距离）就算近音 */
+    fun soundsAlike(a: String, b: String): Boolean {
+        val t = transliterator ?: return false
+        val pa = t.transliterate(a).filter(Char::isLetterOrDigit)
+        val pb = t.transliterate(b).filter(Char::isLetterOrDigit)
+        if (pa.isEmpty() || pb.isEmpty()) return false
+        val limit = maxOf(pa.length, pb.length) * 3 / 10
+        return editDistance(pa, pb) <= limit
+    }
+
+    private fun editDistance(a: String, b: String): Int {
+        var prev = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            val cur = IntArray(b.length + 1)
+            cur[0] = i
+            for (j in 1..b.length) {
+                cur[j] = minOf(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1)
+            }
+            prev = cur
+        }
+        return prev[b.length]
     }
 }

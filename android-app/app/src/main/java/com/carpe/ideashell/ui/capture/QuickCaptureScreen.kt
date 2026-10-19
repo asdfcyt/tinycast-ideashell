@@ -182,6 +182,16 @@ fun QuickCaptureScreen(
             onClose()
         }
     }
+    // 语音里说了删除待办：删除不可恢复，先让用户确认
+    if (viewModel.pendingDeletes.isNotEmpty()) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = viewModel::cancelDelete,
+            title = { Text("删除待办？") },
+            text = { Text(viewModel.pendingDeletes.joinToString("\n") { "「${it.title.take(30)}」" } + "\n\n删除后不可恢复。") },
+            confirmButton = { TextButton(onClick = viewModel::confirmDelete) { Text("删除") } },
+            dismissButton = { TextButton(onClick = viewModel::cancelDelete) { Text("取消") } },
+        )
+    }
     // 闪念贝壳的语音录音 / AI：交给它的 App 处理，这里收起面板；问 AI 会把已写的文字带过去，成功转交后清空输入
     val bridgeContext = LocalContext.current
     val openVoice = {

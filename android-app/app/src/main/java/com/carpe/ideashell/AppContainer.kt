@@ -271,6 +271,13 @@ class AppContainer(context: Context) {
         onTaskDone = { task, ref, review -> celebrateTaskDone(task, ref, review) },
     )
 
+    /** 语音整理的上下文：热词（文件夹 / 项目 / 标签 / 待办标题）+ 未完成待办列表，只用本地已有的数据 */
+    val voiceContext = com.carpe.ideashell.data.asr.VoiceContext(
+        folders = { folders.folders.value.map { it.name } },
+        projects = { projects.projects },
+        todos = todos,
+    )
+
     /** 任务完成：把这个任务一路记下的进展、累计专注、复盘汇成一张反馈卡（什么都没有就不打扰，只留「已完成」提示） */
     private fun celebrateTaskDone(task: com.carpe.ideashell.data.dida.DidaTask, ref: com.carpe.ideashell.data.project.TaskNoteRef?, review: String) {
         appScope.launch {

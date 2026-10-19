@@ -15,6 +15,14 @@ import java.time.ZoneId
 import java.time.format.TextStyle
 import java.util.Locale
 
+/** 对「之前已经建好的待办」能做的几件事 */
+enum class TodoOp(val label: String) {
+    EDIT("改待办"),
+    COMPLETE("完成待办"),
+    DELETE("删除待办"),
+    QUERY("查待办"),
+}
+
 /** 大模型对一句语音的整理结果。日期 / 时间由模型按「当前时间 + 日历」推算，本地只做格式校验。 */
 data class VoiceIntent(
     val type: CaptureKind,
@@ -34,6 +42,10 @@ data class VoiceIntent(
     /** 修改之前建好的待办：[target] 是找到它的关键词（可为空 = 刚才建的那条），[content] 是要追加到备注的说明（可为空），date / time / priority 是要改成的新值（null / 0 = 不改） */
     val edit: Boolean = false,
     val target: String? = null,
+    /** [edit] 为 true 时具体做什么：改 / 完成 / 删除 / 查询（查询没有「目标」，[target] 是可选的关键词，[range] 是范围） */
+    val op: TodoOp = TodoOp.EDIT,
+    /** 查询范围：today / tomorrow / week / overdue / all（默认 today） */
+    val range: String? = null,
 )
 
 /** 一次语音输入的完整结果 */
@@ -54,7 +66,12 @@ object VoiceIntents {
     private val WEEKDAY = Locale.CHINA
 
     /** 系统提示：当前时间 + 未来三周日历（模型算星期几容易错，直接给表） + 输出格式 */
-    fun systemPrompt(now: LocalDateTime, vocabulary: List<String> = emptyList(), zone: ZoneId = ZoneId.systemDefault()): String {
+    fun systemPrompt(
+        now: LocalDateTime,
+        vocabulary: List<String> = emptyList(),
+        todos: List<String> = emptyList(),
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): String {
         val today = now.toLocalDate()
         val calendar = (0..20).joinToString("；") { i ->
             val d = today.plusDays(i.toLong())
@@ -68,11 +85,14 @@ object VoiceIntents {
         }
         val vocab = if (vocabulary.isEmpty()) "" else
             "\n用户的常用词（项目名、专有名词）：${vocabulary.take(60).joinToString("、")}。转写里读音相近的错字请改成这些词，原本就对的不要乱改。\n"
+        val todoCtx = if (todos.isEmpty()) "" else
+            "\n用户目前未完成的待办（每行「任务名｜日期 时间」，供你判断「改 / 完成 / 删除 / 推迟 / 查询」指的是哪一条，并据此推算「推迟一小时」「往后挪两天」这类相对说法；新建待办不要照抄它们；转写里读音相近的人名、项目名可以参考它们修正）：\n" +
+                todos.take(40).joinToString("\n") { "· $it" } + "\n"
         return """
 你是语音记事助手。用户用语音说了一句话，下面会给出语音转写文字（可能有同音错字、口语、重复）。请判断用户的意图、整理，并只输出一个 JSON 对象，不要输出任何别的文字。
 
 现在是 ${today} ${today.dayOfWeek.getDisplayName(TextStyle.FULL, WEEKDAY)} ${"%02d:%02d".format(now.hour, now.minute)}（时区 ${zone.id}，按中国日历）。
-未来三周日历：$calendar。$vocab
+未来三周日历：$calendar。$vocab$todoCtx
 推算日期以这份日历为准（「下周三」= 下一个周一所在那周的周三；「周五」= 本周还没到的最近一个周五，本周已过则取下周）。月底、节日、「N 天后」请自行推算。
 
 输出格式：{"items":[{...},{...}]}。items 是数组，一句话里有几个互相独立的意图就输出几项，每项按下面的字段整理：
@@ -86,10 +106,14 @@ object VoiceIntents {
   - daily（日记）：除上面三种以外的一切，也是默认选项——今天发生的事、心情、感想、流水账、已经做完的事、随口的一个想法、没头没尾的一句话。用户说了「记个日记 / 写进日记」也是 daily。
   拿不准时选 daily。
 - append：true / false，默认 false。用户说了「追加到上一条笔记 / 上个笔记 / 上一篇 / 刚才那条」「接着上一条写」「补充到上一条」这类话，就是想把这段话接到最近一条笔记后面：append 填 true，type 填 note，content 只写要追加的内容（口令本身不要写进去）。没说这类话一律 false。append 和 ask 不会同时出现。
-- edit：true / false，默认 false。用户要修改**之前已经建好的待办**，而不是新建：「把刚才的会改到两点四十」「开会那个待办补充一下，带上办公电脑」「把交周报那个推迟到周五」。这时 type 填 todo，edit 填 true，并且：
+- edit：true / false，默认 false。用户要对**之前已经建好的待办**做操作（而不是新建）：修改、完成、删除、查询。这时 type 填 todo，edit 填 true，用 op 说明做什么：
+  - op = "edit"（改时间 / 补充备注 / 改优先级）：「把刚才的会改到两点四十」「开会那个待办补充一下，带上办公电脑」「把交周报那个推迟到周五」「开会那个往后推一小时」。
+    - content：要补充进这条待办**备注**的说明（如「带上办公电脑」），没有补充就填 ""。不是任务名，不要把任务名放这里。
+    - date / time：要改成的新日期 / 新时间，**只填用户明确说了要改的**，没说要改的填 null（不要套用「没说日期就取最近一个」的规则）。「推迟一小时 / 往后挪两天」这类相对说法，按上面「未完成的待办」里那条的原日期时间推算出新的 date / time（原来没有时间就从现在算）。priority 同理，没说要改填 0。
+  - op = "complete"（标记完成）：「开会那个完成了」「周报我交了」「把买快递那个勾掉」。content 填 ""。
+  - op = "delete"（删除）：「把开会那个待办删掉」「取消交周报那个任务」。content 填 ""。只有明确说了删除 / 取消 / 不要了 / 删掉才用 delete，「做完了」是 complete。
+  - op = "query"（查询，不改任何东西）：「今天还有什么没做」「明天有哪些待办」「这周还有什么任务」「有没有逾期的」「还有开会相关的待办吗」。range 填 "today"（今天，含已逾期）/ "tomorrow" / "week"（本周起七天内）/ "overdue"（已逾期）/ "all"（全部未完成）之一；说了某个主题（「开会相关的」）时 target 填关键词，否则填 ""。
   - target：用来找到那条待办的关键词（任务名里的核心词，如「开会」「周报」）；只说了「刚才那个 / 上一个」没说是什么就填 ""。
-  - content：要补充进这条待办**备注**的说明（如「带上办公电脑」），没有补充就填 ""。不是任务名，不要把任务名放这里。
-  - date / time：要改成的新日期 / 新时间，**只填用户明确说了要改的**，没说要改的填 null（不要套用「没说日期就取最近一个」的规则）。priority 同理，没说要改填 0。
   - 说「再加一个待办 / 新建」是新建，不是 edit。edit 项不要拆分，也不会和 append / ask 同时出现。
 - content：整理后的正文。去掉「嗯、呃、那个、就是」这类语气词和重复；自我纠正取最后说的（「明天，不对，后天」→ 后天）；修正明显的同音错字；加合适的标点。保留原意和人称，不要扩写、不要总结、不要回答问题（ask 除外：ask 只整理问题本身，不要自己回答）。
 - 待办的任务逻辑（type 为 todo 时）：
@@ -101,6 +125,7 @@ object VoiceIntents {
   - 说了重要 / 紧急才填优先级，别自己猜。
 - date：todo 的日期，格式 yyyy-MM-dd。没说日期但说了具体时间点：取最近一个还没到的那一刻所在的日期（今天这个点已经过了就是明天）。日期和时间都没说为 null。其他类型一律 null。
 - time：todo 的时间，24 小时制 HH:mm；没说具体几点为 null。只说了时段时：凌晨 03:00、早上 07:00、上午 09:00、中午 12:00、下午 14:30、傍晚 17:00、晚上 20:00（「今晚」= 今天晚上）。「八点半」这类没说上午下午的，按生活常理判断，说了「晚」「夜」一定是晚上。
+  相对现在的说法一定按「现在」精确推算：「半小时后」「一个半小时后」「二十分钟后」= 现在加上这段时间，date 和 time 都要填（跨过午夜 date 要变成明天）；「一会儿」「待会儿」没有具体时间，time 填 null。
 - repeat：重复说法原文，如 "每周一"、"每天"、"每月1号"、"每两周"；不重复为 null。有重复说法时，date 填第一次发生的日期。
 - tags：用户明确说了「标签 xxx」「井号 xxx」时的标签数组（不带 #）；否则 []。
 - priority：说了「重要 / 紧急 / 高优先级」填 5；「中优先级」填 3；「低优先级」填 1；否则 0。
@@ -119,9 +144,17 @@ object VoiceIntents {
 输入：追加到上一条笔记，复利的关键是时间和不中断
 输出：{"items":[{"type":"note","append":true,"content":"复利的关键是时间和不中断。","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
 输入：刚才那个开会的待办，改到两点四十，还要带上办公电脑
-输出：{"items":[{"type":"todo","edit":true,"target":"开会","content":"带上办公电脑","date":null,"time":"14:40","repeat":null,"tags":[],"priority":0}]}
+输出：{"items":[{"type":"todo","edit":true,"op":"edit","target":"开会","content":"带上办公电脑","date":null,"time":"14:40","repeat":null,"tags":[],"priority":0}]}
 输入：把交周报那个推迟到周五
-输出：{"items":[{"type":"todo","edit":true,"target":"周报","content":"","date":"2026-10-23","time":null,"repeat":null,"tags":[],"priority":0}]}
+输出：{"items":[{"type":"todo","edit":true,"op":"edit","target":"周报","content":"","date":"2026-10-23","time":null,"repeat":null,"tags":[],"priority":0}]}
+输入：开会那个待办已经做完了
+输出：{"items":[{"type":"todo","edit":true,"op":"complete","target":"开会","content":"","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
+输入：把取快递那个待办删掉
+输出：{"items":[{"type":"todo","edit":true,"op":"delete","target":"快递","content":"","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
+输入：今天还有什么没做
+输出：{"items":[{"type":"todo","edit":true,"op":"query","range":"today","target":"","content":"","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
+输入：半小时后提醒我关火
+输出：{"items":[{"type":"todo","content":"关火","date":"2026-10-18","time":"11:28","repeat":null,"tags":[],"priority":0}]}
 输入：明天上午九点开周会，然后下午三点去取快递，还有每周五要交周报
 输出：{"items":[{"type":"todo","content":"开周会","date":"2026-10-19","time":"09:00","repeat":null,"tags":[],"priority":0},{"type":"todo","content":"去取快递","date":"2026-10-19","time":"15:00","repeat":null,"tags":[],"priority":0},{"type":"todo","content":"交周报","date":"2026-10-23","time":null,"repeat":"每周五","tags":[],"priority":0}]}
 输入：周五前把报告交了，另外帮我查一下报告模板
@@ -211,8 +244,22 @@ object VoiceIntents {
         return VoiceIntent(if (append) CaptureKind.NOTE else type, content, if (append) null else date, if (append) null else time, if (append) null else repeat, tags, if (todo && !append) priority else 0, ask, append)
     }
 
-    /** 修改待办：什么都没要改（没有新时间、没有补充、没有优先级）就丢掉 */
+    /** 对已有待办的操作：改（什么都没要改就丢掉）/ 完成 / 删除 / 查询 */
     private fun parseEdit(obj: JsonObject, content: String): VoiceIntent? {
+        val op = when (obj.string("op")?.trim()?.lowercase()) {
+            "complete", "done", "finish" -> TodoOp.COMPLETE
+            "delete", "remove" -> TodoOp.DELETE
+            "query", "list", "search" -> TodoOp.QUERY
+            else -> TodoOp.EDIT
+        }
+        val target = obj.string("target")?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", true) }
+        if (op == TodoOp.QUERY) {
+            val range = obj.string("range")?.trim()?.lowercase()?.takeIf { it in QUERY_RANGES } ?: "today"
+            return VoiceIntent(CaptureKind.TODO, "", null, null, null, emptyList(), 0, edit = true, target = target, op = op, range = range)
+        }
+        if (op != TodoOp.EDIT) {
+            return VoiceIntent(CaptureKind.TODO, "", null, null, null, emptyList(), 0, edit = true, target = target, op = op)
+        }
         val date = obj.string("date")?.trim()?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
         val time = obj.string("time")?.let { RE_TIME.find(it) }?.let { m ->
             runCatching { LocalTime.of(m.groupValues[1].toInt(), m.groupValues[2].toInt()) }.getOrNull()
@@ -224,8 +271,23 @@ object VoiceIntents {
             else -> 0
         }
         if (content.isEmpty() && date == null && time == null && priority == 0) return null
-        val target = obj.string("target")?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", true) }
         return VoiceIntent(CaptureKind.TODO, content, date, time, null, emptyList(), priority, edit = true, target = target)
+    }
+
+    private val QUERY_RANGES = setOf("today", "tomorrow", "week", "overdue", "all")
+
+    /**
+     * 「半小时后 / 两小时后 / 十分钟后」这类相对现在的说法，本地用规则再精确算一遍，不依赖模型的心算：
+     * 转写里恰好有一个这样的说法、而且整理结果里恰好有一条新建待办时，直接把它的日期和时间改成算出来的那一刻。
+     */
+    fun fixRelativeTime(raw: String, intents: List<VoiceIntent>, now: LocalDateTime = LocalDateTime.now()): List<VoiceIntent> {
+        val found = com.carpe.ideashell.core.parse.TodoParser.findAfterDuration(raw, now) ?: return intents
+        val fresh = intents.filter { it.type == CaptureKind.TODO && !it.edit && !it.ask && !it.append }
+        if (fresh.size != 1) return intents
+        val at = found.first
+        return intents.map {
+            if (it === fresh[0]) it.copy(date = at.toLocalDate(), time = LocalTime.of(at.hour, at.minute)) else it
+        }
     }
 
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull

@@ -118,6 +118,8 @@ class VoiceInputController(
     private val lexicon: Lexicon,
     /** 额外的热词来源（闪念贝壳文件夹 / 项目名） */
     private val extraHotwords: () -> List<String>,
+    /** 用户目前未完成的待办（「任务名｜日期 时间」）：给大模型判断「改 / 完成 / 删除哪一条」，也帮它修正人名项目名 */
+    private val todoContext: () -> List<String> = { emptyList() },
     private val onError: (String) -> Unit,
     private val onResult: (VoiceResult) -> Unit,
 ) {
@@ -255,8 +257,10 @@ class VoiceInputController(
             // 没填大模型 Key 就静默用本地规则；填了但失败，提示一句并退回原始转写
             if (settings.current.voicePolish && llm.configured) {
                 try {
-                    val reply = llm.chatJson(VoiceIntents.systemPrompt(LocalDateTime.now(), vocabulary = hot), VoiceIntents.userPrompt(raw))
-                    intents = VoiceIntents.parse(reply)
+                    val now = LocalDateTime.now()
+                    val reply = llm.chatJson(VoiceIntents.systemPrompt(now, vocabulary = hot, todos = todoContext()), VoiceIntents.userPrompt(raw))
+                    // 「半小时后」这类相对时间，本地再精确算一遍
+                    intents = VoiceIntents.fixRelativeTime(raw, VoiceIntents.parse(reply), now)
                     if (intents.isEmpty()) polishError = "AI 整理的结果无法解析，已使用原始转写"
                 } catch (e: LlmException) {
                     polishError = (e.message ?: "AI 整理失败") + "，已使用原始转写"

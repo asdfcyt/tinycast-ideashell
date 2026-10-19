@@ -4,7 +4,8 @@ import java.time.LocalDate
 import java.time.LocalTime
 
 /**
- * 用语音修改「之前建好的待办」：找到要改的那一条，再改时间 / 往备注里追加说明 / 改优先级。
+ * 用语音对「之前建好的待办」做操作：找到那一条，再改时间 / 往备注里追加说明 / 改优先级 / 标记完成 / 删除；
+ * 也可以按范围查询（今天还有什么没做）。
  *
  * 能改多久之前的：就是待办页里本来就有的那批未完成待办——逾期（最近 13 天）、今天起 7 天内、收集箱里最新的无日期任务。
  * - 说了待办名里的关键词（「开会那个」）：在这批里按名字匹配，匹配上了就改，不看建了多久；
@@ -124,7 +125,67 @@ class TodoEditor(
         return Result.success(describe(task, edit))
     }
 
+    /** 标记完成；成功返回「完成「开会」」 */
+    suspend fun complete(task: DidaTask): Result<String> =
+        todos.complete(task).map { "完成「${task.title.take(24)}」" }
+
+    /** 删除（滴答里的删除不可恢复，界面上要先让用户确认）；成功返回「删除「开会」」 */
+    suspend fun delete(task: DidaTask): Result<String> =
+        todos.delete(task).map { "删除「${task.title.take(24)}」" }
+
+    /**
+     * 按范围查未完成的待办：today（今天，含已逾期）/ tomorrow / week（今天起 7 天）/ overdue / all；
+     * [keyword] 不为空时只留标题里能匹配上的。会先刷新一次。
+     */
+    suspend fun query(range: String?, keyword: String?): List<DidaTask> {
+        if (!hasCredential()) return emptyList()
+        todos.refreshNow()
+        val o = todos.peek() ?: return emptyList()
+        val today = LocalDate.now()
+        val dated = (o.overdue + o.upcoming).filterNot { it.done }.distinctBy { it.id }
+        fun dateOf(t: DidaTask) = t.date?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
+        val picked = when (range) {
+            "tomorrow" -> dated.filter { dateOf(it) == today.plusDays(1) }
+            "week" -> dated.filter { d -> dateOf(d)?.let { !it.isBefore(today) && it.isBefore(today.plusDays(7)) } == true }
+            "overdue" -> dated.filter { d -> dateOf(d)?.isBefore(today) == true }
+            "all" -> dated + o.undated.filterNot { it.done }
+            else -> dated.filter { d -> dateOf(d)?.let { !it.isAfter(today) } == true }
+        }.distinctBy { it.id }
+        val key = normalize(keyword.orEmpty())
+        val now = System.currentTimeMillis()
+        val filtered = if (key.isEmpty()) picked else picked.filter { score(it, key, now) >= MIN_SCORE }
+        return filtered.sortedWith(compareBy({ it.date ?: "9999" }, { it.time ?: "99:99" }))
+    }
+
+    /** 查询结果给人看的几行字：标题行 +「· 14:30 开会」，最多 [QUERY_LINES] 行 */
+    fun formatQuery(range: String?, keyword: String?, tasks: List<DidaTask>): String {
+        val scope = when (range) {
+            "tomorrow" -> "明天"
+            "week" -> "这一周"
+            "overdue" -> "已逾期的"
+            "all" -> "全部未完成的"
+            else -> "今天"
+        }
+        val topic = keyword?.trim()?.takeIf { it.isNotEmpty() }?.let { "「$it」相关的" } ?: ""
+        if (tasks.isEmpty()) return "$scope${topic}没有待办"
+        val today = LocalDate.now()
+        val lines = tasks.take(QUERY_LINES).joinToString("\n") { t ->
+            val d = t.date?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
+            val whenText = when {
+                d == null -> t.time.orEmpty()
+                d.isBefore(today) -> "逾期 ${d.monthValue}/${d.dayOfMonth}" + (t.time?.let { " $it" } ?: "")
+                d == today -> t.time.orEmpty()
+                else -> dayLabel(d.toString()) + (t.time?.let { " $it" } ?: "")
+            }
+            "· " + (if (whenText.isEmpty()) "" else "$whenText ") + t.title.trim().take(24)
+        }
+        val more = if (tasks.size > QUERY_LINES) "\n…还有 ${tasks.size - QUERY_LINES} 项" else ""
+        val head = if (range == "today" || range == null) "今天还有 ${tasks.size} 项$topic" + "待办" else "${scope}${topic}共 ${tasks.size} 项待办"
+        return "$head：\n$lines$more"
+    }
+
     private companion object {
+        const val QUERY_LINES = 8
         const val HOUR_MS = 3_600_000L
         const val DAY_MS = 24 * HOUR_MS
         const val MIN_SCORE = 30

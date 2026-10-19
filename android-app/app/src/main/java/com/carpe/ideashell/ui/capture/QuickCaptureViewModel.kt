@@ -125,7 +125,8 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         local = container.localAsr,
         llm = container.llm,
         lexicon = container.lexicon,
-        extraHotwords = { container.folders.folders.value.map { it.name } },
+        extraHotwords = { container.voiceContext.hotwords() },
+        todoContext = { container.voiceContext.todoLines() },
         onError = { error = it },
         onResult = ::applyVoice,
     )
@@ -199,28 +200,71 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
     var editNotice by mutableStateOf<String?>(null)
     var editClose by mutableStateOf(false)
 
+    /** 要删除的待办：删除不可恢复，界面弹对话框让用户确认后才调用 [confirmDelete] */
+    var pendingDeletes by mutableStateOf<List<com.carpe.ideashell.data.dida.DidaTask>>(emptyList())
+
+    fun cancelDelete() {
+        pendingDeletes = emptyList()
+    }
+
+    fun confirmDelete() {
+        val list = pendingDeletes
+        pendingDeletes = emptyList()
+        viewModelScope.launch {
+            val lines = list.map { task ->
+                container.todoEditor.delete(task).fold(
+                    onSuccess = { "已$it" },
+                    onFailure = { "删除失败：" + (it.message ?: "未知错误") },
+                )
+            }
+            editNotice = lines.joinToString("\n")
+        }
+    }
+
     private fun applyTodoEdits(edits: List<VoiceIntent>, closeWhenDone: Boolean) {
         viewModelScope.launch {
             val editor = container.todoEditor
             val lines = mutableListOf<String>()
+            val deletes = mutableListOf<com.carpe.ideashell.data.dida.DidaTask>()
             var allOk = true
             edits.forEach { intent ->
+                if (intent.op == com.carpe.ideashell.core.voice.TodoOp.QUERY) {
+                    lines += editor.formatQuery(intent.range, intent.target, editor.query(intent.range, intent.target))
+                    return@forEach
+                }
+                val verb = when (intent.op) {
+                    com.carpe.ideashell.core.voice.TodoOp.COMPLETE -> "完成"
+                    com.carpe.ideashell.core.voice.TodoOp.DELETE -> "删除"
+                    else -> "修改"
+                }
                 val task = editor.find(intent.target)
                 if (task == null) {
                     allOk = false
-                    lines += "没找到要修改的待办" + (intent.target?.let { "「$it」" } ?: "（最近 24 小时内建的）")
+                    lines += "没找到要${verb}的待办" + (intent.target?.let { "「$it」" } ?: "（最近 24 小时内建的）")
                     return@forEach
                 }
-                val edit = com.carpe.ideashell.data.dida.TodoEditor.Edit(intent.date, intent.time, intent.content, intent.priority)
-                editor.apply(task, edit)
-                    .onSuccess { lines += "已修改待办：$it" }
-                    .onFailure {
-                        allOk = false
-                        lines += "修改失败：" + (it.message ?: "未知错误")
+                when (intent.op) {
+                    com.carpe.ideashell.core.voice.TodoOp.DELETE -> deletes += task
+                    com.carpe.ideashell.core.voice.TodoOp.COMPLETE -> editor.complete(task)
+                        .onSuccess { lines += "已$it" }
+                        .onFailure {
+                            allOk = false
+                            lines += "完成失败：" + (it.message ?: "未知错误")
+                        }
+                    else -> {
+                        val edit = com.carpe.ideashell.data.dida.TodoEditor.Edit(intent.date, intent.time, intent.content, intent.priority)
+                        editor.apply(task, edit)
+                            .onSuccess { lines += "已修改待办：$it" }
+                            .onFailure {
+                                allOk = false
+                                lines += "修改失败：" + (it.message ?: "未知错误")
+                            }
                     }
+                }
             }
-            editClose = closeWhenDone && allOk
-            editNotice = lines.joinToString("\n")
+            if (deletes.isNotEmpty()) pendingDeletes = deletes
+            editClose = closeWhenDone && allOk && deletes.isEmpty()
+            if (lines.isNotEmpty()) editNotice = lines.joinToString("\n")
         }
     }
 

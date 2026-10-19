@@ -40,6 +40,12 @@ object TodoParser {
     private val RE_WEEKDAY = Regex("(下下|下)?(?:周|星期|礼拜)([一二三四五六日天])")
     private val RE_WEEKEND = Regex("(下下|下|这|本)?(?:个)?周末")
     private val RE_AFTER = Regex("($N)\\s*(?:个)?(天|日|周|星期|礼拜|月|年)(?:之)?后")
+    // 两小时后 / 一个半小时后 / 2小时30分钟后 / 2小时半后
+    private val RE_AFTER_HOURS = Regex("($N)\\s*个?\\s*(半)?\\s*小时(?:\\s*(半)|\\s*($N)\\s*分钟?)?\\s*(?:之)?后")
+    // 半小时后 / 半个小时后
+    private val RE_AFTER_HALF_HOUR = Regex("半\\s*个?\\s*小时\\s*(?:之)?后")
+    // 十分钟后 / 45分钟后（「分」前面必须是「分钟」，免得和「3点15分」混）
+    private val RE_AFTER_MINUTES = Regex("($N)\\s*分钟\\s*(?:之)?后")
     private val RE_MONTH_EDGE = Regex("(?:(下)个?|(本|这个)|($N))月份?(底|末|初)|月(底|末|初)")
     private val RE_YEAR_END = Regex("年底|年末")
     private val RE_NEXT_MONTH_DAY = Regex("(?:(下)个?月|(?:本|这个)月)\\s*($N)\\s*[日号]")
@@ -107,11 +113,38 @@ object TodoParser {
         "$day$period"
     }
 
+    /** 「半小时后 / 两小时后 / 十分钟后」这类相对现在的说法：返回（那一刻, 命中的原文）；没有返回 null */
+    fun findAfterDuration(text: String, now: LocalDateTime = LocalDateTime.now()): Pair<LocalDateTime, String>? {
+        RE_AFTER_HOURS.find(text)?.let { m ->
+            val hours = num(m.groupValues[1]) ?: return@let
+            var minutes = hours * 60
+            if (m.groups[2] != null || m.groups[3] != null) minutes += 30
+            m.groups[4]?.let { g -> num(g.value)?.let { minutes += it } }
+            if (minutes in 1..(72 * 60)) return now.plusMinutes(minutes.toLong()) to m.value
+        }
+        RE_AFTER_HALF_HOUR.find(text)?.let { m -> return now.plusMinutes(30) to m.value }
+        RE_AFTER_MINUTES.find(text)?.let { m ->
+            val minutes = num(m.groupValues[1])
+            if (minutes != null && minutes in 1..(72 * 60)) return now.plusMinutes(minutes.toLong()) to m.value
+        }
+        return null
+    }
+
     fun parse(input: String, now: LocalDateTime = LocalDateTime.now()): ParsedTodo {
         val today = now.toLocalDate()
         var text = expandDayPeriod(input.trim())
         var date: String? = null
         var time: String? = null
+
+        // 相对现在的时长（半小时后 / 两小时后）：直接算出具体日期和时间，不再走下面的日期时间识别
+        val after = findAfterDuration(text, now)
+        if (after != null) {
+            date = after.first.toLocalDate().toString()
+            time = "%02d:%02d".format(after.first.hour, after.first.minute)
+            text = text.replaceFirst(after.second, " ")
+            val content = text.replace(RE_SPACES, " ").replace(RE_EDGE_PUNCT, "").replace(RE_LEADING_PREP, "").trim()
+            return ParsedTodo(content.ifEmpty { input.trim() }, date, time)
+        }
 
         // 重复说法先抠出来：「每周一」里的「周一」不能再被当成一次性的日期
         val repeatFound = RepeatParser.find(text)

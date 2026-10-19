@@ -54,6 +54,7 @@ import com.carpe.ideashell.R
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.core.voice.VoiceIntent
 import com.carpe.ideashell.data.settings.ThemeMode
+import com.carpe.ideashell.core.voice.TodoOp
 import com.carpe.ideashell.core.voice.VoiceResult
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.dida.TodoEditor
@@ -126,18 +127,34 @@ class VoiceCapsuleService : Service() {
         AUTO("自动"), TODO("待办"), DAILY("日记"), NOTE("笔记"), APPEND("追加"), ASK("问 AI"), EDIT("改待办"),
     }
 
-    /** [task]：修改待办（[Mode.EDIT]）时找到的那条滴答待办，没找到为 null；此时 [text] 是要追加到备注的说明 */
-    private class Draft(var mode: Mode, var text: String, val intent: VoiceIntent?, var task: DidaTask? = null)
+    /** [task]：对已有待办的操作（[Mode.EDIT]，具体是改 / 完成 / 删除见 [VoiceIntent.op]）找到的那条滴答待办，没找到为 null；改待办时 [text] 是要追加到备注的说明 */
+    private class Draft(var mode: Mode, var text: String, val intent: VoiceIntent?, var task: DidaTask? = null) {
+        /** 整理出来的原文：保存时和用户手改后的文字比一比，学习近音错字 */
+        val original: String = text
+    }
 
     private fun Draft.isValid(): Boolean = text.isNotBlank() || mode == Mode.EDIT
 
+    private fun Draft.op(): TodoOp = intent?.op ?: TodoOp.EDIT
+
     private fun Draft.editOf() = TodoEditor.Edit(intent?.date, intent?.time, text, intent?.priority ?: 0)
 
-    /** 修改待办的一句话摘要：「开会」改到 14:40，备注加「带上办公电脑」 */
+    /** 卡片 / 小胶囊上的类型标签：待办操作按具体动作显示（改待办 / 完成待办 / 删除待办） */
+    private fun draftLabel(draft: Draft, saved: Boolean = false): String =
+        if (draft.mode == Mode.EDIT) draft.op().label else modeLabel(draft.mode, saved)
+
+    /** 待办操作的一句话摘要：「开会」改到 14:40，备注加「带上办公电脑」 / 完成「开会」 / 删除「开会」 */
     private fun editSummary(draft: Draft): String {
-        val task = draft.task ?: return "没找到要修改的待办" + (draft.intent?.target?.let { "「$it」" } ?: "")
-        return (application as IdeashellApp).container.todoEditor.describe(task, draft.editOf())
+        val task = draft.task
+            ?: return "没找到要" + (when (draft.op()) { TodoOp.COMPLETE -> "完成"; TodoOp.DELETE -> "删除"; else -> "修改" }) +
+                "的待办" + (draft.intent?.target?.let { "「$it」" } ?: "")
+        return when (draft.op()) {
+            TodoOp.COMPLETE -> "完成「${task.title.take(24)}」"
+            TodoOp.DELETE -> "删除「${task.title.take(24)}」（不可恢复）"
+            else -> (application as IdeashellApp).container.todoEditor.describe(task, draft.editOf())
+        }
     }
+
     private val drafts = ArrayList<Draft>()
     private var editing = false
 
@@ -268,7 +285,8 @@ class VoiceCapsuleService : Service() {
             local = container.localAsr,
             llm = container.llm,
             lexicon = container.lexicon,
-            extraHotwords = { container.folders.folders.value.map { it.name } },
+            extraHotwords = { container.voiceContext.hotwords() },
+            todoContext = { container.voiceContext.todoLines() },
             onError = { showMessage(it, error = true) },
             onResult = { result -> onResult(result) },
         ).also { voice = it }
@@ -332,13 +350,28 @@ class VoiceCapsuleService : Service() {
 
     private fun onResult(result: VoiceResult) {
         scope.launch {
-            // 修改待办要先去滴答里找到那一条（可能要刷新一下），这期间界面还停在「正在识别整理」
-            val built = buildDrafts(result)
+            val editor = (application as IdeashellApp).container.todoEditor
+            // 「今天还有什么没做」：纯查询，不保存任何东西，直接把清单显示出来
+            val queries = result.intents.filter { it.edit && it.op == TodoOp.QUERY }
+            val queryLines = mutableListOf<String>()
+            for (q in queries) queryLines += editor.formatQuery(q.range, q.target, editor.query(q.range, q.target))
+            val queryText = queryLines.joinToString("\n")
+            val rest = result.intents.filterNot { it.edit && it.op == TodoOp.QUERY }
+            if (queries.isNotEmpty() && rest.isEmpty()) {
+                if (stopping) return@launch
+                showMessage(queryText, error = false, durationMs = 6000L + queryText.length * 20L)
+                return@launch
+            }
+            // 修改 / 完成 / 删除待办要先去滴答里找到那一条（可能要刷新一下），这期间界面还停在「正在识别整理」
+            val built = buildDrafts(if (queries.isEmpty()) result else result.copy(intents = rest))
             if (stopping) return@launch
             drafts.clear()
             drafts.addAll(built)
+            val note = listOfNotNull(result.polishError, queryText.ifBlank { null }).joinToString("\n").ifBlank { null }
+            // 删除待办不可恢复：即使开了「松手自动保存」也要弹出确认卡片，由用户点保存
+            val needsConfirm = drafts.any { it.mode == Mode.EDIT && it.op() == TodoOp.DELETE && it.task != null }
             // 开了「松手自动保存」：不弹确认卡片，只显示小胶囊倒计时；点它才展开卡片修改
-            if (settings.current.voiceAutoSend) renderPending(result.polishError) else renderConfirm(result.polishError)
+            if (settings.current.voiceAutoSend && !needsConfirm) renderPending(note) else renderConfirm(note)
         }
     }
 
@@ -371,6 +404,10 @@ class VoiceCapsuleService : Service() {
         val saved = mutableListOf<SavedItem>()
         val asks = mutableListOf<String>()
         val failures = mutableListOf<String>()
+        // 在确认卡片里把同音错字改对了：记下来，下次识别 / 整理自动改对
+        val learned = list.filter { it.mode != Mode.EDIT && it.text != it.original }
+            .mapNotNull { app.container.lexicon.learnFromEdit(it.original, it.text) }
+            .map { "已记住「${it.first}→${it.second}」" }
         list.filter { it.isValid() }.forEach { draft ->
             val text = draft.text.trim()
             if (draft.mode == Mode.EDIT) {
@@ -378,9 +415,16 @@ class VoiceCapsuleService : Service() {
                 if (task == null) {
                     failures += editSummary(draft)
                 } else {
-                    app.container.todoEditor.apply(task, draft.editOf())
-                        .onSuccess { saved += SavedItem("改待办", it) }
-                        .onFailure { failures += "修改失败：" + (it.message ?: "未知错误") }
+                    val editor = app.container.todoEditor
+                    val op = draft.op()
+                    val result = when (op) {
+                        TodoOp.COMPLETE -> editor.complete(task)
+                        TodoOp.DELETE -> editor.delete(task)
+                        else -> editor.apply(task, draft.editOf())
+                    }
+                    result
+                        .onSuccess { saved += SavedItem(op.label, it) }
+                        .onFailure { failures += "${op.label}失败：" + (it.message ?: "未知错误") }
                 }
                 return@forEach
             }
@@ -416,7 +460,8 @@ class VoiceCapsuleService : Service() {
             showMessage(failures.firstOrNull() ?: "没有可保存的内容", error = true)
             return
         }
-        showSaved(saved, listOfNotNull(note, failures.joinToString("；").ifBlank { null }).joinToString("；").ifBlank { null }, quiet && failures.isEmpty())
+        val tail = (listOfNotNull(note) + failures + learned).joinToString("；").ifBlank { null }
+        showSaved(saved, tail, quiet && failures.isEmpty() && learned.isEmpty())
     }
 
     private fun modeLabel(mode: Mode, saved: Boolean = false): String =
@@ -879,7 +924,7 @@ class VoiceCapsuleService : Service() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(6), 0, dp(6))
         }
-        val chip = label(modeLabel(draft.mode), 12f, bold = true).apply {
+        val chip = label(draftLabel(draft), 12f, bold = true).apply {
             setTextColor(pal.accentSoft)
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
@@ -891,7 +936,7 @@ class VoiceCapsuleService : Service() {
             setOnClickListener {
                 if (draft.mode == Mode.EDIT) return@setOnClickListener // 改待办的类型不能换
                 draft.mode = nextMode(draft.mode, draft.intent != null)
-                text = modeLabel(draft.mode)
+                text = draftLabel(draft)
                 onChanged()
             }
         }
@@ -905,6 +950,8 @@ class VoiceCapsuleService : Service() {
             setTextColor(pal.text)
             setHintTextColor((pal.text and 0x00FFFFFF) or 0x66000000)
             hint = if (draft.mode == Mode.EDIT) "补充到待办备注（可留空）" else "说的内容"
+            // 完成 / 删除待办没有可补充的文字，不显示输入框
+            if (draft.mode == Mode.EDIT && draft.op() != TodoOp.EDIT) visibility = View.GONE
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             background = null
             setPadding(0, dp(2), 0, dp(2))
@@ -942,7 +989,7 @@ class VoiceCapsuleService : Service() {
             // 先说清楚改的是哪一条、改成什么；找不到就用红字提醒
             body.addView(
                 label(editSummary(draft), 15f, bold = true).apply {
-                    if (draft.task == null) setTextColor(pal.error)
+                    if (draft.task == null || draft.op() == TodoOp.DELETE) setTextColor(pal.error)
                 },
                 LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
             )
@@ -1006,7 +1053,7 @@ class VoiceCapsuleService : Service() {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(16), dp(9), dp(14), dp(13))
             }
-            row.addView(label(modeLabel(draft.mode, saved = true).let { if (draft.mode == Mode.AUTO) "记录" else it }, 12f, bold = true).apply {
+            row.addView(label(draftLabel(draft, saved = true).let { if (draft.mode == Mode.AUTO) "记录" else it }, 12f, bold = true).apply {
                 setTextColor(pal.accentSoft)
                 setPadding(0, 0, dp(8), 0)
             })
@@ -1109,7 +1156,7 @@ class VoiceCapsuleService : Service() {
         handler.postDelayed({ dismissWithSlide() }, if (quiet) 1100L else 2800L + items.size * 400L)
     }
 
-    private fun showMessage(message: String, error: Boolean) {
+    private fun showMessage(message: String, error: Boolean, durationMs: Long = if (error) 4000L else 2500L) {
         if (stopping) return
         stopTick()
         dotAnimator?.cancel()
@@ -1127,7 +1174,7 @@ class VoiceCapsuleService : Service() {
         addSmall(box)
         recenter()
         col.setOnClickListener { dismissWithSlide() }
-        handler.postDelayed({ dismissWithSlide() }, if (error) 4000L else 2500L)
+        handler.postDelayed({ dismissWithSlide() }, durationMs)
     }
 
     private fun smallPill(): LinearLayout = LinearLayout(this).apply {
