@@ -296,6 +296,28 @@ fun GlassBadge(
     }
 }
 
+/** 同 [GlassBadge]，图标用 drawable 资源（应用自带的线性图标） */
+@Composable
+fun GlassBadge(
+    @DrawableRes iconRes: Int,
+    modifier: Modifier = Modifier,
+    tint: Color = Color.Unspecified,
+    size: Dp = 36.dp,
+) {
+    val dark = isDarkSurface()
+    val bg = if (tint == Color.Unspecified) (if (dark) MaterialTheme.colorScheme.surfaceContainerHigh else Brand.Brown) else tint
+    val fg = if (tint == Color.Unspecified) Brand.Orange else Color.White
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(bg),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(painterResource(iconRes), contentDescription = null, tint = fg, modifier = Modifier.size(size * 0.56f))
+    }
+}
+
 /** [icon] 是未选中时的图标，[selectedIcon] 是选中时的图标（可以相同）；都是 drawable 资源 */
 data class NavItem(
     val label: String,

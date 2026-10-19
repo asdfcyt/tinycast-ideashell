@@ -1,145 +1,52 @@
 package com.carpe.ideashell.ui.settings
 
-import android.Manifest
-import android.app.StatusBarManager
-import android.appwidget.AppWidgetManager
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.os.Build
-import android.os.PowerManager
-import android.provider.Settings
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Create
-import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
-import com.carpe.ideashell.ui.glass.GlassAlertDialog as AlertDialog
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.carpe.ideashell.data.asr.LocalAsrState
 import com.carpe.ideashell.BuildConfig
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.R
+import com.carpe.ideashell.data.asr.LocalAsrState
 import com.carpe.ideashell.system.ExcerptService
-import com.carpe.ideashell.data.settings.ThemeMode
-import com.carpe.ideashell.data.settings.VoiceEngine
-import com.carpe.ideashell.data.settings.VoiceKey
-import com.carpe.ideashell.ui.components.AppTextField
-import com.carpe.ideashell.ui.components.CircleIconButton
-import com.carpe.ideashell.ui.components.InputSheet
-import com.carpe.ideashell.ui.components.ListGroup
-import com.carpe.ideashell.ui.components.RowDivider
-import com.carpe.ideashell.system.QuickCaptureTileService
-import com.carpe.ideashell.system.FocusWidgetProvider
-import com.carpe.ideashell.system.RiverWidgetProvider
-import com.carpe.ideashell.system.TodoWidgetProvider
-import com.carpe.ideashell.ui.glass.GlassBadge
-import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
-import com.carpe.ideashell.data.backup.BackupFile
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
-private const val SEC_RECORD = "record"
-private const val SEC_REVISIT = "revisit"
-private const val SEC_TODO = "todo"
-private const val SEC_QUICK = "quick"
-private const val SEC_BACKGROUND = "background"
-private const val SEC_BACKUP = "backup"
-private const val SEC_VOICE = "voice"
-private const val SEC_OCR = "ocr"
-private const val SEC_AI = "ai"
-private const val SEC_LEXICON = "lexicon"
-private const val SEC_VOICE_HISTORY = "voice_history"
-
-/** 二级页面里还有三级页面：返回时回到它的上一级，一级页面返回就是设置首页 */
-private fun parentSection(section: String?): String? = when (section) {
-    SEC_LEXICON, SEC_VOICE_HISTORY -> SEC_VOICE
-    else -> null
-}
-
-private sealed interface Dialog {
-    data object Tags : Dialog
-    data object DailyFolder : Dialog
-    data object Theme : Dialog
-    data object FocusGoal : Dialog
-    data object ShortBreak : Dialog
-    data object LongBreak : Dialog
-    data object AddWidget : Dialog
-    data object Ocr : Dialog
-    data object Llm : Dialog
-    data object VoiceEngine : Dialog
-    data object VoiceKey : Dialog
-    data object VoiceSilence : Dialog
-    data object RevisitLimit : Dialog
-    data object RevisitRetention : Dialog
-    data object ClozeRange : Dialog
-}
-
+/**
+ * 设置：首页 + 各个二级页面的路由。
+ * 每个二级页面在自己的文件里（账号 / 输入 / AI / 重温 / 待办专注 / 入口一览 / 系统），
+ * 这里只负责读取共用状态、标题栏和返回。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
@@ -150,12 +57,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
     val didaConnected by container.credentials.didaConnected.collectAsStateWithLifecycle()
     val ocrConfigured by container.credentials.ocrConfigured.collectAsStateWithLifecycle()
     val llmConfigured by container.credentials.llmConfigured.collectAsStateWithLifecycle()
-    val lexicon by container.lexicon.state.collectAsStateWithLifecycle()
-    val localAsr by container.localAsr.state.collectAsStateWithLifecycle()
-    var confirmDeleteLocalAsr by remember { mutableStateOf(false) }
-    val revisitToday by container.revisit.today.collectAsStateWithLifecycle()
 
-    var dialog by remember { mutableStateOf<Dialog?>(null) }
     var batteryIgnored by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
     var excerptServiceOn by remember { mutableStateOf(ExcerptService.isEnabled(context)) }
     var overlayOn by remember { mutableStateOf(android.provider.Settings.canDrawOverlays(context)) }
@@ -166,125 +68,34 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
         onPauseOrDispose { }
     }
 
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
-            container.settings.setPersistentNotification(true)
-        } else {
-            Toast.makeText(context, "没有通知权限，无法显示常驻通知", Toast.LENGTH_SHORT).show()
-        }
-    }
-    val scope = rememberCoroutineScope()
-    val revisitPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) {
-            container.settings.setRevisitReminder(true)
-        } else {
-            Toast.makeText(context, "没有通知权限，无法发出重温提醒", Toast.LENGTH_SHORT).show()
-        }
-    }
-    fun setRevisitReminder(enable: Boolean) {
-        if (enable && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            revisitPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            container.settings.setRevisitReminder(enable)
-        }
-    }
-    fun pickReminderTime() {
-        val minutes = settings.revisitReminderMinutes
-        android.app.TimePickerDialog(
-            context,
-            { _, hour, minute -> container.settings.setRevisitReminderMinutes(hour * 60 + minute) },
-            minutes / 60,
-            minutes % 60,
-            true,
-        ).show()
-    }
-    fun postponeRevisit() {
-        scope.launch {
-            val before = container.revisit.postponeAll(7)
-            Toast.makeText(
-                context,
-                if (before.isEmpty()) "现在没有到期的内容" else "已把到期的 ${before.size} 条推后 7 天",
-                Toast.LENGTH_SHORT,
-            ).show()
-        }
-    }
-
-    fun setPersistentNotification(enable: Boolean) {
-        when {
-            !enable -> container.settings.setPersistentNotification(false)
-            !didaConnected -> Toast.makeText(context, "请先连接滴答清单", Toast.LENGTH_SHORT).show()
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED ->
-                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-
-            else -> container.settings.setPersistentNotification(true)
-        }
-    }
-
     var section by rememberSaveable { mutableStateOf<String?>(null) }
+    // 「账号与连接」可以从多个页面跳进来：记住是从哪来的，返回时回到那里
+    var accountsReturn by rememberSaveable { mutableStateOf<String?>(null) }
+    fun parentSection(current: String?): String? = when (current) {
+        SEC_LEXICON, SEC_VOICE_HISTORY -> SEC_VOICE
+        SEC_ACCOUNTS -> accountsReturn
+        else -> null
+    }
     BackHandler(enabled = section != null) { section = parentSection(section) }
 
-    // ── 备份与迁移 ──
-    var backupBusy by remember { mutableStateOf(false) }
-    var pendingRestore by remember { mutableStateOf<BackupFile?>(null) }
-    var cloudBackupAt by remember { mutableStateOf(container.backup.lastCloudBackupAt()) }
-    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) {
-            scope.launch {
-                backupBusy = true
-                runCatching {
-                    val text = container.backup.encode(container.backup.build())
-                    withContext(Dispatchers.IO) {
-                        context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
-                            ?: error("无法写入所选位置")
-                    }
-                }.onSuccess { toast(context, "已导出备份文件") }
-                    .onFailure { toast(context, "导出失败：${it.message ?: "未知错误"}") }
-                backupBusy = false
-            }
-        }
-    }
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            scope.launch {
-                backupBusy = true
-                runCatching {
-                    val text = withContext(Dispatchers.IO) {
-                        context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                            ?: error("无法读取所选文件")
-                    }
-                    container.backup.decode(text)
-                }.onSuccess { pendingRestore = it }
-                    .onFailure { toast(context, it.message ?: "读取失败") }
-                backupBusy = false
-            }
-        }
-    }
-    fun backupToIdeashell() {
-        if (backupBusy) return
-        scope.launch {
-            backupBusy = true
-            runCatching { container.backup.pushToIdeashell() }
-                .onSuccess {
-                    cloudBackupAt = container.backup.lastCloudBackupAt()
-                    toast(context, "已备份到闪念贝壳")
-                }
-                .onFailure { toast(context, "备份失败：${it.message ?: "网络异常"}") }
-            backupBusy = false
-        }
-    }
-    fun restoreFromIdeashell() {
-        if (backupBusy) return
-        scope.launch {
-            backupBusy = true
-            runCatching { container.backup.pullFromIdeashell() }
-                .onSuccess { pendingRestore = it }
-                .onFailure { toast(context, it.message ?: "读取失败") }
-            backupBusy = false
-        }
-    }
+    val env = SettingsEnv(
+        context = context,
+        container = container,
+        settings = settings,
+        ideashellConnected = ideashellConnected,
+        didaConnected = didaConnected,
+        ocrConfigured = ocrConfigured,
+        llmConfigured = llmConfigured,
+        excerptServiceOn = excerptServiceOn,
+        overlayOn = overlayOn,
+        batteryIgnored = batteryIgnored,
+        go = { target ->
+            if (target == SEC_ACCOUNTS) accountsReturn = section
+            section = target
+        },
+        onOpenConnection = onOpenConnection,
+        onOpenRevisit = onOpenRevisit,
+    )
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -296,29 +107,16 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                 .fillMaxSize()
                 .padding(start = 16.dp, end = 16.dp, top = 8.dp),
         ) {
-            val sectionTitle = when (section) {
-                SEC_RECORD -> "文字记录"
-                SEC_REVISIT -> "重温"
-                SEC_TODO -> "待办"
-                SEC_QUICK -> "快速入口与摘录"
-                SEC_BACKGROUND -> "后台同步"
-                SEC_BACKUP -> "备份与迁移"
-                SEC_VOICE -> "语音输入"
-                SEC_OCR -> "OCR 输入"
-                SEC_AI -> "AI 与大模型"
-                SEC_LEXICON -> "语音词库"
-                SEC_VOICE_HISTORY -> "语音历史"
-                else -> null
-            }
+            val title = sectionTitle(section)
             // 标题栏固定在顶部，只有下面的设置项滚动
-            if (sectionTitle == null) {
+            if (title == null) {
                 Text(
                     "设置",
                     style = MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.padding(start = 4.dp, top = 16.dp, bottom = 12.dp),
                 )
             } else {
-                SubPageHeader(sectionTitle, onBack = { section = parentSection(section) })
+                SubPageHeader(title, onBack = { section = parentSection(section) })
                 Spacer(Modifier.height(12.dp))
             }
 
@@ -330,1346 +128,141 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                     .padding(bottom = LocalBottomBarPadding.current + 8.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-            when (section) {
-                null -> {
-                    Group("连接") {
-                        SettingsItem(
-                            icon = Icons.Filled.Lock,
-                            title = "闪念贝壳",
-                            summary = if (ideashellConnected) "已连接 · 点击可更换或检查连接" else "未连接 · 填入 API Key",
-                            onClick = onOpenConnection,
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Refresh,
-                            title = "滴答清单",
-                            summary = if (didaConnected) "已连接 · 待办直接建到滴答" else "未连接 · 待办会先建到闪念贝壳",
-                            onClick = onOpenConnection,
-                        )
-                    }
-
-                    Group("输入方式") {
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "文字记录",
-                            summary = "${settings.defaultTagsText.ifEmpty { "无默认标签" }} · ${settings.dailyFolder}",
-                            onClick = { section = SEC_RECORD },
-                            trailing = { Chevron() },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "语音输入",
-                            summary = when {
-                                !settings.voiceEnabled -> "已关闭"
-                                !ocrConfigured && localAsr !is LocalAsrState.Ready -> "未配置 · 需要腾讯云密钥并开通「语音识别」，或下载本地模型"
-                                settings.voicePolish && llmConfigured -> "按住说话 · AI 整理并推算日期时间（${settings.llmModel}）"
-                                else -> "按住说话 · 本地规则识别日期时间（配置大模型可让 AI 整理）"
-                            },
-                            onClick = { section = SEC_VOICE },
-                            trailing = { Chevron() },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "OCR 输入",
-                            summary = when {
-                                !ocrConfigured -> "未配置 · 填入腾讯云密钥后，可拍照识别文字录入"
-                                settings.ocrEnabled -> "已开启 · 记一条里点相机，拍完自动识别文字"
-                                else -> "已配置 · 在相机页点「识别文字」开启"
-                            },
-                            onClick = { section = SEC_OCR },
-                            trailing = { Chevron() },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Add,
-                            title = "快速入口与摘录",
-                            summary = "磁贴 · 分享菜单 · 桌面图标 · 摘录模式" + if (settings.excerptMode) "（摘录中）" else "",
-                            onClick = { section = SEC_QUICK },
-                            trailing = { Chevron() },
-                        )
-                    }
-
-                    Group("AI") {
-                        SettingsItem(
-                            icon = Icons.Filled.Star,
-                            title = "AI 与大模型",
-                            summary = (if (llmConfigured) "大模型已配置 · ${settings.llmModel}" else "大模型未配置") +
-                                " · 问 AI 自动发送${if (settings.aiAutoSend) "已开" else "已关"}",
-                            onClick = { section = SEC_AI },
-                            trailing = { Chevron() },
-                        )
-                    }
-
-                    Group("功能") {
-                        SettingsItem(
-                            icon = Icons.Filled.Refresh,
-                            title = "重温",
-                            summary = when {
-                                revisitToday.remaining > 0 -> "今天有 ${revisitToday.remaining} 条待重温"
-                                revisitToday.total == 0 -> "还没有加入的内容"
-                                revisitToday.doneToday > 0 -> "今天已完成 · 共 ${revisitToday.total} 条"
-                                else -> "今天没有待重温的 · 共 ${revisitToday.total} 条"
-                            } + if (settings.revisitReminder) " · 每天 ${formatClock(settings.revisitReminderMinutes)} 提醒" else "",
-                            onClick = { section = SEC_REVISIT },
-                            trailing = { Chevron() },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.DateRange,
-                            title = "待办",
-                            summary = "专注目标 ${formatGoal(settings.focusGoalMin)} · 常驻通知${if (settings.persistentNotification) "已开" else "已关"}",
-                            onClick = { section = SEC_TODO },
-                            trailing = { Chevron() },
-                        )
-                    }
-
-                    Group("系统") {
-                        SettingsItem(
-                            icon = Icons.Filled.Settings,
-                            title = "主题",
-                            summary = settings.themeMode.label,
-                            onClick = { dialog = Dialog.Theme },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Share,
-                            title = "备份与迁移",
-                            summary = if (cloudBackupAt > 0) "上次备份到闪念贝壳：${formatDateTime(cloudBackupAt)}" else "导出 / 导入文件，或备份到闪念贝壳，换手机不丢数据",
-                            onClick = { section = SEC_BACKUP },
-                            trailing = { Chevron() },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Notifications,
-                            title = "后台同步",
-                            summary = if (batteryIgnored) "电池优化已忽略" else "建议开启，离线记下的内容才能及时同步",
-                            onClick = { section = SEC_BACKGROUND },
-                            trailing = { Chevron() },
-                        )
-                    }
-
-                    Group("关于") {
-                        SettingsItem(
-                            icon = Icons.Filled.Info,
-                            title = "拾忆",
-                            summary = "版本 ${BuildConfig.VERSION_NAME} · 记录自动同步到闪念贝壳与滴答清单",
-                            onClick = null,
-                        )
-                    }
+                when (section) {
+                    null -> SettingsHome(env)
+                    SEC_ACCOUNTS -> AccountsSection(env)
+                    SEC_RECORD -> RecordSection(env)
+                    SEC_VOICE -> VoiceSection(env)
+                    SEC_LEXICON -> LexiconPage()
+                    SEC_VOICE_HISTORY -> VoiceHistoryPage()
+                    SEC_OCR -> OcrSection(env)
+                    SEC_AI -> AiSection(env)
+                    SEC_REVISIT -> RevisitSection(env)
+                    SEC_TODO -> TodoFocusSection(env)
+                    SEC_QUICK -> EntriesSection(env)
+                    SEC_BACKUP -> BackupSection(env)
+                    SEC_BACKGROUND -> BackgroundSection(env)
+                    else -> Unit
                 }
-
-                SEC_RECORD -> Group(null) {
-                    SettingsItem(
-                        icon = Icons.Filled.Star,
-                        title = "默认标签",
-                        summary = settings.defaultTagsText.ifEmpty { "无（创建笔记时自动附加，逗号分隔）" },
-                        onClick = { dialog = Dialog.Tags },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.DateRange,
-                        title = "Daily Note 文件夹",
-                        summary = settings.dailyFolder,
-                        onClick = { dialog = Dialog.DailyFolder },
-                    )
-                }
-
-                SEC_REVISIT -> Group(null) {
-                    SettingsItem(
-                        icon = Icons.Filled.Refresh,
-                        title = "开始重温",
-                        summary = when {
-                            revisitToday.remaining > 0 -> "今天有 ${revisitToday.remaining} 条待重温 · 点击开始"
-                            revisitToday.total == 0 -> "还没有加入的内容 · 在笔记页点右上角的循环图标，或选中文字加入"
-                            revisitToday.doneToday > 0 -> "今天的重温完成了 · 共 ${revisitToday.total} 条在重温"
-                            else -> "今天没有待重温的 · 共 ${revisitToday.total} 条在重温"
-                        },
-                        onClick = onOpenRevisit,
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Star,
-                        title = "每天最多重温",
-                        summary = "${settings.revisitDailyLimit} 条 · 超出的顺延到后面几天，不会一次性全抛出来",
-                        onClick = { dialog = Dialog.RevisitLimit },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Refresh,
-                        title = "目标记忆率",
-                        summary = "${settings.revisitRetention}% · 越高出现得越频繁（范围 80%–95%）",
-                        onClick = { dialog = Dialog.RevisitRetention },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Notifications,
-                        title = "每天提醒",
-                        summary = if (settings.revisitReminder) "每天 ${formatClock(settings.revisitReminderMinutes)} 一条通知「今天有 N 条待重温」" else "已关闭 · 「今天」页仍会显示今日重温",
-                        onClick = { setRevisitReminder(!settings.revisitReminder) },
-                        trailing = {
-                            Switch(checked = settings.revisitReminder, onCheckedChange = { setRevisitReminder(it) })
-                        },
-                    )
-                    if (settings.revisitReminder) {
-                        SettingsItem(
-                            icon = Icons.Filled.DateRange,
-                            title = "提醒时间",
-                            summary = formatClock(settings.revisitReminderMinutes),
-                            onClick = { pickReminderTime() },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Notifications,
-                            title = "周末不提醒",
-                            summary = "周六、周日不发通知",
-                            onClick = { container.settings.setRevisitSkipWeekends(!settings.revisitSkipWeekends) },
-                            trailing = {
-                                Switch(
-                                    checked = settings.revisitSkipWeekends,
-                                    onCheckedChange = { container.settings.setRevisitSkipWeekends(it) },
-                                )
-                            },
-                        )
-                    }
-                    SettingsItem(
-                        icon = Icons.Filled.Create,
-                        title = "填空模式",
-                        summary = if (settings.revisitCloze) "已开启 · 重温时把关键词挖空，点空白处查看。用 {{词}}、**加粗**、==高亮== 标出的词优先挖，没标就自动挑"
-                        else "关闭 · 开启后重温时把正文里的关键词挖空，先回忆再看答案",
-                        onClick = { container.settings.setRevisitCloze(!settings.revisitCloze) },
-                        trailing = {
-                            Switch(checked = settings.revisitCloze, onCheckedChange = { container.settings.setRevisitCloze(it) })
-                        },
-                    )
-                    if (settings.revisitCloze) {
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "自动挖空比例",
-                            summary = "${settings.clozeMinPercent}% – ${settings.clozeMaxPercent}% · 挖掉的字数占正文的比例，每次重温在范围内随机取；你手动挖的空不受影响",
-                            onClick = { dialog = Dialog.ClozeRange },
-                        )
-                    }
-                    SettingsItem(
-                        icon = Icons.Filled.Refresh,
-                        title = "全部推后 7 天",
-                        summary = "积压太多、一时看不过来时，把现在到期的都往后挪一周",
-                        onClick = { postponeRevisit() },
-                    )
-                }
-
-                SEC_TODO -> Group(null) {
-                    SettingsItem(
-                        icon = Icons.Filled.Star,
-                        title = "每日专注目标",
-                        summary = "${formatGoal(settings.focusGoalMin)} · 「今天」页的专注环以它为满环",
-                        onClick = { dialog = Dialog.FocusGoal },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Refresh,
-                        title = "专注完成后自动休息",
-                        summary = "番茄走完立刻开始休息倒计时；关闭时只在通知和专注页上提供「开始休息」",
-                        onClick = { container.settings.setAutoBreak(!settings.autoBreak) },
-                        trailing = {
-                            Switch(checked = settings.autoBreak, onCheckedChange = { container.settings.setAutoBreak(it) })
-                        },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Refresh,
-                        title = "短休息时长",
-                        summary = "${settings.shortBreakMin} 分钟 · 每个番茄之后",
-                        onClick = { dialog = Dialog.ShortBreak },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Refresh,
-                        title = "长休息时长",
-                        summary = "${settings.longBreakMin} 分钟 · 每完成 4 个番茄之后",
-                        onClick = { dialog = Dialog.LongBreak },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Notifications,
-                        title = "常驻通知",
-                        summary = "通知栏显示「今天 N · 逾期 M」，可直接回复快记、点完成。系统可能允许你划掉它，下次刷新会重新出现",
-                        onClick = { setPersistentNotification(!settings.persistentNotification) },
-                        trailing = {
-                            Switch(
-                                checked = settings.persistentNotification,
-                                onCheckedChange = { setPersistentNotification(it) },
-                            )
-                        },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Notifications,
-                        title = "每晚自动生成今日小结",
-                        summary = "每晚 23:20 把今天完成的任务和专注时长插到今天 Daily Note 最前面（需要连接滴答清单）",
-                        onClick = { container.settings.setAutoDaySummary(!settings.autoDaySummary) },
-                        trailing = {
-                            Switch(
-                                checked = settings.autoDaySummary,
-                                onCheckedChange = { container.settings.setAutoDaySummary(it) },
-                            )
-                        },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Add,
-                        title = "添加小部件",
-                        summary = "待办、专注、记录（时间河）三种，选一个放到桌面。也可以长按桌面空白处 → 小组件 → 拾忆",
-                        onClick = { dialog = Dialog.AddWidget },
-                    )
-                }
-
-                SEC_QUICK -> Group(null) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        SettingsItem(
-                            icon = Icons.Filled.Add,
-                            title = "添加快速设置磁贴",
-                            summary = "下拉通知栏，一点就能弹出输入框",
-                            onClick = { requestAddTile(context) },
-                        )
-                    }
-                    SettingsItem(
-                        icon = Icons.Filled.Create,
-                        title = "摘录模式",
-                        summary = when {
-                            !settings.excerptMode -> "关闭 · 开启后屏幕边缘出现闪电小胶囊，选中文字后点它，就存成摘录笔记。也可从下拉磁贴「摘录」、长按桌面图标「摘录模式」开启"
-                            excerptServiceOn -> "摘录中 · 在任何 App 选中文字，点屏幕边缘的闪电胶囊。只读取你选中的文字"
-                            else -> "还差一步 · 请在「无障碍」里打开「拾忆」（点此前往，一个开关管摘录、自动发送、音量键说话）"
-                        },
-                        onClick = {
-                            if (settings.excerptMode && excerptServiceOn) {
-                                container.settings.setExcerptMode(false)
-                            } else {
-                                container.settings.setExcerptMode(true)
-                                if (!excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
-                            }
-                        },
-                        trailing = {
-                            Switch(
-                                checked = settings.excerptMode,
-                                onCheckedChange = {
-                                    container.settings.setExcerptMode(it)
-                                    if (it && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
-                                },
-                            )
-                        },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Create,
-                        title = "摘录后写想法",
-                        summary = if (settings.excerptWriteNote) "开启 · 摘录后从底部升起抽屉，写下想法、填书名或文章标题和标签；同一个 App 里标题和标签自动延续，连续摘录写进同一篇笔记"
-                        else "关闭 · 不弹抽屉，摘录直接存进笔记（原文 + 来源），同样追加进同一篇",
-                        onClick = { container.settings.setExcerptWriteNote(!settings.excerptWriteNote) },
-                        trailing = {
-                            Switch(
-                                checked = settings.excerptWriteNote,
-                                onCheckedChange = { container.settings.setExcerptWriteNote(it) },
-                            )
-                        },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Create,
-                        title = "其他入口",
-                        summary = "任何 App 里点「分享 → 拾忆」；选中文字后点菜单里的「记到拾忆」；长按桌面图标可直达「记一条」「记待办」",
-                        onClick = null,
-                    )
-                }
-
-                SEC_BACKGROUND -> Group(null) {
-                    SettingsItem(
-                        icon = Icons.Filled.Notifications,
-                        title = "忽略电池优化",
-                        summary = if (batteryIgnored) "已允许" else "未允许 · 建议开启，离线记下的内容才能及时同步",
-                        onClick = { if (!batteryIgnored) requestIgnoreBattery(context) },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Info,
-                        title = "应用启动管理",
-                        summary = "打开系统的应用信息页。在「应用启动管理」里把「拾忆」改为手动管理，打开「自启动」「关联启动」「后台活动」；再到多任务界面锁定「拾忆」卡片。不同系统版本入口略有差异。",
-                        onClick = { openAppDetails(context) },
-                    )
-                }
-
-                SEC_BACKUP -> {
-                    Group(null) {
-                        SettingsItem(
-                            icon = Icons.Filled.Share,
-                            title = "导出到文件",
-                            summary = "项目、任务笔记、模板、专注记录、设置、重温库，保存成一个 JSON 文件",
-                            onClick = { if (!backupBusy) exportLauncher.launch("拾忆备份-${java.time.LocalDate.now()}.json") },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Add,
-                            title = "从文件导入",
-                            summary = "选择之前导出的备份文件，合并进当前数据",
-                            onClick = { if (!backupBusy) importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
-                        )
-                    }
-                    Group("闪念贝壳（可选）") {
-                        SettingsItem(
-                            icon = Icons.Filled.Send,
-                            title = "备份到闪念贝壳",
-                            summary = if (!ideashellConnected) "请先连接闪念贝壳"
-                            else if (cloudBackupAt > 0) "存成一篇备份笔记（回顾里不显示）· 上次：${formatDateTime(cloudBackupAt)}"
-                            else "存成一篇备份笔记（回顾里不显示），换机时一键恢复",
-                            onClick = { if (ideashellConnected) backupToIdeashell() else onOpenConnection() },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Refresh,
-                            title = "每周自动备份",
-                            summary = autoBackupSummary(
-                                connected = ideashellConnected,
-                                enabled = settings.autoCloudBackup,
-                                lastAt = cloudBackupAt,
-                                error = container.settings.autoBackupError(),
-                            ),
-                            onClick = {
-                                if (!ideashellConnected) onOpenConnection()
-                                else container.settings.setAutoCloudBackup(!settings.autoCloudBackup)
-                            },
-                            trailing = {
-                                Switch(
-                                    checked = settings.autoCloudBackup && ideashellConnected,
-                                    onCheckedChange = {
-                                        if (ideashellConnected) container.settings.setAutoCloudBackup(it) else onOpenConnection()
-                                    },
-                                )
-                            },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Refresh,
-                            title = "从闪念贝壳恢复",
-                            summary = if (ideashellConnected) "读取备份笔记并合并进当前数据" else "请先连接闪念贝壳",
-                            onClick = { if (ideashellConnected) restoreFromIdeashell() else onOpenConnection() },
-                        )
-                    }
-                    Text(
-                        "备份不含 API Key、口令等凭证，换机后需要在「连接」里重新填写。恢复是合并：同名项目 / 模板以备份为准，本机多出来的内容不会被删除。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                    )
-                    if (backupBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                }
-
-                SEC_VOICE -> {
-                    Group("怎么开始说") {
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "按住说话",
-                            summary = if (settings.voiceEnabled) "记一条里按住输入框说话，松手识别；上滑取消、下滑锁定" else "已关闭",
-                            onClick = { container.settings.setVoiceEnabled(!settings.voiceEnabled) },
-                            trailing = {
-                                Switch(checked = settings.voiceEnabled, onCheckedChange = { container.settings.setVoiceEnabled(it) })
-                            },
-                        )
-                        // 「语音记一条」磁贴 / 快捷方式的悬浮胶囊要「显示在其他应用上层」权限
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "语音记一条 · 悬浮胶囊",
-                            summary = if (overlayOn) "已开启 · 点磁贴 / 桌面快捷方式「语音记一条」会浮出录音胶囊，不打开面板，说完点「完成」直接保存"
-                            else "未开启 · 需要允许「显示在其他应用上层」；没开时「语音记一条」会打开快记面板录音 · 点一下去开启",
-                            onClick = {
-                                if (!overlayOn) {
-                                    context.startActivity(
-                                        Intent(
-                                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                            Uri.parse("package:" + context.packageName),
-                                        ),
-                                    )
-                                }
-                            },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "音量键按住说话",
-                            summary = when {
-                                settings.voiceKey == VoiceKey.OFF -> "关闭 · 选一个音量键，长按开始录音、松手结束（不用点胶囊）"
-                                !excerptServiceOn -> "${settings.voiceKey.label} · 还没开启无障碍里的「拾忆」，点一下去开启"
-                                else -> "${settings.voiceKey.label} · 长按录音，松手结束；轻按照常调音量"
-                            },
-                            onClick = {
-                                if (settings.voiceKey != VoiceKey.OFF && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
-                                else dialog = Dialog.VoiceKey
-                            },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Refresh,
-                            title = "说完自动停止",
-                            summary = if (settings.voiceAutoStop) "已开启 · 说完停顿 ${"%.1f".format(settings.voiceSilenceMs / 1000f)} 秒就自动结束并开始处理；一直没人说话约 6 秒后放弃"
-                            else "已关闭 · 需要手动点胶囊上的停止键",
-                            onClick = { container.settings.setVoiceAutoStop(!settings.voiceAutoStop) },
-                            trailing = {
-                                Switch(checked = settings.voiceAutoStop, onCheckedChange = { container.settings.setVoiceAutoStop(it) })
-                            },
-                        )
-                        if (settings.voiceAutoStop) {
-                            SettingsItem(
-                                icon = Icons.Filled.Info,
-                                title = "停顿多久算说完",
-                                summary = "${"%.1f".format(settings.voiceSilenceMs / 1000f)} 秒 · 说话慢、爱停顿就调长一点",
-                                onClick = { dialog = Dialog.VoiceSilence },
-                            )
-                        }
-                    }
-
-                    Group("语音识别") {
-                        SettingsItem(
-                            icon = Icons.Filled.Refresh,
-                            title = "识别方式",
-                            summary = settings.voiceEngine.label + " · " + settings.voiceEngine.summary,
-                            onClick = { dialog = Dialog.VoiceEngine },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Lock,
-                            title = "腾讯云密钥",
-                            summary = if (ocrConfigured) "已配置 · 与 OCR 输入共用，需要在腾讯云开通「语音识别」（每月免费 5000 次）"
-                            else "未配置 · 填入腾讯云 SecretId / SecretKey（与 OCR 输入共用）",
-                            onClick = { dialog = Dialog.Ocr },
-                        )
-                        // 本地模型：不随应用安装，在这里下载 / 删除
-                        SettingsItem(
-                            icon = Icons.Filled.Info,
-                            title = "本地模型（SenseVoice）",
-                            summary = when (val s = localAsr) {
-                                LocalAsrState.Unsupported -> "这台设备不支持（仅支持 64 位 ARM 手机）"
-                                LocalAsrState.Missing -> "未下载 · 约 160 MB，建议连 Wi-Fi；识别在手机上完成，支持中 / 英 / 日 / 韩 / 粤 · 点一下下载"
-                                is LocalAsrState.Downloading ->
-                                    if (s.unpacking) "正在保存模型…"
-                                    else "正在下载" + (if (s.percent >= 0) " ${s.percent}%" else "") + "，请先别关掉应用 · 点一下取消"
-                                is LocalAsrState.Ready -> "已下载（${s.sizeMb} MB）"
-                                is LocalAsrState.Failed -> "下载失败：${s.message} · 点一下重试"
-                            },
-                            onClick = {
-                                when (localAsr) {
-                                    LocalAsrState.Unsupported -> toast(context, "这台设备不支持本地识别")
-                                    is LocalAsrState.Downloading -> container.localAsr.cancelDownload()
-                                    LocalAsrState.Missing, is LocalAsrState.Failed -> container.localAsr.download()
-                                    is LocalAsrState.Ready -> Unit
-                                }
-                            },
-                        )
-                        if (localAsr is LocalAsrState.Ready) {
-                            SettingsItem(
-                                icon = Icons.Filled.Info,
-                                title = "删除本地模型",
-                                summary = "释放 ${(localAsr as LocalAsrState.Ready).sizeMb} MB 空间，需要时可以重新下载",
-                                onClick = { confirmDeleteLocalAsr = true },
-                            )
-                        }
-                    }
-                    if (localAsr is LocalAsrState.Downloading) LinearProgressIndicator(Modifier.fillMaxWidth())
-
-                    Group("整理与词库") {
-                        SettingsItem(
-                            icon = Icons.Filled.Star,
-                            title = "AI 整理口语",
-                            summary = if (settings.voicePolish) "去掉嗯啊重复，判断是待办 / 日记 / 笔记，并由大模型推算日期、时间、重复；失败时退回本地规则"
-                            else "已关闭 · 只做简单清洗，日期时间由本地规则识别",
-                            onClick = { container.settings.setVoicePolish(!settings.voicePolish) },
-                            trailing = {
-                                Switch(checked = settings.voicePolish, onCheckedChange = { container.settings.setVoicePolish(it) })
-                            },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Settings,
-                            title = "大模型接口",
-                            summary = (if (llmConfigured) "已配置" else "未配置 · 需要 API Key") + " · ${settings.llmModel} · 在「AI 与大模型」里设置",
-                            onClick = { section = SEC_AI },
-                            trailing = { Chevron() },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Star,
-                            title = "语音词库",
-                            summary = "${lexicon.hotwords.size} 个热词 · ${lexicon.replacements.size} 条替换规则 · 另有来自文件夹、项目、待办的自动热词；改对的同音错字会自动学到这里",
-                            onClick = { section = SEC_LEXICON },
-                            trailing = { Chevron() },
-                        )
-                    }
-
-                    Group("保存") {
-                        SettingsItem(
-                            icon = Icons.Filled.Send,
-                            title = "松手直接保存",
-                            summary = if (settings.voiceAutoSend) "识别完不弹确认卡片，只显示一条小提示，几秒后自动保存；点它可以改字、放弃（删除待办仍会先确认）" else "识别完先放进输入框 / 弹出确认卡片，确认后再保存",
-                            onClick = { container.settings.setVoiceAutoSend(!settings.voiceAutoSend) },
-                            trailing = {
-                                Switch(checked = settings.voiceAutoSend, onCheckedChange = { container.settings.setVoiceAutoSend(it) })
-                            },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Info,
-                            title = "语音历史",
-                            summary = if (settings.voiceHistory) "保留最近 ${com.carpe.ideashell.data.asr.VoiceHistory.MAX_RECORDS} 条原话和录音（只在本机）· 识别错了可重新识别 / 整理"
-                            else "已关闭 · 点进去可以开启，或清空已有的",
-                            onClick = { section = SEC_VOICE_HISTORY },
-                            trailing = { Chevron() },
-                        )
-                    }
-                    Text(
-                        "你说的话会发给腾讯云识别（或在本机识别），再把文字发给所选大模型整理，不经过其他服务器。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                    )
-                }
-
-                SEC_LEXICON -> LexiconPage()
-
-                SEC_VOICE_HISTORY -> VoiceHistoryPage()
-
-                SEC_OCR -> {
-                    Group(null) {
-                        SettingsItem(
-                            icon = Icons.Filled.Lock,
-                            title = "腾讯云密钥",
-                            summary = if (ocrConfigured) "已配置 · 与语音输入的云端识别共用，需要在腾讯云开通「文字识别」"
-                            else "未配置 · 填入腾讯云 SecretId / SecretKey 后，可拍照识别文字",
-                            onClick = { dialog = Dialog.Ocr },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "识别文字",
-                            summary = when {
-                                !ocrConfigured -> "需要先填入腾讯云密钥"
-                                settings.ocrEnabled -> "已开启 · 记一条里点相机，拍照或选图后自动识别，挑出要的文字录入"
-                                else -> "已关闭 · 拍的照片直接当图片附件；也可以在相机页右下角随时开启"
-                            },
-                            onClick = {
-                                if (!ocrConfigured) dialog = Dialog.Ocr else container.settings.setOcrEnabled(!settings.ocrEnabled)
-                            },
-                            trailing = {
-                                Switch(
-                                    checked = settings.ocrEnabled && ocrConfigured,
-                                    onCheckedChange = { if (!ocrConfigured) dialog = Dialog.Ocr else container.settings.setOcrEnabled(it) },
-                                )
-                            },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "选择方式",
-                            summary = if (settings.ocrFrameMode) "选择框 · 先框出要识别的区域，只识别框里的文字" else "划选识别 · 整张图识别，再点选 / 划选要的文字",
-                            onClick = { container.settings.setOcrFrameMode(!settings.ocrFrameMode) },
-                            trailing = {
-                                Switch(checked = settings.ocrFrameMode, onCheckedChange = { container.settings.setOcrFrameMode(it) })
-                            },
-                        )
-                    }
-                    Text(
-                        "识别在腾讯云完成：图片先缩放压缩再发送，不经过其他服务器。图片转文字之后，和其他输入一样按平常的方式保存。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                    )
-                }
-
-                SEC_AI -> {
-                    Group("大模型") {
-                        SettingsItem(
-                            icon = Icons.Filled.Settings,
-                            title = "大模型接口",
-                            summary = (if (llmConfigured) "已配置" else "未配置 · 需要 API Key") +
-                                " · ${settings.llmModel} · ${settings.llmBaseUrl}",
-                            onClick = { dialog = Dialog.Llm },
-                        )
-                    }
-                    Group("闪念贝壳 AI") {
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "问 AI 自动发送",
-                            summary = when {
-                                !settings.aiAutoSend -> "关闭 · 从拾忆转交问题到闪念贝壳 AI 时，只把问题填进输入框，需要自己点发送"
-                                excerptServiceOn -> "已开启 · 转交问题后自动点发送键。仅在转交后几秒内、且前台是闪念贝壳时动作"
-                                else -> "还差一步 · 请在「无障碍」里打开「拾忆」（点此前往，一个开关管摘录、自动发送、音量键说话）"
-                            },
-                            onClick = {
-                                if (settings.aiAutoSend && excerptServiceOn) {
-                                    container.settings.setAiAutoSend(false)
-                                } else {
-                                    container.settings.setAiAutoSend(true)
-                                    if (!excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
-                                }
-                            },
-                            trailing = {
-                                Switch(
-                                    checked = settings.aiAutoSend,
-                                    onCheckedChange = {
-                                        container.settings.setAiAutoSend(it)
-                                        if (it && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
-                                    },
-                                )
-                            },
-                        )
-                    }
-                    Text(
-                        "大模型使用 OpenAI 兼容接口，默认通义千问（DashScope）；用于语音整理（判断待办 / 日记 / 笔记、推算日期时间、修改待办）和专注记录润色。「问 AI 自动发送」是把问题转交到闪念贝壳 AI 后帮你点发送键。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp),
-                    )
-                }
-
-                else -> Unit
-            }
             }
         }
     }
+}
 
-    if (confirmDeleteLocalAsr) {
-        AlertDialog(
-            onDismissRequest = { confirmDeleteLocalAsr = false },
-            title = { Text("删除本地模型？") },
-            text = { Text("删除后之后想用本地识别要重新下载（约 160 MB）。如果当前选的是「本地模型」，会改回「自动」。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDeleteLocalAsr = false
-                    if (settings.voiceEngine == VoiceEngine.LOCAL) container.settings.setVoiceEngine(VoiceEngine.AUTO)
-                    container.localAsr.delete()
-                }) { Text("删除") }
-            },
-            dismissButton = { TextButton(onClick = { confirmDeleteLocalAsr = false }) { Text("取消") } },
+@Composable
+private fun SettingsHome(env: SettingsEnv) {
+    val container = env.container
+    val settings = env.settings
+    val localAsr by container.localAsr.state.collectAsStateWithLifecycle()
+    val revisitToday by container.revisit.today.collectAsStateWithLifecycle()
+    val cloudBackupAt = remember { container.backup.lastCloudBackupAt() }
+    var showTheme by remember { mutableStateOf(false) }
+
+    Group("账号") {
+        SettingsItem(
+            icon = Icons.Filled.AccountCircle,
+            title = "账号与连接",
+            summary = env.accountsSummary(),
+            onClick = { env.go(SEC_ACCOUNTS) },
+            trailing = { Chevron() },
         )
     }
 
-    pendingRestore?.let { file ->
-        AlertDialog(
-            onDismissRequest = { pendingRestore = null },
-            title = { Text("恢复这份备份？") },
-            text = { Text(file.summary() + "\n\n同名项目 / 模板以备份为准，本机多出来的内容不会被删除。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    pendingRestore = null
-                    scope.launch {
-                        runCatching { container.backup.restore(file) }
-                            .onSuccess { toast(context, it.text()) }
-                            .onFailure { toast(context, "恢复失败：${it.message ?: "未知错误"}") }
-                    }
-                }) { Text("恢复") }
-            },
-            dismissButton = { TextButton(onClick = { pendingRestore = null }) { Text("取消") } },
+    Group("输入方式") {
+        SettingsItem(
+            icon = Icons.Filled.Create,
+            title = "文字记录",
+            summary = "${settings.defaultTagsText.ifEmpty { "无默认标签" }} · ${settings.dailyFolder}",
+            onClick = { env.go(SEC_RECORD) },
+            trailing = { Chevron() },
+        )
+        SettingsItem(
+            iconRes = R.drawable.ic_mic,
+            title = "语音输入",
+            summary = env.voiceSummary(localReady = localAsr is LocalAsrState.Ready),
+            onClick = { env.go(SEC_VOICE) },
+            trailing = { Chevron() },
+        )
+        SettingsItem(
+            iconRes = R.drawable.ic_ocr,
+            title = "OCR 输入",
+            summary = env.ocrSummary(),
+            onClick = { env.go(SEC_OCR) },
+            trailing = { Chevron() },
+        )
+        SettingsItem(
+            iconRes = R.drawable.ic_tile,
+            title = "入口一览",
+            summary = env.entriesSummary(),
+            onClick = { env.go(SEC_QUICK) },
+            trailing = { Chevron() },
         )
     }
 
-    when (dialog) {
-        Dialog.Tags -> TextInputDialog(
-            title = "默认标签",
-            label = "标签（逗号分隔）",
-            initial = settings.defaultTagsText,
-            onConfirm = { container.settings.setDefaultTags(it) },
-            onDismiss = { dialog = null },
+    Group("AI") {
+        SettingsItem(
+            iconRes = R.drawable.ic_sparkle,
+            title = "AI 与大模型",
+            summary = env.aiSummary(),
+            onClick = { env.go(SEC_AI) },
+            trailing = { Chevron() },
         )
+    }
 
-        Dialog.DailyFolder -> TextInputDialog(
-            title = "Daily Note 文件夹",
-            label = "文件夹名",
-            initial = settings.dailyFolder,
-            onConfirm = { container.settings.setDailyFolder(it) },
-            onDismiss = { dialog = null },
+    Group("功能") {
+        SettingsItem(
+            iconRes = R.drawable.ic_revisit,
+            title = "重温",
+            summary = env.revisitSummary(revisitToday),
+            onClick = { env.go(SEC_REVISIT) },
+            trailing = { Chevron() },
         )
-
-        Dialog.VoiceEngine -> VoiceEngineDialog(
-            current = settings.voiceEngine,
-            onSelect = { engine ->
-                container.settings.setVoiceEngine(engine)
-                if (engine != VoiceEngine.CLOUD) {
-                    when (localAsr) {
-                        LocalAsrState.Missing, is LocalAsrState.Failed -> {
-                            container.localAsr.download()
-                            toast(context, "开始下载本地模型（约 160 MB），下载完成前仍用云端")
-                        }
-                        LocalAsrState.Unsupported -> toast(context, "这台设备不支持本地识别")
-                        else -> Unit
-                    }
-                }
-            },
-            onDismiss = { dialog = null },
+        SettingsItem(
+            iconRes = R.drawable.ic_nav_todo,
+            title = "待办与专注",
+            summary = env.todoSummary(),
+            onClick = { env.go(SEC_TODO) },
+            trailing = { Chevron() },
         )
+    }
 
-        Dialog.VoiceSilence -> ChoiceDialog(
-            title = "停顿多久算说完",
-            options = listOf(1000, 1500, 2000, 3000),
-            current = settings.voiceSilenceMs,
-            label = { "${"%.1f".format(it / 1000f)} 秒" + if (it == 1500) "（默认）" else "" },
-            onSelect = { container.settings.setVoiceSilenceMs(it) },
-            onDismiss = { dialog = null },
+    Group("系统") {
+        SettingsItem(
+            icon = Icons.Filled.Settings,
+            title = "主题",
+            summary = settings.themeMode.label,
+            onClick = { showTheme = true },
         )
-
-        Dialog.VoiceKey -> ChoiceDialog(
-            title = "音量键按住说话",
-            options = VoiceKey.entries,
-            current = settings.voiceKey,
-            label = { it.label },
-            onSelect = { key ->
-                container.settings.setVoiceKey(key)
-                if (key != VoiceKey.OFF && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
-            },
-            onDismiss = { dialog = null },
+        SettingsItem(
+            icon = Icons.Filled.Share,
+            title = "备份与迁移",
+            summary = backupSummary(cloudBackupAt),
+            onClick = { env.go(SEC_BACKUP) },
+            trailing = { Chevron() },
         )
+        SettingsItem(
+            icon = Icons.Filled.Refresh,
+            title = "后台同步",
+            summary = env.backgroundSummary(),
+            onClick = { env.go(SEC_BACKGROUND) },
+            trailing = { Chevron() },
+        )
+    }
 
-        Dialog.Theme -> ThemeDialog(
+    Group("关于") {
+        SettingsItem(
+            icon = Icons.Filled.Info,
+            title = "拾忆",
+            summary = "版本 ${BuildConfig.VERSION_NAME} · 记录自动同步到闪念贝壳与滴答清单",
+            onClick = null,
+        )
+    }
+
+    if (showTheme) {
+        ThemeDialog(
             current = settings.themeMode,
             onSelect = { container.settings.setThemeMode(it) },
-            onDismiss = { dialog = null },
+            onDismiss = { showTheme = false },
         )
-
-        Dialog.FocusGoal -> FocusGoalDialog(
-            current = settings.focusGoalMin,
-            onSelect = { container.settings.setFocusGoalMin(it) },
-            onDismiss = { dialog = null },
-        )
-
-        Dialog.ShortBreak -> ChoiceDialog(
-            title = "短休息时长",
-            options = (SHORT_BREAK_PRESETS + settings.shortBreakMin).distinct().sorted(),
-            current = settings.shortBreakMin,
-            label = { "$it 分钟" + if (it == 5) "（默认）" else "" },
-            onSelect = { container.settings.setShortBreakMin(it) },
-            onDismiss = { dialog = null },
-        )
-
-        Dialog.LongBreak -> ChoiceDialog(
-            title = "长休息时长",
-            options = (LONG_BREAK_PRESETS + settings.longBreakMin).distinct().sorted(),
-            current = settings.longBreakMin,
-            label = { "$it 分钟" + if (it == 15) "（默认）" else "" },
-            onSelect = { container.settings.setLongBreakMin(it) },
-            onDismiss = { dialog = null },
-        )
-
-        Dialog.RevisitLimit -> ChoiceDialog(
-            title = "每天最多重温",
-            options = (REVISIT_LIMIT_PRESETS + settings.revisitDailyLimit).distinct().sorted(),
-            current = settings.revisitDailyLimit,
-            label = { "$it 条" },
-            onSelect = { container.settings.setRevisitDailyLimit(it) },
-            onDismiss = { dialog = null },
-        )
-
-        Dialog.RevisitRetention -> ChoiceDialog(
-            title = "目标记忆率",
-            options = REVISIT_RETENTION_PRESETS,
-            current = settings.revisitRetention,
-            label = { "$it%" + if (it == 90) "（默认）" else "" },
-            onSelect = { container.settings.setRevisitRetention(it) },
-            onDismiss = { dialog = null },
-        )
-
-        Dialog.ClozeRange -> ClozeRangeDialog(
-            minPercent = settings.clozeMinPercent,
-            maxPercent = settings.clozeMaxPercent,
-            onConfirm = { lo, hi -> container.settings.setClozeRange(lo, hi) },
-            onDismiss = { dialog = null },
-        )
-
-        Dialog.AddWidget -> AddWidgetDialog(
-            onPick = { widget -> requestPinWidget(context, widget) },
-            onDismiss = { dialog = null },
-        )
-
-        Dialog.Ocr -> OcrKeyDialog(
-            initialId = container.credentials.tencentSecretId.orEmpty(),
-            initialKey = container.credentials.tencentSecretKey.orEmpty(),
-            onConfirm = { id, key -> container.credentials.setTencentOcr(id, key) },
-            onDismiss = { dialog = null },
-        )
-
-        Dialog.Llm -> LlmConfigDialog(
-            initialBaseUrl = settings.llmBaseUrl,
-            initialModel = settings.llmModel,
-            initialKey = container.credentials.llmKey.orEmpty(),
-            onConfirm = { url, model, key ->
-                container.settings.setLlm(url, model)
-                container.credentials.llmKey = key
-            },
-            onDismiss = { dialog = null },
-        )
-
-        null -> Unit
     }
 }
-
-/** 大模型接口：任意 OpenAI 兼容服务（接口地址 + 模型名 + Key）。Key 留空保存即清除 */
-@Composable
-private fun LlmConfigDialog(
-    initialBaseUrl: String,
-    initialModel: String,
-    initialKey: String,
-    onConfirm: (String, String, String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var url by remember { mutableStateOf(initialBaseUrl) }
-    var model by remember { mutableStateOf(initialModel) }
-    var key by remember { mutableStateOf(initialKey) }
-    InputSheet(
-        title = "大模型接口",
-        hint = "任意 OpenAI 兼容服务都行（通义千问、DeepSeek、智谱、OpenAI…）。接口地址填到 /v1 为止，应用会请求其中的 /chat/completions。Key 只保存在本机（加密）。",
-        onDismiss = onDismiss,
-        onConfirm = {
-            onConfirm(url.trim(), model.trim(), key.trim())
-            onDismiss()
-        },
-    ) {
-        ListGroup {
-            AppTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = "接口地址",
-                placeholder = "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                autoFocus = true,
-                singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Next),
-            )
-            RowDivider()
-            AppTextField(
-                value = model,
-                onValueChange = { model = it },
-                label = "模型",
-                placeholder = "qwen-plus",
-                singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Next),
-            )
-            RowDivider()
-            AppTextField(
-                value = key,
-                onValueChange = { key = it },
-                label = "API Key",
-                placeholder = "sk-…",
-                singleLine = true,
-                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Done),
-            )
-        }
-    }
-}
-
-/** 腾讯云文字识别密钥：到腾讯云控制台「访问管理 → API 密钥管理」创建，并在「文字识别」控制台开通服务 */
-@Composable
-private fun OcrKeyDialog(
-    initialId: String,
-    initialKey: String,
-    onConfirm: (String, String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var id by remember { mutableStateOf(initialId) }
-    var key by remember { mutableStateOf(initialKey) }
-    InputSheet(
-        title = "腾讯云密钥",
-        hint = "拍照识别文字、按住说话共用这对密钥：在腾讯云控制台开通「文字识别」「语音识别」，并在「访问管理 → API 密钥管理」创建密钥。密钥只保存在本机（加密）。两项都留空并保存即可清除。",
-        onDismiss = onDismiss,
-        onConfirm = {
-            onConfirm(id, key)
-            onDismiss()
-        },
-    ) {
-        ListGroup {
-            AppTextField(
-                value = id,
-                onValueChange = { id = it },
-                label = "SecretId",
-                placeholder = "AKID…",
-                autoFocus = true,
-                singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Next),
-            )
-            RowDivider()
-            AppTextField(
-                value = key,
-                onValueChange = { key = it },
-                label = "SecretKey",
-                placeholder = "点这里输入",
-                singleLine = true,
-                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Done),
-            )
-        }
-    }
-}
-
-/** 可以放到桌面的小部件 */
-private enum class PinnableWidget(val title: String, val summary: String, val provider: Class<*>) {
-    Todo("待办", "逾期和今天的待办一眼可见，点圆圈直接完成", TodoWidgetProvider::class.java),
-    Focus("专注", "今日专注进度；一键开始、暂停、结束，计入滴答清单", FocusWidgetProvider::class.java),
-    River("记录", "最近的日记、笔记和完成的待办，按时间排成一条线", RiverWidgetProvider::class.java),
-}
-
-@Composable
-private fun AddWidgetDialog(onPick: (PinnableWidget) -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("添加小部件") },
-        text = {
-            Column {
-                PinnableWidget.entries.forEach { widget ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(role = Role.Button) {
-                                onPick(widget)
-                                onDismiss()
-                            }
-                            .padding(vertical = 10.dp),
-                    ) {
-                        Text(widget.title, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            widget.summary,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-private val REVISIT_LIMIT_PRESETS = listOf(3, 5, 8, 10, 15, 20)
-private val SHORT_BREAK_PRESETS = listOf(3, 5, 8, 10, 15)
-private val LONG_BREAK_PRESETS = listOf(10, 15, 20, 25, 30)
-private val REVISIT_RETENTION_PRESETS = listOf(80, 85, 90, 95)
-
-private fun formatDateTime(ms: Long): String =
-    java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault())
-        .format(java.time.format.DateTimeFormatter.ofPattern("M月d日 HH:mm"))
-
-private fun formatClock(minutes: Int): String = "%02d:%02d".format(minutes / 60, minutes % 60)
-
-@Composable
-private fun <T> ChoiceDialog(
-    title: String,
-    options: List<T>,
-    current: T,
-    label: (T) -> String,
-    onSelect: (T) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                options.forEach { option ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = option == current,
-                                role = Role.RadioButton,
-                                onClick = {
-                                    onSelect(option)
-                                    onDismiss()
-                                },
-                            )
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = option == current, onClick = null)
-                        Text(label(option), modifier = Modifier.padding(start = 12.dp))
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-/** 自动挖空比例：拖两端的圆点定范围 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ClozeRangeDialog(minPercent: Int, maxPercent: Int, onConfirm: (Int, Int) -> Unit, onDismiss: () -> Unit) {
-    var range by remember { mutableStateOf(minPercent.toFloat()..maxPercent.toFloat()) }
-    val lo = range.start.toInt()
-    val hi = range.endInclusive.toInt()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("自动挖空比例") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    if (lo == hi) "挖掉约 $lo% 的字" else "挖掉 $lo% – $hi% 的字",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-                RangeSlider(
-                    value = range,
-                    onValueChange = { range = it },
-                    valueRange = 5f..60f,
-                    steps = 54,
-                )
-                Text(
-                    "比例按正文字数算，每次重温在这个范围内随机取一个目标，位置也会换。比例小：只挖最关键的词；比例大：几乎每个词都要回忆。原文里用 {{词}} 标出的、加粗或高亮的词，以及你手动挖的空，不受这个比例影响。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        confirmButton = { TextButton(onClick = { onConfirm(lo, hi); onDismiss() }) { Text("确定") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-private val FOCUS_GOAL_PRESETS = listOf(30, 60, 90, 120, 180, 240, 300, 360)
-
-private fun formatGoal(min: Int): String = when {
-    min < 60 -> "$min 分钟"
-    min % 60 == 0 -> "${min / 60} 小时"
-    else -> "${min / 60} 小时 ${min % 60} 分钟"
-}
-
-@Composable
-private fun FocusGoalDialog(current: Int, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
-    val options = (FOCUS_GOAL_PRESETS + current).distinct().sorted()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("每日专注目标") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                options.forEach { min ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = min == current,
-                                role = Role.RadioButton,
-                                onClick = {
-                                    onSelect(min)
-                                    onDismiss()
-                                },
-                            )
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = min == current, onClick = null)
-                        Text(formatGoal(min), modifier = Modifier.padding(start = 12.dp))
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-@Composable
-internal fun Group(title: String?, content: @Composable ColumnScope.() -> Unit) {
-    Column {
-        if (title != null) {
-            Text(
-                title,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
-            )
-        }
-        GlassSurface(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.fillMaxWidth(), content = content)
-        }
-    }
-}
-
-/** 二级页面的标题栏：返回 + 页面名 */
-@Composable
-internal fun SubPageHeader(title: String, onBack: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        CircleIconButton(Icons.AutoMirrored.Filled.ArrowBack, "返回", onBack)
-        Text(title, style = MaterialTheme.typography.headlineSmall)
-    }
-}
-
-/** 一级页面里「点进去还有更多」的右箭头 */
-@Composable
-internal fun Chevron() {
-    Icon(
-        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-        contentDescription = null,
-        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-}
-
-@Composable
-internal fun SettingsItem(
-    icon: ImageVector,
-    title: String,
-    summary: String,
-    onClick: (() -> Unit)?,
-    trailing: (@Composable () -> Unit)? = null,
-) {
-    ListItem(
-        modifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-        leadingContent = { GlassBadge(icon) },
-        headlineContent = { Text(title, style = MaterialTheme.typography.titleMedium) },
-        supportingContent = { Text(summary, style = MaterialTheme.typography.bodyMedium) },
-        trailingContent = trailing,
-    )
-}
-
-@Composable
-private fun TextInputDialog(
-    title: String,
-    label: String,
-    initial: String,
-    onConfirm: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var value by remember { mutableStateOf(initial) }
-    InputSheet(
-        title = title,
-        onDismiss = onDismiss,
-        onConfirm = {
-            onConfirm(value)
-            onDismiss()
-        },
-    ) {
-        ListGroup {
-            AppTextField(
-                value = value,
-                onValueChange = { value = it },
-                label = null,
-                placeholder = "点这里输入",
-                autoFocus = true,
-                singleLine = true,
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Done),
-            )
-        }
-    }
-}
-
-@Composable
-private fun VoiceEngineDialog(current: VoiceEngine, onSelect: (VoiceEngine) -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("识别方式") },
-        text = {
-            Column {
-                VoiceEngine.entries.forEach { engine ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = engine == current,
-                                role = Role.RadioButton,
-                                onClick = {
-                                    onSelect(engine)
-                                    onDismiss()
-                                },
-                            )
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = engine == current, onClick = null)
-                        Column(Modifier.padding(start = 12.dp)) {
-                            Text(engine.label)
-                            Text(
-                                engine.summary,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-@Composable
-private fun ThemeDialog(current: ThemeMode, onSelect: (ThemeMode) -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("主题") },
-        text = {
-            Column {
-                ThemeMode.entries.forEach { mode ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = mode == current,
-                                role = Role.RadioButton,
-                                onClick = {
-                                    onSelect(mode)
-                                    onDismiss()
-                                },
-                            )
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = mode == current, onClick = null)
-                        Text(mode.label, modifier = Modifier.padding(start = 12.dp))
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-private fun requestAddTile(context: Context) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-    val manager = context.getSystemService(StatusBarManager::class.java)
-    if (manager == null) {
-        toast(context, "当前系统不支持一键添加，请在通知栏编辑里手动添加「拾忆」磁贴")
-        return
-    }
-    manager.requestAddTileService(
-        ComponentName(context, QuickCaptureTileService::class.java),
-        context.getString(R.string.tile_label),
-        android.graphics.drawable.Icon.createWithResource(context, R.drawable.ic_tile),
-        context.mainExecutor,
-    ) { result ->
-        val message = when (result) {
-            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED -> "已添加到快速设置"
-            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED -> "磁贴已经在快速设置里了"
-            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED -> null
-            else -> "系统没有响应，请在通知栏编辑里手动添加「拾忆」磁贴"
-        }
-        if (message != null) toast(context, message)
-    }
-}
-
-private fun isIgnoringBatteryOptimizations(context: Context): Boolean =
-    context.getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(context.packageName) == true
-
-private fun requestIgnoreBattery(context: Context) {
-    try {
-        context.startActivity(
-            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-    } catch (_: Exception) {
-        openAppDetails(context)
-    }
-}
-
-private fun openAppDetails(context: Context) {
-    try {
-        context.startActivity(
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-    } catch (_: Exception) {
-        toast(context, "无法打开系统设置，请手动进入「设置 → 应用」")
-    }
-}
-
-private fun toast(context: Context, text: String) {
-    Toast.makeText(context, text, Toast.LENGTH_LONG).show()
-}
-
-/** 请求把小部件固定到桌面；启动器不支持时给出手动添加的提示 */
-private fun requestPinWidget(context: Context, widget: PinnableWidget) {
-    val manager = AppWidgetManager.getInstance(context)
-    if (manager.isRequestPinAppWidgetSupported) {
-        manager.requestPinAppWidget(ComponentName(context, widget.provider), null, null)
-    } else {
-        Toast.makeText(context, "请长按桌面空白处 → 小组件 → 拾忆 → ${widget.title}", Toast.LENGTH_LONG).show()
-    }
-}
-
-/** 「每周自动备份」那一行的说明：没连接 / 已开启（带上次时间与最近的失败原因）/ 未开启 */
-private fun autoBackupSummary(connected: Boolean, enabled: Boolean, lastAt: Long, error: String?): String = when {
-    !connected -> "请先连接闪念贝壳"
-    !enabled -> "每 7 天在有网络时自动更新那篇备份笔记，不用再手动点"
-    error != null -> "已开启 · 最近一次自动备份失败：$error（系统会稍后重试）"
-    lastAt > 0 -> "已开启 · 每 7 天一次 · 上次：${formatDateTime(lastAt)}"
-    else -> "已开启 · 每 7 天一次，马上会先备份一次"
-}
-

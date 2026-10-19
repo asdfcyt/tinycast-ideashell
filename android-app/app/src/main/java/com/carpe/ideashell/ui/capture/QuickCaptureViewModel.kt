@@ -46,6 +46,10 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
     var text by mutableStateOf("")
     var override by mutableStateOf<CaptureKind?>(null)
 
+    /** 入口替你预设的类型（待办页的「＋」、桌面图标「记待办」等）；面板上据此提示「已预设」，null = 自动识别 */
+    var presetKind by mutableStateOf<CaptureKind?>(null)
+        private set
+
     /** 追加开关：开着时保存成「追加到上一篇快记笔记」，类型固定为笔记 */
     var append by mutableStateOf(false)
         private set
@@ -215,6 +219,29 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
     var editNotice by mutableStateOf<String?>(null)
     var editClose by mutableStateOf(false)
 
+    /** 一次语音「完成 / 修改」可以撤销的内容：[label] 是给人看的那句话，[run] 执行撤销 */
+    class EditUndo(val label: String, val run: suspend () -> Result<String>)
+
+    /** 刚做完的语音「完成 / 修改」，面板上显示一条带「撤销」的提示，过一会儿自动消失（见 [expireUndos]） */
+    var editUndos by mutableStateOf<List<EditUndo>>(emptyList())
+        private set
+
+    /** 点「撤销」：把刚才的完成 / 修改改回去，结果用提示告诉用户；面板不再自动收起 */
+    fun undoEdits() {
+        val list = editUndos
+        editUndos = emptyList()
+        editClose = false
+        viewModelScope.launch {
+            val lines = list.map { u -> u.run().fold(onSuccess = { it }, onFailure = { "撤销失败：" + (it.message ?: "未知错误") }) }
+            editNotice = lines.joinToString("\n")
+        }
+    }
+
+    /** 撤销的时间窗过了：收起提示 */
+    fun expireUndos() {
+        editUndos = emptyList()
+    }
+
     /** 要删除的待办：删除不可恢复，界面弹对话框让用户确认后才调用 [confirmDelete] */
     var pendingDeletes by mutableStateOf<List<com.carpe.ideashell.data.dida.DidaTask>>(emptyList())
 
@@ -241,6 +268,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
             val editor = container.todoEditor
             val lines = mutableListOf<String>()
             val deletes = mutableListOf<com.carpe.ideashell.data.dida.DidaTask>()
+            val undos = mutableListOf<EditUndo>()
             var allOk = true
             edits.forEach { intent ->
                 if (intent.op == com.carpe.ideashell.core.voice.TodoOp.QUERY) {
@@ -261,7 +289,10 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
                 when (intent.op) {
                     com.carpe.ideashell.core.voice.TodoOp.DELETE -> deletes += task
                     com.carpe.ideashell.core.voice.TodoOp.COMPLETE -> editor.complete(task)
-                        .onSuccess { lines += "已$it" }
+                        .onSuccess {
+                            lines += "已$it"
+                            undos += EditUndo("已$it") { editor.undoComplete(task) }
+                        }
                         .onFailure {
                             allOk = false
                             lines += "完成失败：" + (it.message ?: "未知错误")
@@ -269,7 +300,10 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
                     else -> {
                         val edit = com.carpe.ideashell.data.dida.TodoEditor.Edit(intent.date, intent.time, intent.content, intent.priority)
                         editor.apply(task, edit)
-                            .onSuccess { lines += "已修改待办：$it" }
+                            .onSuccess {
+                                lines += "已修改待办：$it"
+                                undos += EditUndo("已修改待办：$it") { editor.undoApply(task, edit) }
+                            }
                             .onFailure {
                                 allOk = false
                                 lines += "修改失败：" + (it.message ?: "未知错误")
@@ -278,6 +312,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }
             if (deletes.isNotEmpty()) pendingDeletes = deletes
+            editUndos = undos
             editClose = closeWhenDone && allOk && deletes.isEmpty()
             if (lines.isNotEmpty()) editNotice = lines.joinToString("\n")
         }
@@ -428,6 +463,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         configured = true
         this.clip = clip
         this.override = preset
+        this.presetKind = preset
         this.origin = origin
     }
 

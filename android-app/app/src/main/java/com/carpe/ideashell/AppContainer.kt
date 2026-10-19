@@ -35,6 +35,7 @@ import com.carpe.ideashell.system.FocusNotifier
 import com.carpe.ideashell.system.DaySummaryAuto
 import com.carpe.ideashell.system.DaySummaryScheduler
 import com.carpe.ideashell.system.TodoRefreshScheduler
+import com.carpe.ideashell.system.TodoOpFlushScheduler
 import com.carpe.ideashell.system.TodoSurfaces
 import com.carpe.ideashell.data.settings.SettingsStore
 import java.time.LocalDate
@@ -133,6 +134,8 @@ class AppContainer(context: Context) {
         cacheFile = File(context.filesDir, "todo_cache.json"),
         scope = appScope,
         hasCredential = { !credentials.didaToken.isNullOrBlank() },
+        // 离线时记下的操作：安排一次「有网就提交」的后台任务，进程被杀后也能发出去
+        onQueued = { TodoOpFlushScheduler.schedule(context.applicationContext) },
     )
 
     /** 语音修改之前建好的待办 */
@@ -318,9 +321,25 @@ class AppContainer(context: Context) {
 
     init {
         startSurfaceSync(context.applicationContext)
+        watchNetworkForPendingTodos(context.applicationContext)
         // 进程被杀后重新起来：让专注通知 / 闹钟与存盘的状态一致，并补记到点没来得及记的专注
         focus.restore()
         appScope.launch { focus.settle() }
+    }
+
+    /** 网络恢复时，把离线期间记下的待办操作提交给滴答（进程在时立刻提交，进程不在时由后台任务兜底） */
+    private fun watchNetworkForPendingTodos(appContext: Context) {
+        runCatching {
+            val cm = appContext.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+            cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    if (todos.pendingCount.value == 0) return
+                    appScope.launch {
+                        if (todos.flushPending()) todos.refresh(force = true)
+                    }
+                }
+            })
+        }
     }
 
     /**

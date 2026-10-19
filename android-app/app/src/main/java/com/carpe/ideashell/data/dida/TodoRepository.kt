@@ -1,7 +1,10 @@
 package com.carpe.ideashell.data.dida
 
 import com.carpe.ideashell.data.mcp.McpAuthException
+import com.carpe.ideashell.data.mcp.McpHttpException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -37,13 +40,19 @@ private data class RangedCache(val tasks: List<DidaTask>)
 
 /**
  * 待办的数据来源（以滴答为主）：本地缓存秒开 → 后台刷新；完成 / 改期等操作先改本地（乐观更新），
- * 再提交滴答，失败回滚并把原因抛给界面。
+ * 再提交滴答。提交失败时分两种：
+ * - 断网 / 超时 / 服务端暂时出错：保留界面上的改动，把操作记进本机队列（[PendingTodoQueue]），联网后自动提交；
+ * - 凭证失效 / 服务端明确拒绝：回滚并把原因抛给界面。
  */
 class TodoRepository(
     private val api: DidaApi,
     private val cacheFile: File,
     private val scope: CoroutineScope,
     private val hasCredential: () -> Boolean,
+    /** 离线操作队列的存盘文件 */
+    pendingFile: File = File(cacheFile.parentFile, "todo_pending.json"),
+    /** 有操作进了离线队列：安排一次「有网就提交」的后台任务（进程被杀后也能提交） */
+    private val onQueued: () -> Unit = {},
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val _state = MutableStateFlow(TodoData())
@@ -51,6 +60,28 @@ class TodoRepository(
 
     private val refreshLock = Mutex()
     private val stateLock = Mutex()
+
+    // ---- 离线操作队列 ----
+    private val pendingStore = PendingTodoStore(pendingFile, json)
+    private val queueLock = Mutex()
+    private val flushLock = Mutex()
+    private val pending = ArrayList(pendingStore.load())
+
+    /** 正在提交的那一条（合并新操作时不能动它，否则「已发出去」的操作会被当成「还没发」抵消掉） */
+    private var inFlight: PendingTodoOp? = null
+
+    /** 刚提交成功的操作：刷新结果里可能还是旧数据，一小段时间内继续把它盖上去 */
+    private val recentlyFlushed = ArrayList<Pair<PendingTodoOp, Long>>()
+
+    private val _pendingCount = MutableStateFlow(pending.size)
+
+    /** 还没提交到滴答的操作条数（界面提示「N 项修改联网后同步」） */
+    val pendingCount: StateFlow<Int> = _pendingCount.asStateFlow()
+
+    private val _syncNotice = MutableStateFlow<String?>(null)
+
+    /** 离线操作提交时被服务端拒绝（任务已被删等）的说明；一会儿自动消失 */
+    val syncNotice: StateFlow<String?> = _syncNotice.asStateFlow()
 
     /** 本次运行中刚完成的任务：刷新结果里即使还带着它（服务端延迟）也先不显示 */
     private val recentlyDone = HashMap<String, Long>()
@@ -138,12 +169,16 @@ class TodoRepository(
         try {
             _state.update { it.copy(loading = true) }
             try {
+                // 先把离线时记下的操作提交了，再读最新的，免得读到的是「还没改」的旧数据
+                flushPending()
                 val fetched = api.fetchOverview(LocalDate.now())
                 val now = System.currentTimeMillis()
-                val cleaned = stateLock.withLock {
+                val withoutDone = stateLock.withLock {
                     recentlyDone.entries.removeAll { now - it.value > DONE_GRACE_MS }
                     recentlyDone.keys.fold(fetched) { acc, id -> acc.withoutTask(id) }
                 }
+                // 仍在队列里的（和刚提交、服务端可能还没反映的）操作，盖在读到的数据上，界面上的改动不会「弹回去」
+                val cleaned = applyOps(withoutDone, queuedOps(now))
                 _state.update { TodoData(overview = cleaned, loading = false, error = null, updatedAt = now) }
                 persist(cleaned, now)
             } catch (e: CancellationException) {
@@ -168,7 +203,7 @@ class TodoRepository(
         if (task.date != null) {
             _ranged.update { it - openKey(task.id) + (doneKey(task.id) to task.copy(done = true, completedAt = System.currentTimeMillis())) }
         }
-        return attempt { api.complete(task) }.onFailure {
+        return submit(PendingTodoOp(PendingKind.COMPLETE, task.id, task.projectId)) { api.complete(task) }.onFailure {
             stateLock.withLock { recentlyDone.remove(task.id) }
             rollback(before)
             _ranged.value = rangedBefore
@@ -208,7 +243,7 @@ class TodoRepository(
         if (task.date != null) {
             _ranged.update { it - doneKey(task.id) + (openKey(task.id) to task.copy(done = false, completedAt = null)) }
         }
-        return attempt { api.reopen(task) }.onFailure {
+        return submit(PendingTodoOp(PendingKind.REOPEN, task.id, task.projectId)) { api.reopen(task) }.onFailure {
             rollback(before)
             _ranged.value = rangedBefore
         }
@@ -219,7 +254,7 @@ class TodoRepository(
         val rangedBefore = _ranged.value
         mutate { o -> insertOpen(o.withoutTask(task.id), task.copy(date = date, time = time)) }
         _ranged.update { it - openKey(task.id) + (openKey(task.id) to task.copy(date = date, time = time, done = false)) }
-        return attempt { api.reschedule(task, date, time) }.onFailure {
+        return submit(PendingTodoOp(PendingKind.RESCHEDULE, task.id, task.projectId, date = date, time = time)) { api.reschedule(task, date, time) }.onFailure {
             rollback(before)
             _ranged.value = rangedBefore
         }
@@ -230,7 +265,7 @@ class TodoRepository(
         val rangedBefore = _ranged.value
         mutate { o -> replaceOpen(o, task.copy(priority = priority)) }
         patchRanged(task.copy(priority = priority))
-        return attempt { api.setPriority(task, priority) }.onFailure {
+        return submit(PendingTodoOp(PendingKind.PRIORITY, task.id, task.projectId, priority = priority)) { api.setPriority(task, priority) }.onFailure {
             rollback(before)
             _ranged.value = rangedBefore
         }
@@ -242,7 +277,7 @@ class TodoRepository(
         val rangedBefore = _ranged.value
         mutate { o -> replaceOpen(o, task.copy(title = title)) }
         patchRanged(task.copy(title = title))
-        return attempt { api.setTitle(task, title) }.onFailure {
+        return submit(PendingTodoOp(PendingKind.TITLE, task.id, task.projectId, text = title)) { api.setTitle(task, title) }.onFailure {
             rollback(before)
             _ranged.value = rangedBefore
         }
@@ -254,7 +289,7 @@ class TodoRepository(
         val rangedBefore = _ranged.value
         mutate { o -> replaceOpen(o, task.copy(content = content)) }
         patchRanged(task.copy(content = content))
-        return attempt { api.setContent(task, content) }.onFailure {
+        return submit(PendingTodoOp(PendingKind.CONTENT, task.id, task.projectId, text = content)) { api.setContent(task, content) }.onFailure {
             rollback(before)
             _ranged.value = rangedBefore
         }
@@ -266,7 +301,7 @@ class TodoRepository(
         val rangedBefore = _ranged.value
         mutate { o -> replaceOpen(o, task.copy(tags = tags)) }
         patchRanged(task.copy(tags = tags))
-        return attempt { api.setTags(task, tags) }.onFailure {
+        return submit(PendingTodoOp(PendingKind.TAGS, task.id, task.projectId, tags = tags)) { api.setTags(task, tags) }.onFailure {
             rollback(before)
             _ranged.value = rangedBefore
         }
@@ -277,7 +312,7 @@ class TodoRepository(
         val rangedBefore = _ranged.value
         mutate { o -> o.withoutTask(task.id) }
         _ranged.update { it - openKey(task.id) - doneKey(task.id) }
-        return attempt { api.deleteTask(task) }.onFailure {
+        return submit(PendingTodoOp(PendingKind.DELETE, task.id, task.projectId)) { api.deleteTask(task) }.onFailure {
             rollback(before)
             _ranged.value = rangedBefore
         }
@@ -286,6 +321,137 @@ class TodoRepository(
     /** 评论失败不影响主流程 */
     suspend fun comment(task: DidaTask, text: String): Boolean =
         attempt { api.addComment(task.projectId, task.id, text) }.isSuccess
+
+    // ---- 离线操作队列 ----
+
+    /** 断网 / 超时 / 服务端暂时出错：值得稍后重试；凭证失效和服务端明确拒绝不算 */
+    private fun isRetryable(e: Throwable): Boolean = when (e) {
+        is IOException -> true
+        is McpHttpException -> e.httpCode >= 500 || e.httpCode == 429 || e.httpCode == 408
+        else -> false
+    }
+
+    /**
+     * 提交一次操作。前面已经有排着队的操作时，这一条也排在后面（保证先后顺序）并顺手试着提交；
+     * 否则直接提交，遇到断网类错误就记进队列、对界面报成功（界面上的改动保留）。
+     */
+    private suspend fun submit(op: PendingTodoOp, call: suspend () -> Unit): Result<Unit> {
+        if (queueLock.withLock { pending.isNotEmpty() }) {
+            enqueue(op)
+            scope.launch { flushPending() }
+            return Result.success(Unit)
+        }
+        val result = attempt { call() }
+        val error = result.exceptionOrNull() ?: return result
+        if (!isRetryable(error)) return result
+        enqueue(op)
+        return Result.success(Unit)
+    }
+
+    private suspend fun enqueue(op: PendingTodoOp) {
+        queueLock.withLock {
+            val head = inFlight?.takeIf { f -> pending.any { it === f } }
+            val candidates = pending.filter { it !== head }
+            val merged = PendingTodoQueue.merge(candidates, op)
+            pending.clear()
+            if (head != null) pending.add(head)
+            pending.addAll(merged)
+            pendingStore.save(pending)
+            _pendingCount.value = pending.size
+        }
+        onQueued()
+    }
+
+    private suspend fun send(op: PendingTodoOp) {
+        val stub = op.stub()
+        when (op.kind) {
+            PendingKind.COMPLETE -> api.complete(stub)
+            PendingKind.REOPEN -> api.reopen(stub)
+            PendingKind.RESCHEDULE -> api.reschedule(stub, op.date ?: LocalDate.now().toString(), op.time)
+            PendingKind.PRIORITY -> api.setPriority(stub, op.priority)
+            PendingKind.TITLE -> api.setTitle(stub, op.text.orEmpty())
+            PendingKind.CONTENT -> api.setContent(stub, op.text.orEmpty())
+            PendingKind.TAGS -> api.setTags(stub, op.tags)
+            PendingKind.DELETE -> api.deleteTask(stub)
+        }
+    }
+
+    /**
+     * 把队列里的操作按顺序提交给滴答。断网 / 凭证失效时停下，留着下次再来；
+     * 被服务端明确拒绝的（任务已被删等）丢掉并提示。返回队列是否已经清空。
+     */
+    suspend fun flushPending(): Boolean {
+        if (!hasCredential()) return queueLock.withLock { pending.isEmpty() }
+        if (queueLock.withLock { pending.isEmpty() }) return true
+        var dropped = 0
+        var lastReason: String? = null
+        flushLock.withLock {
+            while (true) {
+                val op = queueLock.withLock { pending.firstOrNull()?.also { inFlight = it } } ?: break
+                val error = attempt { send(op) }.exceptionOrNull()
+                val gone = op.kind == PendingKind.DELETE && error is McpHttpException && error.httpCode == 404
+                val stop = error != null && !gone && (isRetryable(error) || error is McpAuthException)
+                queueLock.withLock {
+                    inFlight = null
+                    if (!stop) {
+                        pending.removeAll { it === op }
+                        pendingStore.save(pending)
+                        _pendingCount.value = pending.size
+                    }
+                }
+                when {
+                    error == null || gone -> synchronized(recentlyFlushed) { recentlyFlushed += op to System.currentTimeMillis() }
+                    stop -> break
+                    else -> {
+                        dropped++
+                        lastReason = error.message
+                    }
+                }
+            }
+        }
+        if (dropped > 0) {
+            _syncNotice.value = "有 $dropped 项离线时的修改没能同步到滴答" + (lastReason?.let { "：$it" } ?: "") + "，已按滴答里的最新状态为准"
+            scope.launch {
+                delay(20_000L)
+                _syncNotice.value = null
+            }
+            scope.launch { doRefresh() }
+        }
+        return queueLock.withLock { pending.isEmpty() }
+    }
+
+    /** 还在队列里的操作 + 刚提交成功、服务端数据可能还没反映的操作（按先后顺序） */
+    private suspend fun queuedOps(now: Long): List<PendingTodoOp> {
+        val recent = synchronized(recentlyFlushed) {
+            recentlyFlushed.removeAll { now - it.second > DONE_GRACE_MS }
+            recentlyFlushed.map { it.first }
+        }
+        return recent + queueLock.withLock { pending.toList() }
+    }
+
+    /** 把操作的效果盖到一份读来的概览上 */
+    private fun applyOps(base: DidaOverview, ops: List<PendingTodoOp>): DidaOverview {
+        if (ops.isEmpty()) return base
+        fun open(o: DidaOverview, id: String) = (o.overdue + o.upcoming + o.undated).firstOrNull { it.id == id }
+        return ops.fold(base) { o, op ->
+            when (op.kind) {
+                PendingKind.COMPLETE -> open(o, op.taskId)?.let { t ->
+                    o.withoutTask(t.id).copy(done = listOf(t.copy(done = true, completedAt = op.at)) + o.done)
+                } ?: o
+                PendingKind.REOPEN -> o.done.firstOrNull { it.id == op.taskId }?.let { t ->
+                    insertOpen(o.copy(done = o.done.filterNot { it.id == t.id }), t.copy(done = false, completedAt = null))
+                } ?: o
+                PendingKind.DELETE -> o.withoutTask(op.taskId)
+                PendingKind.RESCHEDULE -> open(o, op.taskId)?.let { t ->
+                    insertOpen(o.withoutTask(t.id), t.copy(date = op.date, time = op.time))
+                } ?: o
+                PendingKind.PRIORITY -> open(o, op.taskId)?.let { replaceOpen(o, it.copy(priority = op.priority)) } ?: o
+                PendingKind.TITLE -> open(o, op.taskId)?.let { replaceOpen(o, it.copy(title = op.text.orEmpty())) } ?: o
+                PendingKind.CONTENT -> open(o, op.taskId)?.let { replaceOpen(o, it.copy(content = op.text.orEmpty())) } ?: o
+                PendingKind.TAGS -> open(o, op.taskId)?.let { replaceOpen(o, it.copy(tags = op.tags)) } ?: o
+            }
+        }
+    }
 
     // ---- 本地状态变换 ----
 

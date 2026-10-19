@@ -78,6 +78,10 @@ data class HabitUi(
 class TodoViewModel(private val container: AppContainer) : ViewModel() {
     val data: StateFlow<TodoData> = container.todos.state
     val connected: StateFlow<Boolean> = container.credentials.didaConnected
+
+    /** 离线时记下、还没提交到滴答的操作条数，和提交被拒绝时的说明 */
+    val pendingCount: StateFlow<Int> = container.todos.pendingCount
+    val syncNotice: StateFlow<String?> = container.todos.syncNotice
     val workspace: StateFlow<Workspace> = container.projects.workspace
     val stats: StateFlow<Map<String, ProjectStats>> = container.projects.stats
     val delivery: StateFlow<Map<String, ProjectDelivery>> = container.projects.delivery
@@ -390,8 +394,16 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
     // ───────────── 项目 ─────────────
 
     fun addProject(keyword: String, tags: List<String>): Boolean {
+        val short = tags.map { it.trim().trimStart('#') }.filter { it.isNotEmpty() && !container.projects.isValidTerm(it) }
         val ok = container.projects.add(keyword, tags)
-        message(if (ok) "已添加项目「${keyword.trim()}」" else "项目已存在或名称为空")
+        message(
+            when {
+                ok && short.isNotEmpty() -> "已添加项目「${keyword.trim()}」；标签至少 2 个字，已忽略：${short.joinToString("、")}"
+                ok -> "已添加项目「${keyword.trim()}」"
+                !container.projects.isValidTerm(keyword) -> "项目名至少 2 个字（太短的词会把无关任务也算进来）"
+                else -> "项目已存在"
+            },
+        )
         if (ok) loadStats()
         return ok
     }
@@ -410,7 +422,9 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun setTags(keyword: String, tags: List<String>) {
+        val short = tags.map { it.trim().trimStart('#') }.filter { it.isNotEmpty() && !container.projects.isValidTerm(it) }
         container.projects.setTags(keyword, tags)
+        if (short.isNotEmpty()) message("标签至少 2 个字，已忽略：${short.joinToString("、")}")
         loadStats(force = true)
     }
 

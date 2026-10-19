@@ -43,11 +43,53 @@ data class Project(
             return (listOf(keyword) + tags).map { it.trim() }.filter { it.isNotEmpty() && seen.add(it.lowercase()) }
         }
 
-    /** 文字或标签里含任一检索词 */
+    /**
+     * 任务属于这个项目吗？任一检索词满足下面之一：
+     * - 和任务的某个标签完全相同（忽略大小写和 `#`）；
+     * - 标题里写了 `#检索词`（后面不是文字 / 数字，`#篆刻 阳刻` 算，`#篆刻学习` 不算）；
+     * - 检索词至少 [MIN_TERM_LENGTH] 个字，并出现在标题里；英文 / 数字检索词要整词出现（`go` 不匹配 `google`）。
+     * 单个字的检索词（以前建的「读」「书」）只靠前两条，不再按子串匹配，免得吞掉一大批无关任务。
+     */
     fun matches(content: String, taskTags: List<String> = emptyList()): Boolean {
         val text = content.lowercase()
-        val tagSet = taskTags.map { it.lowercase() }.toSet()
-        return terms.any { t -> text.contains(t.lowercase()) || t.lowercase() in tagSet }
+        val tagSet = taskTags.map { it.lowercase().trimStart('#') }.toSet()
+        return terms.any { term -> termMatches(term.lowercase(), text, tagSet) }
+    }
+
+    companion object {
+        /** 项目关键词 / 标签至少这么长，才允许按「出现在标题里」匹配（也是新建时的最短长度） */
+        const val MIN_TERM_LENGTH = 2
+
+        private fun termMatches(term: String, text: String, tagSet: Set<String>): Boolean {
+            if (term in tagSet) return true
+            if (hashMention(text, term)) return true
+            if (term.length < MIN_TERM_LENGTH) return false
+            return if (term.all { it.code < 128 && it.isLetterOrDigit() }) containsWord(text, term) else text.contains(term)
+        }
+
+        private fun hashMention(text: String, term: String): Boolean {
+            var from = 0
+            while (true) {
+                val i = text.indexOf("#$term", from)
+                if (i < 0) return false
+                val end = i + 1 + term.length
+                val next = text.getOrNull(end)
+                if (next == null || !(next.isLetterOrDigit() || next == '_')) return true
+                from = i + 1
+            }
+        }
+
+        /** 英文 / 数字词整词出现：前后不能紧挨着别的英文字母或数字（紧挨汉字没关系） */
+        private fun containsWord(text: String, term: String): Boolean {
+            fun isAsciiWordChar(c: Char?) = c != null && c.code < 128 && c.isLetterOrDigit()
+            var from = 0
+            while (true) {
+                val i = text.indexOf(term, from)
+                if (i < 0) return false
+                if (!isAsciiWordChar(text.getOrNull(i - 1)) && !isAsciiWordChar(text.getOrNull(i + term.length))) return true
+                from = i + 1
+            }
+        }
     }
 }
 

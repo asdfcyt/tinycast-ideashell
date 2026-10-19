@@ -1,10 +1,13 @@
 package com.carpe.ideashell.system
 
 import android.content.Context
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -28,6 +31,31 @@ class TodoRefreshWorker(context: Context, params: WorkerParameters) : CoroutineW
         // 23:20 的今日小结如果被系统推迟了，这里补上（一天只会生成一次）
         runCatching { DaySummaryAuto.runIfDue(container) }
         return Result.success()
+    }
+}
+
+/** 离线时记在本机的待办操作（完成 / 改期 / 删除……）：有网时提交给滴答。没提交完就让系统稍后重试 */
+class TodoOpFlushWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val container = (applicationContext as IdeashellApp).container
+        if (container.credentials.didaToken.isNullOrBlank()) return Result.success()
+        if (!container.todos.flushPending()) return Result.retry()
+        container.todos.refreshNow()
+        container.surfaces.updateAll()
+        return Result.success()
+    }
+}
+
+object TodoOpFlushScheduler {
+    private const val UNIQUE_NAME = "todo-op-flush"
+
+    fun schedule(context: Context) {
+        val request = OneTimeWorkRequestBuilder<TodoOpFlushWorker>()
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+            .build()
+        WorkManager.getInstance(context.applicationContext)
+            .enqueueUniqueWork(UNIQUE_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
     }
 }
 

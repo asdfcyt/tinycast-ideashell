@@ -99,11 +99,15 @@ class ProjectService(
 
     val projects: List<Project> get() = store.current.projects
 
-    /** 新增项目；已存在（忽略大小写）返回 false */
+    /** 关键词 / 标签够不够长（至少 [Project.MIN_TERM_LENGTH] 个字）：太短的词会把大量无关任务算进项目 */
+    fun isValidTerm(term: String): Boolean = term.trim().trimStart('#').length >= Project.MIN_TERM_LENGTH
+
+    /** 新增项目；已存在（忽略大小写）、名称太短返回 false；太短的标签直接忽略 */
     fun add(keyword: String, tags: List<String> = emptyList()): Boolean {
         val k = keyword.trim().trimStart('#')
-        if (k.isEmpty() || projects.any { it.keyword.equals(k, ignoreCase = true) }) return false
-        store.update { it.copy(projects = it.projects + Project(keyword = k, tags = tags.filterNot { t -> t.equals(k, true) })) }
+        if (!isValidTerm(k) || projects.any { it.keyword.equals(k, ignoreCase = true) }) return false
+        val kept = tags.map { it.trim().trimStart('#') }.filter { isValidTerm(it) && !it.equals(k, true) }
+        store.update { it.copy(projects = it.projects + Project(keyword = k, tags = kept)) }
         return true
     }
 
@@ -128,7 +132,7 @@ class ProjectService(
     fun setStatus(keyword: String, status: ProjectStatus) = edit(keyword) { it.copy(status = status) }
     fun setNext(keyword: String, next: String) = edit(keyword) { it.copy(next = next.trim()) }
     fun setTags(keyword: String, tags: List<String>) = edit(keyword) { p ->
-        p.copy(tags = tags.map { it.trim().trimStart('#') }.filter { it.isNotEmpty() && !it.equals(p.keyword, true) }.distinct())
+        p.copy(tags = tags.map { it.trim().trimStart('#') }.filter { isValidTerm(it) && !it.equals(p.keyword, true) }.distinct())
     }
 
     /** 待办属于哪个项目：文字里含项目关键词或其标签（取第一个命中的） */

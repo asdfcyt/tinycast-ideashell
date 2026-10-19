@@ -440,7 +440,8 @@ class VoiceCapsuleService : Service() {
         }
     }
 
-    private class SavedItem(val tag: String, val text: String)
+    /** [undo] 不为空：保存后的小胶囊上带「撤销」（语音完成 / 修改待办时给一次反悔的机会） */
+    private class SavedItem(val tag: String, val text: String, val undo: (suspend () -> Result<String>)? = null)
 
     /** [quiet]：自动保存倒计时结束后的保存，小胶囊原地变成 ✓ 很快收起，不再重复滑出 */
     private suspend fun saveAll(list: List<Draft>, note: String?, quiet: Boolean = false) {
@@ -462,13 +463,20 @@ class VoiceCapsuleService : Service() {
                 } else {
                     val editor = app.container.todoEditor
                     val op = draft.op()
+                    val edit = draft.editOf()
                     val result = when (op) {
                         TodoOp.COMPLETE -> editor.complete(task)
                         TodoOp.DELETE -> editor.delete(task)
-                        else -> editor.apply(task, draft.editOf())
+                        else -> editor.apply(task, edit)
+                    }
+                    // 完成 / 修改可以撤销；删除不可恢复，没有撤销
+                    val undo: (suspend () -> Result<String>)? = when (op) {
+                        TodoOp.COMPLETE -> ({ editor.undoComplete(task) })
+                        TodoOp.DELETE -> null
+                        else -> ({ editor.undoApply(task, edit) })
                     }
                     result
-                        .onSuccess { saved += SavedItem(op.label, it) }
+                        .onSuccess { saved += SavedItem(op.label, it, undo) }
                         .onFailure { failures += "${op.label}失败：" + (it.message ?: "未知错误") }
                 }
                 return@forEach
@@ -506,7 +514,7 @@ class VoiceCapsuleService : Service() {
             return
         }
         val tail = (listOfNotNull(note) + failures + learned).joinToString("；").ifBlank { null }
-        showSaved(saved, tail, quiet && failures.isEmpty() && learned.isEmpty())
+        showSaved(saved, tail, quiet && failures.isEmpty() && learned.isEmpty() && saved.none { it.undo != null })
     }
 
     private fun modeLabel(mode: Mode, saved: Boolean = false): String =
@@ -1189,6 +1197,19 @@ class VoiceCapsuleService : Service() {
                     ellipsize = TextUtils.TruncateAt.END
                 },
             )
+            val undo = item.undo
+            if (undo != null) {
+                box.addView(
+                    textButton("撤销") {
+                        // 点过一次就不再响应；旧的「自动收起」计时作废，由结果提示自己收起
+                        handler.removeCallbacksAndMessages(null)
+                        scope.launch {
+                            val r = undo()
+                            showMessage(r.fold(onSuccess = { it }, onFailure = { "撤销失败：" + (it.message ?: "未知错误") }), error = r.isFailure)
+                        }
+                    }.apply { setTextColor(pal.accentSoft); alpha = 1f },
+                )
+            }
             addSmall(box, if (quiet) 0L else index * 140L, animate = !quiet)
         }
         if (!note.isNullOrBlank() && !quiet) {
@@ -1198,7 +1219,9 @@ class VoiceCapsuleService : Service() {
         }
         recenter()
         col.setOnClickListener { dismissWithSlide() }
-        handler.postDelayed({ dismissWithSlide() }, if (quiet) 1100L else 2800L + items.size * 400L)
+        // 带「撤销」的多停留一会儿，给用户反悔的时间
+        val hasUndo = items.any { it.undo != null }
+        handler.postDelayed({ dismissWithSlide() }, if (hasUndo) 7000L else if (quiet) 1100L else 2800L + items.size * 400L)
     }
 
     private fun showMessage(message: String, error: Boolean, durationMs: Long = if (error) 4000L else 2500L) {

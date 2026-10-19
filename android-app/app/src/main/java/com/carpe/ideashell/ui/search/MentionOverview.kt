@@ -148,7 +148,8 @@ private fun OverviewBody(
             }) { Text("复制简报") }
             if (project != null) {
                 TextButton(onClick = { onOpenProject(project.keyword) }) { Text("打开项目页") }
-            } else {
+            } else if (data.query.trim().trimStart('#').length >= Project.MIN_TERM_LENGTH) {
+                // 太短的词（单个字）会把大量无关任务算进项目，不提供「设为项目」
                 TextButton(onClick = {
                     onMakeProject()
                     Toast.makeText(context, "已设为项目「${data.query}」", Toast.LENGTH_SHORT).show()

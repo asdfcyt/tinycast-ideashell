@@ -176,7 +176,19 @@ fun QuickCaptureScreen(
     LaunchedEffect(viewModel.editNotice) {
         val notice = viewModel.editNotice ?: return@LaunchedEffect
         viewModel.editNotice = null
+        // 有可以撤销的完成 / 修改时，面板上会显示带「撤销」的提示条（下面的 LaunchedEffect 负责到点收起），这里不再弹 Toast
+        if (viewModel.editUndos.isNotEmpty()) return@LaunchedEffect
         android.widget.Toast.makeText(context, notice, android.widget.Toast.LENGTH_LONG).show()
+        if (viewModel.editClose) {
+            viewModel.editClose = false
+            onClose()
+        }
+    }
+    // 撤销的时间窗：提示条停留几秒；没点撤销就收起，该关面板的这时再关
+    LaunchedEffect(viewModel.editUndos) {
+        if (viewModel.editUndos.isEmpty()) return@LaunchedEffect
+        delay(UNDO_WINDOW_MS)
+        viewModel.expireUndos()
         if (viewModel.editClose) {
             viewModel.editClose = false
             onClose()
@@ -223,6 +235,10 @@ fun QuickCaptureScreen(
         ) {
             val sheetShape = RoundedCornerShape(28.dp)
             Column(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) {
+                // 刚用语音完成 / 修改了待办：给几秒反悔的机会
+                if (viewModel.editUndos.isNotEmpty()) {
+                    EditUndoBar(viewModel.editUndos.joinToString("\n") { it.label }, onUndo = viewModel::undoEdits)
+                }
                 // 类型选择浮在面板上方（对标滴答清单的「任务 / 笔记 / 习惯」）；分享进来的内容、未连接、保存完成时不显示
                 if (composing && viewModel.clip == null) {
                     KindSelector(
@@ -233,6 +249,16 @@ fun QuickCaptureScreen(
                         onAppend = viewModel::toggleAppend,
                         glass = blurOk,
                     )
+                    val preset = viewModel.presetKind
+                    if (preset != null && preset == viewModel.override && !viewModel.append) {
+                        val presetLabel = KIND_CHOICES.firstOrNull { it.first == preset }?.second.orEmpty()
+                        Text(
+                            "入口已预设为「$presetLabel」· 点「自动」可改回自动识别",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (blurOk) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier.padding(start = 16.dp, bottom = 8.dp),
+                        )
+                    }
                 }
                 Box(
                     modifier = Modifier
@@ -283,6 +309,36 @@ fun QuickCaptureScreen(
             onSave = viewModel::saveTemplate,
             onDelete = viewModel::deleteTemplate,
         )
+    }
+}
+
+/** 语音完成 / 修改待办后可反悔的时间（毫秒） */
+private const val UNDO_WINDOW_MS = 7_000L
+
+/** 面板上方的提示条：刚做了什么 + 「撤销」 */
+@Composable
+private fun EditUndoBar(text: String, onUndo: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.inverseSurface,
+        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onUndo) {
+                Text("撤销", color = MaterialTheme.colorScheme.inversePrimary)
+            }
+        }
     }
 }
 

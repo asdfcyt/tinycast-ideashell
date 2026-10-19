@@ -129,6 +129,33 @@ class TodoEditor(
     suspend fun complete(task: DidaTask): Result<String> =
         todos.complete(task).map { "完成「${task.title.take(24)}」" }
 
+    /** 撤销刚才的语音「完成」：把任务重新打开 */
+    suspend fun undoComplete(task: DidaTask): Result<String> =
+        todos.undoComplete(task).map { "已撤销完成「${task.title.take(24)}」" }
+
+    /**
+     * 撤销刚才的语音「修改」：把 [edit] 改过的字段改回 [original]（修改之前的任务）里的值。
+     * 原来没有日期的任务，滴答接口不支持「清除日期」，这一项没法改回，会在返回的说明里提一句。
+     */
+    suspend fun undoApply(original: DidaTask, edit: Edit): Result<String> {
+        val notes = mutableListOf<String>()
+        if (edit.date != null || edit.time != null) {
+            val date = original.date
+            if (date == null) {
+                notes += "原来没有日期，日期没法清除"
+            } else {
+                todos.reschedule(original, date, original.time).onFailure { return Result.failure(it) }
+            }
+        }
+        if (!edit.addNote.isNullOrBlank()) {
+            todos.setContent(original, original.content).onFailure { return Result.failure(it) }
+        }
+        if (edit.priority > 0) {
+            todos.setPriority(original, original.priority).onFailure { return Result.failure(it) }
+        }
+        return Result.success("已撤销修改「${original.title.take(24)}」" + if (notes.isEmpty()) "" else "（${notes.joinToString("，")}）")
+    }
+
     /** 删除（滴答里的删除不可恢复，界面上要先让用户确认）；成功返回「删除「开会」」 */
     suspend fun delete(task: DidaTask): Result<String> =
         todos.delete(task).map { "删除「${task.title.take(24)}」" }

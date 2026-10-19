@@ -193,6 +193,8 @@ fun TodoScreen(
 ) {
     val data by viewModel.data.collectAsStateWithLifecycle()
     val connected by viewModel.connected.collectAsStateWithLifecycle()
+    val pendingCount by viewModel.pendingCount.collectAsStateWithLifecycle()
+    val syncNotice by viewModel.syncNotice.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val stats by viewModel.stats.collectAsStateWithLifecycle()
     val delivery by viewModel.delivery.collectAsStateWithLifecycle()
@@ -447,6 +449,10 @@ fun TodoScreen(
                         else -> {
                             data.error?.let { err -> item(key = "stale") { NoticeLine(err) } }
                             overview.warning?.let { w -> item(key = "warn") { NoticeLine(w) } }
+                            if (pendingCount > 0) {
+                                item(key = "pending") { NoticeLine("有 $pendingCount 项修改还没同步到滴答，联网后会自动提交") }
+                            }
+                            syncNotice?.let { n -> item(key = "sync-notice") { NoticeLine(n) } }
                             val openCount = overview.overdue.size + overview.upcoming.size + overview.undated.size
                             // 日期带可以往前翻 PAST_DAYS 天、往后看一周；过去的日子读滴答里那天完成 / 到期的任务
                             val day = viewModel.day?.takeIf { it >= today.minusDays(PAST_DAYS.toLong()) && it <= today.plusDays(6) } ?: today
