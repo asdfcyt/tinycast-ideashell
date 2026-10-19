@@ -1,11 +1,9 @@
 package com.carpe.ideashell.system
 
 import android.accessibilityservice.AccessibilityService
-import android.content.ComponentName
 import android.content.Context
 import android.graphics.Rect
 import android.os.SystemClock
-import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
@@ -17,21 +15,22 @@ import android.view.accessibility.AccessibilityNodeInfo
  * 1. 刚由 [IdeashellBridge.askAi] 转交过一个问题（[arm] 之后 [WINDOW_MS] 内、只点一次）；
  * 2. 前台窗口是闪念贝壳（无障碍配置里只订阅了它的两个包名）。
  * 除此之外不读取、不操作任何内容。
+ *
+ * 现在不再是单独的无障碍服务：并进统一的 [ExcerptService]（设置里只有一个无障碍开关），由它在收到事件时调用 [onEvent]。
  */
-class AiAutoSendService : AccessibilityService() {
+object AiAutoSend {
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+    /** 统一无障碍服务收到事件时调用 */
+    fun onEvent(service: AccessibilityService) {
         val query = pendingQuery ?: return
         if (SystemClock.elapsedRealtime() - armedAt > WINDOW_MS) {
             disarm()
             return
         }
-        val root = rootInActiveWindow ?: return
+        val root = service.rootInActiveWindow ?: return
         if (root.packageName?.toString() !in IDEASHELL_PACKAGES) return
         if (trySend(root, query)) disarm()
     }
-
-    override fun onInterrupt() = Unit
 
     private fun trySend(root: AccessibilityNodeInfo, query: String): Boolean {
         val edit = findEditText(root) ?: return false
@@ -63,28 +62,22 @@ class AiAutoSendService : AccessibilityService() {
         for (i in 0 until node.childCount) node.getChild(i)?.let { collectClickable(it, box, out) }
     }
 
-    companion object {
-        private val IDEASHELL_PACKAGES = setOf("com.roundreddot.ideashell", "com.rrd.ideaShell")
-        private const val WINDOW_MS = 8_000L
+    private val IDEASHELL_PACKAGES = setOf("com.roundreddot.ideashell", "com.rrd.ideaShell")
+    private const val WINDOW_MS = 8_000L
 
-        @Volatile private var pendingQuery: String? = null
-        @Volatile private var armedAt = 0L
+    @Volatile private var pendingQuery: String? = null
+    @Volatile private var armedAt = 0L
 
-        /** 转交问题时调用：接下来 8 秒内，闪念贝壳输入框里出现这段文字就点发送 */
-        fun arm(query: String) {
-            pendingQuery = query.trim().takeIf { it.isNotEmpty() }
-            armedAt = SystemClock.elapsedRealtime()
-        }
-
-        fun disarm() {
-            pendingQuery = null
-        }
-
-        /** 系统设置里是否已打开本服务 */
-        fun isEnabled(context: Context): Boolean {
-            val enabled = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: return false
-            val me = ComponentName(context, AiAutoSendService::class.java)
-            return enabled.split(':').any { ComponentName.unflattenFromString(it) == me }
-        }
+    /** 转交问题时调用：接下来 8 秒内，闪念贝壳输入框里出现这段文字就点发送 */
+    fun arm(query: String) {
+        pendingQuery = query.trim().takeIf { it.isNotEmpty() }
+        armedAt = SystemClock.elapsedRealtime()
     }
+
+    fun disarm() {
+        pendingQuery = null
+    }
+
+    /** 统一无障碍服务（[ExcerptService]）是否已打开 */
+    fun isEnabled(context: Context): Boolean = ExcerptService.isEnabled(context)
 }

@@ -262,7 +262,13 @@ class VoiceInputController(
                     polishError = (e.message ?: "AI 整理失败") + "，已使用原始转写"
                 }
             }
-            onResult(VoiceResult(raw, cleaned, intents, listOfNotNull(heard.note, polishError).joinToString("；").ifBlank { null }))
+            val note = listOfNotNull(heard.note, polishError).joinToString("；").ifBlank { null }
+            // 没有大模型整理时，本地规则听「追加到上一条笔记」
+            val appendText = if (intents.isEmpty()) VoiceIntents.stripAppendCommand(raw) else null
+            onResult(
+                if (appendText != null) VoiceResult(raw, SpeechCleaner.clean(appendText), intents, note, appendToLast = true)
+                else VoiceResult(raw, cleaned, intents, note),
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: AsrException) {

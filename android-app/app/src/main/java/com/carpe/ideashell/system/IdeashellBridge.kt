@@ -53,15 +53,15 @@ object IdeashellBridge {
     fun askAi(context: Context, query: String? = null, preferAutoSend: Boolean = false): Boolean {
         val v = installed(context) ?: return notInstalled(context)
         val q = query?.trim().orEmpty()
-        // 开启了「自动发送」且无障碍服务在运行：转交后由服务点发送键（见 AiAutoSendService）
+        // 开启了「自动发送」且无障碍服务在运行：转交后由服务点发送键（见 AiAutoSend）
         // [preferAutoSend]（语音里说「帮我查一下」）：只要无障碍服务开着就自动发送，不看设置里的开关
-        val autoSend = q.isNotEmpty() && AiAutoSendService.isEnabled(context) &&
+        val autoSend = q.isNotEmpty() && AiAutoSend.isEnabled(context) &&
             (preferAutoSend || (context.applicationContext as? IdeashellApp)?.container?.settings?.state?.value?.aiAutoSend == true)
-        if (autoSend) AiAutoSendService.arm(q)
+        if (autoSend) AiAutoSend.arm(q)
         if (q.isNotEmpty() && start(context, Intent(Intent.ACTION_VIEW, Uri.parse("${v.scheme}://app/askai?query=${Uri.encode(q)}")).setPackage(v.pkg))) {
             return true
         }
-        if (autoSend) AiAutoSendService.disarm()
+        if (autoSend) AiAutoSend.disarm()
         return shortcut(context, Action.ASK_AI)
     }
 

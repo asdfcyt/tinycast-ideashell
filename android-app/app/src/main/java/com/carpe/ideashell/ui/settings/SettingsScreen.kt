@@ -83,10 +83,10 @@ import com.carpe.ideashell.data.asr.LocalAsrState
 import com.carpe.ideashell.BuildConfig
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.R
-import com.carpe.ideashell.system.AiAutoSendService
 import com.carpe.ideashell.system.ExcerptService
 import com.carpe.ideashell.data.settings.ThemeMode
 import com.carpe.ideashell.data.settings.VoiceEngine
+import com.carpe.ideashell.data.settings.VoiceKey
 import com.carpe.ideashell.ui.components.AppTextField
 import com.carpe.ideashell.ui.components.CircleIconButton
 import com.carpe.ideashell.ui.components.InputSheet
@@ -124,6 +124,8 @@ private sealed interface Dialog {
     data object Llm : Dialog
     data object Lexicon : Dialog
     data object VoiceEngine : Dialog
+    data object VoiceKey : Dialog
+    data object VoiceSilence : Dialog
     data object RevisitLimit : Dialog
     data object RevisitRetention : Dialog
     data object ClozeRange : Dialog
@@ -146,13 +148,11 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
 
     var dialog by remember { mutableStateOf<Dialog?>(null) }
     var batteryIgnored by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
-    var autoSendServiceOn by remember { mutableStateOf(AiAutoSendService.isEnabled(context)) }
     var excerptServiceOn by remember { mutableStateOf(ExcerptService.isEnabled(context)) }
     var overlayOn by remember { mutableStateOf(android.provider.Settings.canDrawOverlays(context)) }
     LifecycleResumeEffect(Unit) {
         overlayOn = android.provider.Settings.canDrawOverlays(context)
         batteryIgnored = isIgnoringBatteryOptimizations(context)
-        autoSendServiceOn = AiAutoSendService.isEnabled(context)
         excerptServiceOn = ExcerptService.isEnabled(context)
         onPauseOrDispose { }
     }
@@ -589,15 +589,15 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                         title = "问 AI 自动发送",
                         summary = when {
                             !settings.aiAutoSend -> "关闭 · 从拾忆转交问题到闪念贝壳 AI 时，只把问题填进输入框，需要自己点发送"
-                            autoSendServiceOn -> "已开启 · 转交问题后自动点发送键。仅在转交后几秒内、且前台是闪念贝壳时动作"
-                            else -> "还差一步 · 请在「无障碍」里打开「拾忆 · 问 AI 自动发送」（点此前往）"
+                            excerptServiceOn -> "已开启 · 转交问题后自动点发送键。仅在转交后几秒内、且前台是闪念贝壳时动作"
+                            else -> "还差一步 · 请在「无障碍」里打开「拾忆」（点此前往，一个开关管摘录、自动发送、音量键说话）"
                         },
                         onClick = {
-                            if (settings.aiAutoSend && autoSendServiceOn) {
+                            if (settings.aiAutoSend && excerptServiceOn) {
                                 container.settings.setAiAutoSend(false)
                             } else {
                                 container.settings.setAiAutoSend(true)
-                                if (!autoSendServiceOn) openAccessibilitySettings(context)
+                                if (!excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
                             }
                         },
                         trailing = {
@@ -605,7 +605,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                                 checked = settings.aiAutoSend,
                                 onCheckedChange = {
                                     container.settings.setAiAutoSend(it)
-                                    if (it && !autoSendServiceOn) openAccessibilitySettings(context)
+                                    if (it && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
                                 },
                             )
                         },
@@ -616,7 +616,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                         summary = when {
                             !settings.excerptMode -> "关闭 · 开启后屏幕边缘出现闪电小胶囊，选中文字后点它，就存成摘录笔记。也可从下拉磁贴「摘录」、长按桌面图标「摘录模式」开启"
                             excerptServiceOn -> "摘录中 · 在任何 App 选中文字，点屏幕边缘的闪电胶囊。只读取你选中的文字"
-                            else -> "还差一步 · 请在「无障碍」里打开「拾忆 · 快速摘录」（点此前往）"
+                            else -> "还差一步 · 请在「无障碍」里打开「拾忆」（点此前往，一个开关管摘录、自动发送、音量键说话）"
                         },
                         onClick = {
                             if (settings.excerptMode && excerptServiceOn) {
@@ -769,6 +769,37 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                                 }
                             },
                         )
+                        SettingsItem(
+                            icon = Icons.Filled.Refresh,
+                            title = "说完自动停止",
+                            summary = if (settings.voiceAutoStop) "已开启 · 说完停顿 ${"%.1f".format(settings.voiceSilenceMs / 1000f)} 秒就自动结束并开始处理；一直没人说话约 6 秒后放弃"
+                            else "已关闭 · 需要手动点胶囊上的停止键",
+                            onClick = { container.settings.setVoiceAutoStop(!settings.voiceAutoStop) },
+                            trailing = {
+                                Switch(checked = settings.voiceAutoStop, onCheckedChange = { container.settings.setVoiceAutoStop(it) })
+                            },
+                        )
+                        if (settings.voiceAutoStop) {
+                            SettingsItem(
+                                icon = Icons.Filled.Info,
+                                title = "停顿多久算说完",
+                                summary = "${"%.1f".format(settings.voiceSilenceMs / 1000f)} 秒 · 说话慢、爱停顿就调长一点",
+                                onClick = { dialog = Dialog.VoiceSilence },
+                            )
+                        }
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "音量键按住说话",
+                            summary = when {
+                                settings.voiceKey == VoiceKey.OFF -> "关闭 · 选一个音量键，长按开始录音、松手结束（不用点胶囊）"
+                                !excerptServiceOn -> "${settings.voiceKey.label} · 还没开启无障碍里的「拾忆」，点一下去开启"
+                                else -> "${settings.voiceKey.label} · 长按录音，松手结束；轻按照常调音量"
+                            },
+                            onClick = {
+                                if (settings.voiceKey != VoiceKey.OFF && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
+                                else dialog = Dialog.VoiceKey
+                            },
+                        )
                         // 识别方式：云端 / 本地 SenseVoice / 自动
                         SettingsItem(
                             icon = Icons.Filled.Refresh,
@@ -837,7 +868,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                         SettingsItem(
                             icon = Icons.Filled.Send,
                             title = "松手直接保存",
-                            summary = if (settings.voiceAutoSend) "识别完立刻保存，不再确认；识别结果可在笔记里修改" else "识别完先放进输入框，确认后再保存",
+                            summary = if (settings.voiceAutoSend) "识别完不弹确认卡片，只显示一条小提示，几秒后自动保存；点它可以改字、放弃" else "识别完先放进输入框 / 弹出确认卡片，确认后再保存",
                             onClick = { container.settings.setVoiceAutoSend(!settings.voiceAutoSend) },
                             trailing = {
                                 Switch(checked = settings.voiceAutoSend, onCheckedChange = { container.settings.setVoiceAutoSend(it) })
@@ -924,6 +955,27 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                         else -> Unit
                     }
                 }
+            },
+            onDismiss = { dialog = null },
+        )
+
+        Dialog.VoiceSilence -> ChoiceDialog(
+            title = "停顿多久算说完",
+            options = listOf(1000, 1500, 2000, 3000),
+            current = settings.voiceSilenceMs,
+            label = { "${"%.1f".format(it / 1000f)} 秒" + if (it == 1500) "（默认）" else "" },
+            onSelect = { container.settings.setVoiceSilenceMs(it) },
+            onDismiss = { dialog = null },
+        )
+
+        Dialog.VoiceKey -> ChoiceDialog(
+            title = "音量键按住说话",
+            options = VoiceKey.entries,
+            current = settings.voiceKey,
+            label = { it.label },
+            onSelect = { key ->
+                container.settings.setVoiceKey(key)
+                if (key != VoiceKey.OFF && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
             },
             onDismiss = { dialog = null },
         )
@@ -1559,9 +1611,3 @@ private fun autoBackupSummary(connected: Boolean, enabled: Boolean, lastAt: Long
     else -> "已开启 · 每 7 天一次，马上会先备份一次"
 }
 
-private fun openAccessibilitySettings(context: android.content.Context) {
-    runCatching {
-        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
-    Toast.makeText(context, "在列表里找到「拾忆 · 问 AI 自动发送」并打开", Toast.LENGTH_LONG).show()
-}

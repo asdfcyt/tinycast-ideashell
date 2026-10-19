@@ -11,8 +11,6 @@
     <string name="shortcut_voice_note_long">语音记一条</string>
     <string name="shortcut_todo_short">记待办</string>
     <string name="shortcut_todo_long">快速记待办</string>
-    <string name="ai_auto_send_label">拾忆 · 问 AI 自动发送</string>
-    <string name="ai_auto_send_description">从拾忆转交问题到闪念贝壳 AI 后，自动点一下发送键。只在转交后的几秒内、且前台是闪念贝壳时动作，不读取其他内容。</string>
     <string name="shortcut_voice_short">语音记</string>
     <string name="shortcut_voice_long">用闪念贝壳录音</string>
     <string name="shortcut_ai_short">问 AI</string>
@@ -22,8 +20,8 @@
     <string name="tile_focus_label">专注</string>
     <string name="tile_voice_label">语音记一条</string>
     <string name="tile_excerpt_label">摘录</string>
-    <string name="excerpt_label">拾忆 · 快速摘录</string>
-    <string name="excerpt_description">开启「摘录模式」后，屏幕边缘会有一个小胶囊。选中文字后点它，选中的文字就存进拾忆。只读取你选中的那段文字，从不后台读取其他内容，也不会操作屏幕（微信、小红书等会替你点一下菜单里的「复制」）。</string>
+    <string name="excerpt_label">拾忆</string>
+    <string name="excerpt_description">拾忆只有这一个无障碍开关，用于三件事：①「摘录模式」下屏幕边缘的小胶囊，选中文字后点它就存进拾忆，只读取你选中的那段文字（微信、小红书等会替你点一下菜单里的「复制」）；②从拾忆转交问题到闪念贝壳 AI 后，自动点一下发送键，只在转交后的几秒内、且前台是闪念贝壳时动作；③在设置里选定音量键后，长按这个键录音、松手结束，只监听你选的那个音量键。除此之外从不后台读取屏幕内容。</string>
     <string name="shortcut_excerpt_short">摘录模式</string>
     <string name="shortcut_excerpt_long">摘录模式（开启 / 关闭摘录胶囊）</string>
     <string name="widget_title">待办</string>

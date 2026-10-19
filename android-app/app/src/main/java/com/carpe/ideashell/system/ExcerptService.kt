@@ -282,8 +282,15 @@ class ExcerptService : AccessibilityService() {
         }
     }
 
+    /** 音量键按住说话（见 [VoiceKeyHandler]） */
+    private val voiceKeys by lazy { VoiceKeyHandler(this) }
+
+    override fun onKeyEvent(event: android.view.KeyEvent): Boolean = voiceKeys.onKeyEvent(event)
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
+        // 问 AI 自动发送：只在刚转交问题后的几秒内动作
+        AiAutoSend.onEvent(this)
         if (!container.settings.current.excerptMode) return
         // 摘录抽屉开着（正在打字）：键盘每按一下都会发窗口事件，这里再去遍历所有窗口会把主线程占住，输入就卡；抽屉开着时什么都不做
         if (sheetOpen) return
@@ -817,7 +824,7 @@ class ExcerptService : AccessibilityService() {
             runCatching {
                 context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
-            Toast.makeText(context, "在列表里找到「拾忆 · 快速摘录」并打开", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "在列表里找到「拾忆」并打开（摘录、问 AI 自动发送、音量键说话共用这一个开关）", Toast.LENGTH_LONG).show()
         }
 
         /** 开始 / 结束快速摘录模式（设置、磁贴、桌面快捷方式共用）；返回切换后是否开启 */

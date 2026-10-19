@@ -186,7 +186,8 @@ fun QuickCaptureScreen(
 
     // 玻璃：面半透明 + 整个窗口背后磨砂；系统不允许跨窗口模糊时保持实心
     val blurOk = rememberCrossWindowBlur()
-    if (blurOk && visible) com.carpe.ideashell.ui.glass.SheetBlurBehind()
+    // 磨砂半径比其他抽屉小：能看清背后的桌面，只是柔化
+    if (blurOk && visible) com.carpe.ideashell.ui.glass.SheetBlurBehind(restPx = 8, peakPx = 14)
     Box(
         modifier = Modifier
             .fillMaxSize()

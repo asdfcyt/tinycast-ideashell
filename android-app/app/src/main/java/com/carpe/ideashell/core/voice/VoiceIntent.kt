@@ -29,6 +29,8 @@ data class VoiceIntent(
     val priority: Int,
     /** 这是一句要问闪念贝壳 AI 的话（「帮我查一下…」）：[content] 是整理好的问题，不存成记录 */
     val ask: Boolean = false,
+    /** 用户说了「追加到上一条笔记」：[content] 是要追加的内容，保存时接到最近一次快记的笔记后面（类型固定为笔记） */
+    val append: Boolean = false,
 )
 
 /** 一次语音输入的完整结果 */
@@ -41,6 +43,8 @@ data class VoiceResult(
     val intents: List<VoiceIntent>,
     /** 大模型整理失败的原因（给用户一句提示）；没失败为 null */
     val polishError: String? = null,
+    /** 没经过大模型、但本地规则听出了「追加到上一条笔记」：[cleaned] 已经去掉了这句口令 */
+    val appendToLast: Boolean = false,
 )
 
 object VoiceIntents {
@@ -78,6 +82,7 @@ object VoiceIntents {
   - note（笔记）：只有用户明确说了「记成笔记 / 记个笔记 / 做个笔记 / 笔记：/ 存为笔记 / 摘录」之类的话才用。没有这类明确说法时，绝对不要用 note，哪怕内容像知识、想法、摘抄也选 daily。这句口令本身不要写进正文。
   - daily（日记）：除上面三种以外的一切，也是默认选项——今天发生的事、心情、感想、流水账、已经做完的事、随口的一个想法、没头没尾的一句话。用户说了「记个日记 / 写进日记」也是 daily。
   拿不准时选 daily。
+- append：true / false，默认 false。用户说了「追加到上一条笔记 / 上个笔记 / 上一篇 / 刚才那条」「接着上一条写」「补充到上一条」这类话，就是想把这段话接到最近一条笔记后面：append 填 true，type 填 note，content 只写要追加的内容（口令本身不要写进去）。没说这类话一律 false。append 和 ask 不会同时出现。
 - content：整理后的正文。去掉「嗯、呃、那个、就是」这类语气词和重复；自我纠正取最后说的（「明天，不对，后天」→ 后天）；修正明显的同音错字；加合适的标点。保留原意和人称，不要扩写、不要总结、不要回答问题（ask 除外：ask 只整理问题本身，不要自己回答）。
 - 待办的任务逻辑（type 为 todo 时）：
   - content 是一句简短的任务名，动词开头（「给张三回电话」「交周报」），去掉日期、时间、重复周期、「提醒我」这些说法（它们放进 date / time / repeat）。
@@ -103,11 +108,33 @@ object VoiceIntents {
 输出：{"items":[{"type":"note","content":"复利就是利滚利，时间越长差距越大。","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
 输入：帮我查一下格雷厄姆的安全边际是什么意思
 输出：{"items":[{"type":"ask","content":"格雷厄姆说的「安全边际」是什么意思？","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
+输入：追加到上一条笔记，复利的关键是时间和不中断
+输出：{"items":[{"type":"note","append":true,"content":"复利的关键是时间和不中断。","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
 输入：明天上午九点开周会，然后下午三点去取快递，还有每周五要交周报
 输出：{"items":[{"type":"todo","content":"开周会","date":"2026-10-19","time":"09:00","repeat":null,"tags":[],"priority":0},{"type":"todo","content":"去取快递","date":"2026-10-19","time":"15:00","repeat":null,"tags":[],"priority":0},{"type":"todo","content":"交周报","date":"2026-10-23","time":null,"repeat":"每周五","tags":[],"priority":0}]}
 输入：周五前把报告交了，另外帮我查一下报告模板
 输出：{"items":[{"type":"todo","content":"交报告","date":"2026-10-23","time":null,"repeat":null,"tags":[],"priority":0},{"type":"ask","content":"有哪些常用的报告模板？","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
         """.trimIndent()
+    }
+
+    private val APPEND_HEAD = Regex(
+        "^[，,。\\s]*(?:请|麻烦)?(?:帮我)?(?:把(?:下面|这句话|这段话|这个|以下)?)?(?:追加|补充|接着写|续写|加)(?:到|在|进|入)(?:上一条|上一个|上个|上一篇|最近一条|最近的|刚才那条|刚才那个|刚才的|刚刚那条)(?:笔记|记录|日记)?(?:里面|里|中|后面)?[，,：:。\\s]*",
+    )
+    private val APPEND_TAIL = Regex(
+        "[，,。\\s]*(?:请|麻烦)?(?:帮我)?(?:追加|补充|续写)(?:到|在|进|入)(?:上一条|上一个|上个|上一篇|最近一条|最近的|刚才那条|刚才那个|刚才的|刚刚那条)(?:笔记|记录|日记)?(?:里面|里|中|后面)?[。\\s]*$",
+    )
+
+    /**
+     * 本地规则：转写开头 / 结尾有「追加到上一条笔记」这类口令时，返回去掉口令后的正文；没有口令返回 null。
+     * 没开大模型时用它；开了大模型由模型通过 append 字段判断。
+     */
+    fun stripAppendCommand(raw: String): String? {
+        val head = APPEND_HEAD.find(raw)
+        val rest = when {
+            head != null -> raw.substring(head.range.last + 1)
+            else -> APPEND_TAIL.find(raw)?.let { raw.substring(0, it.range.first) } ?: return null
+        }.trim()
+        return rest.takeIf { it.isNotEmpty() }
     }
 
     /** 用户消息：就是转写原文 */
@@ -165,7 +192,8 @@ object VoiceIntents {
             in 1..2 -> 1
             else -> 0
         }
-        return VoiceIntent(type, content, date, time, repeat, tags, if (todo) priority else 0, ask)
+        val append = !ask && (obj["append"] as? JsonPrimitive)?.contentOrNull?.equals("true", ignoreCase = true) == true
+        return VoiceIntent(if (append) CaptureKind.NOTE else type, content, if (append) null else date, if (append) null else time, if (append) null else repeat, tags, if (todo && !append) priority else 0, ask, append)
     }
 
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull

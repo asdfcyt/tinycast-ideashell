@@ -63,6 +63,14 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** 语音里说了「追加到上一条笔记」：直接打开追加开关（同点追加按钮） */
+    private fun enableAppend() {
+        if (append) return
+        append = true
+        override = null
+        viewModelScope.launch { appendTarget = container.captures.appendTarget() }
+    }
+
     /** 手动选了类型：和追加冲突，追加自动关掉 */
     fun selectKind(kind: CaptureKind?) {
         append = false
@@ -154,13 +162,16 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         val intent = intents.firstOrNull()
         if (intent == null) {
             text = if (hadText) text.trimEnd() + "\n" + result.cleaned else result.cleaned
+            if (result.appendToLast) enableAppend()
             // 没经过大模型：只留原话和「纠错」
             voiceUndo = VoiceUndo(result.raw, undo.prevText, undo.prevOverride, undo.prevSchedule, polished = false)
         } else {
             // 多件事但没法直接拆开存：并成几行放进输入框
             val body = intents.joinToString("\n") { intentBody(it) }
             text = if (hadText) text.trimEnd() + "\n" + body else body
-            if (!hadText) {
+            if (intent.append) {
+                enableAppend()
+            } else if (!hadText) {
                 append = false
                 override = intent.type
             }
@@ -189,7 +200,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
             }
             items.forEach { intent ->
                 val itemSchedule = if (intent.type == CaptureKind.TODO) intentSchedule(intent) else null
-                val receipt = container.captures.submitText(intentBody(intent), intent.type, origin, schedule = itemSchedule)
+                val receipt = container.captures.submitText(intentBody(intent), intent.type, origin, schedule = itemSchedule, appendToLast = intent.append)
                 if (receipt != null) {
                     last = receipt
                     saved++

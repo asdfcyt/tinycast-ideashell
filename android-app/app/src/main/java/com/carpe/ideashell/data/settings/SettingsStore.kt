@@ -8,6 +8,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 
+/** 用哪个音量键「按住说话」（需要开启无障碍服务「拾忆 · 音量键说话」） */
+enum class VoiceKey(val label: String, val keyCode: Int) {
+    OFF("关闭", -1),
+    VOLUME_DOWN("音量下键", android.view.KeyEvent.KEYCODE_VOLUME_DOWN),
+    VOLUME_UP("音量上键", android.view.KeyEvent.KEYCODE_VOLUME_UP),
+}
+
 /** 语音识别用哪个引擎 */
 enum class VoiceEngine(val label: String, val summary: String) {
     AUTO("自动", "云端优先；没有网络、云端出错时自动改用本地模型（需要先下载模型）"),
@@ -70,6 +77,13 @@ data class AppSettings(
     val voicePolish: Boolean = true,
     /** 松手识别完直接保存，不再等你确认（语音误识别比打字风险高，默认关） */
     val voiceAutoSend: Boolean = false,
+    /** 悬浮胶囊录音：说完停顿一会儿就自动结束并开始处理（点磁贴 / 快捷方式 / AI 按钮触发时不用再手动点停止） */
+    val voiceAutoStop: Boolean = true,
+    /** 自动结束要停顿多久（毫秒） */
+    val voiceSilenceMs: Int = 1500,
+    /** 悬浮胶囊识别后先弹出确认卡片（可修改 / 放弃 / 重新说）；关闭则直接保存 */
+    /** 音量键按住说话 */
+    val voiceKey: VoiceKey = VoiceKey.OFF,
     /** 语音识别引擎：云端 / 本地 SenseVoice / 自动（云端优先，失败时用本地） */
     val voiceEngine: VoiceEngine = VoiceEngine.AUTO,
     /** 大模型接口（OpenAI 兼容）：地址和模型名；Key 在 CredentialStore 里 */
@@ -159,6 +173,13 @@ class SettingsStore(context: Context) {
 
     fun setVoiceAutoSend(enabled: Boolean) = update { it.copy(voiceAutoSend = enabled) }
 
+    fun setVoiceAutoStop(enabled: Boolean) = update { it.copy(voiceAutoStop = enabled) }
+
+    fun setVoiceSilenceMs(ms: Int) = update { it.copy(voiceSilenceMs = ms) }
+
+
+    fun setVoiceKey(key: VoiceKey) = update { it.copy(voiceKey = key) }
+
     fun setVoiceEngine(engine: VoiceEngine) = update { it.copy(voiceEngine = engine) }
 
     fun setLlm(baseUrl: String, model: String) = update {
@@ -198,6 +219,9 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_VOICE_POLISH, next.voicePolish)
             .putBoolean(KEY_VOICE_AUTO_SEND, next.voiceAutoSend)
             .putString(KEY_VOICE_ENGINE, next.voiceEngine.name)
+            .putBoolean(KEY_VOICE_AUTO_STOP, next.voiceAutoStop)
+            .putInt(KEY_VOICE_SILENCE_MS, next.voiceSilenceMs)
+            .putString(KEY_VOICE_KEY, next.voiceKey.name)
             .putString(KEY_LLM_BASE_URL, next.llmBaseUrl)
             .putString(KEY_LLM_MODEL, next.llmModel)
             .apply()
@@ -232,6 +256,10 @@ class SettingsStore(context: Context) {
         voiceEnabled = prefs.getBoolean(KEY_VOICE_ENABLED, true),
         voicePolish = prefs.getBoolean(KEY_VOICE_POLISH, true),
         voiceAutoSend = prefs.getBoolean(KEY_VOICE_AUTO_SEND, false),
+        voiceAutoStop = prefs.getBoolean(KEY_VOICE_AUTO_STOP, true),
+        voiceSilenceMs = prefs.getInt(KEY_VOICE_SILENCE_MS, 1500),
+        voiceKey = runCatching { VoiceKey.valueOf(prefs.getString(KEY_VOICE_KEY, null).orEmpty()) }
+            .getOrDefault(VoiceKey.OFF),
         voiceEngine = runCatching { VoiceEngine.valueOf(prefs.getString(KEY_VOICE_ENGINE, null).orEmpty()) }
             .getOrDefault(VoiceEngine.AUTO),
         llmBaseUrl = prefs.getString(KEY_LLM_BASE_URL, null)?.ifBlank { null } ?: AppSettings.DEFAULT_LLM_BASE_URL,
@@ -335,6 +363,9 @@ class SettingsStore(context: Context) {
         const val KEY_VOICE_POLISH = "voice_polish"
         const val KEY_VOICE_AUTO_SEND = "voice_auto_send"
         const val KEY_VOICE_ENGINE = "voice_engine"
+        const val KEY_VOICE_AUTO_STOP = "voice_auto_stop"
+        const val KEY_VOICE_SILENCE_MS = "voice_silence_ms"
+        const val KEY_VOICE_KEY = "voice_key"
         const val KEY_LLM_BASE_URL = "llm_base_url"
         const val KEY_LLM_MODEL = "llm_model"
         const val KEY_AUTO_CLOUD_BACKUP = "auto_cloud_backup"

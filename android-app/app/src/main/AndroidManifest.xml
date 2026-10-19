@@ -131,21 +131,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 无障碍服务：转交问题到闪念贝壳 AI 后，替用户点一下发送键（设置里开启） -->
-        <service
-            android:name=".system.AiAutoSendService"
-            android:exported="false"
-            android:label="@string/ai_auto_send_label"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/ai_auto_send_service" />
-        </service>
-
-        <!-- 无障碍服务：快速摘录模式下，悬浮气泡 + 读取选中的文字（设置 / 磁贴 / 桌面快捷方式开启） -->
+        <!-- 统一的无障碍服务（只有这一个开关）：摘录模式的悬浮气泡 + 读取选中的文字、问 AI 后自动点发送、音量键按住说话 -->
         <service
             android:name=".system.ExcerptService"
             android:exported="false"
