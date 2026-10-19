@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.carpe.ideashell.data.dida.calendarEventKey
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -161,4 +162,6 @@ class WorkspaceStore(private val file: File, private val scope: CoroutineScope) 
 
 fun noteUrl(noteId: String): String = "https://ideashell.site/boards/$noteId"
 
-fun taskKeyOf(taskId: String): String = "dida:$taskId"
+fun taskKeyOf(taskId: String): String =
+    // 日历事件：重复事件的每一次共用同一篇任务笔记
+    if (taskId.startsWith("cal:")) calendarEventKey(taskId) else "dida:$taskId"

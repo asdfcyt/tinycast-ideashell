@@ -193,6 +193,7 @@ fun TodoScreen(
 ) {
     val data by viewModel.data.collectAsStateWithLifecycle()
     val connected by viewModel.connected.collectAsStateWithLifecycle()
+    val didaConnected by viewModel.didaOn.collectAsStateWithLifecycle()
     val pendingCount by viewModel.pendingCount.collectAsStateWithLifecycle()
     val syncNotice by viewModel.syncNotice.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
@@ -220,7 +221,7 @@ fun TodoScreen(
     // 任务页下方的项目卡，以及完整的项目 / 习惯页，要用到这两份数据
     LaunchedEffect(view, connected) {
         if (view == TodoView.PROJECTS || view == TodoView.LIST) viewModel.loadStats()
-        if (view == TodoView.HABITS && connected && !viewModel.habitUi.loaded) viewModel.loadHabits()
+        if (view == TodoView.HABITS && didaConnected && !viewModel.habitUi.loaded) viewModel.loadHabits()
     }
 
     // 从搜索页点进来的任务：切到列表并直接打开详情
@@ -397,7 +398,7 @@ fun TodoScreen(
                 isRefreshing = (data.loading && overview != null) || (view == TodoView.HABITS && viewModel.habitUi.loading && viewModel.habitUi.habits.isNotEmpty()),
                 onRefresh = {
                     viewModel.refresh(force = true)
-                    if (view == TodoView.HABITS && connected) viewModel.loadHabits(force = true)
+                    if (view == TodoView.HABITS && didaConnected) viewModel.loadHabits(force = true)
                     if (view == TodoView.PROJECTS) viewModel.loadStats(force = true)
                 },
                 modifier = Modifier.fillMaxSize(),
@@ -421,7 +422,15 @@ fun TodoScreen(
                         !connected -> item(key = "connect") {
                             EmptyNote(
                                 title = "先连接滴答清单",
-                                text = "待办来自滴答清单。填入滴答 API 口令后，这里会显示逾期、今天和未来 7 天的任务，点一下就能完成。",
+                                text = "待办来自滴答清单。填入滴答 API 口令后，这里会显示逾期、今天和未来 7 天的任务，点一下就能完成。也可以在「设置 → 日历同步」里把系统日历的事件读进来。",
+                                action = { GlassButton(onClick = onOpenConnection) { Text("去连接") } },
+                            )
+                        }
+
+                        view == TodoView.HABITS && !didaConnected -> item(key = "habit-connect") {
+                            EmptyNote(
+                                title = "习惯来自滴答清单",
+                                text = "连接滴答清单后，这里可以查看并打卡今天的习惯。",
                                 action = { GlassButton(onClick = onOpenConnection) { Text("去连接") } },
                             )
                         }
@@ -806,8 +815,8 @@ internal fun TaskRow(
     val whenText = when {
         !showWhen -> null
         task.date == null -> null
-        tone == Tone.OVERDUE -> LocalDate.parse(task.date).let { "${it.monthValue}月${it.dayOfMonth}日" } + (task.time?.let { " $it" } ?: "")
-        else -> task.time ?: "全天"
+        tone == Tone.OVERDUE -> LocalDate.parse(task.date).let { "${it.monthValue}月${it.dayOfMonth}日" } + (timeTextOf(task)?.let { " $it" } ?: "")
+        else -> timeTextOf(task) ?: "全天"
     }
     val support = buildAnnotatedString {
         var first = true
@@ -826,6 +835,10 @@ internal fun TaskRow(
         if (project.isNotEmpty()) {
             sep()
             append(project)
+        }
+        task.location?.let { loc ->
+            sep()
+            append(loc)
         }
         task.tags.take(2).forEach { t ->
             sep()

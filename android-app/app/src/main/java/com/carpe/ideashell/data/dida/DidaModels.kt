@@ -33,7 +33,23 @@ data class DidaTask(
     val createdAt: Long? = null,
     /** 重复规则（RRULE，例如 `RRULE:FREQ=DAILY;INTERVAL=1`）；不重复为 null */
     val repeatFlag: String? = null,
-)
+    /** 来源：null = 滴答清单；[SOURCE_CALENDAR] = 系统日历事件（只读导入，id 形如 `cal:事件id@日期`） */
+    val source: String? = null,
+    /** 日历事件的结束时间（HH:mm，同一天内）；没有 / 全天事件为 null */
+    val endTime: String? = null,
+    /** 日历事件的地点 */
+    val location: String? = null,
+) {
+    val isCalendar: Boolean get() = source == SOURCE_CALENDAR
+
+    /** 系统待办（荣耀日历 App 里的待办，id 形如 `cal:t<待办id>[@日期]`）；其余日历来源的是日历事件 */
+    val isSystemTodo: Boolean get() = isCalendar && id.startsWith("cal:t")
+}
+
+const val SOURCE_CALENDAR = "calendar"
+
+/** 日历事件任务 id 里的日历事件部分：`cal:123@2026-10-19` → `cal:123`（重复事件的每一次共用同一个事件键） */
+fun calendarEventKey(taskId: String): String = taskId.substringBefore('@')
 
 @Serializable
 data class DidaOverview(

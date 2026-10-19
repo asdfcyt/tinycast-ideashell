@@ -57,8 +57,13 @@ internal fun toneOf(task: DidaTask, today: LocalDate): Tone {
 }
 
 internal fun badgesOf(task: DidaTask, workspace: Workspace): List<String> = buildList {
+    if (task.isSystemTodo) add("系统待办") else if (task.isCalendar) add("日历")
     if (workspace.taskNotes.containsKey(taskKeyOf(task.id))) add("任务笔记")
 }
+
+/** 任务的时间文字：日历事件显示成「09:00–10:30」，滴答任务就是「09:00」；全天为 null */
+internal fun timeTextOf(task: DidaTask): String? =
+    task.time?.let { t -> task.endTime?.let { "$t–$it" } ?: t }
 
 internal fun listNameOf(overview: DidaOverview, projectId: String): String =
     overview.projects[projectId] ?: if (projectId.startsWith("inbox", ignoreCase = true)) "收集箱" else ""

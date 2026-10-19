@@ -14,6 +14,7 @@ import com.carpe.ideashell.AppContainer
 import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.core.notes.NoteSections
 import com.carpe.ideashell.core.parse.TodoMeta
+import com.carpe.ideashell.data.calendar.CalendarState
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.dida.Habit
 import com.carpe.ideashell.data.dida.TodoData
@@ -27,7 +28,11 @@ import com.carpe.ideashell.data.project.Workspace
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import java.time.LocalDate
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
@@ -76,8 +81,23 @@ data class HabitUi(
 )
 
 class TodoViewModel(private val container: AppContainer) : ViewModel() {
-    val data: StateFlow<TodoData> = container.todos.state
-    val connected: StateFlow<Boolean> = container.credentials.didaConnected
+    /** 滴答是否已连接（滴答自己的读取 / 提交只看它） */
+    val didaOn: StateFlow<Boolean> = container.credentials.didaConnected
+
+    /** 系统日历同步的状态 */
+    val calendar: StateFlow<CalendarState> = container.calendar.state
+
+    /** 待办数据 = 滴答 + 系统日历事件（界面层合并；小部件 / 通知 / 语音修改用的仍是纯滴答数据） */
+    val data: StateFlow<TodoData> = combine(container.todos.state, container.calendar.state, didaOn) { td, cal, on ->
+        mergeCalendar(td, cal, on, LocalDate.now())
+    }.stateIn(
+        viewModelScope, SharingStarted.Eagerly,
+        mergeCalendar(container.todos.state.value, container.calendar.state.value, didaOn.value, LocalDate.now()),
+    )
+
+    /** 有待办来源可看：连了滴答，或者开了日历同步 */
+    val connected: StateFlow<Boolean> = combine(didaOn, container.calendar.state) { on, cal -> on || cal.active }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, didaOn.value || container.calendar.state.value.active)
 
     /** 离线时记下、还没提交到滴答的操作条数，和提交被拒绝时的说明 */
     val pendingCount: StateFlow<Int> = container.todos.pendingCount
@@ -106,7 +126,11 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
         if (!force && (cur?.loading == true || cur?.tasks != null)) return
         past[day] = PastDay(cur?.tasks, loading = true)
         viewModelScope.launch {
-            runCatching { container.todos.dayTasks(day) }
+            runCatching {
+                val events = container.calendar.eventsOn(day)
+                val tasks = if (didaOn.value) container.todos.dayTasks(day) else emptyList()
+                tasks + events
+            }
                 .onSuccess { past[day] = PastDay(it) }
                 .onFailure { past[day] = PastDay(cur?.tasks, error = it.message ?: "网络异常") }
         }
@@ -128,7 +152,12 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
     var calMonth by mutableStateOf(java.time.YearMonth.now())
 
     /** 日历读到的任务（含概览之外更远的日期、已完成的），完成 / 改期时会同步更新 */
-    val ranged: StateFlow<Map<String, DidaTask>> = container.todos.ranged
+    val ranged: StateFlow<Map<String, DidaTask>> = combine(container.todos.ranged, container.calendar.state) { r, cal ->
+        mergeCalendarRanged(r, cal)
+    }.stateIn(
+        viewModelScope, SharingStarted.Eagerly,
+        mergeCalendarRanged(container.todos.ranged.value, container.calendar.state.value),
+    )
 
     var calLoading by mutableStateOf(false)
         private set
@@ -173,6 +202,9 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
         val lo = from.toString()
         val hi = to.toString()
         val hasData = ranged.value.values.any { (it.date ?: "") in lo..hi }
+        // 系统日历的事件：把读取范围扩到这个月（本机读取，很快）
+        container.calendar.ensureRange(from, to)
+        if (!didaOn.value) return
         val spinner = !silent && !hasData
         if (spinner) calLoading = true
         container.todos.loadRange(from, to).onFailure {
@@ -227,7 +259,7 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
     init {
         // 以滴答任务内容里的「任务笔记：链接」为准，认回在其他设备上建的任务笔记
         viewModelScope.launch {
-            data.collect { d ->
+            container.todos.state.collect { d ->
                 val ov = d.overview ?: return@collect
                 try {
                     container.projects.restoreTaskNotes(ov.overdue + ov.upcoming + ov.undated)
@@ -239,7 +271,11 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun refresh(force: Boolean = false) = container.todos.refresh(force)
+    fun refresh(force: Boolean = false) {
+        container.todos.refresh(force)
+        // 系统日历：回到页面时顺手重读（本机读取），太频繁的不重复
+        if (force || System.currentTimeMillis() - container.calendar.state.value.updatedAt > 30_000L) container.calendar.refresh()
+    }
 
     private fun message(text: String) {
         _events.trySend(TodoEvent.Message(text))
@@ -297,8 +333,10 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
     fun rescheduleAll(tasks: List<DidaTask>, date: String) {
         viewModelScope.launch {
             var failed = 0
-            tasks.forEach { t -> container.todos.reschedule(t, date, null).onFailure { failed++ } }
-            message(if (failed == 0) "已把 ${tasks.size} 项改到今天" else "有 $failed 项没有改成功")
+            // 系统日历 / 系统待办是只读导入的，改不了日期：只改滴答任务
+            val own = tasks.filter { !it.isCalendar }
+            own.forEach { t -> container.todos.reschedule(t, date, null).onFailure { failed++ } }
+            message(if (failed == 0) "已把 ${own.size} 项改到今天" else "有 $failed 项没有改成功")
         }
     }
 
@@ -313,7 +351,7 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
             var failed = 0
             tasks.forEach { t ->
                 val from = t.date?.let { runCatching { java.time.LocalDate.parse(it.take(10)) }.getOrNull() } ?: return@forEach
-                if (!t.repeatFlag.isNullOrBlank()) return@forEach
+                if (t.isCalendar || !t.repeatFlag.isNullOrBlank()) return@forEach
                 val target = maxOf(from, today).plusDays(days.toLong())
                 container.todos.reschedule(t, target.toString(), t.time)
                     .onSuccess { moved++ }
@@ -522,8 +560,8 @@ class TodoViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun startProjectFocus(p: Project, task: DidaTask?, minutes: Int): Boolean {
         val ok = container.focus.start(
-            taskId = task?.id,
-            projectId = task?.projectId,
+            taskId = task?.takeIf { !it.isCalendar }?.id,
+            projectId = task?.takeIf { !it.isCalendar }?.projectId,
             title = task?.title.orEmpty().ifBlank { "项目「${p.keyword}」" },
             minutes = minutes,
             project = p.keyword,

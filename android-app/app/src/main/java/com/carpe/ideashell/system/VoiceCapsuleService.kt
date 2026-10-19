@@ -75,6 +75,7 @@ import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.sin
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -161,9 +162,18 @@ class VoiceCapsuleService : Service() {
     /** 松手自动保存：小胶囊倒计时，结束时才真正保存 */
     private var countdown: ValueAnimator? = null
 
-    // 编辑文字时跟着输入法上推
-    private var imeBottom = 0
-    private var imeAnimating = false
+    // 编辑文字时跟着输入法上推：只认输入法「最终」的高度，用自己的动画平滑过去，
+    // 不去跟系统输入法动画的逐帧数值（有的系统输入法会先冲过头再回落，卡片就会跟着乱弹）
+    /** 输入法顶边在屏幕上的位置；Int.MAX_VALUE = 输入法没出来 */
+    private var imeTop = Int.MAX_VALUE
+
+    /** 点中的输入框：悬浮窗拿到焦点之后才能弹出输入法，焦点来得晚时要补一次 */
+    private var imeTarget: View? = null
+
+    /** 悬浮窗实际在屏幕上的位置减去 params.y（窗口避开状态栏带来的偏移） */
+    private var winOffset = 0
+    private var shiftAnimator: ValueAnimator? = null
+    private var shiftTarget = 0f
 
     private enum class Shown { NONE, RECORDING, PROCESSING, CONFIRM, PENDING, MESSAGE }
 
@@ -578,25 +588,26 @@ class VoiceCapsuleService : Service() {
         runCatching { wm.updateViewLayout(h, p) }
     }
 
-    private val columnLayoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyImeShift() }
+    /** 卡片高度变了（输入换行等）或窗口刚铺满：按最新高度重新算该推多高 */
+    private val columnLayoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> retargetShift(animate = false) }
 
     private val restoreWindow = Runnable {
         if (editing) return@Runnable
         val p = params ?: return@Runnable
         val h = host ?: return@Runnable
         val col = column ?: return@Runnable
-        imeBottom = 0
-        imeAnimating = false
+        imeTop = Int.MAX_VALUE
+        cancelShift()
         h.setOnApplyWindowInsetsListener(null)
         if (Build.VERSION.SDK_INT >= 30) h.setWindowInsetsAnimationCallback(null)
         h.setOnClickListener(null)
+        h.setOnTouchListener(null)
         h.isClickable = false
+        h.removeOnLayoutChangeListener(columnLayoutListener)
         col.removeOnLayoutChangeListener(columnLayoutListener)
-        col.translationY = 0f
-        (col.layoutParams as FrameLayout.LayoutParams).topMargin = 0
-        col.requestLayout()
-        p.flags = p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-        p.width = WindowManager.LayoutParams.WRAP_CONTENT
+        // 窗口只往下缩回内容大小：顶边不动，画面不会跳
+        p.flags = (p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS) and
+            (WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH).inv()
         p.height = WindowManager.LayoutParams.WRAP_CONTENT
         p.y = panelY
         updateWindow()
@@ -609,7 +620,12 @@ class VoiceCapsuleService : Service() {
     private fun recenter() {
         val h = host ?: return
         val p = params ?: return
-        if (editing || p.height == WindowManager.LayoutParams.MATCH_PARENT) return
+        if (editing) return
+        // 刚退出编辑、窗口还铺满全屏（卡片还在随输入法落回去）：内容既然要换了，直接落定再居中
+        if (p.height != WindowManager.LayoutParams.WRAP_CONTENT) {
+            handler.removeCallbacks(restoreWindow)
+            restoreWindow.run()
+        }
         val dm = resources.displayMetrics
         h.measure(
             View.MeasureSpec.makeMeasureSpec(dm.widthPixels, View.MeasureSpec.AT_MOST),
@@ -668,8 +684,11 @@ class VoiceCapsuleService : Service() {
     }
 
     /**
-     * 点到文字框：悬浮窗拿焦点、铺满全屏（卡片位置不变），再随输入法弹出的动画一路推上去，
-     * 最终停在输入法正上方；点卡片外面的空白处收起输入法。
+     * 点到文字框：悬浮窗拿焦点，再平滑地把卡片推到输入法正上方；点卡片外面的空白处收起输入法。
+     *
+     * 窗口的顶边和左右边这一刻都不动，只是往下加高（给输入法的高度信息和上移留出余地）——
+     * 窗口顶边一动，系统会在新画面画好之前先把旧画面摆在新位置，看起来就是卡片从屏幕上方「闪下来」。
+     * 之后「上推」是整个窗口的纵向位置平滑上移，窗口大小不再变化。
      */
     private fun enterEditMode() {
         val p = params ?: return
@@ -678,68 +697,163 @@ class VoiceCapsuleService : Service() {
         if (editing) return
         editing = true
         handler.removeCallbacks(restoreWindow)
-        p.flags = p.flags and (WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS).inv()
-        p.width = WindowManager.LayoutParams.MATCH_PARENT
-        p.height = WindowManager.LayoutParams.MATCH_PARENT
-        p.y = 0
-        (col.layoutParams as FrameLayout.LayoutParams).topMargin = panelY
+        cancelShift()
+        imeTop = Int.MAX_VALUE
+        winOffset = IntArray(2).also { h.getLocationOnScreen(it) }[1] - p.y
+        p.flags = (p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()) or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        p.height = resources.displayMetrics.heightPixels
         updateWindow()
         h.setOnClickListener { exitEditMode() }
+        // 点到卡片之外（别的应用上）也收起输入法
+        h.setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) exitEditMode()
+            false
+        }
+        h.addOnLayoutChangeListener(columnLayoutListener)
         col.addOnLayoutChangeListener(columnLayoutListener)
+        // 系统在输入法动画开始时就把「最终」的输入法高度交给这里；动画中间的数值一概不理
         h.setOnApplyWindowInsetsListener { _, insets ->
-            if (!imeAnimating) {
-                imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom
-                applyImeShift()
-            }
+            if (Build.VERSION.SDK_INT >= 30) updateImeTop(insets.getInsets(WindowInsets.Type.ime()).bottom)
             insets
         }
         if (Build.VERSION.SDK_INT >= 30) {
             h.setWindowInsetsAnimationCallback(object : WindowInsetsAnimation.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
-                override fun onPrepare(animation: WindowInsetsAnimation) {
-                    imeAnimating = true
-                }
-
-                override fun onProgress(insets: WindowInsets, runningAnimations: MutableList<WindowInsetsAnimation>): WindowInsets {
-                    imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom
-                    applyImeShift()
-                    return insets
-                }
+                override fun onProgress(insets: WindowInsets, runningAnimations: MutableList<WindowInsetsAnimation>): WindowInsets = insets
 
                 override fun onEnd(animation: WindowInsetsAnimation) {
-                    imeAnimating = false
-                    h.rootWindowInsets?.let { imeBottom = it.getInsets(WindowInsets.Type.ime()).bottom }
-                    applyImeShift()
+                    // 动画走完再核对一次最终高度（比如输入法换了高度）
+                    h.rootWindowInsets?.let { updateImeTop(it.getInsets(WindowInsets.Type.ime()).bottom) }
+                }
+            })
+        }
+        // 悬浮窗要等系统把焦点给它之后，输入法才能弹出来：点击那一刻窗口多半还没拿到焦点，焦点一到就补弹一次
+        if (!h.hasWindowFocus()) {
+            h.viewTreeObserver.addOnWindowFocusChangeListener(object : android.view.ViewTreeObserver.OnWindowFocusChangeListener {
+                override fun onWindowFocusChanged(hasFocus: Boolean) {
+                    if (!hasFocus) return
+                    if (h.viewTreeObserver.isAlive) h.viewTreeObserver.removeOnWindowFocusChangeListener(this)
+                    val v = imeTarget ?: return
+                    if (!editing) return
+                    v.requestFocus()
+                    (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(v, InputMethodManager.SHOW_IMPLICIT)
                 }
             })
         }
         h.requestApplyInsets()
     }
 
-    /** 把卡片推到输入法上方（输入法没出来就留在原位） */
-    private fun applyImeShift() {
+    /** 输入法占的高度（相对窗口底边）换算成它的顶边在屏幕上的位置，再按新位置重算上推 */
+    private fun updateImeTop(insetBottom: Int) {
         val h = host ?: return
-        val col = column ?: return
-        if (!editing && imeBottom == 0) return
-        if (h.height == 0) return
-        val bottomRest = panelY + col.height
-        val avail = h.height - imeBottom - dp(10)
-        val ty = if (imeBottom <= 0) 0f else min(0f, (avail - bottomRest).toFloat())
-        col.translationY = ty.coerceAtLeast(-(panelY - dp(40)).toFloat())
+        if (!editing) return
+        val top = if (insetBottom <= 0) {
+            Int.MAX_VALUE
+        } else {
+            val loc = IntArray(2)
+            h.getLocationOnScreen(loc)
+            // 窗口往下伸出了屏幕：系统给的输入法高度是按「屏幕内可见部分」的底边算的，所以底边要取屏幕底
+            min(loc[1] + h.height, resources.displayMetrics.heightPixels) - insetBottom
+        }
+        if (top == imeTop) return
+        imeTop = top
+        retargetShift(animate = true)
+    }
+
+    /** 卡片该上推多少（负数 = 窗口比原位置往上移多少）：卡片底边停在输入法上方，同时顶边离屏幕顶部不少于 40dp */
+    private fun computeShift(): Float {
+        val col = column ?: return 0f
+        if (imeTop == Int.MAX_VALUE) return 0f
+        val avail = imeTop - dp(10)
+        // 窗口在屏幕上的实际位置比 params.y 低一个状态栏高度（winOffset），这里统一按屏幕坐标算
+        val panelTop = panelY + winOffset
+        val targetTop = min(panelTop, avail - col.height).coerceAtLeast(min(panelTop, dp(40)))
+        return (targetTop - panelTop).toFloat()
+    }
+
+    private fun currentShift(): Float = ((params?.y ?: panelY) - panelY).toFloat()
+
+    private fun setShift(v: Float) {
+        val p = params ?: return
+        p.y = panelY + v.roundToInt()
+        updateWindow()
+    }
+
+    /**
+     * 重新算上推高度。[animate]：输入法升起 / 落下这类大幅变化用一次平滑动画过去；
+     * 打字换行引起的小幅变化（卡片本身的高度变化已经有布局动画）直接跟上，不重启动画。
+     */
+    private fun retargetShift(animate: Boolean) {
+        if (column == null || !editing) return
+        val target = computeShift()
+        shiftTarget = target
+        if (shiftAnimator != null) return // 正在动：它每帧读最新的 shiftTarget
+        val diff = target - currentShift()
+        when {
+            kotlin.math.abs(diff) < 1f -> Unit
+            animate || kotlin.math.abs(diff) > dp(48) -> animateShift(target, 280L)
+            else -> setShift(target)
+        }
+    }
+
+    private fun animateShift(target: Float, durationMs: Long, onEnd: (() -> Unit)? = null) {
+        if (column == null) {
+            onEnd?.invoke()
+            return
+        }
+        cancelShift()
+        shiftTarget = target
+        val from = currentShift()
+        if (kotlin.math.abs(target - from) < 1f) {
+            setShift(target)
+            onEnd?.invoke()
+            return
+        }
+        shiftAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = durationMs
+            interpolator = DecelerateInterpolator(2f)
+            addUpdateListener { a ->
+                val t = a.animatedValue as Float
+                setShift(from + (shiftTarget - from) * t)
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                private var cancelled = false
+                override fun onAnimationCancel(animation: Animator) {
+                    cancelled = true
+                }
+
+                override fun onAnimationEnd(animation: Animator) {
+                    if (cancelled) return
+                    shiftAnimator = null
+                    setShift(shiftTarget)
+                    onEnd?.invoke()
+                }
+            })
+            start()
+        }
+    }
+
+    private fun cancelShift() {
+        shiftAnimator?.cancel()
+        shiftAnimator = null
     }
 
     private fun exitEditMode() {
         if (!editing) return
         editing = false
+        imeTop = Int.MAX_VALUE
         val col = column
-        // 先收输入法：卡片随输入法下沉的动画回到原位，动画结束后再把窗口还原成小窗口
+        // 收输入法的同时卡片平滑落回原位；落定后再把窗口缩回内容大小
         col?.let { c ->
             (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(c.windowToken, 0)
             c.findFocus()?.clearFocus()
         }
         host?.setOnClickListener(null)
+        host?.setOnTouchListener(null)
         host?.isClickable = false
         handler.removeCallbacks(restoreWindow)
-        handler.postDelayed(restoreWindow, 320)
+        animateShift(0f, 220L) { restoreWindow.run() }
     }
 
     // ───────────────────────────── 面板：录音 / 整理 / 确认 ─────────────────────────────
@@ -1014,6 +1128,7 @@ class VoiceCapsuleService : Service() {
             maxLines = 5
             setOnTouchListener { v, event ->
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    imeTarget = v
                     enterEditMode()
                     v.post {
                         v.requestFocus()
@@ -1286,6 +1401,7 @@ class VoiceCapsuleService : Service() {
 
     private fun stopSelfClean() {
         stopping = true
+        cancelShift()
         stopTick()
         handler.removeCallbacksAndMessages(null)
         dotAnimator?.cancel()
@@ -1302,6 +1418,7 @@ class VoiceCapsuleService : Service() {
         if (instance === this) instance = null
         handler.removeCallbacksAndMessages(null)
         dotAnimator?.cancel()
+        cancelShift()
         voice?.release()
         cancelCountdown()
         host?.let { runCatching { wm.removeView(it) } }

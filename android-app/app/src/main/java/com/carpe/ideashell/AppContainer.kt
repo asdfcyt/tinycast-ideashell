@@ -129,6 +129,14 @@ class AppContainer(context: Context) {
         hasCredential = { !credentials.ideashellKey.isNullOrBlank() },
     )
 
+    /** 系统日历 → 待办页（只读导入的日历事件） */
+    val calendar = com.carpe.ideashell.data.calendar.SystemCalendarRepository(
+        context = context,
+        settings = settings,
+        scope = appScope,
+        localFile = File(context.filesDir, "calendar_local.json"),
+    )
+
     val todos = TodoRepository(
         api = didaApi,
         cacheFile = File(context.filesDir, "todo_cache.json"),
@@ -136,6 +144,7 @@ class AppContainer(context: Context) {
         hasCredential = { !credentials.didaToken.isNullOrBlank() },
         // 离线时记下的操作：安排一次「有网就提交」的后台任务，进程被杀后也能发出去
         onQueued = { TodoOpFlushScheduler.schedule(context.applicationContext) },
+        calendarOps = calendar,
     )
 
     /** 语音修改之前建好的待办 */

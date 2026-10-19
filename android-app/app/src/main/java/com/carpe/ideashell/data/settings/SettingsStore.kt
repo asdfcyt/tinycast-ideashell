@@ -91,7 +91,26 @@ data class AppSettings(
     /** 大模型接口（OpenAI 兼容）：地址和模型名；Key 在 CredentialStore 里 */
     val llmBaseUrl: String = DEFAULT_LLM_BASE_URL,
     val llmModel: String = DEFAULT_LLM_MODEL,
+    /** 把系统日历的事件读进待办页（只读导入；需要「读取日历」权限） */
+    val calendarSync: Boolean = false,
+    /**
+     * 要同步哪些日历（系统日历 id，逗号分隔）：空 = 还没选过，用默认（可写、非本地提醒类的日历）；
+     * "-" = 明确一个都不选。
+     */
+    val calendarIdsText: String = "",
+    /** 同时读取系统待办（荣耀日历 App 里的待办；只读导入，跟随「同步系统日历」开关） */
+    val calendarTasks: Boolean = true,
+    /** 在拾忆里完成 / 恢复系统待办时，同时写回系统（需要「写入日历」权限） */
+    val calendarWriteback: Boolean = false,
 ) {
+    /** 明确选过的日历 id；null = 还没选过（用默认） */
+    val calendarIds: Set<Long>?
+        get() = when (calendarIdsText) {
+            "" -> null
+            "-" -> emptySet()
+            else -> calendarIdsText.split(',').mapNotNull { it.trim().toLongOrNull() }.toSet()
+        }
+
     val defaultTags: List<String>
         get() = defaultTagsText.split(',', '，').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }
 
@@ -186,6 +205,14 @@ class SettingsStore(context: Context) {
 
     fun setVoiceEngine(engine: VoiceEngine) = update { it.copy(voiceEngine = engine) }
 
+    fun setCalendarSync(enabled: Boolean) = update { it.copy(calendarSync = enabled) }
+
+    fun setCalendarTasks(enabled: Boolean) = update { it.copy(calendarTasks = enabled) }
+    fun setCalendarWriteback(enabled: Boolean) = update { it.copy(calendarWriteback = enabled) }
+
+    fun setCalendarIds(ids: Set<Long>?) =
+        update { it.copy(calendarIdsText = if (ids == null) "" else if (ids.isEmpty()) "-" else ids.sorted().joinToString(",")) }
+
     fun setLlm(baseUrl: String, model: String) = update {
         it.copy(
             llmBaseUrl = baseUrl.trim().trimEnd('/').ifEmpty { AppSettings.DEFAULT_LLM_BASE_URL },
@@ -229,6 +256,10 @@ class SettingsStore(context: Context) {
             .putString(KEY_VOICE_KEY, next.voiceKey.name)
             .putString(KEY_LLM_BASE_URL, next.llmBaseUrl)
             .putString(KEY_LLM_MODEL, next.llmModel)
+            .putBoolean(KEY_CALENDAR_SYNC, next.calendarSync)
+            .putString(KEY_CALENDAR_IDS, next.calendarIdsText)
+            .putBoolean(KEY_CALENDAR_TASKS, next.calendarTasks)
+            .putBoolean(KEY_CALENDAR_WRITEBACK, next.calendarWriteback)
             .apply()
         _state.value = next
     }
@@ -270,6 +301,10 @@ class SettingsStore(context: Context) {
             .getOrDefault(VoiceEngine.AUTO),
         llmBaseUrl = prefs.getString(KEY_LLM_BASE_URL, null)?.ifBlank { null } ?: AppSettings.DEFAULT_LLM_BASE_URL,
         llmModel = prefs.getString(KEY_LLM_MODEL, null)?.ifBlank { null } ?: AppSettings.DEFAULT_LLM_MODEL,
+        calendarSync = prefs.getBoolean(KEY_CALENDAR_SYNC, false),
+        calendarIdsText = prefs.getString(KEY_CALENDAR_IDS, "").orEmpty(),
+        calendarTasks = prefs.getBoolean(KEY_CALENDAR_TASKS, true),
+        calendarWriteback = prefs.getBoolean(KEY_CALENDAR_WRITEBACK, false),
     )
 
     // ── 文件夹缓存 ──
@@ -375,6 +410,10 @@ class SettingsStore(context: Context) {
         const val KEY_VOICE_KEY = "voice_key"
         const val KEY_LLM_BASE_URL = "llm_base_url"
         const val KEY_LLM_MODEL = "llm_model"
+        const val KEY_CALENDAR_SYNC = "calendar_sync"
+        const val KEY_CALENDAR_IDS = "calendar_ids"
+        const val KEY_CALENDAR_TASKS = "calendar_tasks"
+        const val KEY_CALENDAR_WRITEBACK = "calendar_writeback"
         const val KEY_AUTO_CLOUD_BACKUP = "auto_cloud_backup"
         const val KEY_AUTO_BACKUP_ERROR = "auto_backup_error"
         const val KEY_SYNC_ALERTED = "sync_alerted"

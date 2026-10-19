@@ -31,6 +31,15 @@ data class TodoData(
     val updatedAt: Long = 0L,
 )
 
+/** 日历事件任务的本地操作（只标记「已处理」/ 本地标签，不写回系统日历） */
+interface CalendarTaskOps {
+    suspend fun complete(task: DidaTask): Result<Unit>
+    suspend fun undoComplete(task: DidaTask): Result<Unit>
+    suspend fun setTags(task: DidaTask, tags: List<String>): Result<Unit>
+}
+
+private val CALENDAR_READONLY = Result.failure<Unit>(UnsupportedOperationException("日历事件是只读的，请到日历 App 里修改"))
+
 @Serializable
 private data class TodoCache(val overview: DidaOverview, val updatedAt: Long)
 
@@ -53,6 +62,8 @@ class TodoRepository(
     pendingFile: File = File(cacheFile.parentFile, "todo_pending.json"),
     /** 有操作进了离线队列：安排一次「有网就提交」的后台任务（进程被杀后也能提交） */
     private val onQueued: () -> Unit = {},
+    /** 日历事件（来源 = 系统日历）的完成 / 标签走这里；其他修改一律拒绝 */
+    private val calendarOps: CalendarTaskOps? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val _state = MutableStateFlow(TodoData())
@@ -194,6 +205,7 @@ class TodoRepository(
 
     /** 完成任务（乐观更新）。失败时回滚并返回失败原因 */
     suspend fun complete(task: DidaTask): Result<Unit> {
+        if (task.isCalendar) return calendarOps?.complete(task) ?: CALENDAR_READONLY
         val before = _state.value.overview
         val rangedBefore = _ranged.value
         stateLock.withLock { recentlyDone[task.id] = System.currentTimeMillis() }
@@ -236,6 +248,7 @@ class TodoRepository(
 
     /** 撤销刚才的完成 */
     suspend fun undoComplete(task: DidaTask): Result<Unit> {
+        if (task.isCalendar) return calendarOps?.undoComplete(task) ?: CALENDAR_READONLY
         val before = _state.value.overview
         val rangedBefore = _ranged.value
         stateLock.withLock { recentlyDone.remove(task.id) }
@@ -250,6 +263,7 @@ class TodoRepository(
     }
 
     suspend fun reschedule(task: DidaTask, date: String, time: String?): Result<Unit> {
+        if (task.isCalendar) return CALENDAR_READONLY
         val before = _state.value.overview
         val rangedBefore = _ranged.value
         mutate { o -> insertOpen(o.withoutTask(task.id), task.copy(date = date, time = time)) }
@@ -261,6 +275,7 @@ class TodoRepository(
     }
 
     suspend fun setPriority(task: DidaTask, priority: Int): Result<Unit> {
+        if (task.isCalendar) return CALENDAR_READONLY
         val before = _state.value.overview
         val rangedBefore = _ranged.value
         mutate { o -> replaceOpen(o, task.copy(priority = priority)) }
@@ -273,6 +288,7 @@ class TodoRepository(
 
     /** 改标题（`!重要` / `!紧急` 标记就写在标题里） */
     suspend fun setTitle(task: DidaTask, title: String): Result<Unit> {
+        if (task.isCalendar) return CALENDAR_READONLY
         val before = _state.value.overview
         val rangedBefore = _ranged.value
         mutate { o -> replaceOpen(o, task.copy(title = title)) }
@@ -285,6 +301,7 @@ class TodoRepository(
 
     /** 整体替换备注（语音「补充一下」会把新内容追加到原备注后面再整体写回） */
     suspend fun setContent(task: DidaTask, content: String): Result<Unit> {
+        if (task.isCalendar) return CALENDAR_READONLY
         val before = _state.value.overview
         val rangedBefore = _ranged.value
         mutate { o -> replaceOpen(o, task.copy(content = content)) }
@@ -297,6 +314,7 @@ class TodoRepository(
 
     /** 整体替换标签（「归入项目」就是给任务加项目标签） */
     suspend fun setTags(task: DidaTask, tags: List<String>): Result<Unit> {
+        if (task.isCalendar) return calendarOps?.setTags(task, tags) ?: CALENDAR_READONLY
         val before = _state.value.overview
         val rangedBefore = _ranged.value
         mutate { o -> replaceOpen(o, task.copy(tags = tags)) }
@@ -308,6 +326,7 @@ class TodoRepository(
     }
 
     suspend fun delete(task: DidaTask): Result<Unit> {
+        if (task.isCalendar) return CALENDAR_READONLY
         val before = _state.value.overview
         val rangedBefore = _ranged.value
         mutate { o -> o.withoutTask(task.id) }
@@ -320,7 +339,7 @@ class TodoRepository(
 
     /** 评论失败不影响主流程 */
     suspend fun comment(task: DidaTask, text: String): Boolean =
-        attempt { api.addComment(task.projectId, task.id, text) }.isSuccess
+        !task.isCalendar && attempt { api.addComment(task.projectId, task.id, text) }.isSuccess
 
     // ---- 离线操作队列 ----
 

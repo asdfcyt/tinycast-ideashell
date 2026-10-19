@@ -49,6 +49,7 @@ import com.carpe.ideashell.IdeashellApp
 import com.carpe.ideashell.core.parse.TodoMeta
 import com.carpe.ideashell.data.focus.FocusKind
 import com.carpe.ideashell.data.dida.DidaTask
+import com.carpe.ideashell.data.dida.calendarEventKey
 import com.carpe.ideashell.data.project.Project
 import com.carpe.ideashell.data.project.TaskNoteRef
 import com.carpe.ideashell.data.project.didaTaskUrl
@@ -131,8 +132,33 @@ internal fun TaskSheet(
                 }
             }
 
+            // 日历事件：时间 / 地点只读（要改请到日历 App），只能给它归入项目
+            if (task.isCalendar) {
+                ListGroup {
+                    PropertyRow("日期", dateText(task.date, today))
+                    RowDivider()
+                    PropertyRow("时间", timeTextOf(task) ?: "全天")
+                    task.location?.let { loc ->
+                        RowDivider()
+                        PropertyRow("地点", loc)
+                    }
+                    if (projects.isNotEmpty() && !task.done) {
+                        RowDivider()
+                        MenuPropertyRow("项目", currentProject?.keyword ?: "未归入") { close ->
+                            projects.forEach { p ->
+                                AppMenuItem(
+                                    text = { Text(p.keyword) },
+                                    selected = currentProject?.keyword == p.keyword,
+                                    onClick = { close(); if (currentProject?.keyword != p.keyword) actions.onAssignProject(p.keyword) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // 属性：一行一项，当前值写在右边，点一下才展开选项
-            if (!task.done) {
+            if (!task.done && !task.isCalendar) {
                 ListGroup {
                     MenuPropertyRow("日期", dateText(task.date, today), valueColor = MaterialTheme.colorScheme.primary) { close ->
                         val nextMonday = today.with(TemporalAdjusters.next(DayOfWeek.MONDAY))
@@ -210,7 +236,10 @@ internal fun TaskSheet(
                 contentColor = Brand.Brown,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) {
-                Text(if (task.done) "恢复为未完成" else "完成", fontWeight = FontWeight.Bold)
+                Text(
+                    if (task.isCalendar) (if (task.done) "恢复为未处理" else "标记已处理") else if (task.done) "恢复为未完成" else "完成",
+                    fontWeight = FontWeight.Bold,
+                )
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (!task.done) {
@@ -227,20 +256,30 @@ internal fun TaskSheet(
                 Box {
                     TextButton(onClick = { more = true }) { Text("更多") }
                     AppMenu(expanded = more, onDismissRequest = { more = false }) {
-                        AppMenuItem(text = { Text("改标题") }, onClick = { more = false; dialog = SheetDialog.RENAME })
-                        AppMenuItem(
-                            text = { Text("用滴答清单打开") },
-                            onClick = {
-                                more = false
-                                openInApp(context, didaTaskUrl(task.projectId, task.id), "滴答清单")
-                            },
-                        )
-                        AppMenuDivider()
-                        AppMenuItem(
-                            text = { Text("删除") },
-                            destructive = true,
-                            onClick = { more = false; dialog = SheetDialog.DELETE },
-                        )
+                        if (task.isCalendar) {
+                            AppMenuItem(
+                                text = { Text(if (task.isSystemTodo) "在日历 App 中打开" else "在日历中打开") },
+                                onClick = {
+                                    more = false
+                                    openInCalendar(context, task)
+                                },
+                            )
+                        } else {
+                            AppMenuItem(text = { Text("改标题") }, onClick = { more = false; dialog = SheetDialog.RENAME })
+                            AppMenuItem(
+                                text = { Text("用滴答清单打开") },
+                                onClick = {
+                                    more = false
+                                    openInApp(context, didaTaskUrl(task.projectId, task.id), "滴答清单")
+                                },
+                            )
+                            AppMenuDivider()
+                            AppMenuItem(
+                                text = { Text("删除") },
+                                destructive = true,
+                                onClick = { more = false; dialog = SheetDialog.DELETE },
+                            )
+                        }
                     }
                 }
             }
@@ -275,7 +314,7 @@ internal fun TaskSheet(
         SheetDialog.PROGRESS -> TextPromptDialog(
             title = "记一条进展",
             label = "进展",
-            hint = "今天做了什么？卡在哪里？下一步是什么？会同步成滴答任务上的一条评论。",
+            hint = if (task.isCalendar) "今天做了什么？卡在哪里？下一步是什么？会记进这个事件的任务笔记。" else "今天做了什么？卡在哪里？下一步是什么？会同步成滴答任务上的一条评论。",
             minLines = 3,
             draftKey = "progress:${task.id}",
             onDismiss = { dialog = null },
@@ -379,7 +418,45 @@ private fun startFocusOn(context: android.content.Context, task: DidaTask) {
     val focus = container.focus
     val title = TodoMeta.cleanTitle(task.title).ifBlank { task.title }
     val project = container.projects.projectOf(task)?.keyword
-    val started = focus.start(task.id, task.projectId, title, focus.lastMinutes, FocusKind.FOCUS, project)
+    // 日历事件不是滴答任务：专注记录不绑任务 id（否则会往滴答提交一条找不到任务的专注）
+    val started = if (task.isCalendar) {
+        focus.start(null, null, title, focus.lastMinutes, FocusKind.FOCUS, project)
+    } else {
+        focus.start(task.id, task.projectId, title, focus.lastMinutes, FocusKind.FOCUS, project)
+    }
     val message = if (started) "开始专注 ${focus.lastMinutes} 分钟 · $title" else "已经有一个专注在进行"
     android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+}
+
+/** 用系统日历 App 打开这个事件（要改时间 / 标题 / 删除都在那边做） */
+private fun openInCalendar(context: android.content.Context, task: DidaTask) {
+    if (task.isSystemTodo) {
+        // 系统待办没有公开的详情地址：打开日历 App（待办在里面）
+        val launch = context.packageManager.getLaunchIntentForPackage("com.hihonor.calendar")
+            ?: context.packageManager.getLaunchIntentForPackage("com.android.calendar")
+        if (launch != null) {
+            runCatching { context.startActivity(launch) }
+        } else {
+            android.widget.Toast.makeText(context, "没有可以打开待办的应用", android.widget.Toast.LENGTH_SHORT).show()
+        }
+        return
+    }
+    val eventId = calendarEventKey(task.id).removePrefix("cal:").toLongOrNull()
+    if (eventId == null) {
+        android.widget.Toast.makeText(context, "找不到这个事件", android.widget.Toast.LENGTH_SHORT).show()
+        return
+    }
+    val begin = runCatching {
+        val date = LocalDate.parse(task.date)
+        val time = task.time?.split(":")
+        val h = time?.getOrNull(0)?.toIntOrNull() ?: 0
+        val m = time?.getOrNull(1)?.toIntOrNull() ?: 0
+        date.atTime(h, m).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+    }.getOrNull()
+    val intent = Intent(Intent.ACTION_VIEW)
+        .setData(android.content.ContentUris.withAppendedId(android.provider.CalendarContract.Events.CONTENT_URI, eventId))
+        .also { i -> begin?.let { i.putExtra(android.provider.CalendarContract.EXTRA_EVENT_BEGIN_TIME, it) } }
+    runCatching { context.startActivity(intent) }.onFailure {
+        android.widget.Toast.makeText(context, "没有可以打开日历事件的应用", android.widget.Toast.LENGTH_SHORT).show()
+    }
 }

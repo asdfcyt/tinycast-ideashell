@@ -7,6 +7,7 @@ import com.carpe.ideashell.data.capture.SubmitReceipt
 import com.carpe.ideashell.data.dida.DaySummaryService
 import com.carpe.ideashell.data.dida.DidaApi
 import com.carpe.ideashell.data.dida.DidaTask
+import com.carpe.ideashell.data.dida.calendarEventKey
 import com.carpe.ideashell.data.dida.FocusParser
 import com.carpe.ideashell.data.dida.FocusSummary
 import com.carpe.ideashell.data.dida.HabitRepository
@@ -224,7 +225,8 @@ class ProjectService(
                 purpose = purpose,
                 steps = steps,
                 project = project,
-                taskLink = didaTaskUrl(task.projectId, task.id),
+                // 日历事件没有网页地址，笔记里只写事件名
+                taskLink = if (task.isCalendar) null else didaTaskUrl(task.projectId, task.id),
             ),
         )
         val created = ideashell.createNote(
@@ -238,7 +240,8 @@ class ProjectService(
 
         // 笔记链接写回滴答任务，在滴答里也能找到它（失败不影响主流程）
         val line = "任务笔记：${noteUrl(ref.noteId)}"
-        softly { dida.setContent(task, if (task.content.isNotBlank()) "${task.content}\n$line" else line) }
+        // 日历事件是只读导入的，不写回系统日历；笔记与事件的对应只存在本机
+        if (!task.isCalendar) softly { dida.setContent(task, if (task.content.isNotBlank()) "${task.content}\n$line" else line) }
         if (project != null) softly { syncHomeLinks(project) }
         return ref
     }
@@ -322,7 +325,7 @@ class ProjectService(
     }
 
     private suspend fun comment(projectId: String, taskId: String, text: String): Boolean {
-        if (!hasDida()) return false
+        if (!hasDida() || projectId.startsWith("cal:")) return false
         return try {
             dida.addComment(projectId, taskId, text)
             true
@@ -589,13 +592,16 @@ class ProjectService(
      */
     suspend fun refreshDelivery(p: Project, openIds: Set<String>, doneIds: Set<String>, archive: Boolean = true): ProjectDelivery {
         val entries = taskNotesOf(p).take(20)
+        // 日历事件的任务 id 带日期（cal:事件@日期），任务笔记绑定的是事件本身：按事件键比对
+        val doneKeys = doneIds.mapTo(HashSet()) { calendarEventKey(it) }
+        val openKeys = openIds.mapTo(HashSet()) { calendarEventKey(it) }
         val items = coroutineScope {
             entries.map { e ->
                 async {
                     val state = when {
-                        e.ref.archived || e.taskId in doneIds -> DeliveryState.DONE
-                        e.taskId in openIds -> DeliveryState.ACTIVE
-                        hasDida() -> softly { dida.fetchTask(e.taskId) }?.let { if (it.done) DeliveryState.DONE else DeliveryState.ACTIVE }
+                        e.ref.archived || e.taskId in doneKeys -> DeliveryState.DONE
+                        e.taskId in openKeys -> DeliveryState.ACTIVE
+                        hasDida() && !e.taskId.startsWith("cal:") -> softly { dida.fetchTask(e.taskId) }?.let { if (it.done) DeliveryState.DONE else DeliveryState.ACTIVE }
                             ?: DeliveryState.UNKNOWN
                         else -> DeliveryState.UNKNOWN
                     }
@@ -748,7 +754,7 @@ class ProjectService(
         val rows = coroutineScope {
             entries.map { e ->
                 async {
-                    val state = if (hasDida()) softly { dida.fetchTask(e.taskId) }?.let { if (it.done) "done" else "open" } else null
+                    val state = if (hasDida() && !e.taskId.startsWith("cal:")) softly { dida.fetchTask(e.taskId) }?.let { if (it.done) "done" else "open" } else null
                     val detail = softly { ideashell.noteDetail(e.ref.noteId) }
                     val progress = detail?.let { NoteSections.stepProgress(it.content) }
                     val min = focus?.byTask?.get(e.taskId)?.weekMin ?: 0

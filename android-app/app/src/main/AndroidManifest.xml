@@ -32,6 +32,10 @@
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- 把系统日历里的事件读进待办页（只读，设置里开启「日历同步」时才会申请） -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+
     <!-- 分享 / 选中文字时，用来把来源应用的包名换成应用名 -->
     <queries>
         <!-- 「在闪念贝壳打开」要知道它装没装（国内版 / 国际版） -->

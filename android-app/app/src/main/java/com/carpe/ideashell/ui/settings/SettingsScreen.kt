@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Create
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -140,6 +141,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                     SEC_REVISIT -> RevisitSection(env)
                     SEC_TODO -> TodoFocusSection(env)
                     SEC_QUICK -> EntriesSection(env)
+                    SEC_CALENDAR -> CalendarSection(env)
                     SEC_BACKUP -> BackupSection(env)
                     SEC_BACKGROUND -> BackgroundSection(env)
                     else -> Unit
@@ -222,6 +224,13 @@ private fun SettingsHome(env: SettingsEnv) {
             title = "待办与专注",
             summary = env.todoSummary(),
             onClick = { env.go(SEC_TODO) },
+            trailing = { Chevron() },
+        )
+        SettingsItem(
+            icon = Icons.Filled.DateRange,
+            title = "日历同步",
+            summary = env.calendarSummary(),
+            onClick = { env.go(SEC_CALENDAR) },
             trailing = { Chevron() },
         )
     }
