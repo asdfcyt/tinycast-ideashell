@@ -77,6 +77,8 @@ data class AppSettings(
     val voicePolish: Boolean = true,
     /** 松手识别完直接保存，不再等你确认（语音误识别比打字风险高，默认关） */
     val voiceAutoSend: Boolean = false,
+    /** 保留最近几条语音的原话、结果和原始录音（只在本机），识别错了可以重新识别 / 整理 */
+    val voiceHistory: Boolean = true,
     /** 悬浮胶囊录音：说完停顿一会儿就自动结束并开始处理（点磁贴 / 快捷方式 / AI 按钮触发时不用再手动点停止） */
     val voiceAutoStop: Boolean = true,
     /** 自动结束要停顿多久（毫秒） */
@@ -173,6 +175,8 @@ class SettingsStore(context: Context) {
 
     fun setVoiceAutoSend(enabled: Boolean) = update { it.copy(voiceAutoSend = enabled) }
 
+    fun setVoiceHistory(enabled: Boolean) = update { it.copy(voiceHistory = enabled) }
+
     fun setVoiceAutoStop(enabled: Boolean) = update { it.copy(voiceAutoStop = enabled) }
 
     fun setVoiceSilenceMs(ms: Int) = update { it.copy(voiceSilenceMs = ms) }
@@ -218,6 +222,7 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_VOICE_ENABLED, next.voiceEnabled)
             .putBoolean(KEY_VOICE_POLISH, next.voicePolish)
             .putBoolean(KEY_VOICE_AUTO_SEND, next.voiceAutoSend)
+            .putBoolean(KEY_VOICE_HISTORY, next.voiceHistory)
             .putString(KEY_VOICE_ENGINE, next.voiceEngine.name)
             .putBoolean(KEY_VOICE_AUTO_STOP, next.voiceAutoStop)
             .putInt(KEY_VOICE_SILENCE_MS, next.voiceSilenceMs)
@@ -256,6 +261,7 @@ class SettingsStore(context: Context) {
         voiceEnabled = prefs.getBoolean(KEY_VOICE_ENABLED, true),
         voicePolish = prefs.getBoolean(KEY_VOICE_POLISH, true),
         voiceAutoSend = prefs.getBoolean(KEY_VOICE_AUTO_SEND, false),
+        voiceHistory = prefs.getBoolean(KEY_VOICE_HISTORY, true),
         voiceAutoStop = prefs.getBoolean(KEY_VOICE_AUTO_STOP, true),
         voiceSilenceMs = prefs.getInt(KEY_VOICE_SILENCE_MS, 1500),
         voiceKey = runCatching { VoiceKey.valueOf(prefs.getString(KEY_VOICE_KEY, null).orEmpty()) }
@@ -362,6 +368,7 @@ class SettingsStore(context: Context) {
         const val KEY_VOICE_ENABLED = "voice_enabled"
         const val KEY_VOICE_POLISH = "voice_polish"
         const val KEY_VOICE_AUTO_SEND = "voice_auto_send"
+        const val KEY_VOICE_HISTORY = "voice_history"
         const val KEY_VOICE_ENGINE = "voice_engine"
         const val KEY_VOICE_AUTO_STOP = "voice_auto_stop"
         const val KEY_VOICE_SILENCE_MS = "voice_silence_ms"

@@ -111,6 +111,16 @@ private const val SEC_QUICK = "quick"
 private const val SEC_BACKGROUND = "background"
 private const val SEC_BACKUP = "backup"
 private const val SEC_VOICE = "voice"
+private const val SEC_OCR = "ocr"
+private const val SEC_AI = "ai"
+private const val SEC_LEXICON = "lexicon"
+private const val SEC_VOICE_HISTORY = "voice_history"
+
+/** 二级页面里还有三级页面：返回时回到它的上一级，一级页面返回就是设置首页 */
+private fun parentSection(section: String?): String? = when (section) {
+    SEC_LEXICON, SEC_VOICE_HISTORY -> SEC_VOICE
+    else -> null
+}
 
 private sealed interface Dialog {
     data object Tags : Dialog
@@ -122,7 +132,6 @@ private sealed interface Dialog {
     data object AddWidget : Dialog
     data object Ocr : Dialog
     data object Llm : Dialog
-    data object Lexicon : Dialog
     data object VoiceEngine : Dialog
     data object VoiceKey : Dialog
     data object VoiceSilence : Dialog
@@ -215,7 +224,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
     }
 
     var section by rememberSaveable { mutableStateOf<String?>(null) }
-    BackHandler(enabled = section != null) { section = null }
+    BackHandler(enabled = section != null) { section = parentSection(section) }
 
     // ── 备份与迁移 ──
     var backupBusy by remember { mutableStateOf(false) }
@@ -288,13 +297,17 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                 .padding(start = 16.dp, end = 16.dp, top = 8.dp),
         ) {
             val sectionTitle = when (section) {
-                SEC_RECORD -> "记录"
+                SEC_RECORD -> "文字记录"
                 SEC_REVISIT -> "重温"
                 SEC_TODO -> "待办"
-                SEC_QUICK -> "快速入口"
+                SEC_QUICK -> "快速入口与摘录"
                 SEC_BACKGROUND -> "后台同步"
                 SEC_BACKUP -> "备份与迁移"
                 SEC_VOICE -> "语音输入"
+                SEC_OCR -> "OCR 输入"
+                SEC_AI -> "AI 与大模型"
+                SEC_LEXICON -> "语音词库"
+                SEC_VOICE_HISTORY -> "语音历史"
                 else -> null
             }
             // 标题栏固定在顶部，只有下面的设置项滚动
@@ -305,7 +318,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                     modifier = Modifier.padding(start = 4.dp, top = 16.dp, bottom = 12.dp),
                 )
             } else {
-                SubPageHeader(sectionTitle, onBack = { section = null })
+                SubPageHeader(sectionTitle, onBack = { section = parentSection(section) })
                 Spacer(Modifier.height(12.dp))
             }
 
@@ -334,14 +347,58 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                         )
                     }
 
-                    Group("功能") {
+                    Group("输入方式") {
                         SettingsItem(
-                            icon = Icons.Filled.Star,
-                            title = "记录",
+                            icon = Icons.Filled.Create,
+                            title = "文字记录",
                             summary = "${settings.defaultTagsText.ifEmpty { "无默认标签" }} · ${settings.dailyFolder}",
                             onClick = { section = SEC_RECORD },
                             trailing = { Chevron() },
                         )
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "语音输入",
+                            summary = when {
+                                !settings.voiceEnabled -> "已关闭"
+                                !ocrConfigured && localAsr !is LocalAsrState.Ready -> "未配置 · 需要腾讯云密钥并开通「语音识别」，或下载本地模型"
+                                settings.voicePolish && llmConfigured -> "按住说话 · AI 整理并推算日期时间（${settings.llmModel}）"
+                                else -> "按住说话 · 本地规则识别日期时间（配置大模型可让 AI 整理）"
+                            },
+                            onClick = { section = SEC_VOICE },
+                            trailing = { Chevron() },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "OCR 输入",
+                            summary = when {
+                                !ocrConfigured -> "未配置 · 填入腾讯云密钥后，可拍照识别文字录入"
+                                settings.ocrEnabled -> "已开启 · 记一条里点相机，拍完自动识别文字"
+                                else -> "已配置 · 在相机页点「识别文字」开启"
+                            },
+                            onClick = { section = SEC_OCR },
+                            trailing = { Chevron() },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Add,
+                            title = "快速入口与摘录",
+                            summary = "磁贴 · 分享菜单 · 桌面图标 · 摘录模式" + if (settings.excerptMode) "（摘录中）" else "",
+                            onClick = { section = SEC_QUICK },
+                            trailing = { Chevron() },
+                        )
+                    }
+
+                    Group("AI") {
+                        SettingsItem(
+                            icon = Icons.Filled.Star,
+                            title = "AI 与大模型",
+                            summary = (if (llmConfigured) "大模型已配置 · ${settings.llmModel}" else "大模型未配置") +
+                                " · 问 AI 自动发送${if (settings.aiAutoSend) "已开" else "已关"}",
+                            onClick = { section = SEC_AI },
+                            trailing = { Chevron() },
+                        )
+                    }
+
+                    Group("功能") {
                         SettingsItem(
                             icon = Icons.Filled.Refresh,
                             title = "重温",
@@ -361,24 +418,6 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                             onClick = { section = SEC_TODO },
                             trailing = { Chevron() },
                         )
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "腾讯云文字识别",
-                            summary = if (ocrConfigured) "已配置 · 记一条里点相机，开启「识别文字」后拍照录入笔记；语音输入也用这对密钥" else "未配置 · 填入腾讯云 SecretId / SecretKey 后，可拍照识别文字、按住说话录入",
-                            onClick = { dialog = Dialog.Ocr },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "语音输入",
-                            summary = when {
-                                !settings.voiceEnabled -> "已关闭"
-                                !ocrConfigured -> "未配置 · 需要腾讯云密钥，并开通「语音识别」"
-                                settings.voicePolish && llmConfigured -> "按住说话 · AI 整理并推算日期时间（${settings.llmModel}）"
-                                else -> "按住说话 · 本地规则识别日期时间（填大模型 Key 可让 AI 整理）"
-                            },
-                            onClick = { section = SEC_VOICE },
-                            trailing = { Chevron() },
-                        )
                     }
 
                     Group("系统") {
@@ -396,15 +435,8 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                             trailing = { Chevron() },
                         )
                         SettingsItem(
-                            icon = Icons.Filled.Add,
-                            title = "快速入口",
-                            summary = "快速设置磁贴 · 分享菜单 · 桌面图标长按",
-                            onClick = { section = SEC_QUICK },
-                            trailing = { Chevron() },
-                        )
-                        SettingsItem(
                             icon = Icons.Filled.Notifications,
-                            title = "后台同步（荣耀 MagicOS）",
+                            title = "后台同步",
                             summary = if (batteryIgnored) "电池优化已忽略" else "建议开启，离线记下的内容才能及时同步",
                             onClick = { section = SEC_BACKGROUND },
                             trailing = { Chevron() },
@@ -586,32 +618,6 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                     }
                     SettingsItem(
                         icon = Icons.Filled.Create,
-                        title = "问 AI 自动发送",
-                        summary = when {
-                            !settings.aiAutoSend -> "关闭 · 从拾忆转交问题到闪念贝壳 AI 时，只把问题填进输入框，需要自己点发送"
-                            excerptServiceOn -> "已开启 · 转交问题后自动点发送键。仅在转交后几秒内、且前台是闪念贝壳时动作"
-                            else -> "还差一步 · 请在「无障碍」里打开「拾忆」（点此前往，一个开关管摘录、自动发送、音量键说话）"
-                        },
-                        onClick = {
-                            if (settings.aiAutoSend && excerptServiceOn) {
-                                container.settings.setAiAutoSend(false)
-                            } else {
-                                container.settings.setAiAutoSend(true)
-                                if (!excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
-                            }
-                        },
-                        trailing = {
-                            Switch(
-                                checked = settings.aiAutoSend,
-                                onCheckedChange = {
-                                    container.settings.setAiAutoSend(it)
-                                    if (it && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
-                                },
-                            )
-                        },
-                    )
-                    SettingsItem(
-                        icon = Icons.Filled.Create,
                         title = "摘录模式",
                         summary = when {
                             !settings.excerptMode -> "关闭 · 开启后屏幕边缘出现闪电小胶囊，选中文字后点它，就存成摘录笔记。也可从下拉磁贴「摘录」、长按桌面图标「摘录模式」开启"
@@ -735,7 +741,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                 }
 
                 SEC_VOICE -> {
-                    Group(null) {
+                    Group("怎么开始说") {
                         SettingsItem(
                             icon = Icons.Filled.Create,
                             title = "按住说话",
@@ -744,13 +750,6 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                             trailing = {
                                 Switch(checked = settings.voiceEnabled, onCheckedChange = { container.settings.setVoiceEnabled(it) })
                             },
-                        )
-                        SettingsItem(
-                            icon = Icons.Filled.Lock,
-                            title = "腾讯云密钥",
-                            summary = if (ocrConfigured) "已配置 · 与文字识别共用，需要在腾讯云开通「语音识别」（每月免费 5000 次）"
-                            else "未配置 · 填入腾讯云 SecretId / SecretKey",
-                            onClick = { dialog = Dialog.Ocr },
                         )
                         // 「语音记一条」磁贴 / 快捷方式的悬浮胶囊要「显示在其他应用上层」权限
                         SettingsItem(
@@ -767,6 +766,19 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                                         ),
                                     )
                                 }
+                            },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "音量键按住说话",
+                            summary = when {
+                                settings.voiceKey == VoiceKey.OFF -> "关闭 · 选一个音量键，长按开始录音、松手结束（不用点胶囊）"
+                                !excerptServiceOn -> "${settings.voiceKey.label} · 还没开启无障碍里的「拾忆」，点一下去开启"
+                                else -> "${settings.voiceKey.label} · 长按录音，松手结束；轻按照常调音量"
+                            },
+                            onClick = {
+                                if (settings.voiceKey != VoiceKey.OFF && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
+                                else dialog = Dialog.VoiceKey
                             },
                         )
                         SettingsItem(
@@ -787,25 +799,21 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                                 onClick = { dialog = Dialog.VoiceSilence },
                             )
                         }
-                        SettingsItem(
-                            icon = Icons.Filled.Create,
-                            title = "音量键按住说话",
-                            summary = when {
-                                settings.voiceKey == VoiceKey.OFF -> "关闭 · 选一个音量键，长按开始录音、松手结束（不用点胶囊）"
-                                !excerptServiceOn -> "${settings.voiceKey.label} · 还没开启无障碍里的「拾忆」，点一下去开启"
-                                else -> "${settings.voiceKey.label} · 长按录音，松手结束；轻按照常调音量"
-                            },
-                            onClick = {
-                                if (settings.voiceKey != VoiceKey.OFF && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
-                                else dialog = Dialog.VoiceKey
-                            },
-                        )
-                        // 识别方式：云端 / 本地 SenseVoice / 自动
+                    }
+
+                    Group("语音识别") {
                         SettingsItem(
                             icon = Icons.Filled.Refresh,
                             title = "识别方式",
                             summary = settings.voiceEngine.label + " · " + settings.voiceEngine.summary,
                             onClick = { dialog = Dialog.VoiceEngine },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Lock,
+                            title = "腾讯云密钥",
+                            summary = if (ocrConfigured) "已配置 · 与 OCR 输入共用，需要在腾讯云开通「语音识别」（每月免费 5000 次）"
+                            else "未配置 · 填入腾讯云 SecretId / SecretKey（与 OCR 输入共用）",
+                            onClick = { dialog = Dialog.Ocr },
                         )
                         // 本地模型：不随应用安装，在这里下载 / 删除
                         SettingsItem(
@@ -837,17 +845,10 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                                 onClick = { confirmDeleteLocalAsr = true },
                             )
                         }
-                        SettingsItem(
-                            icon = Icons.Filled.Star,
-                            title = "词库",
-                            summary = if (lexicon.hotwords.isEmpty() && lexicon.replacements.isEmpty())
-                                "项目名、人名等专有名词，和总是被听错的词；识别后点「纠错」也会记到这里"
-                            else "${lexicon.hotwords.size} 个热词 · ${lexicon.replacements.size} 条替换规则",
-                            onClick = { dialog = Dialog.Lexicon },
-                        )
                     }
                     if (localAsr is LocalAsrState.Downloading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Group("AI 整理") {
+
+                    Group("整理与词库") {
                         SettingsItem(
                             icon = Icons.Filled.Star,
                             title = "AI 整理口语",
@@ -861,22 +862,135 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                         SettingsItem(
                             icon = Icons.Filled.Settings,
                             title = "大模型接口",
-                            summary = (if (llmConfigured) "已配置" else "未配置 · 需要 API Key") +
-                                " · ${settings.llmModel} · ${settings.llmBaseUrl}",
-                            onClick = { dialog = Dialog.Llm },
+                            summary = (if (llmConfigured) "已配置" else "未配置 · 需要 API Key") + " · ${settings.llmModel} · 在「AI 与大模型」里设置",
+                            onClick = { section = SEC_AI },
+                            trailing = { Chevron() },
                         )
+                        SettingsItem(
+                            icon = Icons.Filled.Star,
+                            title = "语音词库",
+                            summary = "${lexicon.hotwords.size} 个热词 · ${lexicon.replacements.size} 条替换规则 · 另有来自文件夹、项目、待办的自动热词；改对的同音错字会自动学到这里",
+                            onClick = { section = SEC_LEXICON },
+                            trailing = { Chevron() },
+                        )
+                    }
+
+                    Group("保存") {
                         SettingsItem(
                             icon = Icons.Filled.Send,
                             title = "松手直接保存",
-                            summary = if (settings.voiceAutoSend) "识别完不弹确认卡片，只显示一条小提示，几秒后自动保存；点它可以改字、放弃" else "识别完先放进输入框 / 弹出确认卡片，确认后再保存",
+                            summary = if (settings.voiceAutoSend) "识别完不弹确认卡片，只显示一条小提示，几秒后自动保存；点它可以改字、放弃（删除待办仍会先确认）" else "识别完先放进输入框 / 弹出确认卡片，确认后再保存",
                             onClick = { container.settings.setVoiceAutoSend(!settings.voiceAutoSend) },
                             trailing = {
                                 Switch(checked = settings.voiceAutoSend, onCheckedChange = { container.settings.setVoiceAutoSend(it) })
                             },
                         )
+                        SettingsItem(
+                            icon = Icons.Filled.Info,
+                            title = "语音历史",
+                            summary = if (settings.voiceHistory) "保留最近 ${com.carpe.ideashell.data.asr.VoiceHistory.MAX_RECORDS} 条原话和录音（只在本机）· 识别错了可重新识别 / 整理"
+                            else "已关闭 · 点进去可以开启，或清空已有的",
+                            onClick = { section = SEC_VOICE_HISTORY },
+                            trailing = { Chevron() },
+                        )
                     }
                     Text(
-                        "大模型使用 OpenAI 兼容接口，默认通义千问（DashScope）。你说的话会发给腾讯云识别、再把文字发给所选大模型，不经过其他服务器。",
+                        "你说的话会发给腾讯云识别（或在本机识别），再把文字发给所选大模型整理，不经过其他服务器。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
+                }
+
+                SEC_LEXICON -> LexiconPage()
+
+                SEC_VOICE_HISTORY -> VoiceHistoryPage()
+
+                SEC_OCR -> {
+                    Group(null) {
+                        SettingsItem(
+                            icon = Icons.Filled.Lock,
+                            title = "腾讯云密钥",
+                            summary = if (ocrConfigured) "已配置 · 与语音输入的云端识别共用，需要在腾讯云开通「文字识别」"
+                            else "未配置 · 填入腾讯云 SecretId / SecretKey 后，可拍照识别文字",
+                            onClick = { dialog = Dialog.Ocr },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "识别文字",
+                            summary = when {
+                                !ocrConfigured -> "需要先填入腾讯云密钥"
+                                settings.ocrEnabled -> "已开启 · 记一条里点相机，拍照或选图后自动识别，挑出要的文字录入"
+                                else -> "已关闭 · 拍的照片直接当图片附件；也可以在相机页右下角随时开启"
+                            },
+                            onClick = {
+                                if (!ocrConfigured) dialog = Dialog.Ocr else container.settings.setOcrEnabled(!settings.ocrEnabled)
+                            },
+                            trailing = {
+                                Switch(
+                                    checked = settings.ocrEnabled && ocrConfigured,
+                                    onCheckedChange = { if (!ocrConfigured) dialog = Dialog.Ocr else container.settings.setOcrEnabled(it) },
+                                )
+                            },
+                        )
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "选择方式",
+                            summary = if (settings.ocrFrameMode) "选择框 · 先框出要识别的区域，只识别框里的文字" else "划选识别 · 整张图识别，再点选 / 划选要的文字",
+                            onClick = { container.settings.setOcrFrameMode(!settings.ocrFrameMode) },
+                            trailing = {
+                                Switch(checked = settings.ocrFrameMode, onCheckedChange = { container.settings.setOcrFrameMode(it) })
+                            },
+                        )
+                    }
+                    Text(
+                        "识别在腾讯云完成：图片先缩放压缩再发送，不经过其他服务器。图片转文字之后，和其他输入一样按平常的方式保存。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    )
+                }
+
+                SEC_AI -> {
+                    Group("大模型") {
+                        SettingsItem(
+                            icon = Icons.Filled.Settings,
+                            title = "大模型接口",
+                            summary = (if (llmConfigured) "已配置" else "未配置 · 需要 API Key") +
+                                " · ${settings.llmModel} · ${settings.llmBaseUrl}",
+                            onClick = { dialog = Dialog.Llm },
+                        )
+                    }
+                    Group("闪念贝壳 AI") {
+                        SettingsItem(
+                            icon = Icons.Filled.Create,
+                            title = "问 AI 自动发送",
+                            summary = when {
+                                !settings.aiAutoSend -> "关闭 · 从拾忆转交问题到闪念贝壳 AI 时，只把问题填进输入框，需要自己点发送"
+                                excerptServiceOn -> "已开启 · 转交问题后自动点发送键。仅在转交后几秒内、且前台是闪念贝壳时动作"
+                                else -> "还差一步 · 请在「无障碍」里打开「拾忆」（点此前往，一个开关管摘录、自动发送、音量键说话）"
+                            },
+                            onClick = {
+                                if (settings.aiAutoSend && excerptServiceOn) {
+                                    container.settings.setAiAutoSend(false)
+                                } else {
+                                    container.settings.setAiAutoSend(true)
+                                    if (!excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
+                                }
+                            },
+                            trailing = {
+                                Switch(
+                                    checked = settings.aiAutoSend,
+                                    onCheckedChange = {
+                                        container.settings.setAiAutoSend(it)
+                                        if (it && !excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
+                                    },
+                                )
+                            },
+                        )
+                    }
+                    Text(
+                        "大模型使用 OpenAI 兼容接口，默认通义千问（DashScope）；用于语音整理（判断待办 / 日记 / 笔记、推算日期时间、修改待办）和专注记录润色。「问 AI 自动发送」是把问题转交到闪念贝壳 AI 后帮你点发送键。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 8.dp),
@@ -1047,18 +1161,6 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
             onDismiss = { dialog = null },
         )
 
-        Dialog.Lexicon -> LexiconDialog(
-            initialHotwords = lexicon.hotwords.joinToString("\n"),
-            initialReplacements = com.carpe.ideashell.data.asr.Lexicon.formatReplacements(lexicon.replacements),
-            onConfirm = { hot, rep ->
-                container.lexicon.save(
-                    com.carpe.ideashell.data.asr.Lexicon.parseHotwords(hot),
-                    com.carpe.ideashell.data.asr.Lexicon.parseReplacements(rep),
-                )
-            },
-            onDismiss = { dialog = null },
-        )
-
         Dialog.Llm -> LlmConfigDialog(
             initialBaseUrl = settings.llmBaseUrl,
             initialModel = settings.llmModel,
@@ -1071,46 +1173,6 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
         )
 
         null -> Unit
-    }
-}
-
-/** 语音词库：热词（每行一个）+ 替换规则（每行「错字=正确」） */
-@Composable
-private fun LexiconDialog(
-    initialHotwords: String,
-    initialReplacements: String,
-    onConfirm: (String, String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var hot by remember { mutableStateOf(initialHotwords) }
-    var rep by remember { mutableStateOf(initialReplacements) }
-    InputSheet(
-        title = "语音词库",
-        hint = "热词：项目名、人名、产品名等专有名词（2–10 个字，每行一个），识别时优先，也会告诉大模型；闪念贝壳的文件夹名会自动当热词。替换规则：总是被听错的词，每行写成「错字=正确」，识别后自动改。",
-        onDismiss = onDismiss,
-        onConfirm = {
-            onConfirm(hot, rep)
-            onDismiss()
-        },
-    ) {
-        ListGroup {
-            AppTextField(
-                value = hot,
-                onValueChange = { hot = it },
-                label = "热词",
-                placeholder = "拾忆\n闪念贝壳",
-                minLines = 2,
-                autoFocus = true,
-            )
-            RowDivider()
-            AppTextField(
-                value = rep,
-                onValueChange = { rep = it },
-                label = "替换规则",
-                placeholder = "是疑=拾忆\n闪年贝壳=闪念贝壳",
-                minLines = 2,
-            )
-        }
     }
 }
 
@@ -1379,7 +1441,7 @@ private fun FocusGoalDialog(current: Int, onSelect: (Int) -> Unit, onDismiss: ()
 }
 
 @Composable
-private fun Group(title: String?, content: @Composable ColumnScope.() -> Unit) {
+internal fun Group(title: String?, content: @Composable ColumnScope.() -> Unit) {
     Column {
         if (title != null) {
             Text(
@@ -1397,7 +1459,7 @@ private fun Group(title: String?, content: @Composable ColumnScope.() -> Unit) {
 
 /** 二级页面的标题栏：返回 + 页面名 */
 @Composable
-private fun SubPageHeader(title: String, onBack: () -> Unit) {
+internal fun SubPageHeader(title: String, onBack: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1410,7 +1472,7 @@ private fun SubPageHeader(title: String, onBack: () -> Unit) {
 
 /** 一级页面里「点进去还有更多」的右箭头 */
 @Composable
-private fun Chevron() {
+internal fun Chevron() {
     Icon(
         Icons.AutoMirrored.Filled.KeyboardArrowRight,
         contentDescription = null,
@@ -1419,7 +1481,7 @@ private fun Chevron() {
 }
 
 @Composable
-private fun SettingsItem(
+internal fun SettingsItem(
     icon: ImageVector,
     title: String,
     summary: String,

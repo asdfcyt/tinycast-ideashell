@@ -165,7 +165,7 @@ fun CameraOcrScreen(
                 onToggleOcr = {
                     when {
                         ocrOn -> container.settings.setOcrEnabled(false)
-                        !ocrConfigured -> Toast.makeText(context, "请先到「设置 → 文字识别」填入腾讯云密钥", Toast.LENGTH_LONG).show()
+                        !ocrConfigured -> Toast.makeText(context, "请先到「设置 → OCR 输入」填入腾讯云密钥", Toast.LENGTH_LONG).show()
                         else -> container.settings.setOcrEnabled(true)
                     }
                 },

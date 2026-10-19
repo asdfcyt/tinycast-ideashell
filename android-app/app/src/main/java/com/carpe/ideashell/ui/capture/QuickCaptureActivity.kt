@@ -157,6 +157,7 @@ class QuickCaptureActivity : ComponentActivity() {
         if (fresh) viewModel.reconfigure(clip, preset, origin) else viewModel.configure(clip, preset, origin)
         // 磁贴「语音记一条」：面板就绪后自动开始录音
         viewModel.voiceStartRequest = intent.getBooleanExtra(EXTRA_START_VOICE, false)
+        intent.getStringExtra(EXTRA_REPLAY_ID)?.let { viewModel.replayVoice(it, intent.getBooleanExtra(EXTRA_REPLAY_AUDIO, false)) }
         if (presetText != null) {
             viewModel.text = presetText
             viewModel.baselineText = presetText
@@ -212,6 +213,10 @@ class QuickCaptureActivity : ComponentActivity() {
 
         /** true：面板打开后立刻开始语音录入（快速设置磁贴「语音记一条」） */
         const val EXTRA_START_VOICE = "start_voice"
+
+        /** 语音历史里的「重新识别 / 重新整理」：历史记录 id，以及是否从录音重新识别（否则用原话重新整理） */
+        const val EXTRA_REPLAY_ID = "replay_id"
+        const val EXTRA_REPLAY_AUDIO = "replay_audio"
 
         /** 预选日期（yyyy-MM-dd）：待办页选了某一天后点「+」，新待办直接排在这一天 */
         const val EXTRA_DATE = "date"

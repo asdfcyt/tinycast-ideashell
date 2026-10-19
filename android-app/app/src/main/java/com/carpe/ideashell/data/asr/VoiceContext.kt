@@ -16,17 +16,20 @@ class VoiceContext(
     private val projects: () -> List<Project>,
     private val todos: TodoRepository,
 ) {
-    fun hotwords(): List<String> {
+    /** 自动热词按来源分组（设置里「语音词库」展示用）；每组已去掉不适合当热词的 */
+    fun hotwordSources(): List<Pair<String, List<String>>> {
         val overview = todos.peek()
         val open = openTasks()
-        return buildList {
-            addAll(folders())
-            projects().forEach { p -> addAll(p.terms) }
-            overview?.projects?.values?.let(::addAll)
-            open.forEach { addAll(it.tags) }
-            open.forEach { add(it.title) }
-        }.map { it.trim().removePrefix("#") }.filter(Lexicon::isValidHotword).distinct()
+        fun clean(list: List<String>) = list.map { it.trim().removePrefix("#") }.filter(Lexicon::isValidHotword).distinct()
+        return listOf(
+            "闪念贝壳文件夹" to clean(folders()),
+            "项目关键词与标签" to clean(projects().flatMap { it.terms }),
+            "滴答清单与任务标签" to clean(overview?.projects?.values.orEmpty().toList() + open.flatMap { it.tags }),
+            "待办标题" to clean(open.map { it.title }),
+        ).filter { it.second.isNotEmpty() }
     }
+
+    fun hotwords(): List<String> = hotwordSources().flatMap { it.second }.distinct()
 
     fun todoLines(): List<String> {
         val today = LocalDate.now()

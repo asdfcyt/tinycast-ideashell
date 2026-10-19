@@ -76,6 +76,7 @@ import com.carpe.ideashell.data.asr.AsrException
 import com.carpe.ideashell.data.asr.CODE_NETWORK
 import com.carpe.ideashell.data.asr.LocalSenseVoice
 import com.carpe.ideashell.data.asr.Lexicon
+import com.carpe.ideashell.data.asr.VoiceHistory
 import com.carpe.ideashell.data.asr.TencentAsr
 import com.carpe.ideashell.data.llm.LlmClient
 import com.carpe.ideashell.data.llm.LlmException
@@ -120,6 +121,8 @@ class VoiceInputController(
     private val extraHotwords: () -> List<String>,
     /** 用户目前未完成的待办（「任务名｜日期 时间」）：给大模型判断「改 / 完成 / 删除哪一条」，也帮它修正人名项目名 */
     private val todoContext: () -> List<String> = { emptyList() },
+    /** 语音历史（设置里开着才留底）：每次录音存原始录音，之后补上原话和整理结果；null 不留底 */
+    private val history: VoiceHistory? = null,
     private val onError: (String) -> Unit,
     private val onResult: (VoiceResult) -> Unit,
 ) {
@@ -235,44 +238,100 @@ class VoiceInputController(
         phase = VoicePhase.IDLE
     }
 
-    private suspend fun process(pcm: ByteArray) {
-        try {
-            val durationMs = pcm.size / 32L // 16kHz × 16 位 = 每毫秒 32 字节
-            if (durationMs < MIN_MS) {
-                onError("说话时间太短，按住说完再松手")
-                return
-            }
-            val hot = lexicon.hotwordsFor(extraHotwords())
-            // 词库里的替换规则先改一遍：总是听错的词不用每次都纠
-            val heard = recognize(pcm, hot)
-            val raw = lexicon.apply(heard.text)
-            if (raw.isBlank()) {
-                onError("没有听清，再说一次试试")
-                return
-            }
-            val cleaned = SpeechCleaner.clean(raw)
+    /** 历史里的「重新识别」：用留底的录音再识别 + 整理一遍，结果和平时一样交给 [onResult]；[historyId] 是那条历史 */
+    fun reprocessAudio(pcm: ByteArray, historyId: String) {
+        if (phase != VoicePhase.IDLE) return
+        phase = VoicePhase.PROCESSING
+        processing = scope.launch { process(pcm, historyId) }
+    }
 
-            var intents: List<VoiceIntent> = emptyList()
-            var polishError: String? = null
-            // 没填大模型 Key 就静默用本地规则；填了但失败，提示一句并退回原始转写
-            if (settings.current.voicePolish && llm.configured) {
-                try {
-                    val now = LocalDateTime.now()
-                    val reply = llm.chatJson(VoiceIntents.systemPrompt(now, vocabulary = hot, todos = todoContext()), VoiceIntents.userPrompt(raw))
-                    // 「半小时后」这类相对时间，本地再精确算一遍
-                    intents = VoiceIntents.fixRelativeTime(raw, VoiceIntents.parse(reply), now)
-                    if (intents.isEmpty()) polishError = "AI 整理的结果无法解析，已使用原始转写"
-                } catch (e: LlmException) {
-                    polishError = (e.message ?: "AI 整理失败") + "，已使用原始转写"
+    /** 历史里的「重新整理」：不再识别，拿留底的原话重新走一遍 AI 整理 */
+    fun reprocessText(raw: String, historyId: String) {
+        if (phase != VoicePhase.IDLE) return
+        phase = VoicePhase.PROCESSING
+        processing = scope.launch { guarded { deliver(raw, null, historyId) } }
+    }
+
+    private suspend fun process(pcm: ByteArray, replayId: String? = null) = guarded {
+        val durationMs = pcm.size / 32L // 16kHz × 16 位 = 每毫秒 32 字节
+        if (durationMs < MIN_MS) {
+            onError("说话时间太短，按住说完再松手")
+            return@guarded
+        }
+        // 先把录音留底：识别失败了也还能重试
+        val historyId = replayId ?: if (settings.current.voiceHistory) history?.begin(pcm, durationMs) else null
+        val hot = lexicon.hotwordsFor(extraHotwords())
+        // 词库里的替换规则先改一遍：总是听错的词不用每次都纠
+        val heard = try {
+            recognize(pcm, hot)
+        } catch (e: AsrException) {
+            if (historyId != null) history?.update(historyId, error = "识别失败：" + (e.message ?: "未知错误"))
+            throw e
+        }
+        val raw = lexicon.apply(heard.text)
+        if (raw.isBlank()) {
+            if (historyId != null) history?.update(historyId, error = "没有听清")
+            onError("没有听清，再说一次试试")
+            return@guarded
+        }
+        if (historyId != null) history?.update(historyId, raw = raw, error = "")
+        deliver(raw, heard.note, historyId)
+    }
+
+    /** 拿到原话之后：（可选）AI 整理 → [onResult]，并把整理结果记进历史 */
+    private suspend fun deliver(raw: String, heardNote: String?, historyId: String?) {
+        val hot = lexicon.hotwordsFor(extraHotwords())
+        val cleaned = SpeechCleaner.clean(raw)
+
+        var intents: List<VoiceIntent> = emptyList()
+        var polishError: String? = null
+        // 没填大模型 Key 就静默用本地规则；填了但失败，提示一句并退回原始转写
+        if (settings.current.voicePolish && llm.configured) {
+            try {
+                val now = LocalDateTime.now()
+                val reply = llm.chatJson(VoiceIntents.systemPrompt(now, vocabulary = hot, todos = todoContext()), VoiceIntents.userPrompt(raw))
+                // 「半小时后」这类相对时间，本地再精确算一遍
+                intents = VoiceIntents.fixRelativeTime(raw, VoiceIntents.parse(reply), now)
+                if (intents.isEmpty()) polishError = "AI 整理的结果无法解析，已使用原始转写"
+            } catch (e: LlmException) {
+                polishError = (e.message ?: "AI 整理失败") + "，已使用原始转写"
+            }
+        }
+        val note = listOfNotNull(heardNote, polishError).joinToString("；").ifBlank { null }
+        // 没有大模型整理时，本地规则听「追加到上一条笔记」
+        val appendText = if (intents.isEmpty()) VoiceIntents.stripAppendCommand(raw) else null
+        if (historyId != null) {
+            history?.update(historyId, summary = summarize(intents, cleaned), error = if (polishError != null) polishError else "")
+        }
+        onResult(
+            if (appendText != null) VoiceResult(raw, SpeechCleaner.clean(appendText), intents, note, appendToLast = true)
+            else VoiceResult(raw, cleaned, intents, note),
+        )
+    }
+
+    /** 历史里显示的「整理成了什么」：待办：开会 / 日记：… / 问 AI：… */
+    private fun summarize(intents: List<VoiceIntent>, cleaned: String): String {
+        if (intents.isEmpty()) return "原话：$cleaned".take(80)
+        return intents.joinToString("；") { i ->
+            val kind = when {
+                i.edit -> i.op.label
+                i.ask -> "问 AI"
+                i.append -> "追加"
+                else -> when (i.type) {
+                    CaptureKind.TODO -> "待办"
+                    CaptureKind.DAILY -> "日记"
+                    CaptureKind.NOTE -> "笔记"
                 }
             }
-            val note = listOfNotNull(heard.note, polishError).joinToString("；").ifBlank { null }
-            // 没有大模型整理时，本地规则听「追加到上一条笔记」
-            val appendText = if (intents.isEmpty()) VoiceIntents.stripAppendCommand(raw) else null
-            onResult(
-                if (appendText != null) VoiceResult(raw, SpeechCleaner.clean(appendText), intents, note, appendToLast = true)
-                else VoiceResult(raw, cleaned, intents, note),
-            )
+            val body = if (i.edit && i.content.isBlank()) (i.target ?: "") else i.content
+            "$kind：${body.take(30)}"
+        }.take(120)
+    }
+
+    /** 统一的收尾：异常转成错误提示，最后一定回到空闲 */
+    private suspend fun guarded(block: suspend () -> Unit) {
+        try {
+            block()
         } catch (e: CancellationException) {
             throw e
         } catch (e: AsrException) {

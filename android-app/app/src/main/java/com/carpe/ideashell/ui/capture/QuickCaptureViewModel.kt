@@ -127,6 +127,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         lexicon = container.lexicon,
         extraHotwords = { container.voiceContext.hotwords() },
         todoContext = { container.voiceContext.todoLines() },
+        history = container.voiceHistory,
         onError = { error = it },
         onResult = ::applyVoice,
     )
@@ -194,6 +195,20 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
             voiceUndo = undo
         }
         if (container.settings.current.voiceAutoSend) pendingAutoSubmit = true
+    }
+
+    /** 语音历史里点了「重新识别 / 重新整理」（没开悬浮胶囊权限时回到这里）：结果和平时一样放进输入框 */
+    fun replayVoice(id: String, audio: Boolean) {
+        viewModelScope.launch {
+            val h = container.voiceHistory
+            if (audio) {
+                val pcm = h.audio(id)
+                if (pcm == null) error = "这条的录音已经不在了" else voice.reprocessAudio(pcm, id)
+            } else {
+                val raw = h.get(id)?.raw
+                if (raw.isNullOrBlank()) error = "这条没有识别出原话，可以试试「重新识别」" else voice.reprocessText(raw, id)
+            }
+        }
     }
 
     /** 修改待办的结果提示：界面收到后弹一条 Toast；[editClose] 为 true 表示都改成功了，顺便收起面板 */

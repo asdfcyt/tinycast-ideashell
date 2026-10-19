@@ -224,6 +224,17 @@ class VoiceCapsuleService : Service() {
                 voice?.cancel()
                 stopSelfClean()
             }
+            ACTION_REPLAY -> {
+                startForegroundNow()
+                val id = intent.getStringExtra(EXTRA_REPLAY_ID)
+                val v = voice
+                val busy = v != null && v.phase != VoicePhase.IDLE || shown == Shown.CONFIRM || shown == Shown.PENDING
+                if (id == null || busy) {
+                    if (voice == null) stopSelfClean()
+                } else {
+                    replay(id, intent.getBooleanExtra(EXTRA_REPLAY_AUDIO, false))
+                }
+            }
             ACTION_FINISH -> {
                 startForegroundNow()
                 val v = voice
@@ -272,13 +283,9 @@ class VoiceCapsuleService : Service() {
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
     }
 
-    private fun begin(hold: Boolean) {
-        if (!Settings.canDrawOverlays(this)) {
-            stopSelfClean()
-            return
-        }
+    private fun ensureController(): VoiceInputController {
         val container = (application as IdeashellApp).container
-        val controller = voice ?: VoiceInputController(
+        return voice ?: VoiceInputController(
             scope = scope,
             settings = container.settings,
             asr = container.asr,
@@ -287,9 +294,47 @@ class VoiceCapsuleService : Service() {
             lexicon = container.lexicon,
             extraHotwords = { container.voiceContext.hotwords() },
             todoContext = { container.voiceContext.todoLines() },
+            history = container.voiceHistory,
             onError = { showMessage(it, error = true) },
             onResult = { result -> onResult(result) },
         ).also { voice = it }
+    }
+
+    /** 语音历史里的「重新识别（[audio]）/ 重新整理」：显示「正在识别整理」，结果和平时一样走确认卡片 / 自动保存 */
+    private fun replay(id: String, audio: Boolean) {
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelfClean()
+            return
+        }
+        val controller = ensureController()
+        holdMode = false
+        stopping = false
+        drafts.clear()
+        cancelCountdown()
+        pal = resolvePalette()
+        ensureColumn()
+        renderProcessing()
+        stopTick()
+        scheduleTick()
+        val history = (application as IdeashellApp).container.voiceHistory
+        scope.launch {
+            if (audio) {
+                val pcm = history.audio(id)
+                if (pcm == null) showMessage("这条的录音已经不在了", error = true) else controller.reprocessAudio(pcm, id)
+            } else {
+                val raw = history.get(id)?.raw
+                if (raw.isNullOrBlank()) showMessage("这条没有识别出原话，可以试试「重新识别」", error = true)
+                else controller.reprocessText(raw, id)
+            }
+        }
+    }
+
+    private fun begin(hold: Boolean) {
+        if (!Settings.canDrawOverlays(this)) {
+            stopSelfClean()
+            return
+        }
+        val controller = ensureController()
         holdMode = hold
         stopping = false
         drafts.clear()
@@ -1401,7 +1446,10 @@ class VoiceCapsuleService : Service() {
 
         const val ACTION_FINISH = "com.carpe.ideashell.action.VOICE_CAPSULE_FINISH"
         const val ACTION_CANCEL = "com.carpe.ideashell.action.VOICE_CAPSULE_CANCEL"
+        const val ACTION_REPLAY = "com.carpe.ideashell.action.VOICE_CAPSULE_REPLAY"
         private const val EXTRA_HOLD = "hold"
+        private const val EXTRA_REPLAY_ID = "replay_id"
+        private const val EXTRA_REPLAY_AUDIO = "replay_audio"
 
         /** 按住期间松手得比录音开始还早时，记下来，开始后立刻结束 */
         @Volatile
@@ -1421,6 +1469,16 @@ class VoiceCapsuleService : Service() {
         /** 没在录就开始录，正在录就结束并保存 */
         fun toggle(context: Context) {
             context.startForegroundService(Intent(context, VoiceCapsuleService::class.java))
+        }
+
+        /** 语音历史里的「重新识别 / 重新整理」：用胶囊显示进度和确认卡片（需要「显示在其他应用上层」权限） */
+        fun replay(context: Context, historyId: String, audio: Boolean) {
+            context.startForegroundService(
+                Intent(context, VoiceCapsuleService::class.java)
+                    .setAction(ACTION_REPLAY)
+                    .putExtra(EXTRA_REPLAY_ID, historyId)
+                    .putExtra(EXTRA_REPLAY_AUDIO, audio),
+            )
         }
 
         /** 音量键按住：开始录，松手由 [onKeyReleased] 结束（录音期间不做说完自动结束） */
