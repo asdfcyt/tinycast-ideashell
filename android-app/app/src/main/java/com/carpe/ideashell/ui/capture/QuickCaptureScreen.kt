@@ -172,6 +172,16 @@ fun QuickCaptureScreen(
             viewModel.text = if (viewModel.text.isBlank()) question else viewModel.text.trimEnd() + "\n" + question
         }
     }
+    // 语音里说了修改之前的待办：改完弹一条提示；全部改成功就收起面板
+    LaunchedEffect(viewModel.editNotice) {
+        val notice = viewModel.editNotice ?: return@LaunchedEffect
+        viewModel.editNotice = null
+        android.widget.Toast.makeText(context, notice, android.widget.Toast.LENGTH_LONG).show()
+        if (viewModel.editClose) {
+            viewModel.editClose = false
+            onClose()
+        }
+    }
     // 闪念贝壳的语音录音 / AI：交给它的 App 处理，这里收起面板；问 AI 会把已写的文字带过去，成功转交后清空输入
     val bridgeContext = LocalContext.current
     val openVoice = {
@@ -186,8 +196,7 @@ fun QuickCaptureScreen(
 
     // 玻璃：面半透明 + 整个窗口背后磨砂；系统不允许跨窗口模糊时保持实心
     val blurOk = rememberCrossWindowBlur()
-    // 磨砂半径比其他抽屉小：能看清背后的桌面，只是柔化
-    if (blurOk && visible) com.carpe.ideashell.ui.glass.SheetBlurBehind(restPx = 8, peakPx = 14)
+    if (blurOk && visible) com.carpe.ideashell.ui.glass.SheetBlurBehind()
     Box(
         modifier = Modifier
             .fillMaxSize()

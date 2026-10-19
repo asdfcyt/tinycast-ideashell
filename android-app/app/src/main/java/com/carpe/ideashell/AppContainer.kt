@@ -132,6 +132,9 @@ class AppContainer(context: Context) {
         hasCredential = { !credentials.didaToken.isNullOrBlank() },
     )
 
+    /** 语音修改之前建好的待办 */
+    val todoEditor = com.carpe.ideashell.data.dida.TodoEditor(todos) { !credentials.didaToken.isNullOrBlank() }
+
     val surfaces = TodoSurfaces(
         context = context.applicationContext,
         todos = todos,

@@ -248,6 +248,18 @@ class TodoRepository(
         }
     }
 
+    /** 整体替换备注（语音「补充一下」会把新内容追加到原备注后面再整体写回） */
+    suspend fun setContent(task: DidaTask, content: String): Result<Unit> {
+        val before = _state.value.overview
+        val rangedBefore = _ranged.value
+        mutate { o -> replaceOpen(o, task.copy(content = content)) }
+        patchRanged(task.copy(content = content))
+        return attempt { api.setContent(task, content) }.onFailure {
+            rollback(before)
+            _ranged.value = rangedBefore
+        }
+    }
+
     /** 整体替换标签（「归入项目」就是给任务加项目标签） */
     suspend fun setTags(task: DidaTask, tags: List<String>): Result<Unit> {
         val before = _state.value.overview

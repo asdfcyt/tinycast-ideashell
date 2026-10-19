@@ -31,6 +31,9 @@ data class VoiceIntent(
     val ask: Boolean = false,
     /** 用户说了「追加到上一条笔记」：[content] 是要追加的内容，保存时接到最近一次快记的笔记后面（类型固定为笔记） */
     val append: Boolean = false,
+    /** 修改之前建好的待办：[target] 是找到它的关键词（可为空 = 刚才建的那条），[content] 是要追加到备注的说明（可为空），date / time / priority 是要改成的新值（null / 0 = 不改） */
+    val edit: Boolean = false,
+    val target: String? = null,
 )
 
 /** 一次语音输入的完整结果 */
@@ -83,6 +86,11 @@ object VoiceIntents {
   - daily（日记）：除上面三种以外的一切，也是默认选项——今天发生的事、心情、感想、流水账、已经做完的事、随口的一个想法、没头没尾的一句话。用户说了「记个日记 / 写进日记」也是 daily。
   拿不准时选 daily。
 - append：true / false，默认 false。用户说了「追加到上一条笔记 / 上个笔记 / 上一篇 / 刚才那条」「接着上一条写」「补充到上一条」这类话，就是想把这段话接到最近一条笔记后面：append 填 true，type 填 note，content 只写要追加的内容（口令本身不要写进去）。没说这类话一律 false。append 和 ask 不会同时出现。
+- edit：true / false，默认 false。用户要修改**之前已经建好的待办**，而不是新建：「把刚才的会改到两点四十」「开会那个待办补充一下，带上办公电脑」「把交周报那个推迟到周五」。这时 type 填 todo，edit 填 true，并且：
+  - target：用来找到那条待办的关键词（任务名里的核心词，如「开会」「周报」）；只说了「刚才那个 / 上一个」没说是什么就填 ""。
+  - content：要补充进这条待办**备注**的说明（如「带上办公电脑」），没有补充就填 ""。不是任务名，不要把任务名放这里。
+  - date / time：要改成的新日期 / 新时间，**只填用户明确说了要改的**，没说要改的填 null（不要套用「没说日期就取最近一个」的规则）。priority 同理，没说要改填 0。
+  - 说「再加一个待办 / 新建」是新建，不是 edit。edit 项不要拆分，也不会和 append / ask 同时出现。
 - content：整理后的正文。去掉「嗯、呃、那个、就是」这类语气词和重复；自我纠正取最后说的（「明天，不对，后天」→ 后天）；修正明显的同音错字；加合适的标点。保留原意和人称，不要扩写、不要总结、不要回答问题（ask 除外：ask 只整理问题本身，不要自己回答）。
 - 待办的任务逻辑（type 为 todo 时）：
   - content 是一句简短的任务名，动词开头（「给张三回电话」「交周报」），去掉日期、时间、重复周期、「提醒我」这些说法（它们放进 date / time / repeat）。
@@ -110,6 +118,10 @@ object VoiceIntents {
 输出：{"items":[{"type":"ask","content":"格雷厄姆说的「安全边际」是什么意思？","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
 输入：追加到上一条笔记，复利的关键是时间和不中断
 输出：{"items":[{"type":"note","append":true,"content":"复利的关键是时间和不中断。","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
+输入：刚才那个开会的待办，改到两点四十，还要带上办公电脑
+输出：{"items":[{"type":"todo","edit":true,"target":"开会","content":"带上办公电脑","date":null,"time":"14:40","repeat":null,"tags":[],"priority":0}]}
+输入：把交周报那个推迟到周五
+输出：{"items":[{"type":"todo","edit":true,"target":"周报","content":"","date":"2026-10-23","time":null,"repeat":null,"tags":[],"priority":0}]}
 输入：明天上午九点开周会，然后下午三点去取快递，还有每周五要交周报
 输出：{"items":[{"type":"todo","content":"开周会","date":"2026-10-19","time":"09:00","repeat":null,"tags":[],"priority":0},{"type":"todo","content":"去取快递","date":"2026-10-19","time":"15:00","repeat":null,"tags":[],"priority":0},{"type":"todo","content":"交周报","date":"2026-10-23","time":null,"repeat":"每周五","tags":[],"priority":0}]}
 输入：周五前把报告交了，另外帮我查一下报告模板
@@ -163,6 +175,9 @@ object VoiceIntents {
 
     private fun parseOne(obj: JsonObject): VoiceIntent? {
         val content = obj.string("content")?.trim().orEmpty()
+        val edit = obj.string("type")?.trim()?.lowercase() == "todo" &&
+            (obj["edit"] as? JsonPrimitive)?.contentOrNull?.equals("true", ignoreCase = true) == true
+        if (edit) return parseEdit(obj, content)
         if (content.isEmpty()) return null
         val rawType = obj.string("type")?.trim()?.lowercase()
         // 问 AI：不是记录，type 随便占个位（DAILY），靠 ask 标志区分
@@ -194,6 +209,23 @@ object VoiceIntents {
         }
         val append = !ask && (obj["append"] as? JsonPrimitive)?.contentOrNull?.equals("true", ignoreCase = true) == true
         return VoiceIntent(if (append) CaptureKind.NOTE else type, content, if (append) null else date, if (append) null else time, if (append) null else repeat, tags, if (todo && !append) priority else 0, ask, append)
+    }
+
+    /** 修改待办：什么都没要改（没有新时间、没有补充、没有优先级）就丢掉 */
+    private fun parseEdit(obj: JsonObject, content: String): VoiceIntent? {
+        val date = obj.string("date")?.trim()?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        val time = obj.string("time")?.let { RE_TIME.find(it) }?.let { m ->
+            runCatching { LocalTime.of(m.groupValues[1].toInt(), m.groupValues[2].toInt()) }.getOrNull()
+        }
+        val priority = when ((obj["priority"] as? JsonPrimitive)?.intOrNull ?: 0) {
+            in 5..Int.MAX_VALUE -> 5
+            in 3..4 -> 3
+            in 1..2 -> 1
+            else -> 0
+        }
+        if (content.isEmpty() && date == null && time == null && priority == 0) return null
+        val target = obj.string("target")?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", true) }
+        return VoiceIntent(CaptureKind.TODO, content, date, time, null, emptyList(), priority, edit = true, target = target)
     }
 
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull

@@ -139,6 +139,18 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
      * - 没开 / 失败：追加本地清洗过的转写，日期时间退回本地规则识别。
      */
     private fun applyVoice(result: VoiceResult) {
+        // 「把刚才那个会改到两点四十」：修改之前建好的待办，直接去滴答里改，不进输入框
+        val edits = result.intents.filter { it.edit }
+        if (edits.isNotEmpty()) {
+            val rest = result.intents.filterNot { it.edit }
+            applyTodoEdits(edits, closeWhenDone = rest.isEmpty())
+            if (rest.isEmpty()) {
+                error = result.polishError
+                return
+            }
+            applyVoice(result.copy(intents = rest))
+            return
+        }
         error = result.polishError
         // 「帮我查一下…」是问闪念贝壳 AI，不是记录：单独拿出来，由界面转交给闪念贝壳
         val asks = result.intents.filter { it.ask }
@@ -181,6 +193,35 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
             voiceUndo = undo
         }
         if (container.settings.current.voiceAutoSend) pendingAutoSubmit = true
+    }
+
+    /** 修改待办的结果提示：界面收到后弹一条 Toast；[editClose] 为 true 表示都改成功了，顺便收起面板 */
+    var editNotice by mutableStateOf<String?>(null)
+    var editClose by mutableStateOf(false)
+
+    private fun applyTodoEdits(edits: List<VoiceIntent>, closeWhenDone: Boolean) {
+        viewModelScope.launch {
+            val editor = container.todoEditor
+            val lines = mutableListOf<String>()
+            var allOk = true
+            edits.forEach { intent ->
+                val task = editor.find(intent.target)
+                if (task == null) {
+                    allOk = false
+                    lines += "没找到要修改的待办" + (intent.target?.let { "「$it」" } ?: "（最近 24 小时内建的）")
+                    return@forEach
+                }
+                val edit = com.carpe.ideashell.data.dida.TodoEditor.Edit(intent.date, intent.time, intent.content, intent.priority)
+                editor.apply(task, edit)
+                    .onSuccess { lines += "已修改待办：$it" }
+                    .onFailure {
+                        allOk = false
+                        lines += "修改失败：" + (it.message ?: "未知错误")
+                    }
+            }
+            editClose = closeWhenDone && allOk
+            editNotice = lines.joinToString("\n")
+        }
     }
 
     private fun intentBody(intent: VoiceIntent): String = voiceIntentBody(intent)

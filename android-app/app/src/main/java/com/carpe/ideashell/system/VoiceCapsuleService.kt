@@ -55,6 +55,8 @@ import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.core.voice.VoiceIntent
 import com.carpe.ideashell.data.settings.ThemeMode
 import com.carpe.ideashell.core.voice.VoiceResult
+import com.carpe.ideashell.data.dida.DidaTask
+import com.carpe.ideashell.data.dida.TodoEditor
 import com.carpe.ideashell.ui.capture.voiceIntentBody
 import com.carpe.ideashell.ui.capture.voiceIntentSchedule
 import com.carpe.ideashell.ui.components.VoiceInputController
@@ -67,6 +69,7 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalTime
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.sin
@@ -120,10 +123,21 @@ class VoiceCapsuleService : Service() {
 
     // 确认卡片
     private enum class Mode(val label: String) {
-        AUTO("自动"), TODO("待办"), DAILY("日记"), NOTE("笔记"), APPEND("追加"), ASK("问 AI"),
+        AUTO("自动"), TODO("待办"), DAILY("日记"), NOTE("笔记"), APPEND("追加"), ASK("问 AI"), EDIT("改待办"),
     }
 
-    private class Draft(var mode: Mode, var text: String, val intent: VoiceIntent?)
+    /** [task]：修改待办（[Mode.EDIT]）时找到的那条滴答待办，没找到为 null；此时 [text] 是要追加到备注的说明 */
+    private class Draft(var mode: Mode, var text: String, val intent: VoiceIntent?, var task: DidaTask? = null)
+
+    private fun Draft.isValid(): Boolean = text.isNotBlank() || mode == Mode.EDIT
+
+    private fun Draft.editOf() = TodoEditor.Edit(intent?.date, intent?.time, text, intent?.priority ?: 0)
+
+    /** 修改待办的一句话摘要：「开会」改到 14:40，备注加「带上办公电脑」 */
+    private fun editSummary(draft: Draft): String {
+        val task = draft.task ?: return "没找到要修改的待办" + (draft.intent?.target?.let { "「$it」" } ?: "")
+        return (application as IdeashellApp).container.todoEditor.describe(task, draft.editOf())
+    }
     private val drafts = ArrayList<Draft>()
     private var editing = false
 
@@ -291,7 +305,7 @@ class VoiceCapsuleService : Service() {
         }
 
         // 声波：位置固定的一排竖条，每帧弹性地靠近各自的目标高度（见 [WaveView]）
-        wave?.update(v.level)
+        wave?.update(v.level, elapsed)
 
         // 说完停顿自动结束：说话达到一小段后，安静超过设定时间就结束；一直没人说话就放弃
         if (holdMode || !settings.current.voiceAutoStop) return
@@ -317,17 +331,24 @@ class VoiceCapsuleService : Service() {
     // ───────────────────────────── 结果：确认或直接保存 ─────────────────────────────
 
     private fun onResult(result: VoiceResult) {
-        drafts.clear()
-        drafts.addAll(buildDrafts(result))
-        // 开了「松手自动保存」：不弹确认卡片，只显示小胶囊倒计时；点它才展开卡片修改
-        if (settings.current.voiceAutoSend) renderPending(result.polishError) else renderConfirm(result.polishError)
+        scope.launch {
+            // 修改待办要先去滴答里找到那一条（可能要刷新一下），这期间界面还停在「正在识别整理」
+            val built = buildDrafts(result)
+            if (stopping) return@launch
+            drafts.clear()
+            drafts.addAll(built)
+            // 开了「松手自动保存」：不弹确认卡片，只显示小胶囊倒计时；点它才展开卡片修改
+            if (settings.current.voiceAutoSend) renderPending(result.polishError) else renderConfirm(result.polishError)
+        }
     }
 
-    private fun buildDrafts(result: VoiceResult): List<Draft> {
+    private suspend fun buildDrafts(result: VoiceResult): List<Draft> {
+        val editor = (application as IdeashellApp).container.todoEditor
         if (result.intents.isEmpty()) {
             return listOf(Draft(if (result.appendToLast) Mode.APPEND else Mode.AUTO, result.cleaned, null))
         }
         return result.intents.map { intent ->
+            if (intent.edit) return@map Draft(Mode.EDIT, intent.content, intent, editor.find(intent.target))
             val mode = when {
                 intent.ask -> Mode.ASK
                 intent.append -> Mode.APPEND
@@ -349,8 +370,20 @@ class VoiceCapsuleService : Service() {
         val captures = app.container.captures
         val saved = mutableListOf<SavedItem>()
         val asks = mutableListOf<String>()
-        list.filter { it.text.isNotBlank() }.forEach { draft ->
+        val failures = mutableListOf<String>()
+        list.filter { it.isValid() }.forEach { draft ->
             val text = draft.text.trim()
+            if (draft.mode == Mode.EDIT) {
+                val task = draft.task
+                if (task == null) {
+                    failures += editSummary(draft)
+                } else {
+                    app.container.todoEditor.apply(task, draft.editOf())
+                        .onSuccess { saved += SavedItem("改待办", it) }
+                        .onFailure { failures += "修改失败：" + (it.message ?: "未知错误") }
+                }
+                return@forEach
+            }
             if (draft.mode == Mode.ASK) {
                 asks += text
                 return@forEach
@@ -380,10 +413,10 @@ class VoiceCapsuleService : Service() {
             }
         }
         if (saved.isEmpty()) {
-            showMessage("没有可保存的内容", error = true)
+            showMessage(failures.firstOrNull() ?: "没有可保存的内容", error = true)
             return
         }
-        showSaved(saved, note, quiet)
+        showSaved(saved, listOfNotNull(note, failures.joinToString("；").ifBlank { null }).joinToString("；").ifBlank { null }, quiet && failures.isEmpty())
     }
 
     private fun modeLabel(mode: Mode, saved: Boolean = false): String =
@@ -487,6 +520,8 @@ class VoiceCapsuleService : Service() {
         val y = (restingY + dp(CENTER_OFFSET_DP) - h.measuredHeight / 2).coerceAtLeast(dp(24))
         panelY = y
         p.y = y
+        // 录音时窗口一次性开到最宽：波形变宽只是窗口里的视图在长，不用每帧都让系统重排整个悬浮窗，才顺滑
+        p.width = if (shown == Shown.RECORDING) dp(RECORD_WINDOW_DP).coerceAtMost(dm.widthPixels) else WindowManager.LayoutParams.WRAP_CONTENT
         updateWindow()
     }
 
@@ -652,6 +687,8 @@ class VoiceCapsuleService : Service() {
         shown = Shown.RECORDING
         dotAnimator?.cancel()
         column?.layoutTransition = newTransition()
+        // 进入录音面板的过渡做完后关掉布局动画：录音时波形区域每帧都在微微变宽，不能再套动画
+        handler.postDelayed({ if (shown == Shown.RECORDING) column?.layoutTransition = null }, 420)
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -852,6 +889,7 @@ class VoiceCapsuleService : Service() {
             setPadding(dp(10), dp(4), dp(10), dp(4))
             pressable()
             setOnClickListener {
+                if (draft.mode == Mode.EDIT) return@setOnClickListener // 改待办的类型不能换
                 draft.mode = nextMode(draft.mode, draft.intent != null)
                 text = modeLabel(draft.mode)
                 onChanged()
@@ -866,7 +904,7 @@ class VoiceCapsuleService : Service() {
             setText(draft.text)
             setTextColor(pal.text)
             setHintTextColor((pal.text and 0x00FFFFFF) or 0x66000000)
-            hint = "说的内容"
+            hint = if (draft.mode == Mode.EDIT) "补充到待办备注（可留空）" else "说的内容"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             background = null
             setPadding(0, dp(2), 0, dp(2))
@@ -899,6 +937,15 @@ class VoiceCapsuleService : Service() {
                     draft.text = s?.toString().orEmpty()
                 }
             })
+        }
+        if (draft.mode == Mode.EDIT) {
+            // 先说清楚改的是哪一条、改成什么；找不到就用红字提醒
+            body.addView(
+                label(editSummary(draft), 15f, bold = true).apply {
+                    if (draft.task == null) setTextColor(pal.error)
+                },
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
+            )
         }
         body.addView(edit, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         val intent = draft.intent
@@ -944,7 +991,7 @@ class VoiceCapsuleService : Service() {
         col.removeAllViews()
         surface = null
         val lines = ArrayList<View>()
-        drafts.filter { it.text.isNotBlank() }.forEachIndexed { index, draft ->
+        drafts.filter { it.isValid() }.forEachIndexed { index, draft ->
             val intent = draft.intent
             val whenText = if (draft.mode == Mode.TODO && intent != null) scheduleText(intent.date, intent.time) else ""
             val box = FrameLayout(this).apply {
@@ -964,7 +1011,11 @@ class VoiceCapsuleService : Service() {
                 setPadding(0, 0, dp(8), 0)
             })
             row.addView(
-                label((if (whenText.isNotEmpty()) "$whenText · " else "") + draft.text.trim().take(60), 15f).apply {
+                label(
+                    if (draft.mode == Mode.EDIT) editSummary(draft)
+                    else (if (whenText.isNotEmpty()) "$whenText · " else "") + draft.text.trim().take(60),
+                    15f,
+                ).apply {
                     maxWidth = dp(230)
                     maxLines = 2
                     ellipsize = TextUtils.TruncateAt.END
@@ -1204,37 +1255,51 @@ class VoiceCapsuleService : Service() {
     }
 
     /**
-     * 声波：位置固定、宽度固定的一排竖条（常见的语音输入法做法）。
-     * 音量先做「起得快、落得慢」的平滑；每根竖条有自己的起伏相位，中间的更高；
-     * 每一帧按真实帧间隔让高度指数式靠近目标，所以不论音量多久更新一次，动起来都是连续的。
+     * 声波：一排竖条，靠右（停止键一侧）对齐，随录音时间慢慢向左变长，约 [GROW_MS] 后固定。
+     * 竖条位置固定、只有高度在动：音量先做「起得快、落得慢」的平滑，每根有自己的起伏相位、中间的更高，
+     * 每一帧按真实帧间隔让高度指数式靠近目标；变长时左边新出现的竖条是渐显的。
+     * 宽度只是视图在窗口里长大（窗口是预先开到最宽的），不触发系统重排悬浮窗。
      */
     private class WaveView(context: Context, color: Int) : View(context) {
         private val density = resources.displayMetrics.density
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = color
             strokeCap = Paint.Cap.ROUND
-            strokeWidth = 2.8f * density
+            strokeWidth = 2.6f * density
         }
-        private val count = 20
-        private val slot = 5.4f * density
-        private val heights = FloatArray(count)
-        private val phases = FloatArray(count) { i -> ((i * 37) % 11) * 0.57f }
+        private val slot = 5.2f * density
+        private val minW = 26f * density
+        private val maxW = WAVE_MAX_DP * density
+        private val maxBars = (maxW / slot).toInt() + 2
+        private val heights = FloatArray(maxBars)
+        private val phases = FloatArray(maxBars) { i -> ((i * 37) % 11) * 0.57f }
+        private var desiredW = minW
         private var live = 0f
         private var clock = 0f
         private var lastNow = 0L
 
-        fun update(level: Float) {
+        fun update(level: Float, elapsedMs: Long) {
             val now = SystemClock.uptimeMillis()
             val dt = (if (lastNow == 0L) 16L else (now - lastNow).coerceIn(1L, 50L)) / 1000f
             lastNow = now
+
+            // 变长：正弦缓出，开头快一点、接近上限时慢慢收住
+            val f = (elapsedMs.toFloat() / GROW_MS).coerceIn(0f, 1f)
+            val w = minW + (maxW - minW) * sin(f * (PI / 2)).toFloat()
+            if (abs(w - desiredW) >= 0.5f) {
+                desiredW = w
+                requestLayout()
+            }
+
             val tau = if (level > live) 0.05f else 0.28f
             live += (level.coerceIn(0f, 1f) - live) * (1f - exp(-dt / tau))
             val amp = sqrt(live)
             clock += dt
             val follow = 1f - exp(-dt / 0.07f)
-            val mid = (count - 1) / 2f
-            for (i in 0 until count) {
-                val centerWeight = 0.55f + 0.45f * cos((i - mid) / mid * (PI / 2)).toFloat()
+            val half = (desiredW / 2).coerceAtLeast(1f)
+            for (i in 0 until maxBars) {
+                val x = desiredW - slot / 2 - i * slot
+                val centerWeight = 0.55f + 0.45f * cos(((x - half) / half).coerceIn(-1f, 1f) * (PI / 2)).toFloat()
                 val wobble = 0.5f + 0.5f * sin(clock * 6f + i * 0.75f + phases[i])
                 val target = amp * centerWeight * (0.3f + 0.7f * wobble)
                 heights[i] += (target - heights[i]) * follow
@@ -1243,14 +1308,18 @@ class VoiceCapsuleService : Service() {
         }
 
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            setMeasuredDimension((count * slot).toInt(), MeasureSpec.getSize(heightMeasureSpec).takeIf { it > 0 } ?: (30 * density).toInt())
+            setMeasuredDimension(desiredW.toInt(), MeasureSpec.getSize(heightMeasureSpec).takeIf { it > 0 } ?: (30 * density).toInt())
         }
 
         override fun onDraw(canvas: Canvas) {
             val minH = 3.5f * density
-            for (i in 0 until count) {
+            val w = width.toFloat()
+            for (i in 0 until maxBars) {
+                val x = w - slot / 2 - i * slot
+                if (x < slot / 4) break
                 val h = (minH + (height - minH) * heights[i].coerceIn(0f, 1f)).coerceAtMost(height.toFloat())
-                val x = slot * i + slot / 2
+                // 左边缘新长出来的竖条渐显
+                paint.alpha = (255 * (x / (slot * 2.5f)).coerceIn(0f, 1f)).toInt()
                 canvas.drawLine(x, (height - h) / 2, x, (height + h) / 2, paint)
             }
         }
@@ -1265,6 +1334,13 @@ class VoiceCapsuleService : Service() {
 
         /** 面板共同的水平中心线，离 [restingY]（录音胶囊顶边）的距离：录音胶囊高 56dp，所以是 28 */
         private const val CENTER_OFFSET_DP = 28
+
+        /** 录音时悬浮窗的固定宽度：录音面板里除波形外约 190dp，加上波形最宽的 [WAVE_MAX_DP] */
+        private const val WAVE_MAX_DP = 132
+        private const val RECORD_WINDOW_DP = 190 + WAVE_MAX_DP + 6
+
+        /** 波形从最窄长到最宽用的时间，之后宽度固定 */
+        private const val GROW_MS = 8000L
 
         /** 松手自动保存：小胶囊倒计时多久后保存 */
         private const val PENDING_MS = 3000L
