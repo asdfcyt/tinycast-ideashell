@@ -81,6 +81,10 @@ data class AppSettings(
     val voiceHistory: Boolean = true,
     /** 悬浮胶囊录音：说完停顿一会儿就自动结束并开始处理（点磁贴 / 快捷方式 / AI 按钮触发时不用再手动点停止） */
     val voiceAutoStop: Boolean = true,
+    /** 录音时用系统的降噪 / 自动增益（录音源换成语音识别专用） */
+    val voiceSystemDenoise: Boolean = false,
+    /** 识别前用本机 AI 模型（GTCRN）再降一次噪；模型没下载时不生效 */
+    val voiceAiDenoise: Boolean = false,
     /** 自动结束要停顿多久（毫秒） */
     val voiceSilenceMs: Int = 1500,
     /** 悬浮胶囊识别后先弹出确认卡片（可修改 / 放弃 / 重新说）；关闭则直接保存 */
@@ -197,6 +201,8 @@ class SettingsStore(context: Context) {
     fun setVoiceHistory(enabled: Boolean) = update { it.copy(voiceHistory = enabled) }
 
     fun setVoiceAutoStop(enabled: Boolean) = update { it.copy(voiceAutoStop = enabled) }
+    fun setVoiceSystemDenoise(enabled: Boolean) = update { it.copy(voiceSystemDenoise = enabled) }
+    fun setVoiceAiDenoise(enabled: Boolean) = update { it.copy(voiceAiDenoise = enabled) }
 
     fun setVoiceSilenceMs(ms: Int) = update { it.copy(voiceSilenceMs = ms) }
 
@@ -252,6 +258,8 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_VOICE_HISTORY, next.voiceHistory)
             .putString(KEY_VOICE_ENGINE, next.voiceEngine.name)
             .putBoolean(KEY_VOICE_AUTO_STOP, next.voiceAutoStop)
+            .putBoolean(KEY_VOICE_SYSTEM_DENOISE, next.voiceSystemDenoise)
+            .putBoolean(KEY_VOICE_AI_DENOISE, next.voiceAiDenoise)
             .putInt(KEY_VOICE_SILENCE_MS, next.voiceSilenceMs)
             .putString(KEY_VOICE_KEY, next.voiceKey.name)
             .putString(KEY_LLM_BASE_URL, next.llmBaseUrl)
@@ -294,6 +302,8 @@ class SettingsStore(context: Context) {
         voiceAutoSend = prefs.getBoolean(KEY_VOICE_AUTO_SEND, false),
         voiceHistory = prefs.getBoolean(KEY_VOICE_HISTORY, true),
         voiceAutoStop = prefs.getBoolean(KEY_VOICE_AUTO_STOP, true),
+        voiceSystemDenoise = prefs.getBoolean(KEY_VOICE_SYSTEM_DENOISE, false),
+        voiceAiDenoise = prefs.getBoolean(KEY_VOICE_AI_DENOISE, false),
         voiceSilenceMs = prefs.getInt(KEY_VOICE_SILENCE_MS, 1500),
         voiceKey = runCatching { VoiceKey.valueOf(prefs.getString(KEY_VOICE_KEY, null).orEmpty()) }
             .getOrDefault(VoiceKey.OFF),
@@ -406,6 +416,8 @@ class SettingsStore(context: Context) {
         const val KEY_VOICE_HISTORY = "voice_history"
         const val KEY_VOICE_ENGINE = "voice_engine"
         const val KEY_VOICE_AUTO_STOP = "voice_auto_stop"
+        const val KEY_VOICE_SYSTEM_DENOISE = "voice_system_denoise"
+        const val KEY_VOICE_AI_DENOISE = "voice_ai_denoise"
         const val KEY_VOICE_SILENCE_MS = "voice_silence_ms"
         const val KEY_VOICE_KEY = "voice_key"
         const val KEY_LLM_BASE_URL = "llm_base_url"

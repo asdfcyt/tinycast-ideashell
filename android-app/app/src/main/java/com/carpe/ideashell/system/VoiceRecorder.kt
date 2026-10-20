@@ -4,6 +4,9 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AudioEffect
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,14 +32,15 @@ class VoiceRecorder {
      * [onLevel] 在录音线程回调，0..1 的音量；到 [MAX_MS] 自动停止录音并回调 [onLimit]（数据还在，仍要调 [stop] 取走）。
      */
     @SuppressLint("MissingPermission")
-    fun start(scope: CoroutineScope, onLevel: (Float) -> Unit, onLimit: () -> Unit): Boolean {
+    fun start(scope: CoroutineScope, onLevel: (Float) -> Unit, onLimit: () -> Unit, systemDenoise: Boolean = false): Boolean {
         if (isRecording) return false
         val minSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minSize <= 0) return false
         val bufferSize = maxOf(minSize, SAMPLE_RATE / 5 * 2)
         val rec = try {
             AudioRecord(
-                MediaRecorder.AudioSource.MIC,
+                // 系统降噪：VOICE_RECOGNITION 是给语音识别调过的录音源（关掉部分音效处理、针对人声），再叠系统的降噪 / 自动增益
+                if (systemDenoise) MediaRecorder.AudioSource.VOICE_RECOGNITION else MediaRecorder.AudioSource.MIC,
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
@@ -49,9 +53,11 @@ class VoiceRecorder {
             rec.release()
             return false
         }
+        if (systemDenoise) attachEffects(rec.audioSessionId)
         try {
             rec.startRecording()
         } catch (_: Exception) {
+            releaseEffects()
             rec.release()
             return false
         }
@@ -94,8 +100,28 @@ class VoiceRecorder {
         runCatching { rec.stop() }
         running?.cancel()
         running?.join()
+        releaseEffects()
         rec.release()
         return synchronized(buffer) { buffer.toByteArray() }
+    }
+
+    private var effects: List<AudioEffect> = emptyList()
+
+    /** 挂上系统的降噪 / 自动增益（这台设备没有就跳过；不同机型效果不一样） */
+    private fun attachEffects(sessionId: Int) {
+        val list = ArrayList<AudioEffect>()
+        runCatching {
+            if (NoiseSuppressor.isAvailable()) list += listOfNotNull(NoiseSuppressor.create(sessionId)?.also { it.enabled = true })
+        }
+        runCatching {
+            if (AutomaticGainControl.isAvailable()) list += listOfNotNull(AutomaticGainControl.create(sessionId)?.also { it.enabled = true })
+        }
+        effects = list
+    }
+
+    private fun releaseEffects() {
+        effects.forEach { runCatching { it.release() } }
+        effects = emptyList()
     }
 
     /** 丢弃正在录的内容 */
@@ -109,6 +135,7 @@ class VoiceRecorder {
         // 录音线程可能还卡在 read() 上，等它退出后再释放，避免释放中读取
         CoroutineScope(Dispatchers.IO).launch {
             running?.join()
+            releaseEffects()
             rec.release()
         }
     }

@@ -11,7 +11,6 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.carpe.ideashell.ui.glass.glassSnackbar
 import com.carpe.ideashell.ui.theme.Brand
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -23,9 +22,10 @@ fun AppSnackbarHost(state: SnackbarHostState, modifier: Modifier = Modifier) {
     SnackbarHost(state, modifier) { data ->
         Snackbar(
             snackbarData = data,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp).glassSnackbar(RoundedCornerShape(20.dp)),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
             shape = RoundedCornerShape(20.dp),
-            containerColor = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.82f),
+            // 不透明：半透明时背后卡片上的字会透出来（深色模式下反色面是浅色，尤其像套了一层玻璃）
+            containerColor = MaterialTheme.colorScheme.inverseSurface,
             contentColor = MaterialTheme.colorScheme.inverseOnSurface,
             actionColor = Brand.Orange,
             dismissActionContentColor = MaterialTheme.colorScheme.inverseOnSurface,

@@ -549,7 +549,7 @@ class ProjectService(
 
     /**
      * 专注通知上的「记录」：绑定了任务就记到任务笔记（并同步滴答评论）；
-     * 从项目页发起的专注，还会记一行到项目主页的「里程碑与进展」（项目还没有主页笔记就先建一个）。
+     * 没有绑定任务、只为项目专注时，记一行到项目主页的「里程碑与进展」（项目还没有主页笔记就先建一个）；绑定了任务就只记任务。
      * @return 任务评论是否同步到了滴答（没有绑定任务时为 true）
      */
     suspend fun recordFocus(taskId: String?, project: String?, text: String): Boolean {
@@ -565,13 +565,13 @@ class ProjectService(
                 failure = e
             }
         }
-        val p = project?.let { k -> projects.firstOrNull { it.keyword == k } }
+        // 绑定了任务的记录只属于任务（写进任务笔记，完成时由复盘汇到里程碑）；只有没绑定任务的项目专注才直接记进里程碑
+        val p = if (taskId.isNullOrBlank()) project?.let { k -> projects.firstOrNull { it.keyword == k } } else null
         if (p != null) {
             try {
-                val label = if (taskId.isNullOrBlank()) "专注" else taskNote(taskId)?.deliverable ?: "专注"
                 recordLock.withLock {
                     val homeId = resolveHome(p.keyword) ?: createHome(p)
-                    appendMilestones(homeId, listOf("- ${NoteSections.minuteStamp()} 〔$label〕${line.replace(Regex("\\s*\\n\\s*"), " ")}"))
+                    appendMilestones(homeId, listOf("- ${NoteSections.minuteStamp()} 〔专注〕${line.replace(Regex("\\s*\\n\\s*"), " ")}"))
                 }
             } catch (e: CancellationException) {
                 throw e

@@ -305,6 +305,7 @@ class VoiceCapsuleService : Service() {
             extraHotwords = { container.voiceContext.hotwords() },
             todoContext = { container.voiceContext.todoLines() },
             history = container.voiceHistory,
+            denoiser = container.denoiser,
             onError = { showMessage(it, error = true) },
             onResult = { result -> onResult(result) },
         ).also { voice = it }

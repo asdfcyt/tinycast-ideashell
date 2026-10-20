@@ -48,7 +48,11 @@ private sealed interface MdBlock {
     data class Quote(val text: String) : MdBlock
     data class Code(val text: String) : MdBlock
     data object Rule : MdBlock
+    data class Image(val url: String) : MdBlock
 }
+
+/** 单独占一行的图片：`![说明](地址)` */
+private val RE_IMAGE_LINE = Regex("^\\s*!\\[[^\\]]*]\\(\\s*<?([^)\\s>]+)>?[^)]*\\)\\s*$")
 
 private val RE_HEADING = Regex("^(#{1,6})\\s+(.+?)\\s*#*\\s*$")
 private val RE_BULLET = Regex("^(\\s*)[-*+]\\s+(.*)$")
@@ -89,6 +93,10 @@ private fun parseBlocks(markdown: String): List<MdBlock> {
         val line = raw.trimEnd()
         when {
             line.isBlank() -> flushPara()
+            RE_IMAGE_LINE.matches(line) -> {
+                flushPara()
+                out += MdBlock.Image(RE_IMAGE_LINE.matchEntire(line)!!.groupValues[1])
+            }
             RE_RULE.matches(line) -> {
                 flushPara()
                 out += MdBlock.Rule
@@ -223,6 +231,8 @@ fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
                     ) {
                         Text(block.text, style = type.bodySmall.copy(fontFamily = FontFamily.Monospace))
                     }
+
+                    is MdBlock.Image -> NoteImage(block.url)
 
                     MdBlock.Rule -> Box(
                         Modifier

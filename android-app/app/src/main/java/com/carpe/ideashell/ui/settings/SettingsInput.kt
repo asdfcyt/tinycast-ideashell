@@ -1,6 +1,8 @@
 package com.carpe.ideashell.ui.settings
 
 import android.content.Intent
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,6 +37,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.carpe.ideashell.R
+import com.carpe.ideashell.data.asr.DenoiserState
 import com.carpe.ideashell.data.asr.LocalAsrState
 import com.carpe.ideashell.data.asr.VoiceHistory
 import com.carpe.ideashell.data.settings.VoiceEngine
@@ -106,6 +109,7 @@ internal fun VoiceSection(env: SettingsEnv) {
     val container = env.container
     val settings = env.settings
     val localAsr by container.localAsr.state.collectAsStateWithLifecycle()
+    val aiDenoiser by container.denoiser.state.collectAsStateWithLifecycle()
     val lexicon by container.lexicon.state.collectAsStateWithLifecycle()
     var dialog by remember { mutableStateOf<VoiceDialog?>(null) }
     var confirmDeleteLocalAsr by remember { mutableStateOf(false) }
@@ -191,6 +195,47 @@ internal fun VoiceSection(env: SettingsEnv) {
         )
     }
     if (localAsr is LocalAsrState.Downloading) LinearProgressIndicator(Modifier.fillMaxWidth())
+
+    Group("降噪") {
+        SettingsSwitchItem(
+            icon = Icons.Filled.Info,
+            title = "系统降噪",
+            summary = if (settings.voiceSystemDenoise) "已开启 · 录音用语音识别专用录音源，并打开系统的降噪 / 自动增益（效果因手机而异，说话很轻时可能被削掉）"
+            else "已关闭 · 开启后在嘈杂环境里识别更稳；不下载任何东西",
+            checked = settings.voiceSystemDenoise,
+            onChange = { container.settings.setVoiceSystemDenoise(it) },
+        )
+        val effectSupport = remember {
+            val ns = runCatching { NoiseSuppressor.isAvailable() }.getOrDefault(false)
+            val agc = runCatching { AutomaticGainControl.isAvailable() }.getOrDefault(false)
+            fun mark(ok: Boolean) = if (ok) "可用" else "不可用"
+            "降噪（NS）${mark(ns)} · 自动增益（AGC）${mark(agc)}" +
+                if (!ns && !agc) "，这台手机开「系统降噪」不会有任何效果" else ""
+        }
+        SettingsItem(
+            icon = Icons.Filled.Info,
+            title = "本机系统降噪支持情况",
+            summary = effectSupport,
+            onClick = null,
+        )
+        SettingsSwitchItem(
+            icon = Icons.Filled.Star,
+            title = "AI 降噪（本机）",
+            summary = when {
+                !settings.voiceAiDenoise -> "已关闭 · 识别前用手机上的 AI 模型再降一次噪，约 0.5 MB，录音不会上传"
+                aiDenoiser is DenoiserState.Downloading -> "正在下载模型…"
+                aiDenoiser is DenoiserState.Failed -> "模型下载失败：${(aiDenoiser as DenoiserState.Failed).message} · 关掉再打开重试"
+                aiDenoiser is DenoiserState.Unsupported -> "这台设备不支持（仅支持 64 位 ARM 手机）"
+                aiDenoiser is DenoiserState.Ready -> "已开启 · 识别前先降噪；效果不一定更好，可在「语音历史」里重新识别对比（历史里留的仍是原始录音）"
+                else -> "已开启 · 模型还没下载"
+            },
+            checked = settings.voiceAiDenoise,
+            onChange = { on ->
+                container.settings.setVoiceAiDenoise(on)
+                if (on) container.denoiser.download()
+            },
+        )
+    }
 
     Group("整理与词库") {
         SettingsSwitchItem(

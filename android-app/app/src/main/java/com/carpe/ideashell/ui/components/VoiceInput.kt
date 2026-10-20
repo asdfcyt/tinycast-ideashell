@@ -123,6 +123,8 @@ class VoiceInputController(
     private val todoContext: () -> List<String> = { emptyList() },
     /** 语音历史（设置里开着才留底）：每次录音存原始录音，之后补上原话和整理结果；null 不留底 */
     private val history: VoiceHistory? = null,
+    /** 本机 AI 降噪：设置里开着且模型已下载，识别前先处理录音（留底的仍是原始录音）；null 不降噪 */
+    private val denoiser: com.carpe.ideashell.data.asr.VoiceDenoiser? = null,
     private val onError: (String) -> Unit,
     private val onResult: (VoiceResult) -> Unit,
 ) {
@@ -176,7 +178,12 @@ class VoiceInputController(
             )
             return false
         }
-        val ok = recorder.start(scope, onLevel = { level = it }, onLimit = { scope.launch { finish() } })
+        val ok = recorder.start(
+            scope,
+            onLevel = { level = it },
+            onLimit = { scope.launch { finish() } },
+            systemDenoise = settings.current.voiceSystemDenoise,
+        )
         if (!ok) {
             onError("无法打开麦克风，请检查权限或是否被其他应用占用")
             return false
@@ -262,8 +269,9 @@ class VoiceInputController(
         val historyId = replayId ?: if (settings.current.voiceHistory) history?.begin(pcm, durationMs) else null
         val hot = lexicon.hotwordsFor(extraHotwords())
         // 词库里的替换规则先改一遍：总是听错的词不用每次都纠
+        val input = if (settings.current.voiceAiDenoise) denoiser?.denoise(pcm) ?: pcm else pcm
         val heard = try {
-            recognize(pcm, hot)
+            recognize(input, hot)
         } catch (e: AsrException) {
             if (historyId != null) history?.update(historyId, error = "识别失败：" + (e.message ?: "未知错误"))
             throw e

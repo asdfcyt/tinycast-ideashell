@@ -96,6 +96,9 @@ class AppContainer(context: Context) {
     /** 本地 SenseVoice（断网兜底）：模型在设置里开启时才下载 */
     val localAsr = com.carpe.ideashell.data.asr.LocalSenseVoice(context = context, http = http, scope = appScope)
 
+    /** 本机 AI 降噪（GTCRN）：识别前处理录音，模型在设置里打开开关时下载 */
+    val denoiser = com.carpe.ideashell.data.asr.VoiceDenoiser(context = context, http = http, scope = appScope)
+
     /** 语音词库：热词 + 替换规则（纠错学习的结果也存在这里） */
     val lexicon = com.carpe.ideashell.data.asr.Lexicon(context)
 
@@ -104,6 +107,9 @@ class AppContainer(context: Context) {
 
     /** 大模型（OpenAI 兼容）：把转写整理成待办 / 日记 / 笔记，并推算日期时间 */
     val llm = com.carpe.ideashell.data.llm.LlmClient(http = http, credentials = credentials, settings = settings)
+
+    /** 笔记详情里的图片：下载 + 内存缓存 */
+    val noteImages = com.carpe.ideashell.data.ideashell.NoteImageLoader(http = http, credentials = credentials)
 
     val ideashell = McpClient(
         endpoint = McpEndpoints.IDEASHELL,

@@ -132,6 +132,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         extraHotwords = { container.voiceContext.hotwords() },
         todoContext = { container.voiceContext.todoLines() },
         history = container.voiceHistory,
+        denoiser = container.denoiser,
         onError = { error = it },
         onResult = ::applyVoice,
     )

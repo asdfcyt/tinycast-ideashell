@@ -69,6 +69,8 @@ import com.carpe.ideashell.system.openIdeaShellNote
 import com.carpe.ideashell.ui.components.AppSnackbarHost
 import com.carpe.ideashell.ui.components.showTimed
 import com.carpe.ideashell.ui.components.MarkdownText
+import com.carpe.ideashell.ui.components.NoteImage
+import com.carpe.ideashell.data.ideashell.NoteImages
 import com.carpe.ideashell.ui.glass.GlassSurface
 import com.carpe.ideashell.ui.glass.LocalBottomBarPadding
 import kotlinx.coroutines.CancellationException
@@ -328,17 +330,25 @@ private fun NoteBody(
         }
     }
 
+    // 笔记里的图片：正文里用 Markdown 写的图片已经在正文中显示；接口另外列出的（附件形式）统一接在正文后面
+    val extraImages = remember(note.raw, note.content) {
+        NoteImages.extract(note.raw).filter { url -> !note.content.contains(url) }
+    }
+
     if (note.content.isBlank()) {
-        Text(
-            if (summary == null) "（空白笔记）" else "（正文只有语音或附件，没有文字）",
-            style = MaterialTheme.typography.bodyMedium,
-            color = scheme.onSurfaceVariant,
-        )
+        if (extraImages.isEmpty()) {
+            Text(
+                if (summary == null) "（空白笔记）" else "（正文只有语音或附件，没有文字）",
+                style = MaterialTheme.typography.bodyMedium,
+                color = scheme.onSurfaceVariant,
+            )
+        }
     } else if (daily) {
         DailyBody(note, revisitKeys, onToggleEntry)
     } else {
         MarkdownText(note.content)
     }
+    extraImages.forEach { NoteImage(it) }
 }
 
 /**

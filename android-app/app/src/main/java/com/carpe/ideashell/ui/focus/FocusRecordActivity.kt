@@ -100,8 +100,7 @@ class FocusRecordActivity : ComponentActivity() {
         val target = if (taskId.isNullOrBlank()) "记录到项目" else "记录到任务"
         val saved = when {
             taskId.isNullOrBlank() -> "已记录到「$project」的里程碑与进展"
-            project.isNullOrBlank() -> "已记录到任务笔记"
-            else -> "已记录到任务笔记和「$project」的里程碑"
+            else -> "已记录到任务笔记"
         }
 
         // 写到一半被点到外面 / 返回键关掉时，文字存在本机，下次从通知点「记录」自动放回来；提交后清掉
