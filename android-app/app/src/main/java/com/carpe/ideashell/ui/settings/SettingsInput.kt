@@ -37,9 +37,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.carpe.ideashell.R
-import com.carpe.ideashell.data.asr.DenoiserState
 import com.carpe.ideashell.data.asr.LocalAsrState
 import com.carpe.ideashell.data.asr.VoiceHistory
+import com.carpe.ideashell.data.asr.VoiceprintModelState
 import com.carpe.ideashell.data.settings.VoiceEngine
 import com.carpe.ideashell.data.settings.VoiceKey
 import com.carpe.ideashell.system.ExcerptService
@@ -93,7 +93,7 @@ internal fun RecordSection(env: SettingsEnv) {
 
 // ───────────────────────── 语音输入 ─────────────────────────
 
-private enum class VoiceDialog { Engine, Key, Silence }
+private enum class VoiceDialog { Engine, Key, Silence, Enroll, VoiceprintLevel }
 
 /** 首页「语音输入」那一行的状态摘要 */
 internal fun SettingsEnv.voiceSummary(localReady: Boolean): String = when {
@@ -109,7 +109,9 @@ internal fun VoiceSection(env: SettingsEnv) {
     val container = env.container
     val settings = env.settings
     val localAsr by container.localAsr.state.collectAsStateWithLifecycle()
-    val aiDenoiser by container.denoiser.state.collectAsStateWithLifecycle()
+    val vpModel by container.voicePrint.state.collectAsStateWithLifecycle()
+    val vpEnrolled by container.voicePrint.enrolled.collectAsStateWithLifecycle()
+    var confirmClearVoiceprint by remember { mutableStateOf(false) }
     val lexicon by container.lexicon.state.collectAsStateWithLifecycle()
     var dialog by remember { mutableStateOf<VoiceDialog?>(null) }
     var confirmDeleteLocalAsr by remember { mutableStateOf(false) }
@@ -218,24 +220,70 @@ internal fun VoiceSection(env: SettingsEnv) {
             summary = effectSupport,
             onClick = null,
         )
+    }
+
+    Group("声纹 · 只识别我的声音") {
         SettingsSwitchItem(
             icon = Icons.Filled.Star,
-            title = "AI 降噪（本机）",
+            title = "只识别我的声音",
             summary = when {
-                !settings.voiceAiDenoise -> "已关闭 · 识别前用手机上的 AI 模型再降一次噪，约 0.5 MB，录音不会上传"
-                aiDenoiser is DenoiserState.Downloading -> "正在下载模型…"
-                aiDenoiser is DenoiserState.Failed -> "模型下载失败：${(aiDenoiser as DenoiserState.Failed).message} · 关掉再打开重试"
-                aiDenoiser is DenoiserState.Unsupported -> "这台设备不支持（仅支持 64 位 ARM 手机）"
-                aiDenoiser is DenoiserState.Ready -> "已开启 · 识别前先降噪；效果不一定更好，可在「语音历史」里重新识别对比（历史里留的仍是原始录音）"
-                else -> "已开启 · 模型还没下载"
+                !settings.voiceprintEnabled -> "已关闭 · 开启后，录完先和你录入的声音比对，不像就不识别，避免把旁人的话记进来（本机处理，录音不上传）"
+                vpModel is VoiceprintModelState.Unsupported -> "这台设备不支持（仅支持 64 位 ARM 手机）"
+                vpModel is VoiceprintModelState.Downloading -> "正在下载声纹模型（约 27 MB）" + (vpModel as VoiceprintModelState.Downloading).percent.takeIf { it >= 0 }?.let { " $it%" }.orEmpty()
+                vpModel is VoiceprintModelState.Failed -> "模型下载失败：${(vpModel as VoiceprintModelState.Failed).message} · 点下面的「声纹模型」重试"
+                vpModel !is VoiceprintModelState.Ready -> "已开启 · 声纹模型还没下载"
+                !vpEnrolled -> "已开启 · 还没录入你的声音，点下面「录入我的声音」，录入前不会拦截任何录音"
+                else -> "已开启 · 录音和你的声音不像就会被忽略（并留在语音历史里，可强制重新识别）"
             },
-            checked = settings.voiceAiDenoise,
+            checked = settings.voiceprintEnabled,
             onChange = { on ->
-                container.settings.setVoiceAiDenoise(on)
-                if (on) container.denoiser.download()
+                container.settings.setVoiceprintEnabled(on)
+                if (on) container.voicePrint.download()
             },
         )
+        if (settings.voiceprintEnabled) {
+            if (vpModel !is VoiceprintModelState.Ready && vpModel !is VoiceprintModelState.Unsupported) {
+                SettingsItem(
+                    icon = Icons.Filled.Info,
+                    title = "声纹模型（CAM++）",
+                    summary = when (val s = vpModel) {
+                        is VoiceprintModelState.Downloading -> "正在下载" + (if (s.percent >= 0) " ${s.percent}%" else "") + " · 点一下取消"
+                        is VoiceprintModelState.Failed -> "下载失败：${s.message} · 点一下重试"
+                        else -> "未下载 · 约 27 MB，建议连 Wi-Fi · 点一下下载"
+                    },
+                    onClick = {
+                        if (vpModel is VoiceprintModelState.Downloading) container.voicePrint.cancelDownload()
+                        else container.voicePrint.download()
+                    },
+                )
+            }
+            if (vpModel is VoiceprintModelState.Downloading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (vpModel is VoiceprintModelState.Ready) {
+                SettingsItem(
+                    icon = Icons.Filled.Create,
+                    title = "录入我的声音",
+                    summary = if (vpEnrolled) "已录入 · 点一下重新录入（读 3 句话，每句约 5 秒，在安静的地方录）"
+                    else "未录入 · 读 3 句话，每句约 5 秒，在安静的地方录；只保存一个声音特征，不保存录音",
+                    onClick = { dialog = VoiceDialog.Enroll },
+                )
+                SettingsItem(
+                    icon = Icons.Filled.Search,
+                    title = "严格程度",
+                    summary = voiceprintLevelLabel(settings.voiceprintLevel) + " · 误拒太多（说了却被忽略）就调宽松，旁人的话仍进来就调严格；每次被拦截都会显示相似度分数",
+                    onClick = { dialog = VoiceDialog.VoiceprintLevel },
+                )
+                if (vpEnrolled) {
+                    SettingsItem(
+                        icon = Icons.Filled.Delete,
+                        title = "删除我的声纹",
+                        summary = "删除录入的声音特征；删除后声纹不再拦截任何录音",
+                        onClick = { confirmClearVoiceprint = true },
+                    )
+                }
+            }
+        }
     }
+    SettingsNote("声纹只能判断「整段录音像不像你」：旁人的话被单独录进来时会被拦下；你和别人同时说话、或背景一直有人说话时，它分不开，还可能误拒你自己。它不是安全验证，别人播放你的录音也可能通过。")
 
     Group("整理与词库") {
         SettingsSwitchItem(
@@ -304,6 +352,14 @@ internal fun VoiceSection(env: SettingsEnv) {
                 onClick = { confirmDeleteLocalAsr = true },
             )
         }
+        (vpModel as? VoiceprintModelState.Ready)?.let { vp ->
+            SettingsItem(
+                icon = Icons.Filled.Delete,
+                title = "删除声纹模型",
+                summary = "释放 ${vp.sizeMb} MB 空间；已录入的声音保留，再下载模型即可继续用",
+                onClick = { container.voicePrint.deleteModel() },
+            )
+        }
     }
 
     SettingsNote("你说的话会发给腾讯云识别（或在本机识别），再把文字发给所选大模型整理，不经过其他服务器。")
@@ -348,7 +404,33 @@ internal fun VoiceSection(env: SettingsEnv) {
             onDismiss = { dialog = null },
         )
 
+        VoiceDialog.Enroll -> VoiceprintEnrollDialog(container = container, onDismiss = { dialog = null })
+
+        VoiceDialog.VoiceprintLevel -> ChoiceDialog(
+            title = "声纹严格程度",
+            options = listOf(0, 1, 2),
+            current = settings.voiceprintLevel,
+            label = { voiceprintLevelLabel(it) },
+            onSelect = { container.settings.setVoiceprintLevel(it) },
+            onDismiss = { dialog = null },
+        )
+
         null -> Unit
+    }
+
+    if (confirmClearVoiceprint) {
+        AlertDialog(
+            onDismissRequest = { confirmClearVoiceprint = false },
+            title = { Text("删除我的声纹？") },
+            text = { Text("删除后声纹不再拦截任何录音，想继续用要重新录入。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClearVoiceprint = false
+                    container.voicePrint.clearProfile()
+                }) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { confirmClearVoiceprint = false }) { Text("取消") } },
+        )
     }
 
     if (confirmDeleteLocalAsr) {
@@ -366,6 +448,12 @@ internal fun VoiceSection(env: SettingsEnv) {
             dismissButton = { TextButton(onClick = { confirmDeleteLocalAsr = false }) { Text("取消") } },
         )
     }
+}
+
+internal fun voiceprintLevelLabel(level: Int): String = when (level) {
+    0 -> "宽松"
+    2 -> "严格"
+    else -> "标准"
 }
 
 @Composable

@@ -83,8 +83,10 @@ data class AppSettings(
     val voiceAutoStop: Boolean = true,
     /** 录音时用系统的降噪 / 自动增益（录音源换成语音识别专用） */
     val voiceSystemDenoise: Boolean = false,
-    /** 识别前用本机 AI 模型（GTCRN）再降一次噪；模型没下载时不生效 */
-    val voiceAiDenoise: Boolean = false,
+    /** 声纹：录完先和你录入的声音比对，不像就不识别（需要已录入声纹且模型已下载，否则不生效） */
+    val voiceprintEnabled: Boolean = false,
+    /** 声纹严格程度：0 宽松 / 1 标准 / 2 严格 */
+    val voiceprintLevel: Int = 1,
     /** 自动结束要停顿多久（毫秒） */
     val voiceSilenceMs: Int = 1500,
     /** 悬浮胶囊识别后先弹出确认卡片（可修改 / 放弃 / 重新说）；关闭则直接保存 */
@@ -202,7 +204,8 @@ class SettingsStore(context: Context) {
 
     fun setVoiceAutoStop(enabled: Boolean) = update { it.copy(voiceAutoStop = enabled) }
     fun setVoiceSystemDenoise(enabled: Boolean) = update { it.copy(voiceSystemDenoise = enabled) }
-    fun setVoiceAiDenoise(enabled: Boolean) = update { it.copy(voiceAiDenoise = enabled) }
+    fun setVoiceprintEnabled(enabled: Boolean) = update { it.copy(voiceprintEnabled = enabled) }
+    fun setVoiceprintLevel(level: Int) = update { it.copy(voiceprintLevel = level.coerceIn(0, 2)) }
 
     fun setVoiceSilenceMs(ms: Int) = update { it.copy(voiceSilenceMs = ms) }
 
@@ -259,7 +262,8 @@ class SettingsStore(context: Context) {
             .putString(KEY_VOICE_ENGINE, next.voiceEngine.name)
             .putBoolean(KEY_VOICE_AUTO_STOP, next.voiceAutoStop)
             .putBoolean(KEY_VOICE_SYSTEM_DENOISE, next.voiceSystemDenoise)
-            .putBoolean(KEY_VOICE_AI_DENOISE, next.voiceAiDenoise)
+            .putBoolean(KEY_VOICEPRINT, next.voiceprintEnabled)
+            .putInt(KEY_VOICEPRINT_LEVEL, next.voiceprintLevel)
             .putInt(KEY_VOICE_SILENCE_MS, next.voiceSilenceMs)
             .putString(KEY_VOICE_KEY, next.voiceKey.name)
             .putString(KEY_LLM_BASE_URL, next.llmBaseUrl)
@@ -303,7 +307,8 @@ class SettingsStore(context: Context) {
         voiceHistory = prefs.getBoolean(KEY_VOICE_HISTORY, true),
         voiceAutoStop = prefs.getBoolean(KEY_VOICE_AUTO_STOP, true),
         voiceSystemDenoise = prefs.getBoolean(KEY_VOICE_SYSTEM_DENOISE, false),
-        voiceAiDenoise = prefs.getBoolean(KEY_VOICE_AI_DENOISE, false),
+        voiceprintEnabled = prefs.getBoolean(KEY_VOICEPRINT, false),
+        voiceprintLevel = prefs.getInt(KEY_VOICEPRINT_LEVEL, 1).coerceIn(0, 2),
         voiceSilenceMs = prefs.getInt(KEY_VOICE_SILENCE_MS, 1500),
         voiceKey = runCatching { VoiceKey.valueOf(prefs.getString(KEY_VOICE_KEY, null).orEmpty()) }
             .getOrDefault(VoiceKey.OFF),
@@ -417,7 +422,8 @@ class SettingsStore(context: Context) {
         const val KEY_VOICE_ENGINE = "voice_engine"
         const val KEY_VOICE_AUTO_STOP = "voice_auto_stop"
         const val KEY_VOICE_SYSTEM_DENOISE = "voice_system_denoise"
-        const val KEY_VOICE_AI_DENOISE = "voice_ai_denoise"
+        const val KEY_VOICEPRINT = "voiceprint_enabled"
+        const val KEY_VOICEPRINT_LEVEL = "voiceprint_level"
         const val KEY_VOICE_SILENCE_MS = "voice_silence_ms"
         const val KEY_VOICE_KEY = "voice_key"
         const val KEY_LLM_BASE_URL = "llm_base_url"

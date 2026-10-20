@@ -123,8 +123,8 @@ class VoiceInputController(
     private val todoContext: () -> List<String> = { emptyList() },
     /** 语音历史（设置里开着才留底）：每次录音存原始录音，之后补上原话和整理结果；null 不留底 */
     private val history: VoiceHistory? = null,
-    /** 本机 AI 降噪：设置里开着且模型已下载，识别前先处理录音（留底的仍是原始录音）；null 不降噪 */
-    private val denoiser: com.carpe.ideashell.data.asr.VoiceDenoiser? = null,
+    /** 本机声纹：设置里开着且已录入你的声音，识别前先比对，不像你就不识别；null 不比对 */
+    private val voicePrint: com.carpe.ideashell.data.asr.VoicePrint? = null,
     private val onError: (String) -> Unit,
     private val onResult: (VoiceResult) -> Unit,
 ) {
@@ -267,11 +267,21 @@ class VoiceInputController(
         }
         // 先把录音留底：识别失败了也还能重试
         val historyId = replayId ?: if (settings.current.voiceHistory) history?.begin(pcm, durationMs) else null
+        // 声纹：不像你的声音就不识别。从历史里「重新识别」（replayId 不为空）不拦，等于强制识别
+        if (replayId == null && settings.current.voiceprintEnabled && voicePrint != null) {
+            val check = voicePrint.check(pcm, settings.current.voiceprintLevel)
+            if (check != null && !check.passed) {
+                if (historyId != null) history?.update(historyId, error = "声纹不匹配（${check.text}）· 点「重新识别」可强制识别")
+                onError(
+                    "不像是你的声音（${check.text}），已忽略" +
+                        if (historyId != null) "；录音在语音历史里，可强制重新识别" else "",
+                )
+                return@guarded
+            }
+        }
         val hot = lexicon.hotwordsFor(extraHotwords())
-        // 词库里的替换规则先改一遍：总是听错的词不用每次都纠
-        val input = if (settings.current.voiceAiDenoise) denoiser?.denoise(pcm) ?: pcm else pcm
         val heard = try {
-            recognize(input, hot)
+            recognize(pcm, hot)
         } catch (e: AsrException) {
             if (historyId != null) history?.update(historyId, error = "识别失败：" + (e.message ?: "未知错误"))
             throw e

@@ -96,8 +96,8 @@ class AppContainer(context: Context) {
     /** 本地 SenseVoice（断网兜底）：模型在设置里开启时才下载 */
     val localAsr = com.carpe.ideashell.data.asr.LocalSenseVoice(context = context, http = http, scope = appScope)
 
-    /** 本机 AI 降噪（GTCRN）：识别前处理录音，模型在设置里打开开关时下载 */
-    val denoiser = com.carpe.ideashell.data.asr.VoiceDenoiser(context = context, http = http, scope = appScope)
+    /** 本机声纹（CAM++）：录完先和录入的声音比对，不像就不识别；模型在设置里打开开关时下载 */
+    val voicePrint = com.carpe.ideashell.data.asr.VoicePrint(context = context, http = http, scope = appScope)
 
     /** 语音词库：热词 + 替换规则（纠错学习的结果也存在这里） */
     val lexicon = com.carpe.ideashell.data.asr.Lexicon(context)
