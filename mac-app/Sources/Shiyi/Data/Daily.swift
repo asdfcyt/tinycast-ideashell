@@ -3,14 +3,14 @@ import Foundation
 // 移植自安卓端 `DailyNoteService.kt`（只读部分）、`Timeline.kt`、`ReviewViewModel.kt` 里的范围预设。
 
 /// Daily Note 里的一条：时间 `HH:mm` + 文字（多行合并成一行）。[struck] 表示整条加了删除线（文字里已去掉 `~~`）
-struct DailyEntry: Hashable {
+struct DailyEntry: Hashable, Codable {
     var time: String
     var text: String
     var struck: Bool = false
 }
 
 /// 某一天的 Daily Note：笔记 id + 条目（按写入顺序）
-struct DailyDay {
+struct DailyDay: Codable {
     var noteId: String
     var entries: [DailyEntry]
 }
@@ -71,6 +71,28 @@ enum DailyFormat {
         }.joined(separator: "\n").trimmed
     }
 
+    /// 去掉一条日记：时间戳行 + 它的续行；时间和文字（按 entries 同样的方式合并续行后）都对上才删。没找到返回 nil，其余内容原样保留。
+    static func removeEntry(_ content: String, time: String, text: String) -> String? {
+        let lines = content.components(separatedBy: "\n")
+        let wanted = text.trimmed
+        var i = 0
+        while i < lines.count {
+            guard let h = head(lines[i]) else { i += 1; continue }
+            var j = i + 1
+            var body = h.rest
+            while j < lines.count, head(lines[j]) == nil, continues(lines[j]) {
+                body += " " + lines[j].trimmed
+                j += 1
+            }
+            let merged = (h.struck ? body.replacingOccurrences(of: "~~", with: "") : body).trimmed
+            if h.time == time && merged == wanted {
+                return (Array(lines[..<i]) + Array(lines[j...])).joined(separator: "\n").trimmed
+            }
+            i = j
+        }
+        return nil
+    }
+
     static func appendEntry(old: String, text: String, stamp: String) -> String {
         let entry = formatEntry(text, stamp: stamp)
         let normalized = normalize(old)
@@ -116,7 +138,37 @@ final class DailyService: @unchecked Sendable {
     private let api: IdeashellApi
     private let lock = NSLock()
     private var pastDays: [String: (at: Date, day: DailyDay)] = [:]
-    private static let ttl: TimeInterval = 600
+    /// 昨天和今天的 Daily Note 容易有改动（10 分钟内认为还新）；更早的日子基本不会再变，缓存 12 小时，并且存在本机，重启后不用重读
+    private static let recentTTL: TimeInterval = 600
+    private static let oldTTL: TimeInterval = 12 * 3600
+    private var diskLoaded = false
+
+    private struct Stored: Codable { var at: Date; var day: DailyDay }
+
+    private static func ttl(_ day: String) -> TimeInterval { day >= Day.add(Day.today(), days: -1) ? recentTTL : oldTTL }
+
+    private func loadDiskIfNeeded() {
+        lock.withLock {
+            guard !diskLoaded else { return }
+            diskLoaded = true
+            guard let text = LocalStore.read("daily-past.json"), let data = text.data(using: .utf8),
+                  let stored = try? JSONDecoder().decode([String: Stored].self, from: data) else { return }
+            for (d, s) in stored where pastDays[d] == nil { pastDays[d] = (s.at, s.day) }
+        }
+    }
+
+    private func saveDisk() {
+        let snapshot: [String: Stored] = lock.withLock { pastDays.mapValues { Stored(at: $0.at, day: $0.day) } }
+        if let d = try? JSONEncoder().encode(snapshot), let text = String(data: d, encoding: .utf8) {
+            LocalStore.write("daily-past.json", text)
+        }
+    }
+
+    /// 手动刷新时：过去的日子也重读
+    func clearPast() {
+        lock.withLock { pastDays.removeAll(); diskLoaded = true }
+        LocalStore.remove("daily-past.json")
+    }
     private static let parallel = 4
 
     init(api: IdeashellApi) { self.api = api }
@@ -138,7 +190,9 @@ final class DailyService: @unchecked Sendable {
         let date = Day.string(at)
         let c = Day.cal.dateComponents([.hour, .minute], from: at)
         let stamp = date + " " + String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
+        loadDiskIfNeeded()
         lock.withLock { _ = pastDays.removeValue(forKey: date) }
+        saveDisk()
 
         let folder = try await findFolder()
         if let folder {
@@ -159,6 +213,19 @@ final class DailyService: @unchecked Sendable {
         try await api.createNote(title: date, body: DailyFormat.formatEntry(text, stamp: stamp), tags: ["daily-note"], folderId: folderId, inlineTags: false)
     }
 
+    /// 删除 [date] 那天 Daily Note 里的一条日记；返回是否真的删掉了
+    func deleteEntry(date: String, entry: DailyEntry) async throws -> Bool {
+        loadDiskIfNeeded()
+        lock.withLock { _ = pastDays.removeValue(forKey: date) }
+        saveDisk()
+        let ids = try await list(from: date, to: date)
+        guard let id = ids[date] else { return false }
+        let detail = try await api.noteFull(id)
+        guard let updated = DailyFormat.removeEntry(detail.content, time: entry.time, text: entry.text) else { return false }
+        try await api.updateNoteBody(id, body: updated)
+        return true
+    }
+
     /// 文件夹里按标题日期倒序的 Daily Note：日期 yyyy-MM-dd → 笔记 id
     private func list(from: String, to: String) async throws -> [String: String] {
         guard let folder = try await findFolder() else { return [:] }
@@ -173,6 +240,7 @@ final class DailyService: @unchecked Sendable {
 
     /// [from]..[to] 之间每天的 Daily Note（含按时间戳拆开的条目）；没有 Daily Note 的天不在结果里。读失败的那一天跳过
     func days(from: String, to: String) async throws -> [String: DailyDay] {
+        loadDiskIfNeeded()
         let ids = try await list(from: from, to: to)
         let today = Day.today()
         let now = Date()
@@ -180,7 +248,7 @@ final class DailyService: @unchecked Sendable {
         var missing: [(String, String)] = []
         for (d, id) in ids {
             let hit = lock.withLock { d < today ? pastDays[d] : nil }
-            if let hit, hit.day.noteId == id, now.timeIntervalSince(hit.at) < Self.ttl { result[d] = hit.day }
+            if let hit, hit.day.noteId == id, now.timeIntervalSince(hit.at) < Self.ttl(d) { result[d] = hit.day }
             else { missing.append((d, id)) }
         }
         let api = self.api
@@ -204,13 +272,16 @@ final class DailyService: @unchecked Sendable {
             }
             return out
         }
+        var cachedNew = false
         for (d, day) in fetched {
             guard let day else { continue }
             result[d] = day
             if d < today {
                 lock.withLock { pastDays[d] = (Date(), day) }
+                cachedNew = true
             }
         }
+        if cachedNew { saveDisk() }
         return result
     }
 }
@@ -251,7 +322,7 @@ enum RangePreset: String, CaseIterable, Identifiable {
 
 // MARK: - 时间河数据
 
-struct DayBucket: Identifiable {
+struct DayBucket: Identifiable, Codable {
     var date: String
     /// 新的在前
     var notes: [NoteInfo]
@@ -261,7 +332,7 @@ struct DayBucket: Identifiable {
     var id: String { date }
 }
 
-struct TimelineData {
+struct TimelineData: Codable {
     var from: String
     var to: String
     /// 新的一天在前

@@ -8,6 +8,7 @@ struct QuickStartSheet: View {
     @State private var plan: QuickStartPlan?
     @State private var error: String?
     @State private var loading = false
+    @State private var postponed: [UUID: String] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -171,10 +172,40 @@ struct QuickStartSheet: View {
         }
         if !p.later.isEmpty {
             block("可以先放一放", icon: "tray.and.arrow.down", tint: .secondary) {
-                ForEach(p.later, id: \.self) { w in
-                    Text("· " + w).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                ForEach(p.later) { w in
+                    HStack(alignment: .center, spacing: 8) {
+                        Text("· " + w.text).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        if let t = w.task { postponeControl(w.id, t) }
+                    }
                 }
             }
+        }
+    }
+
+    /// 「延期」：改到明天 / 后天 / 下周一，保留原来的时间点；改完这一行显示结果
+    @ViewBuilder private func postponeControl(_ id: UUID, _ t: DidaTask) -> some View {
+        if let done = postponed[id] {
+            Label(done, systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+        } else {
+            Menu {
+                let today = Day.today()
+                ForEach([("明天", 1), ("后天", 2), ("下周一", -1)], id: \.0) { label, n in
+                    Button(label) {
+                        let day = n > 0 ? Day.add(today, days: n) : Scheduler.nextMonday(from: today)
+                        let task = model.localTask(t.id) ?? t
+                        Task {
+                            await model.edit(task, .schedule(date: day, time: task.time))
+                            postponed[id] = "已延期到" + Day.label(day)
+                        }
+                    }
+                }
+            } label: {
+                Label("延期", systemImage: "clock.arrow.circlepath").font(.caption.weight(.medium))
+            }
+            .menuStyle(.button).menuIndicator(.hidden).fixedSize()
+            .controlSize(.small)
+            .help("把「" + t.cleanTitle + "」改期")
         }
     }
 

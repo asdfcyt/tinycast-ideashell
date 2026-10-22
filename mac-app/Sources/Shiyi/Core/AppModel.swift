@@ -114,6 +114,12 @@ final class AppModel: ObservableObject {
     @Published var backup: BackupFile?
     /// 在 Mac 上创建的任务笔记（key 同备份里的 `dida:<taskId>`）；手机下次备份后会带上它们
     @Published var localTaskNotes: [String: TaskNoteRef] = [:]
+    /// 本机新建 / 找回的项目主页（关键词 → 笔记 id），见 ProjectHome.swift
+    @Published var localHomes: [String: String] = [:]
+    /// AI 洞察（按统计范围 7 / 14 / 30 天各存一份），见 AIInsight.swift
+    @Published var aiInsights: [Int: AIInsight] = [:]
+    @Published var aiInsightLoading = false
+    @Published var aiInsightError: String?
     @Published var creatingTaskNote = false
     /// 今天页的「往日回顾」：1 周 / 1 个月 / 3 个月 / 1 年前的今天写过的笔记
     @Published var memory: [MemoryItem] = []
@@ -169,6 +175,10 @@ final class AppModel: ObservableObject {
     let calPane = PaneState()
     /// 快速启动最近一次的梳理结果（30 分钟内再打开直接用）
     var quickStartCache: QuickStartPlan?
+    /// 上次读回来的待办 / 笔记指纹；和这次不一样就说明数据有变化（见 HistoryCache.swift）
+    var overviewFP = 0
+    var timelineFP = 0
+    var historyDirty = false
 
     // 回顾页：顶部的新入口（时间河 / 洞察 / 专注）和右侧详情
     /// 回顾页右侧详情的选中状态。单独一个对象：选中变化只刷新右侧和被选行，不会让整条河重新绘制
@@ -189,7 +199,7 @@ final class AppModel: ObservableObject {
     @Published var holidays: [String: HolidayEntry] = [:]
     lazy var daily = DailyService(api: ideashell)
 
-    private var noteCache: [String: NoteDetail] = [:]
+    var noteCache: [String: NoteDetail] = [:]
     private var refreshTimer: Timer?
     private var activeObserver: NSObjectProtocol?
     private var lastQuick = Date()
@@ -212,6 +222,8 @@ final class AppModel: ObservableObject {
         if let json = LocalStore.read("backup.json"), let file = try? BackupService.decode(json) { backup = file }
         if let json = LocalStore.read("tasknotes.json"), let d = json.data(using: .utf8),
            let m = try? JSONDecoder().decode([String: TaskNoteRef].self, from: d) { localTaskNotes = m }
+        if let json = LocalStore.read("homes.json"), let d = json.data(using: .utf8),
+           let m = try? JSONDecoder().decode([String: String].self, from: d) { localHomes = m }
         // 上次的待办 / 笔记先摆出来，网络回来再悄悄更新（启动时不用对着空白等）
         overview = Self.readCache("overview.json")
         timeline = Self.readCache("timeline.json") ?? []
@@ -246,6 +258,8 @@ final class AppModel: ObservableObject {
 
     func start() {
         guard refreshTimer == nil else { return }
+        restoreHistoryCaches()
+        loadAIInsights()
         Task { await refreshAll(startup: true) }
         Task { await loadHolidays() }
         Task { await focus.settle(); await focus.refresh(); stamp("focus", key: "f") }
@@ -276,6 +290,7 @@ final class AppModel: ObservableObject {
     /// 手动刷新（⌘R）= 全部重读；启动时只读必要的（备份缓存还新就不再拉那篇大笔记）
     func refreshAll(startup: Bool = false) async {
         lastQuick = Date()
+        if !startup { daily.clearPast() }
         let skipBackup = startup && (backupCacheAge().map { $0 < 1800 } ?? false) && backup != nil
         async let a: Void = loadTimeline(silent: !timeline.isEmpty)
         async let b: Void = loadOverview(silent: overview != nil)
@@ -299,6 +314,7 @@ final class AppModel: ObservableObject {
         async let b: Void = loadTimeline(silent: true)
         await a
         await b
+        applyHistoryChanges()
     }
 
     /// 已保存的 AI 模型 Key（保存后才算，不看输入框里还没保存的）
@@ -338,6 +354,9 @@ final class AppModel: ObservableObject {
         do {
             let r = try await ideashell.notesInRange(start, Date().addingTimeInterval(120))
             timeline = r.notes.filter(isUserNote)
+            let fp = Self.fingerprint(timeline)
+            if timelineFP != 0 && fp != timelineFP { historyDirty = true }
+            timelineFP = fp
             Self.writeCache("timeline.json", timeline)
             timelineDays = days
             notesTruncated = r.truncated
@@ -507,7 +526,7 @@ final class AppModel: ObservableObject {
 
     /// 笔记 id → 它是哪个项目的主页
     func projectOfHome(_ noteId: String) -> String? {
-        backup?.workspace.homes.first(where: { $0.value == noteId })?.key
+        allHomes.first(where: { $0.value == noteId })?.key
     }
 
     /// 本地已有的任务；没有就向滴答要
@@ -535,8 +554,12 @@ final class AppModel: ObservableObject {
         if !silent { todosLoading = true }
         defer { todosLoading = false }
         do {
-            overview = try await dida.fetchOverview()
-            if let overview, overview.warning == nil { Self.writeCache("overview.json", overview) }
+            let fresh = try await dida.fetchOverview()
+            overview = fresh
+            let fp = Self.fingerprint(fresh)
+            if overviewFP != 0 && fp != overviewFP { historyDirty = true }
+            overviewFP = fp
+            if fresh.warning == nil { Self.writeCache("overview.json", fresh) }
             todosError = overview?.warning
         } catch {
             if !silent || overview == nil { todosError = error.localizedDescription }
@@ -620,7 +643,8 @@ final class AppModel: ObservableObject {
         if ifStale, isFresh("review", key: stampKey), review != nil { return }
         guard beginLoad("review", ifStale: ifStale) else { return }
         defer { endLoad("review") }
-        reviewLoading = true
+        // 已经有这个范围的数据时在后台悄悄更新，不转圈
+        reviewLoading = review == nil || review?.days != reviewDays
         defer { reviewLoading = false }
         reviewError = nil
         let days = reviewDays
@@ -657,6 +681,7 @@ final class AppModel: ObservableObject {
         if reviewError == nil && todoError == nil { stamp("review", key: stampKey) }
         reviewLoading = false
         await loadPreviousPeriod(days: days, today: today)
+        saveReviewCache()
     }
 
     /// 洞察里「较上一个周期」的对比：主数据出来之后再悄悄补读上一段同样长度的时间
@@ -755,7 +780,7 @@ final class AppModel: ObservableObject {
         let days = calendarVisibleDays()
         guard let from = days.first, let to = days.last else { return }
         // 已经读过的范围（比如整个月）盖住了现在要看的（某一周 / 某一天），而且还新，就不再请求
-        if ifStale, let c = calendarCover, c.from <= from, c.to >= to, Date().timeIntervalSince(c.at) < 300 { return }
+        if ifStale, let c = calendarCover, c.from <= from, c.to >= to, Date().timeIntervalSince(c.at) < 900 { return }
         guard beginLoad("calendar", ifStale: ifStale) else { return }
         defer { endLoad("calendar") }
         calendarLoading = true
@@ -788,8 +813,9 @@ final class AppModel: ObservableObject {
             }
         }
         if calendarError == nil {
+            saveCalendarCache()
             // 和上次读的范围相连 / 重叠且还新，就合并成一个更大的范围
-            if let c = calendarCover, Date().timeIntervalSince(c.at) < 300, c.to >= Day.add(from, days: -1), c.from <= Day.add(to, days: 1) {
+            if let c = calendarCover, Date().timeIntervalSince(c.at) < 900, c.to >= Day.add(from, days: -1), c.from <= Day.add(to, days: 1) {
                 calendarCover = (min(c.from, from), max(c.to, to), c.at)
             } else {
                 calendarCover = (from, to, Date())
@@ -812,7 +838,7 @@ final class AppModel: ObservableObject {
 
     // MARK: - 小工具
 
-    func isFresh(_ name: String, key: String, within seconds: TimeInterval = 300) -> Bool {
+    func isFresh(_ name: String, key: String, within seconds: TimeInterval = 900) -> Bool {
         guard let s = loadStamps[name], s.key == key else { return false }
         return Date().timeIntervalSince(s.at) < seconds
     }
@@ -821,6 +847,7 @@ final class AppModel: ObservableObject {
 
     /// 我们自己改了数据（新建 / 完成 / 改期）后，回顾、洞察、日历的缓存作废，下次进页面重读
     func invalidateHistory() {
+        historyDirty = false
         loadStamps.removeValue(forKey: "river")
         loadStamps.removeValue(forKey: "review")
         calendarCover = nil

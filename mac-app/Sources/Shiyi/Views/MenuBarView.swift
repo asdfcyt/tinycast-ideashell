@@ -81,10 +81,20 @@ struct MenuBarView: View {
                     FocusRunBar(focus: focus).padding(.horizontal, 12).padding(.vertical, 8)
                 } else {
                     HStack(spacing: 8) {
-                        Button { focus.quickFocus(focus.minutes) } label: {
-                            Label("开始专注 \(focus.minutes) 分钟", systemImage: "play.fill").font(.callout.weight(.medium))
+                        if let b = focus.pendingBreak {
+                            Button { focus.start() } label: {
+                                Label("开始\(b.label) \(focus.minutes) 分钟", systemImage: "cup.and.saucer.fill").font(.callout.weight(.medium))
+                            }
+                            .buttonStyle(.borderless)
+                            Button("跳过") { focus.skipBreak() }
+                                .buttonStyle(.borderless).font(.caption).foregroundStyle(.secondary)
+                                .help("跳过休息，直接专注")
+                        } else {
+                            Button { focus.quickFocus(focus.minutes) } label: {
+                                Label("开始专注 \(focus.minutes) 分钟", systemImage: "play.fill").font(.callout.weight(.medium))
+                            }
+                            .buttonStyle(.borderless)
                         }
-                        .buttonStyle(.borderless)
                         Spacer(minLength: 6)
                         // 关联待办：选了之后「开始专注」就会绑定它
                         FocusTaskMenu(focus: focus) {
@@ -241,7 +251,7 @@ private struct MenuTaskRow: View {
             if hover, model.focus.run == nil {
                 Button {
                     model.focus.attach(task)
-                    model.focus.quickFocus(model.focus.minutes)
+                    model.focus.quickFocus(model.focus.focusMinutes)
                 } label: {
                     Image(systemName: "play.fill").font(.system(size: 10, weight: .bold)).foregroundStyle(Brand.brown)
                         .frame(width: 22, height: 22).background(Brand.orange, in: Circle())

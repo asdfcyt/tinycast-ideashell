@@ -370,12 +370,14 @@ struct TaskDetailView: View {
     // MARK: - 操作
 
     private var actions: some View {
-        HStack {
+        FlowRow(spacing: 8) {
             Button { model.open(didaTaskURL(current.projectId, current.id)) } label: { Label("在滴答清单中打开", systemImage: "arrow.up.right.square") }
             Button { model.copy(current.cleanTitle) } label: { Label("复制标题", systemImage: "doc.on.doc") }
             if current.done {
                 Button { Task { await model.undoComplete(current) } } label: { Label("恢复为未完成", systemImage: "arrow.uturn.backward") }
             }
+            Button(role: .destructive) { model.requestDelete(.task(current)) } label: { Label("删除", systemImage: "trash") }
+                .help("删除这个待办（会先确认）")
         }
         .buttonStyle(.bordered)
     }

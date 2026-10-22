@@ -326,7 +326,7 @@ private struct ScheduleItems: View {
 @MainActor private func startFocus(_ task: DidaTask, _ focus: FocusStore) {
     guard focus.run == nil else { return }
     focus.task = task
-    focus.quickFocus(focus.minutes)
+    focus.quickFocus(focus.focusMinutes)
 }
 
 // MARK: - 下一件（主角）
@@ -375,7 +375,7 @@ private struct NextCard: View {
                 .buttonStyle(.borderedProminent).tint(Brand.orange)
 
                 Button { startFocus(task, focus) } label: {
-                    Label("专注 \(focus.minutes) 分钟", systemImage: "play.fill")
+                    Label("专注 \(focus.focusMinutes) 分钟", systemImage: "play.fill")
                 }
                 .buttonStyle(.bordered)
                 .disabled(focus.run != nil)
@@ -709,19 +709,28 @@ private struct QuickActions: View {
         }
     }
 
-    /// 点一下就按上次的时长开始；右边的小箭头选 15 / 25 / 45 / 60 / 90 分钟
+    /// 点一下就按上次的时长开始；右边的小箭头选 15 / 25 / 45 / 60 / 90 分钟。
+    /// 刚完成一个番茄、该休息时，主按钮是「休息 N 分」，菜单里可以跳过休息直接专注
     private var focusButton: some View {
-        QuickButton(
-            icon: running ? "timer" : "play.fill", tint: Brand.orange,
-            title: running ? "专注中" : "专注 \(focus.minutes) 分"
+        let breakKind = focus.pendingBreak
+        return QuickButton(
+            icon: running ? "timer" : (breakKind != nil ? "cup.and.saucer.fill" : "play.fill"),
+            tint: breakKind != nil && !running ? Color(red: 0.30, green: 0.69, blue: 0.47) : Brand.orange,
+            title: running ? "专注中" : (breakKind != nil ? "休息 \(focus.minutes) 分" : "专注 \(focus.minutes) 分")
         ) {
-            if running { model.selectedProject = nil; model.section = .focus } else { focus.quickFocus(focus.minutes) }
+            if running { model.selectedProject = nil; model.section = .focus }
+            else if breakKind != nil { focus.start() }
+            else { focus.quickFocus(focus.minutes) }
         }
         .overlay(alignment: .trailing) {
             if !running {
                 Menu {
+                    if let b = breakKind {
+                        Button("开始\(b.label) \(focus.minutes) 分钟") { focus.start() }
+                        Divider()
+                    }
                     ForEach(FocusStore.choices, id: \.self) { m in
-                        Button("专注 \(m) 分钟") { focus.quickFocus(m) }
+                        Button((breakKind != nil ? "跳过休息，专注 " : "专注 ") + "\(m) 分钟") { focus.quickFocus(m) }
                     }
                     Divider()
                     Button("打开专注页") { model.selectedProject = nil; model.section = .focus }

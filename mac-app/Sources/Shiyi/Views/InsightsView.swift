@@ -55,6 +55,8 @@ struct InsightsView: View {
         if r.totalNotes + r.totalDone == 0 {
             EmptyHint(icon: "chart.bar", title: "这段时间还没有记录").frame(height: 240)
         } else {
+            section("AI 洞察") { aiCard(r) }
+
             let notes = highlights(r)
             if !notes.isEmpty {
                 section("发现") { highlightsCard(notes) }
@@ -77,6 +79,15 @@ struct InsightsView: View {
                     pair {
                         if r.onTime + r.lateDone > 0 { completionCard(r) }
                         if !r.projects.isEmpty { projectsCard(r) }
+                    }
+                }
+            }
+
+            if r.donePriority.reduce(0, +) > 0 || r.focusTotalMin > 0 {
+                section("待办与专注") {
+                    pair {
+                        if r.donePriority.reduce(0, +) > 0 { priorityCard(r) }
+                        if r.focusTotalMin > 0 { focusHoursCard(r) }
                     }
                 }
             }
@@ -182,7 +193,28 @@ struct InsightsView: View {
         if let t = r.topTags.first, t.count >= 2 {
             out.append(("number", noteColor, "最常写的话题是 #\(t.tag)，出现 \(t.count) 次"))
         }
-        return Array(out.prefix(5))
+        if r.longestGap >= 3, r.days >= 7 {
+            out.append(("moon.zzz.fill", .secondary, "最长有 \(r.longestGap) 天没有记录，之后又重新捡了起来"))
+        }
+        if r.focusStats.sessions >= 3, let h = bestFocusStart(r) {
+            out.append(("scope", focusColor, "你最容易进入专注的时段是 \(h)–\(h + 2) 点"))
+        }
+        let high = r.donePriority[3]
+        if high > 0 {
+            out.append(("flag.fill", .red, "完成了 \(high) 个高优先级待办，占已完成的 \(Int((Double(high) / Double(max(r.totalDone, 1)) * 100).rounded()))%"))
+        }
+        return Array(out.prefix(7))
+    }
+
+    /// 专注分钟最多的连续 3 小时的起点
+    private func bestFocusStart(_ r: ReviewData) -> Int? {
+        guard r.focusHours.reduce(0, +) > 0 else { return nil }
+        var best = -1, at: Int?
+        for s in 0 ... 21 {
+            let sum = r.focusHours[s] + r.focusHours[s + 1] + r.focusHours[s + 2]
+            if sum > best { best = sum; at = s }
+        }
+        return at
     }
 
     private func highlightsCard(_ items: [(icon: String, tint: Color, text: String)]) -> some View {
@@ -493,6 +525,175 @@ struct InsightsView: View {
                 .frame(maxHeight: .infinity)
             }
         }
+    }
+
+    // MARK: - 完成待办的优先级
+
+    private func priorityCard(_ r: ReviewData) -> some View {
+        let names = ["无", "低", "中", "高"]
+        let colors: [Color] = [.gray, .blue, .orange, .red]
+        let total = max(r.donePriority.reduce(0, +), 1)
+        let top = r.donePriority.enumerated().filter { $0.offset > 0 }.max(by: { $0.element < $1.element })
+        return InsightCard(height: 250) {
+            VStack(alignment: .leading, spacing: 10) {
+                cardHeader("完成的待办", icon: "flag.fill", tint: doneColor, trailing: "按优先级")
+                VStack(alignment: .leading, spacing: 2) {
+                    bigValue("\(r.donePriority[3] + r.donePriority[2])", "个重要待办")
+                    Text(top.map { $0.element > 0 ? "其中「\(names[$0.offset])」优先级最多" : "还没有设置优先级的待办" } ?? " ")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                Chart(0 ..< 4, id: \.self) { i in
+                    BarMark(x: .value("优先级", names[3 - i]), y: .value("个数", r.donePriority[3 - i]))
+                        .foregroundStyle(colors[3 - i].gradient)
+                        .cornerRadius(4)
+                        .annotation(position: .top, spacing: 2) {
+                            Text("\(r.donePriority[3 - i])").font(.caption2).foregroundStyle(.secondary)
+                        }
+                }
+                .chartXAxis { AxisMarks { _ in AxisValueLabel().font(.caption2) } }
+                .chartYAxis(.hidden)
+                .frame(maxHeight: .infinity)
+                Text("共完成 \(total) 个").font(.caption).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    // MARK: - 专注时段
+
+    private func focusHoursCard(_ r: ReviewData) -> some View {
+        let start = bestFocusStart(r)
+        return InsightCard(height: 250) {
+            VStack(alignment: .leading, spacing: 10) {
+                cardHeader("专注时段", icon: "scope", tint: focusColor, trailing: "按开始时间")
+                VStack(alignment: .leading, spacing: 2) {
+                    bigValue(start.map { "\($0)–\($0 + 2) 点" } ?? "–")
+                    Text("你最常在这个时段开始专注").font(.callout).foregroundStyle(.secondary)
+                }
+                Chart(0 ..< 24, id: \.self) { h in
+                    BarMark(x: .value("小时", h), y: .value("分钟", r.focusHours[h]), width: .fixed(6))
+                        .foregroundStyle(focusColor.gradient)
+                }
+                .chartXScale(domain: 0 ... 23)
+                .chartXAxis {
+                    AxisMarks(values: [0, 6, 12, 18]) { v in
+                        AxisValueLabel {
+                            if let h = v.as(Int.self) { Text("\(h)时").font(.caption2) }
+                        }
+                    }
+                }
+                .chartYAxis(.hidden)
+                .frame(maxHeight: .infinity)
+            }
+        }
+    }
+
+    // MARK: - AI 洞察
+
+    private func aiCard(_ r: ReviewData) -> some View {
+        let ins = model.aiInsights[model.reviewDays]
+        let busy = model.aiInsightLoading
+        return InsightCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles").foregroundStyle(Brand.orange)
+                    Text("读一读你最近 \(r.days) 天写的东西").font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 8)
+                    if busy { ProgressView().controlSize(.small) }
+                    Button { Task { await model.generateAIInsight() } } label: {
+                        Label(ins == nil ? "生成洞察" : "重新生成", systemImage: ins == nil ? "wand.and.stars" : "arrow.clockwise")
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .disabled(busy || !model.hasLlm)
+                }
+
+                if !model.hasLlm {
+                    HStack(spacing: 8) {
+                        Text("需要先配置 AI 模型").font(.callout).foregroundStyle(.secondary)
+                        Button("去设置") { model.section = .settings }.buttonStyle(.link)
+                    }
+                }
+                if let e = model.aiInsightError { ErrorBanner(text: e) { Task { await model.generateAIInsight() } } }
+
+                if let ins {
+                    aiBody(ins)
+                } else if busy {
+                    Text("正在阅读笔记、Daily Note 和完成的待办，大约需要十几秒…").font(.callout).foregroundStyle(.secondary)
+                } else if model.hasLlm {
+                    Text("AI 会帮你看看：这段时间在关注什么、有哪些反复出现的主题、状态有什么变化、哪些想法值得回头再看，以及接下来可以怎么做。")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func aiBody(_ ins: AIInsight) -> some View {
+        Text(ins.summary).font(.body.weight(.medium)).fixedSize(horizontal: false, vertical: true)
+
+        if !ins.themes.isEmpty {
+            aiBlock("反复出现的主题", icon: "number", tint: noteColor) {
+                ForEach(ins.themes) { t in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(t.name).font(.callout.weight(.semibold))
+                        if !t.detail.isEmpty { Text(t.detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                        if !t.notes.isEmpty {
+                            FlowRow(spacing: 6) { ForEach(t.notes) { noteChip($0) } }
+                        }
+                    }
+                }
+            }
+        }
+        if !ins.mood.isEmpty {
+            aiBlock("状态观察", icon: "face.smiling", tint: .pink) {
+                Text(ins.mood).font(.callout).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        if !ins.revisit.isEmpty {
+            aiBlock("值得回头看", icon: "arrow.uturn.backward.circle", tint: hourColor) {
+                ForEach(ins.revisit) { v in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        noteChip(v.note)
+                        if !v.reason.isEmpty { Text(v.reason).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                    }
+                }
+            }
+        }
+        if !ins.suggestions.isEmpty {
+            aiBlock("可以试试", icon: "lightbulb.fill", tint: .yellow) {
+                ForEach(ins.suggestions, id: \.self) { s in
+                    Text("· " + s).font(.callout).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        if !ins.questions.isEmpty {
+            aiBlock("想一想", icon: "questionmark.bubble.fill", tint: .teal) {
+                ForEach(ins.questions, id: \.self) { q in
+                    Text(q).font(.callout).italic().fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        Text("分析了 \(ins.noteCount) 条笔记、\(ins.doneCount) 个完成的待办 · 生成于 \(ins.madeAt.formatted(date: .abbreviated, time: .shortened))")
+            .font(.caption).foregroundStyle(.tertiary)
+    }
+
+    private func aiBlock<C: View>(_ title: String, icon: String, tint: Color, @ViewBuilder content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: icon).font(.caption.weight(.bold)).foregroundStyle(tint)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func noteChip(_ n: AIInsight.NoteRef) -> some View {
+        Button { model.openNote(n.id, title: n.title) } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "doc.text").font(.system(size: 10))
+                Text(n.title).font(.caption).lineLimit(1).frame(maxWidth: 220, alignment: .leading)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Color.primary.opacity(0.07), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("打开这条笔记")
     }
 
     // MARK: - 小工具

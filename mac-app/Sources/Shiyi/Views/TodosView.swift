@@ -35,6 +35,10 @@ struct TodosView: View {
             }
         }
         .searchable(text: $query, placement: .toolbar, prompt: "筛选待办")
+        // 选中一个待办按 ⌫ 删除（会先确认）
+        .onDeleteCommand {
+            if let id = selectedId, let t = model.localTask(id) { model.requestDelete(.task(t)) }
+        }
         .overlay(alignment: .bottom) { UndoToast().padding(.bottom, 16) }
     }
 
@@ -43,10 +47,7 @@ struct TodosView: View {
             if !model.hasDida {
                 EmptyHint(icon: "key", title: "还没有填写滴答清单 API 口令", detail: "到「设置」里填写后即可查看待办")
             } else if let ov = model.overview {
-                VStack(spacing: 0) {
-                    dropBar
-                    list(ov)
-                }
+                list(ov)
             } else if model.todosLoading {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -58,42 +59,36 @@ struct TodosView: View {
         }
     }
 
-    /// 一行待办：没做完的可以拖；落在同一天的其他行上等于改到那天
-    private func row(_ t: DidaTask, overdue: Bool = false, droppable: Bool = false, day: String? = nil) -> some View {
-        let r = TaskRow(task: t, overdue: overdue, opensDetail: false)
+    /// 一行待办：没做完的可以拖（用系统原生的 `.draggable`），放到日期分组的标题上就改到那天
+    private func row(_ t: DidaTask, overdue: Bool = false) -> some View {
+        TaskRow(task: t, overdue: overdue, opensDetail: false)
             .modifier(DraggableWhenOpen(task: t))
             .tag(t.id)
-        return Group {
-            if droppable { r.modifier(TodoDrop(day: day, key: $dropKey)) } else { r }
-        }
     }
 
-    /// 顶部的「拖到这里改期」：今天 / 明天 / 后天 / 下周一 / 无日期。列表里没有「今天」这一组时也能把任务拖到今天
-    private var dropBar: some View {
-        let today = Day.today()
-        let nextMonday: String = {
-            let wd = Day.cal.component(.weekday, from: Day.parse(today) ?? Date())  // 1 = 周日
-            return Day.add(today, days: (9 - wd) % 7 == 0 ? 7 : (9 - wd) % 7)
-        }()
-        let targets: [(label: String, day: String?)] = [
-            ("今天", today), ("明天", Day.add(today, days: 1)), ("后天", Day.add(today, days: 2)),
-            ("下周一", nextMonday), ("无日期", nil),
-        ]
-        return HStack(spacing: 8) {
-            Image(systemName: "hand.draw").font(.caption).foregroundStyle(.tertiary)
-            Text("拖到这里改期").font(.caption).foregroundStyle(.tertiary)
-            ForEach(targets, id: \.label) { t in
-                let key = t.day ?? "none"
-                Text(t.label)
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(dropKey == key ? Brand.orange.opacity(0.35) : Color.primary.opacity(0.07), in: Capsule())
-                    .overlay(Capsule().strokeBorder(dropKey == key ? Brand.orange : .clear, lineWidth: 1.5))
-                    .modifier(TodoDrop(day: t.day, key: $dropKey))
-            }
+    /// 日期分组的标题：同时是落点，拖着任务悬上去会高亮。空的分组（今天 / 明天 / 无日期）也留着，拖到哪都有地方放
+    private func dropHeader(_ day: String?, text: String, count: Int?, hint: String? = nil, tint: Color = .secondary) -> some View {
+        let on = dropKey == (day ?? "none")
+        return HStack(spacing: 6) {
+            SectionTitle(text: text, count: count, tint: tint)
+            if let hint { Text(hint).font(.caption).foregroundStyle(.tertiary) }
             Spacer(minLength: 0)
+            if on { Text("松手即改到这里").font(.caption.weight(.semibold)).foregroundStyle(Brand.orange) }
         }
-        .padding(.horizontal, 14).padding(.vertical, 8)
+        .padding(.vertical, 6).padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(on ? Brand.orange.opacity(0.22) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .modifier(TodoDrop(day: day, key: $dropKey))
+    }
+
+    /// 要显示的日期分组：有任务的日子 + 今天 + 明天（没有搜索词时，空的也留着当落点）
+    private func dayKeys(_ byDate: [String: [DidaTask]]) -> [String] {
+        var keys = Set(byDate.keys)
+        if query.trimmed.isEmpty {
+            keys.insert(Day.today())
+            keys.insert(Day.add(Day.today(), days: 1))
+        }
+        return keys.sorted()
     }
 
     private func list(_ ov: DidaOverview) -> some View {
@@ -110,23 +105,16 @@ struct TodosView: View {
                     SectionTitle(text: "逾期", count: overdue.count, tint: .red)
                 }
             }
-            ForEach(byDate.keys.sorted(), id: \.self) { day in
+            ForEach(dayKeys(byDate), id: \.self) { day in
                 Section {
-                    ForEach(byDate[day] ?? []) { row($0, droppable: true, day: day) }
+                    ForEach(byDate[day] ?? []) { row($0) }
                 } header: {
-                    HStack(spacing: 6) {
-                        SectionTitle(text: Day.label(day), count: byDate[day]?.count)
-                        Text(day.dropFirst(5)).font(.caption).foregroundStyle(.tertiary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .modifier(TodoDrop(day: day, key: $dropKey))
+                    dropHeader(day, text: Day.label(day), count: byDate[day]?.count, hint: String(day.dropFirst(5)))
                 }
             }
-            if !undated.isEmpty {
-                Section { ForEach(undated) { row($0, droppable: true, day: nil) } } header: {
-                    SectionTitle(text: "无日期（收集箱）", count: undated.count)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .modifier(TodoDrop(day: nil, key: $dropKey))
+            if !undated.isEmpty || query.trimmed.isEmpty {
+                Section { ForEach(undated) { row($0) } } header: {
+                    dropHeader(nil, text: "无日期（收集箱）", count: undated.count, hint: undated.isEmpty ? "拖到这里清除日期" : nil)
                 }
             }
             if overdue.isEmpty && upcoming.isEmpty && undated.isEmpty {
@@ -206,3 +194,4 @@ private struct TodoDrop: ViewModifier {
             }
     }
 }
+

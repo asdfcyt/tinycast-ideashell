@@ -10,11 +10,11 @@ struct CalendarDraft: Equatable {
 }
 
 extension AppModel {
-    /// 在某天某个时刻（分钟数，已按 15 分钟取整）开一个草稿
-    func startCalendarDraft(date: String, minutes: Int) {
+    /// 在某天某个时刻（分钟数，已按 15 分钟取整）开一个草稿；minutes 为 nil = 全天待办
+    func startCalendarDraft(date: String, minutes: Int?) {
         if date < Day.today() { showNotice("不能把待办安排到过去"); return }
         calPane.clear()
-        calendarDraft = CalendarDraft(date: date, time: String(format: "%02d:%02d", minutes / 60, minutes % 60))
+        calendarDraft = CalendarDraft(date: date, time: minutes.map { String(format: "%02d:%02d", $0 / 60, $0 % 60) })
     }
 
     func cancelCalendarDraft() { calendarDraft = nil }

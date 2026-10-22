@@ -16,7 +16,7 @@ extension AppModel {
     func loadHeat(ifStale: Bool = true) async {
         guard hasIdeashell else { heat = [:]; return }
         let key = Day.today()
-        if ifStale, isFresh("heat", key: key, within: 600) { return }
+        if ifStale, isFresh("heat", key: key, within: 1800) { return }
         guard beginLoad("heat", ifStale: ifStale) else { return }
         defer { endLoad("heat") }
         heatLoading = true

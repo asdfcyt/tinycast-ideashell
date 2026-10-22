@@ -138,6 +138,16 @@ struct CalendarView: View {
                                 )
                                 .frame(height: rowH)
                                 .onTapGesture { model.selectCalendarDay(day) }
+                                .contextMenu {
+                                    Button("在这天新建待办") {
+                                        model.selectCalendarDay(day)
+                                        model.startCalendarDraft(date: day, minutes: nil)
+                                    }
+                                    Button("转到这天的日视图") { model.selectCalendarDay(day, mode: .day) }
+                                    Button("转到这周的周视图") { model.selectCalendarDay(day, mode: .week) }
+                                    Divider()
+                                    Button("转到今天") { model.calendarToday() }
+                                }
                                 .dropDestination(for: String.self) { ids, _ in
                                     guard let id = ids.first else { return false }
                                     Task { await model.moveTask(id, to: day) }
@@ -222,6 +232,7 @@ struct CalendarView: View {
                         .background(Color.primary.opacity(0.07), in: Capsule())
                         .draggable(t.id)
                         .onTapGesture { model.openTask(t) }
+                        .contextMenu { TaskContextMenu(task: t) }
                     }
                 }
             }
@@ -325,6 +336,7 @@ enum CalendarPalette {
 // MARK: - 一格
 
 private struct DayCell: View {
+    @EnvironmentObject var model: AppModel
     let day: String
     let inMonth: Bool
     let selected: Bool
@@ -464,6 +476,8 @@ private struct DayCell: View {
             .padding(.horizontal, 4)
             .opacity(fade)
             .modifier(DraggableWhenOpen(task: t))
+            .onTapGesture { model.openTask(t) }
+            .contextMenu { TaskContextMenu(task: t) }
     }
 
     private func notesChip(_ n: Int) -> some View {

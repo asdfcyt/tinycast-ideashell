@@ -16,6 +16,9 @@ struct HourGridView: View {
     let days: [String]
 
     @State private var dropTarget: String?
+    /// 鼠标在时间轴里最后停的位置（右键「在这里新建」用）。放在引用对象里：鼠标一动就写，不触发界面刷新
+    @State private var hover = HoverBox()
+    private final class HoverBox { var y: CGFloat = 0 }
 
     private let rowH: CGFloat = 52
     private let gutter: CGFloat = 46
@@ -76,6 +79,13 @@ struct HourGridView: View {
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
                 .onTapGesture { model.selectCalendarDay(d) }
+                .contextMenu {
+                    Button("转到这天的日视图") { model.selectCalendarDay(d, mode: .day) }
+                    Button("在这天新建全天待办") {
+                        model.selectCalendarDay(d)
+                        model.startCalendarDraft(date: d, minutes: nil)
+                    }
+                }
             }
         }
     }
@@ -131,6 +141,7 @@ struct HourGridView: View {
             .background(CalendarPalette.color(t).opacity(t.done ? 0.12 : 0.26), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
             .modifier(DraggableWhenOpen(task: t))
             .onTapGesture { model.openTask(t) }
+            .contextMenu { TaskContextMenu(task: t) }
     }
 
     // MARK: 小时格
@@ -195,6 +206,22 @@ struct HourGridView: View {
                         model.selectCalendarDay(d)
                         model.calPane.clear()
                     })
+                    .onContinuousHover { phase in
+                        if case let .active(p) = phase { hover.y = p.y }
+                    }
+                    .contextMenu {
+                        Button("在这里新建待办") {
+                            model.selectCalendarDay(d)
+                            model.startCalendarDraft(date: d, minutes: min(max(Int(hover.y / rowH * 4), 0), 95) * 15)
+                        }
+                        Button("新建全天待办") {
+                            model.selectCalendarDay(d)
+                            model.startCalendarDraft(date: d, minutes: nil)
+                        }
+                        Divider()
+                        if days.count > 1 { Button("转到这一天的日视图") { model.selectCalendarDay(d, mode: .day) } }
+                        Button("转到今天") { model.calendarToday() }
+                    }
                 ForEach(0 ..< 24, id: \.self) { h in
                     Rectangle().fill(Color.primary.opacity(0.09)).frame(height: 0.5).offset(y: CGFloat(h) * rowH).allowsHitTesting(false)
                 }
@@ -266,6 +293,7 @@ struct HourGridView: View {
         }
         .modifier(DraggableWhenOpen(task: t))
         .onTapGesture { model.openTask(t) }
+        .contextMenu { TaskContextMenu(task: t) }
     }
 }
 

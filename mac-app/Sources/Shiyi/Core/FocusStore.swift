@@ -76,6 +76,13 @@ final class FocusStore: ObservableObject {
         Notifier.shared.setup()
     }
 
+    /// 一键开始专注时用的分钟数：该休息时 `minutes` 是休息的时长，专注要用上次的专注时长
+    var focusMinutes: Int {
+        guard pendingBreak != nil else { return minutes }
+        let last = defaults.integer(forKey: "focus.lastMinutes")
+        return last > 0 ? last : FocusKind.focus.defaultMin
+    }
+
     /// 快捷开始：直接按 [m] 分钟开一个专注（该休息时先跳过休息）
     func quickFocus(_ m: Int) {
         guard run == nil else { return }

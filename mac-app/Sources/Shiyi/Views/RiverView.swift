@@ -151,7 +151,7 @@ private struct DaySection: View {
                 ForEach(Array(list.enumerated()), id: \.element.id) { i, row in
                     switch row {
                     case let .daily(e, noteId, idx):
-                        DailyLine(entry: e, noteId: noteId, index: idx, first: i == 0, last: i == list.count - 1)
+                        DailyLine(entry: e, date: day.date, noteId: noteId, index: idx, first: i == 0, last: i == list.count - 1)
                     case let .note(n):
                         NoteLine(note: n, first: i == 0, last: i == list.count - 1)
                     case let .todo(t, clock, overdue):
@@ -272,6 +272,7 @@ private struct TimelineRow<Content: View>: View {
 private struct DailyLine: View {
     @EnvironmentObject var model: AppModel
     let entry: DailyEntry
+    let date: String
     let noteId: String?
     let index: Int
     let first: Bool
@@ -300,6 +301,8 @@ private struct DailyLine: View {
                 Button("弹出这天的 Daily Note") { model.openNote(id, title: "Daily Note") }
                 Button("在闪念贝壳中打开") { model.open(noteURL(id)) }
             }
+            Divider()
+            Button("删除这条日记…", role: .destructive) { model.requestDelete(.daily(date: date, entry: entry, noteId: noteId)) }
         }
     }
 }
@@ -364,10 +367,8 @@ private struct TodoLine: View {
             }
         }
         .contextMenu {
-            Button(task.done ? "恢复为未完成" : "完成") { Task { await model.toggleTask(task) } }
             Button("在右侧查看") { model.paneTask(task) }
-            Button("弹出详情") { model.openTask(task) }
-            Button("复制标题") { model.copy(task.cleanTitle) }
+            TaskContextMenu(task: task)
         }
     }
 }

@@ -28,6 +28,11 @@ struct DidaApi {
         return DidaParser.extractTasks(text).first { $0.title == title }
     }
 
+    /// 删除任务（滴答里会进「已删除」）
+    func deleteTask(_ task: DidaTask) async throws {
+        _ = try await mcp.callText("delete_task", ["project_id": task.projectId, "task_id": task.id])
+    }
+
     /// 改期；time 为 nil 表示全天（当天 9:00 提醒），否则准点提醒
     func reschedule(_ task: DidaTask, date: String, time: String?) async throws {
         let due = Day.dueString(date, time: time)

@@ -172,12 +172,11 @@ struct TaskRow: View {
         }
         .padding(.vertical, 3)
         .contentShape(Rectangle())
-        .onTapGesture { if opensDetail { model.openTask(task) } }
+        // 待办页（opensDetail = false）靠列表自己的选中，行上不挂点击手势：挂了会和拖拽抢手势，要按住好一会儿才开始拖
+        .modifier(TapWhen(enabled: opensDetail) { model.openTask(task) })
         .contextMenu {
-            Button("查看详情") { model.openTask(task) }
-            Button("在滴答清单中打开") { model.open(didaTaskURL(task.projectId, task.id)) }
-            Button("复制标题") { model.copy(task.cleanTitle) }
             if let note = taskNote { Button("打开任务笔记") { model.openNote(note.noteId, title: note.deliverable) } }
+            TaskContextMenu(task: task)
         }
     }
 
@@ -244,5 +243,16 @@ struct RemoteImage: View {
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               let http = resp as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else { return nil }
         return NSImage(data: data)
+    }
+}
+
+
+/// 只在需要时才挂点击手势（不需要时完全不挂，不影响拖拽）
+struct TapWhen: ViewModifier {
+    let enabled: Bool
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        if enabled { content.onTapGesture(perform: action) } else { content }
     }
 }

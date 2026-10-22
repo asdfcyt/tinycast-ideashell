@@ -1,6 +1,6 @@
 import Foundation
 
-struct DayCount: Identifiable {
+struct DayCount: Identifiable, Codable {
     let day: String
     let notes: Int
     let done: Int
@@ -8,33 +8,33 @@ struct DayCount: Identifiable {
     var total: Int { notes + done }
 }
 
-struct TagCount: Identifiable {
+struct TagCount: Identifiable, Codable {
     let tag: String
     let count: Int
     var id: String { tag }
 }
 
-struct HourCount: Identifiable {
+struct HourCount: Identifiable, Codable {
     let hour: Int
     let count: Int
     var id: Int { hour }
 }
 
-struct FocusDay: Identifiable {
+struct FocusDay: Identifiable, Codable {
     let day: String
     let minutes: Int
     var id: String { day }
 }
 
 /// 一段时间的汇总（用来和上一个同样长度的时间段比较）
-struct PeriodTotals {
+struct PeriodTotals: Codable {
     var notes = 0
     var done = 0
     var focusMin = 0
     var activeDays = 0
 }
 
-struct WeekdayStat: Identifiable {
+struct WeekdayStat: Identifiable, Codable {
     /// 0 = 周一 … 6 = 周日
     let index: Int
     let total: Int
@@ -45,14 +45,14 @@ struct WeekdayStat: Identifiable {
     var short: String { ["一", "二", "三", "四", "五", "六", "日"][index] }
 }
 
-struct HourSplit: Identifiable {
+struct HourSplit: Identifiable, Codable {
     let hour: Int
     let notes: Int
     let done: Int
     var id: Int { hour }
 }
 
-struct ProjectStat: Identifiable {
+struct ProjectStat: Identifiable, Codable {
     let keyword: String
     var notes = 0
     var done = 0
@@ -61,7 +61,7 @@ struct ProjectStat: Identifiable {
     var total: Int { notes + done }
 }
 
-struct FocusStats {
+struct FocusStats: Codable {
     var sessions = 0
     var avgMin = 0
     var longestMin = 0
@@ -70,7 +70,7 @@ struct FocusStats {
 }
 
 /// 回顾：由「时间范围内的笔记」+「完成的待办」+「备份里的专注记录」算出的几条发现
-struct ReviewData {
+struct ReviewData: Codable {
     var days: Int
     var counts: [DayCount]
     var totalNotes: Int
@@ -95,6 +95,12 @@ struct ReviewData {
     var longestStreak = 0
     var projects: [ProjectStat] = []
     var focusStats = FocusStats()
+    /// 完成待办按优先级：下标 0 无 / 1 低 / 2 中 / 3 高
+    var donePriority = [0, 0, 0, 0]
+    /// 专注按开始的小时（分钟数）
+    var focusHours = [Int](repeating: 0, count: 24)
+    /// 最长一段没有任何记录的连续天数
+    var longestGap = 0
 
     var peakLabel: String? {
         guard let s = peakStart else { return nil }
@@ -146,6 +152,7 @@ struct ReviewData {
         var onTime = 0
         var late = 0
         var totalDone = 0
+        var donePri = [0, 0, 0, 0]
         for t in done {
             guard let when = t.completedDate else { continue }
             let day = Day.string(when)
@@ -155,6 +162,7 @@ struct ReviewData {
             hoursD[when.hourOfDay] += 1
             for p in projects where p.matches(t.title, tags: t.tags) { projBy[p.keyword]?.done += 1 }
             totalDone += 1
+            donePri[t.priority >= 5 ? 3 : (t.priority >= 3 ? 2 : (t.priority >= 1 ? 1 : 0))] += 1
             if let planned = t.date { if day <= planned { onTime += 1 } else { late += 1 } }
         }
 
@@ -184,10 +192,12 @@ struct ReviewData {
         var focusBy: [String: Int] = [:]
         var fs = FocusStats()
         var focusTotal = 0
+        var focusHours = [Int](repeating: 0, count: 24)
         for f in focusLog {
             let day = Day.string(f.startDate)
             guard day >= first && day <= today else { continue }
             focusBy[day, default: 0] += f.minutes
+            focusHours[f.startDate.hourOfDay] += f.minutes
             fs.sessions += 1
             focusTotal += f.minutes
             fs.longestMin = max(fs.longestMin, f.minutes)
@@ -209,7 +219,11 @@ struct ReviewData {
         }
         // 最长连续
         var longest = 0, run = 0
-        for c in counts { if c.total > 0 { run += 1; longest = max(longest, run) } else { run = 0 } }
+        var gap = 0, longestGap = 0
+        for c in counts {
+            if c.total > 0 { run += 1; longest = max(longest, run); gap = 0 }
+            else { run = 0; gap += 1; longestGap = max(longestGap, gap) }
+        }
 
         var out = ReviewData(
             days: days,
@@ -233,6 +247,9 @@ struct ReviewData {
         out.weekdays = (0 ..< 7).map { WeekdayStat(index: $0, total: wTotal[$0], occurrences: wOcc[$0]) }
         out.bestDay = counts.max(by: { $0.total < $1.total }).flatMap { $0.total > 0 ? $0 : nil }
         out.longestStreak = longest
+        out.longestGap = longestGap
+        out.donePriority = donePri
+        out.focusHours = focusHours
         out.projects = projBy.values.filter { $0.total + $0.focusMin > 0 }
             .sorted { ($0.total * 10 + $0.focusMin / 6) > ($1.total * 10 + $1.focusMin / 6) }
         out.projects = Array(out.projects.prefix(5))

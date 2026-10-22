@@ -2,6 +2,13 @@ import Foundation
 
 /// 快速启动：把今天的待办、逾期、最近的笔记和 Daily Note 交给 AI，梳理出「今天做什么 / 留意什么 / 怎么无压力地开始」。
 struct QuickStartPlan {
+    /// 可以先放一放的事；如果对应某个待办，就能直接延期
+    struct Later: Identifiable {
+        let id = UUID()
+        let text: String
+        let task: DidaTask?
+    }
+
     struct Focus: Identifiable {
         let id = UUID()
         let title: String
@@ -12,7 +19,7 @@ struct QuickStartPlan {
     var greeting: String
     var focus: [Focus]
     var watch: [String]
-    var later: [String]
+    var later: [Later]
     /// 无压启动：从哪件事、用多少分钟、第一步做什么
     var startTask: DidaTask?
     var startTitle: String
@@ -29,14 +36,14 @@ enum QuickStartPlanner {
     请梳理出：
     1. focus：今天真正值得做的 1~3 件事（不是把所有待办罗列一遍）。优先考虑：今天到期的、高优先级的、逾期很久的、笔记 / Daily Note 里反复出现或写着「要做 / 别忘了 / 卡住了」的事。每件给一句不超过 30 字的理由或做法。如果是某个待办，带上它的 id（t1、t2…），不是待办就不带。
     2. watch：需要留意的事项（0~3 条），比如笔记里提到的担心、没有收尾的想法、逾期很久的、时间冲突、今天很满等。每条不超过 40 字。
-    3. later：可以放心先放一放的（0~3 条，每条不超过 20 字），帮用户减压。
+    3. later：可以放心先放一放的（0~3 条，每条 {"text":"不超过 20 字","taskId":"t3"}），帮用户减压。如果这件事就是某个待办，务必带上它的 id（t1、t2…），用户可以一键把它延期；不是待办就不带 taskId。
     4. start：「无压启动」——从 focus 里挑最容易开头的一件，给出 10~25 分钟的小目标：taskId（待办 id，可为空）、title（这一步的名称）、minutes（10~25 的整数）、step（第一步具体做什么，足够小、马上能动手，不超过 40 字）、tip（一句不超过 30 字、让人放松的话）。
     5. greeting：一句温和、不说教的开场白，不超过 30 字，可以结合时间段（现在几点会告诉你）。
 
     原则：语气温和，不责备，不制造焦虑；逾期不要用「拖延」这种词；信息不足时宁可少说，不要编造用户没写过的内容。
 
     只输出一个 JSON 对象，不要其他文字：
-    {"greeting":"","focus":[{"title":"","why":"","taskId":"t1"}],"watch":[""],"later":[""],"start":{"taskId":"t1","title":"","minutes":15,"step":"","tip":""}}
+    {"greeting":"","focus":[{"title":"","why":"","taskId":"t1"}],"watch":[""],"later":[{"text":"","taskId":"t3"}],"start":{"taskId":"t1","title":"","minutes":15,"step":"","tip":""}}
     """
 
     @MainActor
@@ -117,13 +124,18 @@ enum QuickStartPlanner {
             guard let t = (f["title"] as? String)?.trimmed, !t.isEmpty else { return nil }
             return .init(title: t, why: (f["why"] as? String)?.trimmed ?? "", task: (f["taskId"] as? String).flatMap { idMap[$0] })
         }
+        let later: [QuickStartPlan.Later] = ((obj["later"] as? [Any]) ?? []).prefix(3).compactMap { item in
+            if let str = item as? String { return str.trimmed.isEmpty ? nil : .init(text: str.trimmed, task: nil) }
+            guard let o = item as? [String: Any], let t = (o["text"] as? String)?.trimmed, !t.isEmpty else { return nil }
+            return .init(text: t, task: (o["taskId"] as? String).flatMap { idMap[$0] })
+        }
         guard !focus.isEmpty else { throw LlmError(message: "AI 没有梳理出内容，请重试") }
         let st = obj["start"] as? [String: Any] ?? [:]
         let startTask = (st["taskId"] as? String).flatMap { idMap[$0] } ?? focus.first?.task
         let minsRaw = (st["minutes"] as? Int) ?? Int((st["minutes"] as? Double) ?? 15)
         return QuickStartPlan(
             greeting: (obj["greeting"] as? String)?.trimmed ?? "",
-            focus: focus, watch: strings("watch"), later: strings("later"),
+            focus: focus, watch: strings("watch"), later: later,
             startTask: startTask,
             startTitle: (st["title"] as? String)?.trimmed.nonEmpty ?? focus[0].title,
             startMinutes: min(max(minsRaw, 5), 30),

@@ -127,6 +127,7 @@ struct ProjectDetailView: View {
 
     @State private var mentions: [NoteInfo] = []
     @State private var loading = false
+    @State private var creatingHome = false
     @State private var error: String?
 
     private var ws: Workspace { model.backup?.workspace ?? Workspace() }
@@ -184,13 +185,6 @@ struct ProjectDetailView: View {
                 header
                 statsRow
                 if let error { ErrorBanner(text: error) { Task { await load() } } }
-
-                if let home = ws.homes[project.keyword] {
-                    Button { model.openNote(home, title: project.keyword + " · 项目主页") } label: {
-                        Label("打开项目主页笔记", systemImage: "house")
-                    }
-                    .buttonStyle(.bordered)
-                }
 
                 if !openTasks.isEmpty {
                     Card {
@@ -268,6 +262,8 @@ struct ProjectDetailView: View {
             HStack(spacing: 10) {
                 Text(project.keyword).font(.largeTitle.bold())
                 TagChip(text: project.projectStatus.label, tint: project.projectStatus == .PAUSED ? .gray : .green)
+                Spacer(minLength: 12)
+                homeButton
             }
             if let n = project.next, !n.trimmed.isEmpty {
                 Label(n, systemImage: "arrow.turn.down.right").font(.body).foregroundStyle(.secondary).textSelection(.enabled)
@@ -276,6 +272,32 @@ struct ProjectDetailView: View {
                 HStack(spacing: 4) { ForEach(project.tags ?? [], id: \.self) { TagChip(text: "#" + $0) } }
             }
         }
+    }
+
+    /// 右上角：有项目主页笔记就打开它；没有就是「新建项目主页笔记」
+    private var homeButton: some View {
+        Button {
+            if let home = model.homeOf(project.keyword) {
+                model.openNote(home, title: project.keyword + " · 项目主页")
+            } else {
+                Task {
+                    creatingHome = true
+                    defer { creatingHome = false }
+                    if let id = await model.createProjectHome(project) {
+                        model.openNote(id, title: project.keyword + " · 项目主页")
+                    }
+                }
+            }
+        } label: {
+            let has = model.homeOf(project.keyword) != nil
+            HStack(spacing: 6) {
+                if creatingHome { ProgressView().controlSize(.small) }
+                else { Image(systemName: has ? "house" : "plus") }
+                Text(has ? "打开项目主页笔记" : "新建项目主页笔记")
+            }
+        }
+        .buttonStyle(.bordered)
+        .disabled(creatingHome)
     }
 
     private var statsRow: some View {

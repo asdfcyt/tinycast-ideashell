@@ -36,7 +36,8 @@ extension AppModel {
         if ifStale, river != nil, isFresh("river", key: stampKey) { return }
         guard beginLoad("river", ifStale: ifStale) else { return }
         defer { endLoad("river") }
-        if !silent { riverLoading = true }
+        // 页面带着旧数据进来（ifStale）时悄悄更新，不转圈；换了时间范围才转
+        if !silent && !(ifStale && river != nil) { riverLoading = true }
         defer { riverLoading = false }
         let (from, to) = riverPreset.range()
         let start = Day.startOfDay(Day.parse(from) ?? Date())
@@ -74,6 +75,7 @@ extension AppModel {
         riverError = errors.isEmpty ? nil : errors.joined(separator: "；")
         river = TimelineData.build(from: from, to: to, notes: notes, tasks: tasks, truncated: truncated, todoNote: todoNote, daily: daily)
         if errors.isEmpty && (todoNote == nil || !useTodos) { stamp("river", key: stampKey) }
+        saveRiverCache()
     }
 
     /// 河里勾选 / 取消勾选待办
