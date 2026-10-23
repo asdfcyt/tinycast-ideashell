@@ -129,6 +129,9 @@ struct ProjectDetailView: View {
     @State private var loading = false
     @State private var creatingHome = false
     @State private var error: String?
+    /// 项目主页笔记的各个小节（目标 / 交付成果 / 里程碑 / 复盘 / 资料 / 状态）
+    @StateObject private var home = ProjectHomeStore()
+    @State private var editing: HomeEdit?
 
     private var ws: Workspace { model.backup?.workspace ?? Workspace() }
 
@@ -169,7 +172,7 @@ struct ProjectDetailView: View {
         }
         .font(.callout)
         .sheet(isPresented: $showReplan) {
-            ReplanSheet(candidates: openTasks, title: "重新规划 · " + project.keyword).environmentObject(model)
+            ReplanSheet(candidates: openTasks, title: "重新规划 · " + project.keyword, scopeName: project.keyword).environmentObject(model).dismissOnOutsideClick()
         }
     }
 
@@ -185,6 +188,9 @@ struct ProjectDetailView: View {
                 header
                 statsRow
                 if let error { ErrorBanner(text: error) { Task { await load() } } }
+
+                ProjectOverviewCard(home: home, project: project, mentions: mentions, taskNotes: taskNotes,
+                                    creating: creatingHome, onCreate: createHome) { editing = $0 }
 
                 if !openTasks.isEmpty {
                     Card {
@@ -233,6 +239,8 @@ struct ProjectDetailView: View {
                     }
                 }
 
+                ProjectHomeBottom(home: home, project: project) { editing = $0 }
+
                 Card {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
@@ -255,6 +263,19 @@ struct ProjectDetailView: View {
         }
         .background(AmbientBackground())
         .task(id: project.keyword) { await load() }
+        // 主页笔记新建 / 换了一篇时重新读
+        .task(id: project.keyword + "|" + (model.homeOf(project.keyword) ?? "")) { await home.load(model: model, project: project) }
+        .sheet(item: $editing) { e in
+            HomeEditSheet(edit: e) { home.save(section: e.section, mode: e.mode, input: $0) }
+        }
+    }
+
+    private func createHome() {
+        Task {
+            creatingHome = true
+            defer { creatingHome = false }
+            _ = await model.createProjectHome(project)
+        }
     }
 
     private var header: some View {

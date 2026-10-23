@@ -349,35 +349,17 @@ struct FocusView: View {
         }
     }
 
-    /// 刚结束的一次专注的小结
+    /// 刚结束的一次专注的成果小票（和完成时「打印」出来的是同一张），可保存成图片 / 复制
     @ViewBuilder private var receiptCard: some View {
         if let r = focus.receipt, focus.run == nil {
-            Card {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        Image(systemName: r.completed ? "checkmark.seal.fill" : "checkmark.circle.fill").foregroundStyle(Brand.orange)
-                        Text(r.completed ? "番茄完成" : "专注已记录").font(.headline)
-                        Text("\(r.minutes) 分钟").font(.callout).foregroundStyle(.secondary)
-                        Spacer()
-                        Button { focus.dismissReceipt() } label: { Image(systemName: "xmark.circle.fill") }
-                            .buttonStyle(.plain).foregroundStyle(.tertiary).help("关闭")
-                    }
-                    if !r.title.isEmpty { Text(r.title).font(.callout).foregroundStyle(.secondary).lineLimit(2) }
-                    if r.records.isEmpty {
-                        Text("这次没有记录。下次专注时，可以随手记下想法和进展。").font(.caption).foregroundStyle(.tertiary)
-                    } else {
-                        Divider()
-                        Text("期间的 \(r.records.count) 条记录").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        ForEach(Array(r.records.enumerated()), id: \.offset) { _, x in
-                            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                Text(at(x.sec)).font(.caption.weight(.semibold)).foregroundStyle(Brand.orange).monospacedDigit()
-                                Text(x.text).font(.callout).textSelection(.enabled)
-                                Spacer(minLength: 0)
-                            }
-                        }
-                    }
-                }
+            VStack(spacing: 10) {
+                ResultTicketView(c: r)
+                    .shadow(color: .black.opacity(0.18), radius: 10, y: 5)
+                TicketActions(c: r) { focus.dismissReceipt() }
             }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 

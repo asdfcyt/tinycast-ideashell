@@ -34,7 +34,6 @@ struct MenuBarLabel: View {
 /// 顶部一行放标题和图标按钮（快速记录 / 刷新 / 打开拾忆 / 退出），下面是三项小统计、专注条和紧凑的待办列表。
 struct MenuBarView: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.openWindow) private var openWindow
     @State private var adding = false
 
     var body: some View {
@@ -75,6 +74,18 @@ struct MenuBarView: View {
     private struct MenuFocus: View {
         @EnvironmentObject var model: AppModel
         @ObservedObject var focus: FocusStore
+
+        static func shortTitle(_ t: String?) -> String {
+            guard let t, !t.isEmpty else { return "关联待办" }
+            // 按显示宽度估算：中文算 2，其他算 1，总宽不超过 14
+            var w = 0, out = ""
+            for ch in t {
+                let cw = ch.unicodeScalars.first.map { $0.value > 0x2E80 ? 2 : 1 } ?? 1
+                if w + cw > 14 { return out + "…" }
+                w += cw; out.append(ch)
+            }
+            return out
+        }
         var body: some View {
             VStack(spacing: 0) {
                 if focus.run != nil {
@@ -85,15 +96,19 @@ struct MenuBarView: View {
                             Button { focus.start() } label: {
                                 Label("开始\(b.label) \(focus.minutes) 分钟", systemImage: "cup.and.saucer.fill").font(.callout.weight(.medium))
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(.borderless).fixedSize().layoutPriority(2)
                             Button("跳过") { focus.skipBreak() }
                                 .buttonStyle(.borderless).font(.caption).foregroundStyle(.secondary)
                                 .help("跳过休息，直接专注")
                         } else {
-                            Button { focus.quickFocus(focus.minutes) } label: {
-                                Label("开始专注 \(focus.minutes) 分钟", systemImage: "play.fill").font(.callout.weight(.medium))
+                            HStack(spacing: 5) {
+                                Button { focus.quickFocus(focus.minutes) } label: {
+                                    Label("开始专注", systemImage: "play.fill").font(.callout.weight(.medium))
+                                }
+                                .buttonStyle(.borderless).fixedSize()
+                                DurationMenu(focus: focus)
                             }
-                            .buttonStyle(.borderless)
+                            .layoutPriority(2)
                         }
                         Spacer(minLength: 6)
                         // 关联待办：选了之后「开始专注」就会绑定它
@@ -101,17 +116,49 @@ struct MenuBarView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: focus.task == nil ? "link" : "link.circle.fill")
                                     .foregroundStyle(focus.task == nil ? Color.secondary : Brand.orange)
-                                Text(focus.task?.cleanTitle ?? "关联待办").lineLimit(1).frame(maxWidth: 150, alignment: .trailing)
+                                // Menu 的标签不受 frame 限制，长标题会把整个小组件撑宽，所以按字数手动截断
+                                Text(Self.shortTitle(focus.task?.cleanTitle)).lineLimit(1)
                                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 9)).foregroundStyle(.tertiary)
                             }
                             .font(.caption).foregroundStyle(.secondary)
                         }
                         .fixedSize()
+                        .help(focus.task?.cleanTitle ?? "关联待办")
                     }
                     .padding(.horizontal, 12).padding(.vertical, 8)
                 }
                 Divider()
             }
+        }
+    }
+
+    /// 「15 分钟 ⌄」：点一下弹出时长列表，选了就换（休息时长不在这里改）
+    private struct DurationMenu: View {
+        @ObservedObject var focus: FocusStore
+
+        private var options: [Int] {
+            FocusStore.choices.contains(focus.minutes) ? FocusStore.choices : (FocusStore.choices + [focus.minutes]).sorted()
+        }
+
+        var body: some View {
+            Menu {
+                ForEach(options, id: \.self) { m in
+                    Button { focus.minutes = m } label: {
+                        if focus.minutes == m { Label("\(m) 分钟", systemImage: "checkmark") } else { Text("\(m) 分钟") }
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Text("\(focus.minutes) 分钟").font(.callout.weight(.semibold)).monospacedDigit()
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 8.5, weight: .bold))
+                }
+                .foregroundStyle(Brand.orange)
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background(Brand.orange.opacity(0.14), in: Capsule())
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            .fixedSize()
+            .help("选择专注时长")
         }
     }
 
@@ -139,10 +186,7 @@ struct MenuBarView: View {
             if model.todosLoading { ProgressView().controlSize(.small) }
             iconButton(adding ? "xmark" : "plus", adding ? "收起" : "快速记录") { adding.toggle() }
             iconButton("arrow.clockwise", "刷新") { Task { await model.loadOverview() } }
-            iconButton("macwindow", "打开拾忆") {
-                NSApp.activate(ignoringOtherApps: true)
-                openWindow(id: "main")
-            }
+            iconButton("macwindow", "打开拾忆") { MainWindow.show() }
             iconButton("power", "退出") { NSApp.terminate(nil) }
         }
         .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 8)
@@ -155,9 +199,11 @@ struct MenuBarView: View {
         let total = ov.todayTasks().count + done
         let notes = model.timeline.filter { $0.day == today }.count
         let focusMin = model.focus.summary?.todayMin
-        return HStack(spacing: 0) {
+        return HStack(spacing: 8) {
             stat("checkmark.circle", "\(done)/\(total)", "已完成", .green)
-            stat("timer", focusMin.map(FocusParser.formatMinutes) ?? "–", "专注", Brand.orange)
+            Spacer(minLength: 0)
+            stat("timer", focusMin.map(Self.compactMinutes) ?? "–", "专注", Brand.orange)
+            Spacer(minLength: 0)
             stat("note.text", "\(notes)", "笔记", .blue)
         }
         .padding(.horizontal, 12).padding(.bottom, 8)
@@ -166,10 +212,17 @@ struct MenuBarView: View {
     private func stat(_ icon: String, _ value: String, _ label: String, _ tint: Color) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon).font(.system(size: 12)).foregroundStyle(tint)
-            Text(value).font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit()
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1)
+            Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize()
+    }
+
+    /// 紧凑的时长：1小时15分 / 45分，保证不换行
+    private static func compactMinutes(_ m: Int) -> String {
+        let h = m / 60, r = m % 60
+        if h == 0 { return "\(r)分" }
+        return r == 0 ? "\(h)小时" : "\(h)小时\(r)分"
     }
 
     /// 全部直接铺开，不用滚动条：今天的全部显示；逾期最多 6 条、收集箱最多 3 条，其余提示去主窗口看
@@ -215,7 +268,6 @@ struct MenuBarView: View {
 /// 菜单栏里的一行待办：圆圈 + 标题（一行）+ 右边的时间 / 逾期天数 / 项目
 private struct MenuTaskRow: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.openWindow) private var openWindow
     let task: DidaTask
     var overdue = false
     var inbox = false
@@ -263,8 +315,7 @@ private struct MenuTaskRow: View {
         .padding(.horizontal, 12).padding(.vertical, 3)
         .contentShape(Rectangle())
         .onTapGesture {
-            NSApp.activate(ignoringOtherApps: true)
-            openWindow(id: "main")
+            MainWindow.show()
             model.openTask(task)
         }
     }

@@ -17,6 +17,8 @@ struct SettingsView: View {
                 Text("设置").font(.largeTitle.bold())
 
                 accountsCard
+                displayCard
+                appearanceCard
                 aiCard
                 focusCard
                 notifyCard
@@ -112,6 +114,120 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - 显示模式
+
+    @AppStorage(DisplayMode.key) private var displayMode: DisplayMode = .menuBar
+    @AppStorage(DisplayMode.hoverKey) private var islandHover = true
+    @AppStorage(DisplayMode.swipeKey) private var islandSwipe = true
+    @AppStorage(DisplayMode.captureKey) private var islandCapture = true
+    @AppStorage(DisplayMode.activityKey) private var islandActivities = true
+    @AppStorage(DisplayMode.hotkeyKey) private var islandHotkey: IslandHotkey = .optSpace
+    @AppStorage(AppTheme.key) private var theme: AppTheme = .system
+    @AppStorage(BackgroundPrefs.hideDockKey) private var hideDock = false
+    @AppStorage(TicketController.enabledKey) private var ticketOn = true
+    @AppStorage(TicketController.soundKey) private var ticketSound = true
+
+    private func islandRow(_ icon: String, _ tint: Color, _ title: String, _ hint: String, _ on: Binding<Bool>) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold)).foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+                .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                Text(hint).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Toggle("", isOn: on).labelsHidden().toggleStyle(.switch)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var displayCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionTitle(text: "小组件显示方式")
+                HStack(spacing: 10) {
+                    ForEach(DisplayMode.allCases) { modeTile($0) }
+                }
+                if displayMode == .island {
+                    Divider()
+                    islandRow("cursorarrow.motionlines", .blue, "悬停展开", "鼠标移到刘海（没有刘海的屏幕是顶部小条）上就展开；关掉后只能点击展开", $islandHover)
+                    islandRow("hand.draw", .purple, "触控板下滑展开", "在刘海上双指下滑展开；展开后在顶部一条上上滑收起", $islandSwipe)
+                    islandRow("photo.badge.plus", Brand.orange, "截图提示", "刚截了图（或剪贴板里有新图片）时岛自动弹出，一键存为笔记、暂存，或拖走。截图在桌面时，首次使用 macOS 会请求访问桌面文件夹", $islandCapture)
+                    islandRow("bell.badge", .red, "状态提醒", "番茄 / 休息结束、待办到点时岛自动弹出，可直接完成、专注或推迟", $islandActivities)
+                    HStack(spacing: 10) {
+                        Image(systemName: "command")
+                            .font(.system(size: 14, weight: .semibold)).foregroundStyle(.green)
+                            .frame(width: 30, height: 30)
+                            .background(Color.green.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("全局快捷键")
+                            Text("在任何 App 里按下即可展开 / 收起灵动岛").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 12)
+                        Picker("", selection: $islandHotkey) {
+                            ForEach(IslandHotkey.allCases) { Text($0.label).tag($0) }
+                        }
+                        .labelsHidden().frame(width: 130)
+                    }
+                    .padding(.vertical, 2)
+                }
+                Text(displayMode == .island
+                     ? "灵动岛里是和菜单栏弹窗一样的待办、专注小组件，底部是暂存架；平时在刘海两侧显示「今天 · 逾期」或专注进度。把截图、链接、文字拖到刘海：左半边保存（自动识别），右半边暂存。展开后 ⌘V 粘贴保存、⌘⇧V 粘贴暂存，Esc 或点击别处收起。"
+                     : "菜单栏图标显示「今天 · 逾期」或专注倒计时，点击弹出待办小组件。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - 外观与后台
+
+    private var appearanceCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionTitle(text: "外观")
+                HStack(spacing: 10) {
+                    Image(systemName: "circle.lefthalf.filled")
+                        .font(.system(size: 14, weight: .semibold)).foregroundStyle(Brand.orange)
+                        .frame(width: 30, height: 30)
+                        .background(Brand.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("主题")
+                        Text("明亮、暗黑，或跟随系统外观自动切换").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 12)
+                    Picker("", selection: $theme) {
+                        ForEach(AppTheme.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 210)
+                }
+                .padding(.vertical, 2)
+                Divider()
+                islandRow("moon.zzz", .indigo, "关闭窗口后隐藏 Dock 图标",
+                          "关掉主窗口后拾忆一直在后台运行：专注计时、提醒、灵动岛 / 菜单栏都照常。打开后 Dock 里也不再显示图标，要回到窗口，点菜单栏图标或灵动岛上的「打开」。完全退出请按 ⌘Q。", $hideDock)
+            }
+        }
+    }
+
+    private func modeTile(_ m: DisplayMode) -> some View {
+        let on = displayMode == m
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return Button { displayMode = m } label: {
+            VStack(spacing: 6) {
+                Image(systemName: m.icon).font(.system(size: 22)).foregroundStyle(on ? Brand.orange : Color.secondary)
+                Text(m.title).font(.callout.weight(.semibold))
+                Text(m.subtitle).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14).padding(.horizontal, 8)
+            .background(on ? Brand.orange.opacity(0.12) : Color.primary.opacity(0.05), in: shape)
+            .overlay(shape.stroke(on ? Brand.orange : Color.clear, lineWidth: 1.5))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - AI 模型
 
     private var aiCard: some View {
@@ -199,20 +315,26 @@ struct SettingsView: View {
 
     private var notifyCard: some View {
         Card {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     SectionTitle(text: "通知")
                     Spacer()
-                    Button("发送测试通知") { Notifier.shared.sendTest() }.buttonStyle(.bordered)
+                    Button { Notifier.shared.sendTest() } label: { Label("发送测试", systemImage: "paperplane") }
+                        .buttonStyle(.bordered)
                 }
-                notifyRow("专注与休息", "番茄完成、休息结束、还剩 5 分钟、暂停太久", $nFocus)
-                notifyRow("专注目标达成", "今天的专注时长第一次达到每日目标", $nGoal)
-                Divider()
-                notifyRow("待办到点", "有具体时间的待办，到点提醒", $nDue)
+                .padding(.bottom, 6)
+
+                notifyGroup("专注")
+                notifyRow("timer", Brand.orange, "专注与休息", "番茄完成、休息结束、还剩 5 分钟、暂停太久", $nFocus)
+                notifyRow("target", .green, "专注目标达成", "今天的专注时长第一次达到每日目标", $nGoal)
+
+                notifyGroup("待办")
+                notifyRow("bell.badge", .blue, "待办到点", "有具体时间的待办，到点提醒", $nDue)
                 if nDue {
-                    HStack {
+                    HStack(spacing: 10) {
+                        Color.clear.frame(width: 30, height: 1)
                         Text("提前提醒").font(.callout).foregroundStyle(.secondary)
-                        Spacer()
+                        Spacer(minLength: 12)
                         Picker("", selection: $nLead) {
                             Text("不提前").tag(0)
                             Text("5 分钟").tag(5)
@@ -222,12 +344,14 @@ struct SettingsView: View {
                         }
                         .labelsHidden().frame(width: 110)
                     }
-                    .padding(.leading, 2)
+                    .padding(.vertical, 4)
                 }
-                notifyRow("早晚简报", "早上 8:30 今天的安排，晚上 9:00 还没完成的几件", $nDigest)
-                notifyRow("逾期提醒", "每天 10:00 提醒还有几件逾期", $nOverdue)
+                notifyRow("sun.horizon", .purple, "早晚简报", "早上 8:30 今天的安排，晚上 9:00 还没完成的几件", $nDigest)
+                notifyRow("exclamationmark.circle", .red, "逾期提醒", "每天 10:00 提醒还有几件逾期", $nOverdue)
+
                 Text("待办提醒在待办刷新后重新安排，退出拾忆后也会按时响。如果收不到，请在「系统设置 → 通知」里允许拾忆。")
                     .font(.caption).foregroundStyle(.secondary)
+                    .padding(.top, 10)
             }
         }
         .onChange(of: nDue) { _, _ in Notifier.shared.syncTodos(model.overview) }
@@ -236,14 +360,26 @@ struct SettingsView: View {
         .onChange(of: nOverdue) { _, _ in Notifier.shared.syncTodos(model.overview) }
     }
 
-    private func notifyRow(_ title: String, _ hint: String, _ on: Binding<Bool>) -> some View {
-        Toggle(isOn: on) {
+    private func notifyGroup(_ text: String) -> some View {
+        Text(text).font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+            .padding(.top, 10).padding(.bottom, 2)
+    }
+
+    /// 一行：图标 + 标题 / 说明 + 右侧开关；开关统一靠右对齐
+    private func notifyRow(_ icon: String, _ tint: Color, _ title: String, _ hint: String, _ on: Binding<Bool>) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold)).foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+                .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                Text(hint).font(.caption).foregroundStyle(.secondary)
+                Text(hint).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            Spacer(minLength: 12)
+            Toggle("", isOn: on).labelsHidden().toggleStyle(.switch)
         }
-        .toggleStyle(.switch)
+        .padding(.vertical, 5)
     }
 
     // MARK: - 专注目标
@@ -259,6 +395,12 @@ struct SettingsView: View {
                     Stepper("", value: $model.focusGoalMin, in: 10 ... 720, step: 10).labelsHidden()
                 }
                 Text("「今天」页的专注环以它为满环。").font(.caption).foregroundStyle(.secondary)
+                Divider()
+                islandRow("ticket", Brand.orange, "完成后打印成果小票",
+                          "完成（或提前结束）一个番茄后，从屏幕顶部「打印」出一张小票：时长、任务、期间的记录、今日累计。灵动岛模式下从岛里出来，可保存成图片。", $ticketOn)
+                if ticketOn {
+                    islandRow("speaker.wave.2", .teal, "出纸提示音", "出纸时轻轻响一声", $ticketSound)
+                }
             }
         }
     }

@@ -12,6 +12,8 @@ struct ReplanSheet: View {
     /// 要排的任务（逾期 / 无日期 / 项目里的相关待办）
     let candidates: [DidaTask]
     var title = "重新规划"
+    /// 在某个项目里规划时的项目名：AI 规划只动这个项目的待办，新任务归到这个项目
+    var scopeName: String?
 
     @State private var draft: [String: String] = [:]
     @State private var selected: String?
@@ -29,6 +31,9 @@ struct ReplanSheet: View {
     @State private var aiResult: AIPlanResult?
     @State private var aiReasons: [String: String] = [:]
     @State private var aiBackup: [String: String]?
+    @State private var showAIPlan = false
+    /// 点了智能排期却没有可排的任务
+    @State private var emptyHint = false
 
     private var today: String { Day.today() }
 
@@ -130,12 +135,23 @@ struct ReplanSheet: View {
         selected = all.first { draft[$0.id] == nil }?.id
     }
 
+    /// 智能排期：配置了 AI 模型就用 AI 排，没配置（或 AI 没排成）就按规则排
+    private func smartOrAI() {
+        // 没有逾期 / 无日期的任务时，排期什么也不会发生：明确告诉用户，而不是没反应
+        guard items.contains(where: { rank($0) < 2 }) else {
+            withAnimation(.easeOut(duration: 0.2)) { emptyHint = true }
+            return
+        }
+        emptyHint = false
+        if model.hasLlm { aiPlan() } else { smart() }
+    }
+
     /// AI 排期：把任务和每天已有的安排交给大模型，得到方案后只放进草稿预览，由用户确认才写入
     private func aiPlan() {
-        guard model.hasLlm else { aiError = "还没配置 AI 模型，请先到「设置 → AI 模型」填写接口地址和 Key。"; return }
+        guard model.hasLlm else { smart(); return }
         let all = items
         let movable = all.filter { rank($0) < 2 }
-        guard !movable.isEmpty else { aiError = "没有逾期或无日期的待办需要重新安排。"; return }
+        guard !movable.isEmpty else { smart(); return }
         let busy = fixedTasks(Set(all.map(\.id))) + all.filter { rank($0) == 2 }
         let backup = draft
         aiBusy = true; aiError = nil
@@ -159,7 +175,9 @@ struct ReplanSheet: View {
                 }
                 selected = all.first { draft[$0.id] == nil }?.id
             } catch {
-                aiError = error.localizedDescription
+                // AI 没排成：退回规则排期，并说明原因
+                smart()
+                aiError = "AI 排期没成功（" + error.localizedDescription + "），已改用规则智能排期。"
             }
             aiBusy = false
         }
@@ -221,6 +239,15 @@ struct ReplanSheet: View {
             bottomBar(all)
         }
         .frame(width: 840, height: 620)
+        .sheet(isPresented: $showAIPlan) {
+            AIPlanSheet(
+                scopeName: scopeName,
+                movable: scopeName == nil ? nil : Set(candidates.map(\.id)),
+                onApplied: { dismiss() }
+            )
+            .environmentObject(model)
+            .dismissOnOutsideClick()
+        }
         .task {
             if model.hasDida {
                 occupied = (try? await model.dida.tasksInRange(today, Day.add(today, days: 90))) ?? []
@@ -240,17 +267,18 @@ struct ReplanSheet: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 12)
-            Button { aiPlan() } label: {
+            Button { showAIPlan = true } label: {
                 if aiBusy {
                     HStack(spacing: 6) { ProgressView().controlSize(.small); Text("分析中…") }
                 } else {
-                    Label("AI 排期", systemImage: "sparkles")
+                    Label("AI 规划", systemImage: "sparkles")
                 }
             }
             .buttonStyle(.bordered).controlSize(.large).disabled(aiBusy)
-            .help(model.hasLlm ? "让 AI 根据优先级、逾期时间和每天的负载来安排" : "需要先在设置里配置 AI 模型")
-            Button { smart() } label: { Label("智能排期", systemImage: "wand.and.stars") }
+            .help(model.hasLlm ? "AI 先看待办和冲突、问你几个问题，再给出总结、改期和拆解好的任务" : "需要先在设置里配置 AI 模型")
+            Button { smartOrAI() } label: { Label("智能排期", systemImage: "wand.and.stars") }
                 .buttonStyle(.borderedProminent).tint(Brand.orange).controlSize(.large).disabled(aiBusy)
+                .help(model.hasLlm ? "已配置 AI 模型：由 AI 按优先级、逾期时间、每天的负载和任务先后顺序来排" : "按优先级和每天的上限自动排；配置 AI 模型后会改用 AI 排")
             Menu {
                 Button("逾期的全部放到今天") { allOverdueToToday() }
                 Button("清空所有安排") { draft = [:]; aiResult = nil; aiReasons = [:]; selected = items.first?.id }
@@ -273,6 +301,32 @@ struct ReplanSheet: View {
                 Spacer()
             }
             .padding(12).glassCard(radius: 12, tint: Color.purple.opacity(0.10))
+            .padding(.horizontal, 12).padding(.top, 12)
+        } else if emptyHint {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green).frame(width: 18)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("没有需要排期的任务").font(.callout.weight(.bold))
+                        Text(all.isEmpty
+                             ? "现在没有逾期的、也没有未设日期的待办，不用重新安排。"
+                             : "没有逾期或未设日期的待办。下面「已有日期」的任务保持原日期，智能排期不会改动它们。")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(all.isEmpty
+                             ? "想调整已排好的日程，可以在日历里直接改，或试试「AI 规划」。"
+                             : "想挪动它们：点任务再点日历上的某天，或把任务拖过去；也可以试试「AI 规划」。")
+                            .font(.caption).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 14) {
+                    if model.hasLlm { Button("AI 规划") { showAIPlan = true } }
+                    Button("知道了") { emptyHint = false }
+                }
+                .buttonStyle(.link).font(.callout)
+                .padding(.leading, 26)   // 图标宽 18 + 间距 8：和上面的文字左对齐
+            }
+            .padding(12).glassCard(radius: 12, tint: Color.green.opacity(0.10))
             .padding(.horizontal, 12).padding(.top, 12)
         } else if let e = aiError {
             VStack(alignment: .leading, spacing: 6) {

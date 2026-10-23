@@ -20,8 +20,8 @@ final class FocusStore: ObservableObject {
     @Published private(set) var cycle: Int
     @Published private(set) var now = Date()
     @Published var minutes: Int
-    /// 刚结束的一次专注的小结（含期间的记录），页面上显示一张可关闭的卡
-    @Published var receipt: FocusReceipt?
+    /// 刚结束的一次专注的成果小票（含期间的记录），专注页上显示一张可关闭的卡
+    @Published var receipt: Celebration?
     /// 专注中「记录」输入框里还没发出去的文字（关掉再打开不丢）
     @Published var recordDraft = ""
     @Published var task: DidaTask?
@@ -35,6 +35,10 @@ final class FocusStore: ObservableObject {
     private let defaults = UserDefaults.standard
     /// 结束 / 同步结果的提示（主窗口 Toast）
     var onMessage: ((String) -> Void)?
+    /// 倒计时自然走完时回调（灵动岛用来弹出提醒）：种类、专注分钟数（休息为 0）
+    var onCompleted: ((FocusKind, Int) -> Void)?
+    /// 一次专注记录完成（走完或提前结束）：带着成果小票，用来在屏幕上「打印」小票
+    var onTicket: ((Celebration) -> Void)?
 
     init(api: DidaApi, hasDida: @escaping () -> Bool) {
         self.api = api
@@ -48,6 +52,7 @@ final class FocusStore: ObservableObject {
         minutes = last > 0 ? last : FocusKind.focus.defaultMin
         if let b = pendingBreak { minutes = b.defaultMin }
         updateTicker()
+        BackgroundActivity.set(run != nil)
     }
 
     /// 没在计时时界面上显示的种类：该休息就是休息，否则是专注
@@ -139,7 +144,10 @@ final class FocusStore: ObservableObject {
             setBreak(nil)
             if s.kind == .longBreak { saveCycle(0) }
             setRun(nil)
-            if completed { Self.notify(title: "\(s.kind.label)结束", body: "准备好开始下一个专注了吗？") }
+            if completed {
+                Self.notify(title: "\(s.kind.label)结束", body: "准备好开始下一个专注了吗？")
+                onCompleted?(s.kind, 0)
+            }
             return
         }
         if completed { onPomodoroCompleted() }
@@ -155,9 +163,22 @@ final class FocusStore: ObservableObject {
         let synced = pending.isEmpty
         let head = completed ? "番茄完成" : "专注已记录"
         let recs = s.recordList
-        receipt = FocusReceipt(title: s.title, minutes: mins, completed: completed, records: recs)
+        // 今日累计：滴答里读回来的、本机小票里记的，取大的，再加上这一次
+        let base = max(summary?.todayMin ?? 0, TicketStore.shared.todayMinutes)
+        let c = Celebration(
+            title: s.title, minutes: mins, round: completed ? cycle : 0, completed: completed,
+            records: recs.map { Celebration.Entry(tag: String(format: "%02d:%02d", $0.sec / 60, $0.sec % 60), text: $0.text) },
+            todayMin: base + mins,
+            cheer: Cheer.pomodoro(hasRecords: !recs.isEmpty, completed: completed)
+        )
+        TicketStore.shared.add(c)
+        receipt = c
         onMessage?("\(head)：\(mins) 分钟" + (recs.isEmpty ? "" : "，\(recs.count) 条记录") + (synced ? "，已写入滴答" : "，已存在本机，稍后同步"))
-        if completed { Self.notify(title: "番茄完成", body: "专注了 \(mins) 分钟" + (pendingBreak.map { "，休息一下（\($0.label)）" } ?? "")) }
+        if completed {
+            Self.notify(title: "番茄完成", body: "专注了 \(mins) 分钟" + (pendingBreak.map { "，休息一下（\($0.label)）" } ?? ""))
+            onCompleted?(.focus, mins)
+        }
+        onTicket?(c)
         await refresh()
         checkGoal()
     }
@@ -227,6 +248,7 @@ final class FocusStore: ObservableObject {
 
     private func setRun(_ r: FocusRun?) {
         run = r
+        BackgroundActivity.set(r != nil)
         if let r, let data = try? JSONEncoder().encode(r) { defaults.set(data, forKey: "focus.session") }
         else { defaults.removeObject(forKey: "focus.session") }
         now = Date()

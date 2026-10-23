@@ -21,7 +21,7 @@ struct RootView: View {
                 .navigationTitle(model.section.title)
                 .overlay(alignment: .bottom) { NoticeToast().padding(.bottom, 64) }
                 .sheet(isPresented: $model.showQuickAdd) {
-                    QuickAddView(onDone: { model.showQuickAdd = false }).environmentObject(model)
+                    QuickAddView(onDone: { model.showQuickAdd = false }).environmentObject(model).dismissOnOutsideClick()
                 }
                 .background {
                     // ⌘N 一直可用（侧边栏收起时加号按钮也跟着收起）
@@ -48,7 +48,7 @@ struct RootView: View {
                 }
         }
         .sheet(isPresented: Binding(get: { !model.sheetStack.isEmpty }, set: { if !$0 { model.closeSheets() } })) {
-            DetailSheet().environmentObject(model)
+            DetailSheet().environmentObject(model).dismissOnOutsideClick()
         }
         .animation(.easeInOut(duration: 0.2), value: model.lastUndo?.id)
         .animation(.easeInOut(duration: 0.2), value: model.notice)

@@ -60,15 +60,6 @@ struct FocusRun: Codable, Equatable {
     var endAtMs: Int64 { startMs + pausedTotalMs + plannedMs }
 }
 
-/// 刚结束的一次专注的小结（只在本次运行里显示一张卡）
-struct FocusReceipt: Identifiable {
-    let id = UUID()
-    var title: String
-    var minutes: Int
-    var completed: Bool
-    var records: [(sec: Int, text: String)]
-}
-
 /// 已经结束、但还没成功写进滴答的一条记录（断网 / 接口失败时留在本机，之后自动重试）
 struct PendingFocus: Codable, Equatable {
     var startMs: Int64

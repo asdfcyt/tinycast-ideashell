@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 今天。设计北极星：**一条清楚的行动队列，数据退到侧栏**。
@@ -18,7 +19,18 @@ private struct TodayContent: View {
     @State private var showQuickStart = false
 
     private var today: String { Day.today() }
-    private var todayNotes: [NoteInfo] { model.timeline.filter { $0.day == today } }
+    @State private var dailyToday: DailyDay?
+    /// 今天的笔记（Daily Note 单独在下面按条显示，这里不重复列那一篇）
+    private var todayNotes: [NoteInfo] {
+        model.timeline.filter { $0.day == today && $0.id != dailyToday?.noteId && !$0.tags.contains("daily-note") }
+    }
+    /// 今天 Daily Note 里最近的 5 条（新的在上）
+    private var dailyRecent: [DailyEntry] { Array((dailyToday?.entries ?? []).filter { !$0.struck }.suffix(5).reversed()) }
+
+    private func loadDaily() async {
+        guard model.hasIdeashell else { return }
+        if let d = try? await model.daily.days(from: today, to: today) { dailyToday = d[today] }
+    }
 
     private var todayDone: [DidaTask] {
         (model.overview?.done ?? []).filter { $0.completedDate.map { Day.string($0) == today } ?? false }
@@ -70,13 +82,18 @@ private struct TodayContent: View {
         }
         .background(AmbientBackground())
         .overlay(alignment: .bottom) { UndoToast().padding(.bottom, 16) }
-        .sheet(isPresented: $showQuickStart) { QuickStartSheet().environmentObject(model) }
-        .sheet(isPresented: $showPlan) { ReplanSheet(candidates: model.schedulable(includeOverdue: true)).environmentObject(model) }
+        .sheet(isPresented: $showQuickStart) { QuickStartSheet().environmentObject(model).dismissOnOutsideClick() }
+        .sheet(isPresented: $showPlan) { ReplanSheet(candidates: model.schedulable(includeOverdue: true)).environmentObject(model).dismissOnOutsideClick() }
         .task {
             async let m: Void = model.loadMemory()
             async let h: Void = model.loadHeat()
-            _ = await (m, h)
+            async let d: Void = loadDaily()
+            _ = await (m, h, d)
         }
+        // 新记了笔记 / Daily Note、回到应用时，今天的 Daily Note 跟着更新
+        .task(id: model.timeline.map(\.id)) { await loadDaily() }
+        .onChange(of: model.showQuickAdd) { _, open in if !open { Task { await loadDaily() } } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await loadDaily() } }
     }
 
     // MARK: - 标题 + 排期工具
@@ -227,21 +244,58 @@ private struct TodayContent: View {
         }
     }
 
+    /// 今天的记录：普通笔记和 Daily Note 的最近几条放在同一条时间线上，新的在上
+    private struct FeedItem: Identifiable {
+        let id: String
+        let time: String
+        let text: String
+        let isDaily: Bool
+        let noteId: String
+        let title: String
+    }
+
+    private var feed: [FeedItem] {
+        var out: [FeedItem] = todayNotes.map {
+            FeedItem(id: "n" + $0.id, time: $0.clock ?? "", text: $0.title, isDaily: false, noteId: $0.id, title: $0.title)
+        }
+        if let noteId = dailyToday?.noteId {
+            for (i, e) in dailyRecent.enumerated() {
+                out.append(FeedItem(id: "d\(i)" + e.time, time: e.time, text: e.text, isDaily: true, noteId: noteId, title: today + " Daily Note"))
+            }
+        }
+        return out.sorted { $0.time > $1.time }
+    }
+
     private var notesSection: some View {
-        TaskSection(title: "今天的笔记", count: todayNotes.count) {
-            EmptyView()
+        let items = feed
+        return TaskSection(title: "今天的笔记", count: items.count) {
+            if let noteId = dailyToday?.noteId, !dailyRecent.isEmpty {
+                Button { model.openNote(noteId, title: today + " Daily Note") } label: {
+                    Label("打开 Daily Note", systemImage: "text.append").font(.caption)
+                }
+                .buttonStyle(.link)
+            }
         } content: {
             if !model.hasIdeashell {
                 Text("填写闪念贝壳 API Key 后显示").font(.callout).foregroundStyle(.secondary).padding(14)
-            } else if todayNotes.isEmpty {
+            } else if items.isEmpty {
                 Text(model.notesLoading ? "加载中…" : "今天还没有笔记").font(.callout).foregroundStyle(.secondary).padding(14)
             } else {
-                ForEach(Array(todayNotes.enumerated()), id: \.element.id) { i, n in
-                    NoteRow(note: n)
-                        .padding(.horizontal, 14).padding(.vertical, 6)
-                        .contentShape(Rectangle())
-                        .onTapGesture { model.openNote(n.id, title: n.title) }
-                    if i < todayNotes.count - 1 { Divider().padding(.leading, 14) }
+                ForEach(Array(items.enumerated()), id: \.element.id) { i, it in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(it.time).font(.caption.weight(.medium)).monospacedDigit().foregroundStyle(.tertiary)
+                            .frame(width: 38, alignment: .leading)
+                        Image(systemName: it.isDaily ? "text.append" : "doc.text")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(it.isDaily ? Color.green : Color.blue)
+                            .frame(width: 14)
+                        Text(it.text).font(.callout).lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.openNote(it.noteId, title: it.title) }
+                    if i < items.count - 1 { Divider().padding(.leading, 62) }
                 }
             }
         }

@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 
 enum AppSection: String, CaseIterable, Identifiable {
-    case today, todos, calendar, review, insights, focus, settings
+    case today, focus, todos, calendar, review, insights, settings
 
     var id: String { rawValue }
 
@@ -258,17 +258,16 @@ final class AppModel: ObservableObject {
 
     func start() {
         guard refreshTimer == nil else { return }
+        focus.onTicket = { TicketController.shared.present($0) }
+        IslandController.shared.start(model: self)
         restoreHistoryCaches()
         loadAIInsights()
         Task { await refreshAll(startup: true) }
         Task { await loadHolidays() }
         Task { await focus.settle(); await focus.refresh(); stamp("focus", key: "f") }
-        // 定时刷新只在应用处于前台时做；回到前台时，离上次刷新超过 2 分钟再补一次
+        // 定时刷新（后台也做：灵动岛 / 菜单栏上的数字要一直是新的）；回到前台时，离上次刷新超过 2 分钟再补一次
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard NSApp.isActive else { return }
-                await self?.refreshQuick()
-            }
+            Task { @MainActor in await self?.refreshQuick() }
         }
         activeObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in await self?.onBecameActive() }

@@ -13,9 +13,11 @@ struct DidaApi {
     /// 新建任务。没有日期 = 无日期任务（进滴答收集箱）；有具体时间：准点提醒；只有日期：当天 9:00 提醒。
     /// priority：0 无 / 1 低 / 3 中 / 5 高
     @discardableResult
-    func createTask(title: String, date: String?, time: String?, priority: Int) async throws -> DidaTask? {
+    func createTask(title: String, date: String?, time: String?, priority: Int, content: String = "", tags: [String] = []) async throws -> DidaTask? {
         var task: JSON = ["title": title]
         if priority > 0 { task["priority"] = priority }
+        if !content.isEmpty { task["content"] = content }
+        if !tags.isEmpty { task["tags"] = tags }
         if let date {
             let due = Day.dueString(date, time: time)
             task["startDate"] = due

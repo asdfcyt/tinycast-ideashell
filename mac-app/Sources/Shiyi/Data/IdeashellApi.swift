@@ -12,10 +12,14 @@ struct IdeashellApi {
 
     /// 新建笔记。标签以 `#标签` 写进正文末尾（闪念贝壳 App 只识别正文里的行内标签）
     @discardableResult
-    func createNote(title: String, body: String, tags: [String], folderId: String? = nil, inlineTags: Bool = true) async throws -> String {
+    func createNote(title: String, body: String, tags: [String], folderId: String? = nil, inlineTags: Bool = true,
+                    images: [(name: String, data: Data)] = []) async throws -> String {
         let content = inlineTags ? Self.withInlineTags(body, tags) : body
         var args: JSON = ["title": title]
         if !content.isEmpty { args["content"] = content }
+        if !images.isEmpty {
+            args["images"] = images.map { ["data": $0.data.base64EncodedString(), "name": $0.name] as JSON }
+        }
         if !tags.isEmpty { args["tags"] = tags }
         if let folderId, !folderId.isEmpty { args["folder_id"] = folderId }
         return try await mcp.callText("note_create", args)
