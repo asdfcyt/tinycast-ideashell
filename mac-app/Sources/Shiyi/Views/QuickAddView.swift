@@ -24,35 +24,38 @@ struct QuickAddView: View {
     private var analysis: CaptureAnalysis { CaptureParser.analyze(text) }
     private func kind(_ a: CaptureAnalysis) -> CaptureKind { override ?? a.kind }
 
+    /// 输入框高度：一行起步，按内容（粗估折行）长到最多 5 行，再多就在框里滚动
+    private var editorHeight: CGFloat {
+        let lines = text.components(separatedBy: "\n").reduce(0) { $0 + max(1, Int((Double($1.count) / 26).rounded(.up))) }
+        return CGFloat(min(max(lines, 1), 5)) * 21 + 6
+    }
+
     var body: some View {
         let a = analysis
         let k = kind(a)
         VStack(alignment: .leading, spacing: 0) {
-            if !compact {
-                HStack(spacing: 8) {
-                    Image(systemName: "sparkles").foregroundStyle(Brand.orange)
-                    Text("万能输入").font(.headline)
-                    Spacer()
+            // 输入区：没有框，直接写；弹层形态里图标放在文字左边，高度随内容长（1~5 行），不再先占一大块
+            HStack(alignment: .top, spacing: 10) {
+                if !compact {
+                    Image(systemName: "sparkles").font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Brand.orange).frame(width: 20, height: 24)
                 }
-                .padding(.horizontal, 22).padding(.top, 18).padding(.bottom, 4)
-            }
-
-            // 输入区：没有框，直接写
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $text)
-                    .font(.system(size: compact ? 14 : 17))
-                    .scrollContentBackground(.hidden)
-                    .focused($focused)
-                    .padding(.horizontal, -5)
-                if text.isEmpty {
-                    Text("记点什么…")
-                        .font(.system(size: compact ? 14 : 17))
-                        .foregroundStyle(.tertiary)
-                        .allowsHitTesting(false)
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $text)
+                        .font(.system(size: compact ? 14 : 16))
+                        .scrollContentBackground(.hidden)
+                        .focused($focused)
+                        .padding(.horizontal, -5).padding(.vertical, -1)
+                    if text.isEmpty {
+                        Text(compact ? "记点什么…" : "记点什么？待办、想法、日记都可以")
+                            .font(.system(size: compact ? 14 : 16))
+                            .foregroundStyle(.tertiary)
+                            .allowsHitTesting(false)
+                    }
                 }
+                .frame(height: compact ? 70 : editorHeight)
             }
-            .frame(height: compact ? 70 : 104)
-            .padding(.horizontal, compact ? 12 : 22).padding(.top, compact ? 8 : 6)
+            .padding(.horizontal, compact ? 12 : 18).padding(.top, compact ? 8 : 14)
 
             // 提示行：空的时候给几个例子，写了字就显示识别结果
             Group {
@@ -62,18 +65,18 @@ struct QuickAddView: View {
                     recognized(a, k)
                 }
             }
-            .frame(minHeight: 26, alignment: .leading)
-            .padding(.horizontal, compact ? 12 : 22).padding(.top, 6)
+            .frame(minHeight: 24, alignment: .leading)
+            .padding(.horizontal, compact ? 12 : 18).padding(.top, 6)
 
             if let error {
                 Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
-                    .padding(.horizontal, compact ? 12 : 22).padding(.top, 6)
+                    .padding(.horizontal, compact ? 12 : 18).padding(.top, 4)
             } else if let okText {
                 Label(okText, systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
-                    .padding(.horizontal, compact ? 12 : 22).padding(.top, 6)
+                    .padding(.horizontal, compact ? 12 : 18).padding(.top, 4)
             }
 
-            Divider().opacity(0.6).padding(.top, 12)
+            if compact { Divider().opacity(0.6).padding(.top, 12) }
 
             // 底栏：类型 + 优先级 + 提交
             HStack(spacing: 8) {
@@ -87,9 +90,9 @@ struct QuickAddView: View {
                 }
                 submitButton(a, k)
             }
-            .padding(.horizontal, compact ? 12 : 18).padding(.vertical, compact ? 8 : 12)
+            .padding(.horizontal, compact ? 12 : 14).padding(.top, compact ? 8 : 8).padding(.bottom, compact ? 8 : 12)
         }
-        .frame(width: compact ? nil : 520)
+        .frame(width: compact ? nil : 480)
         .onAppear {
             focused = true
             if !model.quickAddText.isEmpty { text = model.quickAddText }
@@ -143,7 +146,7 @@ struct QuickAddView: View {
                 }
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 11).padding(.vertical, 6)
+            .padding(.horizontal, 10).padding(.vertical, 4)
             .background(Brand.orange.opacity(0.14), in: Capsule())
             .foregroundStyle(Brand.orangeDeep)
         }
@@ -166,7 +169,7 @@ struct QuickAddView: View {
                     .foregroundStyle(priority == 5 ? Color.red : (priority == 3 ? Color.orange : (priority == 1 ? Color.blue : Color.secondary)))
                 Text(priority == 0 ? "优先级" : (priority == 5 ? "高" : (priority == 3 ? "中" : "低"))).font(.callout)
             }
-            .padding(.horizontal, 10).padding(.vertical, 6)
+            .padding(.horizontal, 9).padding(.vertical, 4)
             .background(Color.primary.opacity(0.06), in: Capsule())
             .foregroundStyle(.secondary)
         }
@@ -183,7 +186,7 @@ struct QuickAddView: View {
                 Text("⌘↩").font(.caption2).opacity(0.7)
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 14).padding(.vertical, 7)
+            .padding(.horizontal, 12).padding(.vertical, 5)
             .background(Brand.orange.opacity(disabled ? 0.35 : 1), in: Capsule())
         }
         .buttonStyle(.plain)

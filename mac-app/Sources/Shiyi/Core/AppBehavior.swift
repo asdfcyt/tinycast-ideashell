@@ -76,9 +76,37 @@ enum BackgroundActivity {
     }
 }
 
+extension AppModel {
+    /// 给系统「服务」菜单这类拿不到 SwiftUI 环境的入口用
+    static weak var current: AppModel?
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var observers: [NSObjectProtocol] = []
+
+    /// 系统「服务」菜单里的「记到拾忆」：在任何 App 里选中文字 / 图片 / 文件，右键 → 服务 → 记到拾忆。
+    /// 内容和拖到灵动岛一样处理（文字自动识别成待办 / 日记 / 笔记，图片存成带识别文字的笔记）。
+    @objc func captureService(_ pboard: NSPasteboard, userData: String, error: AutoreleasingUnsafeMutablePointer<NSString>) {
+        let raw = DropReader.read(pboard)
+        guard !raw.isEmpty else {
+            error.pointee = "没有读到可以保存的内容"
+            return
+        }
+        Task { @MainActor in
+            guard let model = AppModel.current else {
+                Notifier.post(id: "shiyi.service", title: "拾忆", body: "拾忆还没准备好，请稍后再试")
+                return
+            }
+            do {
+                let msg = try await model.submitDrop(raw)
+                model.showNotice(msg)
+                Notifier.post(id: "shiyi.service", title: "已记到拾忆", body: msg)
+            } catch {
+                Notifier.post(id: "shiyi.service", title: "记到拾忆失败", body: error.localizedDescription)
+            }
+        }
+    }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         AppTheme.current.apply()
@@ -88,6 +116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 系统不要在应用空闲时把它自动退出：它要一直在后台提醒
         ProcessInfo.processInfo.disableAutomaticTermination("拾忆在后台运行")
         ProcessInfo.processInfo.disableSuddenTermination()
+        NSApp.servicesProvider = self
+        NSUpdateDynamicServices()
 
         let nc = NotificationCenter.default
         observers.append(nc.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in

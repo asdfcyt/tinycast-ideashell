@@ -199,21 +199,37 @@ extension AppModel {
         } else if !a.body.isEmpty {
             folder = CaptureParser.inferFolder(a.body, folders: folders)
         }
+        // 截图里的文字：本机识别，附在正文后面（可以在设置里关掉）
+        var ocr: [String] = []
+        if ImageOCR.enabled {
+            let datas = prepared.images.map(\.data)
+            ocr = await Task.detached(priority: .userInitiated) { datas.map { ImageOCR.text(in: $0) } }.value
+        }
+        let found = ocr.filter { !$0.isEmpty }
+        var fullBody = a.body
+        if !found.isEmpty {
+            let parts = ocr.enumerated().filter { !$0.element.isEmpty }.map { i, t in
+                ocr.count > 1 ? "图 \(i + 1)：\n" + t : t
+            }
+            fullBody += (fullBody.isEmpty ? "" : "\n\n") + "---\n图中文字：\n" + parts.joined(separator: "\n\n")
+        }
+
         let first = a.body.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmed ?? ""
         let title: String
         if first.isEmpty {
             let f = DateFormatter()
             f.dateFormat = "M-d HH:mm"
-            title = "截图 " + f.string(from: Date())
+            let ocrLine = found.first?.split(whereSeparator: \.isNewline).first.map { String($0).trimmed } ?? ""
+            title = ocrLine.count >= 4 ? "截图 · " + String(ocrLine.prefix(22)) : "截图 " + f.string(from: Date())
         } else {
             title = String(first.prefix(30))
         }
-        try await ideashell.createNote(title: title, body: a.body, tags: a.tags, folderId: folder?.id, images: prepared.images)
+        try await ideashell.createNote(title: title, body: fullBody, tags: a.tags, folderId: folder?.id, images: prepared.images)
         invalidateHistory()
         Task {
             await loadTimeline(silent: true)
             if section == .review { await loadRiver(silent: true) }
         }
-        return "已保存为笔记（\(prepared.images.count) 张图片）" + (folder.map { " 📁" + $0.name } ?? "")
+        return "已保存为笔记（\(prepared.images.count) 张图片" + (found.isEmpty ? "" : "，识别出文字") + "）" + (folder.map { " 📁" + $0.name } ?? "")
     }
 }

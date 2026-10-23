@@ -240,22 +240,6 @@ struct ProjectDetailView: View {
                 }
 
                 ProjectHomeBottom(home: home, project: project) { editing = $0 }
-
-                Card {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            SectionTitle(text: "提及的笔记", count: loading ? nil : mentions.count)
-                            if loading { ProgressView().controlSize(.small) }
-                        }
-                        if mentions.isEmpty && !loading {
-                            Text("没有找到提到「\(project.terms.joined(separator: "」「"))」的笔记").foregroundStyle(.secondary)
-                        }
-                        ForEach(mentions) { n in
-                            NoteRow(note: n, showDay: true).onTapGesture { model.openNote(n.id, title: n.title) }
-                            if n.id != mentions.last?.id { Divider() }
-                        }
-                    }
-                }
             }
             .padding(24)
             .frame(maxWidth: 780, alignment: .leading)

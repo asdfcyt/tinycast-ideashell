@@ -533,19 +533,23 @@ private struct TaskLine: View {
                     }
                     .opacity(hover ? 1 : 0)
                 }
+            } else if task.done {
+                // 已完成的：悬停时出现「恢复为未完成」
+                Button { Task { await model.undoComplete(task) } } label: {
+                    Image(systemName: "arrow.uturn.backward.circle").font(.system(size: 15)).frame(width: 26, height: 26)
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary).help("恢复为未完成")
+                .opacity(hover ? 1 : 0)
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 7)
         .background(hover ? Color.primary.opacity(0.04) : Color.clear)
         .onHover { hover = $0 }
         .contextMenu {
-            Button("查看详情") { model.openTask(task) }
-            if !task.done {
-                Menu("推迟到") { SnoozeItems(task: task) }
-                Button("开始专注") { startFocus(task, focus) }
+            if let note = model.taskNote(forTask: task) {
+                Button("打开任务笔记") { model.openNote(note.noteId, title: note.deliverable) }
             }
-            Button("在滴答清单中打开") { model.open(didaTaskURL(task.projectId, task.id)) }
-            Button("复制标题") { model.copy(task.cleanTitle) }
+            TaskContextMenu(task: task)
         }
     }
 }

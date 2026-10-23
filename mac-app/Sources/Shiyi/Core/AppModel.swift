@@ -258,6 +258,7 @@ final class AppModel: ObservableObject {
 
     func start() {
         guard refreshTimer == nil else { return }
+        AppModel.current = self
         focus.onTicket = { TicketController.shared.present($0) }
         IslandController.shared.start(model: self)
         restoreHistoryCaches()

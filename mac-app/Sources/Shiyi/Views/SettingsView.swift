@@ -126,6 +126,7 @@ struct SettingsView: View {
     @AppStorage(BackgroundPrefs.hideDockKey) private var hideDock = false
     @AppStorage(TicketController.enabledKey) private var ticketOn = true
     @AppStorage(TicketController.soundKey) private var ticketSound = true
+    @AppStorage(ImageOCR.key) private var ocrOn = true
 
     private func islandRow(_ icon: String, _ tint: Color, _ title: String, _ hint: String, _ on: Binding<Bool>) -> some View {
         HStack(spacing: 10) {
@@ -155,6 +156,7 @@ struct SettingsView: View {
                     islandRow("cursorarrow.motionlines", .blue, "悬停展开", "鼠标移到刘海（没有刘海的屏幕是顶部小条）上就展开；关掉后只能点击展开", $islandHover)
                     islandRow("hand.draw", .purple, "触控板下滑展开", "在刘海上双指下滑展开；展开后在顶部一条上上滑收起", $islandSwipe)
                     islandRow("photo.badge.plus", Brand.orange, "截图提示", "刚截了图（或剪贴板里有新图片）时岛自动弹出，一键存为笔记、暂存，或拖走。截图在桌面时，首次使用 macOS 会请求访问桌面文件夹", $islandCapture)
+                    islandRow("text.viewfinder", .teal, "识别截图里的文字", "把截图保存为笔记时，用系统自带的文字识别（本机完成，图片不外传）把图里的字附在笔记后面，之后能搜到", $ocrOn)
                     islandRow("bell.badge", .red, "状态提醒", "番茄 / 休息结束、待办到点时岛自动弹出，可直接完成、专注或推迟", $islandActivities)
                     HStack(spacing: 10) {
                         Image(systemName: "command")

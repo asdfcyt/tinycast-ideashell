@@ -58,6 +58,25 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key><dict><key>default</key><string>记到拾忆</string></dict>
+            <key>NSMessage</key><string>captureService</string>
+            <key>NSPortName</key><string>拾忆</string>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSStringPboardType</string>
+                <string>public.png</string>
+                <string>public.tiff</string>
+            </array>
+            <key>NSSendFileTypes</key>
+            <array>
+                <string>public.image</string>
+                <string>public.plain-text</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
 PLIST
