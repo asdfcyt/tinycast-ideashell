@@ -14,8 +14,6 @@ struct FocusView: View {
     @State private var confirmDiscard = false
     @State private var showRecord = false
 
-    private var nowMs: Int64 { Int64(focus.now.timeIntervalSince1970 * 1000) }
-
     var body: some View {
         VStack(spacing: 16) {
             if !model.hasDida {
@@ -42,6 +40,10 @@ struct FocusView: View {
                 VStack(spacing: 16) { timerCard; rightColumn(fill: false); todayCard; weekCard; recentCard }
             }
         }
+        .sheet(isPresented: $showRecord) {
+            // 记录用万能记录窗口：底栏显示任务名，写到任务的进展记录里
+            QuickAddView(record: focus, onDone: { showRecord = false }).environmentObject(model).dismissOnOutsideClick()
+        }
         .alert("放弃这次专注？", isPresented: $confirmDiscard) {
             Button("放弃", role: .destructive) { focus.discard() }
             Button("继续专注", role: .cancel) {}
@@ -51,7 +53,7 @@ struct FocusView: View {
     }
 
     @ViewBuilder private func rightColumn(fill: Bool) -> some View {
-        if shownKind() == .focus { taskRow(fill: fill) }
+        if shownKind() == .focus { taskRow(fill: fill) } else { BreakPanel(focus: focus, fill: fill) }
         recordCard
     }
 
@@ -59,7 +61,12 @@ struct FocusView: View {
 
     // MARK: - 计时环（复刻安卓端 TimerCard）
 
+    /// 计时卡片：只有这一块订阅每秒的时钟，页面的其他部分（今日统计、图表、列表）不再每秒重画
     private var timerCard: some View {
+        FocusTick(clock: focus.clock) { timerCardBody($0) }
+    }
+
+    private func timerCardBody(_ nowMs: Int64) -> some View {
         let run = focus.run
         let kind = focus.shownKind
         let fraction: Double = {
@@ -69,14 +76,18 @@ struct FocusView: View {
         let breakGreen = Color(red: 0x4F / 255, green: 0xAE / 255, blue: 0x8B / 255)
         let arc: Color = run?.paused == true ? Brand.orange.opacity(0.5) : (kind.isBreak ? breakGreen : Brand.orange)
 
+        // 上下两条（标题行、底部说明）都固定高度：专注 / 休息 / 暂停 / 没开始 / 点任何按钮，整张卡的高度都不变
         return VStack(spacing: 16) {
-            if let run {
-                Text(run.kind.label).font(.system(size: 13, weight: .bold)).foregroundStyle(arc)
-            } else {
-                cycleHeader(kind, breakGreen)
+            Group {
+                if let run {
+                    Text(run.kind.label).font(.system(size: 13, weight: .bold)).foregroundStyle(arc)
+                } else {
+                    cycleHeader(kind, breakGreen)
+                }
             }
+            .frame(maxWidth: .infinity).frame(height: 38)
 
-            FocusDial(fraction: fraction, arc: arc, idle: run == nil, maxMin: kind.maxMin, minMin: kind.minMin,
+            let dial = FocusDial(fraction: fraction, arc: arc, idle: run == nil, maxMin: kind.maxMin, minMin: kind.minMin,
                       marks: (run.map { r in r.recordList.map { Double($0.sec) * 1000 / Double(max(r.plannedMs, 1)) } } ?? []),
                       onMinutes: { focus.minutes = $0 }) {
                 if let run {
@@ -109,37 +120,30 @@ struct FocusView: View {
                     }
                 }
             }
-            .frame(maxWidth: 232)
+            
+            cornerDial(dial, run)
 
-            if let run {
-                Text("共 \(run.plannedMin) 分钟 · 已\(run.kind.isBreak ? "休息" : "专注") \(spoken(run.elapsedMs(nowMs)))")
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
-            } else {
-                Text("拖动圆环或点一下，选择时长").font(.caption).foregroundStyle(.tertiary)
-            }
-
-            if let run {
-                controls(run).padding(.top, 4)
-                if showRecord, !run.kind.isBreak {
-                    RecordComposer(focus: focus) { showRecord = false }
-                        .environmentObject(model)
-                        .padding(.top, 2)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+            Group {
+                if let run {
+                    Text("共 \(run.plannedMin) 分钟 · 已\(run.kind.isBreak ? "休息" : "专注") \(spoken(run.elapsedMs(nowMs)))")
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                } else {
+                    Text("拖动圆环或点一下，选择时长").font(.system(size: 13)).foregroundStyle(.tertiary)
                 }
             }
+            .lineLimit(1).frame(height: 18)
         }
         .padding(.horizontal, 16).padding(.vertical, 18)
         .frame(maxWidth: .infinity)
-        .animation(.snappy(duration: 0.2), value: showRecord)
         .glassCard(radius: 28)
     }
 
     /// 一轮 4 个番茄的进度；休息时显示休息提示
     private func cycleHeader(_ kind: FocusKind, _ green: Color) -> some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             if kind.isBreak {
                 Text(kind == .longBreak ? "完成 \(FocusStore.cycleLength) 个番茄 · 长休息" : "第 \(focus.cycle) 个番茄完成 · 短休息")
-                    .font(.system(size: 14, weight: .heavy)).foregroundStyle(green)
+                    .font(.system(size: 14, weight: .heavy)).foregroundStyle(green).lineLimit(1)
             }
             HStack(spacing: 7) {
                 ForEach(0 ..< FocusStore.cycleLength, id: \.self) { i in
@@ -147,15 +151,16 @@ struct FocusView: View {
                         .fill(i < focus.cycle ? (kind.isBreak ? green : Brand.orange) : Color.primary.opacity(0.12))
                         .frame(width: 10, height: 10)
                 }
-                if !kind.isBreak {
-                    Text(focus.cycle == 0 ? "  开始第 1 个番茄" : "  第 \(focus.cycle + 1) 个番茄")
+                if kind.isBreak {
+                    Button("跳过休息，直接专注") { focus.skipBreak() }
+                        .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(.secondary)
+                        .padding(.leading, 6)
+                } else {
+                    Text("  " + (focus.cycle == 0 ? "开始第 1 个番茄" : "第 \(focus.cycle + 1) 个番茄"))
                         .font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
                 }
             }
-            if kind.isBreak {
-                Button("跳过休息，直接专注") { focus.skipBreak() }
-                    .buttonStyle(.plain).font(.system(size: 13)).foregroundStyle(.secondary)
-            }
+            .frame(height: 16)
         }
     }
 
@@ -352,18 +357,51 @@ struct FocusView: View {
 
     // MARK: - 控制（圆形按钮，按钮下面一行小字）
 
-    private func controls(_ run: FocusRun) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            if !run.kind.isBreak {
-                roundButton("xmark", "放弃", filled: false) { confirmDiscard = true }
-                roundButton("square.and.pencil", "记录", filled: false, on: showRecord) { showRecord.toggle() }
+    /// 圆环 + 四个角上的控制按钮：左上「放弃」、左下「记录」、右上「暂停」、右下「结束并记录」（一边两个）。
+    /// 按钮嵌在圆环外接正方形的四个角里（圆的四角本来就是空的），所以不占额外的宽和高，圆环可以做得更大。
+    /// 休息时只有两个：左下「暂停」、右下「结束休息」。没在计时时角上是空的。
+    private func cornerDial<D: View>(_ dial: D, _ run: FocusRun?) -> some View {
+        GeometryReader { g in
+            let side = min(g.size.width, g.size.height)
+            let d = side * 0.94
+            let b = max(side * 0.17, 40)
+            let l = b / 2, r = side - b / 2, t = b / 2, bt = side - b / 2
+            ZStack {
+                dial.frame(width: d, height: d).position(x: side / 2, y: side / 2)
+                if let run {
+                    if run.kind.isBreak {
+                        corner(run.paused ? "play.fill" : "pause.fill", run.paused ? "继续" : "暂停", size: b) { focus.pauseOrResume() }
+                            .position(x: l, y: bt)
+                        corner("forward.end.fill", "结束休息", size: b, filled: true) { focus.endBreak() }
+                            .position(x: r, y: bt)
+                    } else {
+                        corner("xmark", "放弃", size: b) { confirmDiscard = true }.position(x: l, y: t)
+                        corner("square.and.pencil", "记录", size: b, on: showRecord) { showRecord.toggle() }.position(x: l, y: bt)
+                        corner(run.paused ? "play.fill" : "pause.fill", run.paused ? "继续" : "暂停", size: b) { focus.pauseOrResume() }
+                            .position(x: r, y: t)
+                        corner("checkmark", "结束并记录", size: b, filled: true) { Task { await focus.finish() } }
+                            .position(x: r, y: bt)
+                    }
+                }
             }
-            roundButton(run.paused ? "play.fill" : "pause.fill", run.paused ? "继续" : "暂停", filled: false) { focus.pauseOrResume() }
-            roundButton(run.kind.isBreak ? "forward.end.fill" : "checkmark", run.kind.isBreak ? "结束休息" : "结束并记录", filled: true) {
-                Task { await focus.finish() }
-            }
+            .frame(width: side, height: side)
+            .frame(width: g.size.width, height: g.size.height)
         }
-        .frame(maxWidth: .infinity)
+        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: 296)
+    }
+
+    private func corner(_ icon: String, _ label: String, size: CGFloat, filled: Bool = false, on: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: size * 0.4, weight: .semibold))
+                .foregroundStyle(filled ? Brand.brown : (on ? Brand.orange : Color.primary))
+                .frame(width: size, height: size)
+                .background(filled ? Brand.orange : (on ? Brand.orange.opacity(0.16) : Color.primary.opacity(0.08)), in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(label)
     }
 
     /// 所有按钮同样大小、同样宽的格子，圆心和文字都落在同一条线上
@@ -415,11 +453,14 @@ struct FocusView: View {
     private var todayCard: some View {
         HStack(spacing: 12) {
             if let s = focus.summary {
-                StatTile(value: FocusParser.formatMinutes(s.todayMin), label: "今天专注" + (s.todayPomos > 0 ? "（\(s.todayPomos) 个番茄）" : ""), tint: Brand.orange)
-                StatTile(value: FocusParser.formatMinutes(s.weekMin), label: "近 7 天" + (s.weekPomos > 0 ? "（\(s.weekPomos) 个番茄）" : ""))
+                StatTile(minutes: s.todayMin, label: "今天专注" + (s.todayPomos > 0 ? " · \(s.todayPomos) 个番茄" : ""), tint: Brand.orange)
+                StatTile(minutes: s.weekMin, label: "近 7 天" + (s.weekPomos > 0 ? " · \(s.weekPomos) 个番茄" : ""))
+                let active = s.daily().filter { $0.minutes > 0 }.count
+                StatTile(minutes: s.weekMin / 7, label: "日均专注" + (active > 0 ? " · \(active)/7 天有专注" : ""))
             } else {
                 StatTile(value: focus.loading ? "…" : "—", label: model.hasDida ? "今天专注" : "未连接滴答")
                 StatTile(value: focus.loading ? "…" : "—", label: "近 7 天")
+                StatTile(value: focus.loading ? "…" : "—", label: "日均专注")
             }
         }
     }
@@ -568,22 +609,11 @@ struct FocusDial<Center: View>: View {
                     .stroke(arc, style: StrokeStyle(lineWidth: stroke, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .frame(width: ringR * 2, height: ringR * 2)
-                    .animation(idle ? nil : .linear(duration: 0.5), value: fraction)
 
-                Canvas { ctx, _ in
-                    for i in 0 ..< 60 {
-                        let long = i % 5 == 0
-                        let len = (long ? 10 : 5) * s
-                        let rad = Double(i) * 6 * .pi / 180 - .pi / 2
-                        let dx = cos(rad), dy = sin(rad)
-                        var p = Path()
-                        p.move(to: CGPoint(x: c.x + dx * tickOuter, y: c.y + dy * tickOuter))
-                        p.addLine(to: CGPoint(x: c.x + dx * (tickOuter - len), y: c.y + dy * (tickOuter - len)))
-                        let on = Double(i) / 60 < fraction || (i == 0 && fraction > 0)
-                        ctx.stroke(p, with: .color(Color.primary.opacity(on ? 0.55 : 0.16)),
-                                   style: StrokeStyle(lineWidth: (long ? 2 : 1.2) * s, lineCap: .round))
-                    }
-                }
+                // 刻度只在亮起的格数变化时才重画（25 分钟的专注里一共才变 60 次），不跟着每秒的刷新走
+                DialTicks(lit: (0 ..< 60).reduce(0) { $0 + ((Double($1) / 60 < fraction || ($1 == 0 && fraction > 0)) ? 1 : 0) },
+                          s: s, tickOuter: tickOuter, c: c)
+                    .equatable()
 
                 ForEach(Array(marks.enumerated()), id: \.offset) { _, m in
                     let a = (360 * (1 - min(max(m, 0), 1)) - 90) * .pi / 180
@@ -661,5 +691,38 @@ struct RatioColumns: Layout {
         let (lw, tw) = widths(bounds.width)
         subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY), anchor: .topLeading, proposal: ProposedViewSize(width: lw, height: nil))
         subviews[1].place(at: CGPoint(x: bounds.minX + lw + spacing, y: bounds.minY), anchor: .topLeading, proposal: ProposedViewSize(width: tw, height: bounds.height))
+    }
+}
+
+
+/// 订阅每秒时钟的小块：内容闭包拿到当前毫秒时间戳。把用到倒计时的最小一块包在里面，别包整个页面
+struct FocusTick<Content: View>: View {
+    @ObservedObject var clock: FocusClock
+    @ViewBuilder var content: (Int64) -> Content
+
+    var body: some View { content(clock.nowMs) }
+}
+
+/// 圆环上的 60 个刻度。输入没变就不会重新求值，也不会重画
+struct DialTicks: View, Equatable {
+    var lit: Int
+    var s: CGFloat
+    var tickOuter: CGFloat
+    var c: CGPoint
+
+    var body: some View {
+        Canvas { ctx, _ in
+            for i in 0 ..< 60 {
+                let long = i % 5 == 0
+                let len = (long ? 10 : 5) * s
+                let rad = Double(i) * 6 * .pi / 180 - .pi / 2
+                let dx = cos(rad), dy = sin(rad)
+                var p = Path()
+                p.move(to: CGPoint(x: c.x + dx * tickOuter, y: c.y + dy * tickOuter))
+                p.addLine(to: CGPoint(x: c.x + dx * (tickOuter - len), y: c.y + dy * (tickOuter - len)))
+                ctx.stroke(p, with: .color(Color.primary.opacity(i < lit ? 0.55 : 0.16)),
+                           style: StrokeStyle(lineWidth: (long ? 2 : 1.2) * s, lineCap: .round))
+            }
+        }
     }
 }

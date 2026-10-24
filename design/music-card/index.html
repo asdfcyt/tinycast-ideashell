@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>休息页音乐卡片 · 三版原型</title>
+<style>
+:root {
+  --bg: #f6f1e7;
+  --ink: #3b2a1a;
+  --muted: #6e5f4f;
+  --card-w: 376px;
+  --card-h: 214px;
+  --r: 18px;
+}
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 14px/1.4 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  padding: 28px; display: flex; gap: 36px; align-items: flex-start; justify-content: center;
+}
+.col { width: var(--card-w); }
+.name { font-size: 15px; font-weight: 700; margin: 0 0 4px; }
+.note { font-size: 12.5px; color: var(--muted); margin: 0 0 14px; min-height: 36px; }
+
+.card {
+  position: relative; width: var(--card-w); height: var(--card-h);
+  border-radius: var(--r); overflow: hidden; color: #fff;
+  box-shadow: 0 10px 30px rgba(60, 30, 10, .22);
+  isolation: isolate;
+}
+.card > .cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -2; }
+.t { font-weight: 800; letter-spacing: .01em; }
+.s { color: rgba(255,255,255,.78); font-size: 12.5px; }
+.bar { display: flex; align-items: center; gap: 8px; font-size: 11px; color: rgba(255,255,255,.8); font-variant-numeric: tabular-nums; }
+.bar i { position: relative; flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,.28); }
+.bar i b { position: absolute; left: 0; top: 0; bottom: 0; width: 31%; border-radius: 2px; background: #fff; }
+.ctl { display: flex; align-items: center; gap: 14px; }
+.ctl button {
+  appearance: none; border: 0; cursor: pointer; color: #fff;
+  width: 30px; height: 30px; border-radius: 50%; background: rgba(255,255,255,.22);
+  display: grid; place-items: center; backdrop-filter: blur(8px);
+}
+.ctl button.main { width: 40px; height: 40px; background: #fff; color: #231a14; }
+.ctl svg { width: 14px; height: 14px; fill: currentColor; }
+.ctl .main svg { width: 16px; height: 16px; }
+
+/* —— A 海报：封面铺满，文字压在底部暗角上 —— */
+.a .cover { filter: saturate(1.05); }
+.a::after {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 22%, rgba(0,0,0,.35) 52%, rgba(0,0,0,.82) 100%);
+}
+.a .body { position: absolute; inset: 0; padding: 14px 16px; display: flex; flex-direction: column; justify-content: flex-end; gap: 9px; }
+.a .t { font-size: 22px; line-height: 1.15; text-shadow: 0 2px 10px rgba(0,0,0,.4); }
+.a .row { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; }
+.a .lyric { font-size: 12.5px; font-weight: 600; text-shadow: 0 1px 6px rgba(0,0,0,.5); }
+
+/* —— B 玻璃：封面保持清晰，下半部一块磨砂玻璃托住所有信息 —— */
+.b .glass {
+  position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 11px 13px 12px;
+  border-radius: 13px; display: flex; flex-direction: column; gap: 8px;
+  background: rgba(24, 16, 12, .38); backdrop-filter: blur(22px) saturate(1.6);
+  border: 1px solid rgba(255,255,255,.18);
+}
+.b .head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.b .t { font-size: 16px; line-height: 1.2; }
+.b .s { margin-top: 1px; }
+.b .app { position: absolute; top: 12px; left: 14px; font-size: 11px; padding: 3px 9px; border-radius: 99px; background: rgba(0,0,0,.34); backdrop-filter: blur(10px); }
+
+/* —— C 沉浸：封面放大虚化染成整张底色，歌词是主角，文字放左上 —— */
+.c .cover { transform: scale(1.35); filter: blur(14px) saturate(1.5) brightness(.62); }
+.c::after {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: radial-gradient(120% 90% at 100% 0%, rgba(255,255,255,.22), rgba(0,0,0,0) 55%), linear-gradient(90deg, rgba(0,0,0,.28), rgba(0,0,0,0) 70%);
+}
+.c .body { position: absolute; inset: 0; padding: 16px 18px 14px; display: flex; flex-direction: column; gap: 6px; }
+.c .t { font-size: 15px; }
+.c .lyric { margin-top: 10px; font-size: 25px; line-height: 1.22; font-weight: 800; letter-spacing: .01em; text-shadow: 0 2px 14px rgba(0,0,0,.35); max-width: 300px; }
+.c .next { font-size: 12.5px; color: rgba(255,255,255,.62); }
+.c .foot { margin-top: auto; display: flex; flex-direction: column; gap: 9px; }
+.c .ctl { gap: 16px; }
+.c .ctl button { background: rgba(255,255,255,.18); }
+.c .ctl button.main { width: 36px; height: 36px; background: #fff; }
+.c .ctlrow { display: flex; align-items: center; gap: 14px; }
+.c .ctlrow .bar { flex: 1; }
+</style>
+</head>
+<body>
+
+<section class="col">
+  <h2 class="name">A · 海报</h2>
+  <p class="note">封面原图铺满整张卡，只在下半压一层暗角；歌名放大，像一张唱片海报。</p>
+  <div class="card a">
+    <img class="cover" src="cover.jpg" alt="">
+    <div class="body">
+      <div>
+        <div class="t">如果的事</div>
+        <div class="s">范玮琪 / 张韶涵 · 网易云音乐</div>
+      </div>
+      <div class="lyric">如果的事 总是会不如人意</div>
+      <div class="bar"><span>1:12</span><i><b></b></i><span>3:48</span></div>
+      <div class="row">
+        <div class="ctl">
+          <button aria-label="上一首"><svg viewBox="0 0 16 16"><path d="M3 2h2v12H3zM14 2v12L6 8z"/></svg></button>
+          <button class="main" aria-label="暂停"><svg viewBox="0 0 16 16"><path d="M3 2h4v12H3zM9 2h4v12H9z"/></svg></button>
+          <button aria-label="下一首"><svg viewBox="0 0 16 16"><path d="M11 2h2v12h-2zM2 2l8 6-8 6z"/></svg></button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="col">
+  <h2 class="name">B · 玻璃</h2>
+  <p class="note">封面几乎不遮，保持清晰完整；信息收进底部一块磨砂玻璃，和 App 其他卡片的玻璃质感一致。</p>
+  <div class="card b">
+    <img class="cover" src="cover.jpg" alt="">
+    <span class="app">网易云音乐</span>
+    <div class="glass">
+      <div class="head">
+        <div>
+          <div class="t">如果的事</div>
+          <div class="s">范玮琪 / 张韶涵</div>
+        </div>
+        <div class="ctl">
+          <button aria-label="上一首"><svg viewBox="0 0 16 16"><path d="M3 2h2v12H3zM14 2v12L6 8z"/></svg></button>
+          <button class="main" aria-label="暂停"><svg viewBox="0 0 16 16"><path d="M3 2h4v12H3zM9 2h4v12H9z"/></svg></button>
+          <button aria-label="下一首"><svg viewBox="0 0 16 16"><path d="M11 2h2v12h-2zM2 2l8 6-8 6z"/></svg></button>
+        </div>
+      </div>
+      <div class="bar"><span>1:12</span><i><b></b></i><span>3:48</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="col">
+  <h2 class="name">C · 沉浸</h2>
+  <p class="note">封面放大虚化，整张卡染成它的颜色；当前这句歌词是主角，休息时看着歌词发呆。</p>
+  <div class="card c">
+    <img class="cover" src="cover.jpg" alt="">
+    <div class="body">
+      <div class="t">如果的事 <span class="s" style="font-weight:500">· 范玮琪 / 张韶涵</span></div>
+      <div class="lyric">如果的事 总是会不如人意</div>
+      <div class="next">所以我们要学会 接受</div>
+      <div class="foot">
+        <div class="ctlrow">
+          <div class="ctl">
+            <button aria-label="上一首"><svg viewBox="0 0 16 16"><path d="M3 2h2v12H3zM14 2v12L6 8z"/></svg></button>
+            <button class="main" aria-label="暂停"><svg viewBox="0 0 16 16"><path d="M3 2h4v12H3zM9 2h4v12H9z"/></svg></button>
+            <button aria-label="下一首"><svg viewBox="0 0 16 16"><path d="M11 2h2v12h-2zM2 2l8 6-8 6z"/></svg></button>
+          </div>
+          <div class="bar"><span>1:12</span><i><b></b></i><span>3:48</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

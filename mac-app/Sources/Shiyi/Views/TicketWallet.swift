@@ -5,6 +5,8 @@ import SwiftUI
 struct TicketWall: View {
     @ObservedObject var focus: FocusStore
     @State private var opened: UUID?
+    /// 收起 / 展开整个小票区（记住上次的状态）
+    @AppStorage("ticketWall.collapsed") private var collapsed = false
 
     private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
 
@@ -41,16 +43,35 @@ struct TicketWall: View {
     var body: some View {
         let gs = groups
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text("小票").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                if !cards.isEmpty {
-                    Text("\(cards.count)").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary).monospacedDigit()
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { collapsed.toggle() }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "ticket.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Brand.orange)
+                        .frame(width: 26, height: 26)
+                        .background(Brand.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    Text("小票").font(.callout.weight(.semibold))
+                    if !cards.isEmpty {
+                        Text("\(cards.count)").font(.caption2.weight(.semibold)).monospacedDigit()
+                            .padding(.horizontal, 6).padding(.vertical, 1.5)
+                            .background(Color.primary.opacity(0.08), in: Capsule())
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(collapsed ? -90 : 0))
                 }
-                Spacer()
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.horizontal, 10)
             }
-            .padding(.horizontal, 18)
+            .buttonStyle(.plain)
+            .help(collapsed ? "展开小票" : "收起小票")
 
-            if gs.isEmpty {
+            if collapsed {
+                EmptyView()
+            } else if gs.isEmpty {
                 VStack(spacing: 4) {
                     Image(systemName: "ticket").font(.system(size: 18, weight: .light)).foregroundStyle(.tertiary)
                     Text("完成一个番茄，小票会收在这里").font(.caption).foregroundStyle(.tertiary)

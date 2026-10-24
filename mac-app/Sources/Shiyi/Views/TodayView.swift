@@ -586,22 +586,28 @@ private struct TaskLine: View {
 struct FocusRunBar: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var focus: FocusStore
+    @ObservedObject private var session = BreakSession.shared
+    @ObservedObject private var music = BreakSession.shared.music
+    @ObservedObject private var sound = AmbientSound.shared
     @State private var writing = false
 
     var body: some View {
         if let r = focus.run {
-            let ms = r.remainingMs(Int64(focus.now.timeIntervalSince1970 * 1000))
-            let left = max(Int(ms / 1000), 0)
             VStack(spacing: 10) {
                 // 第一行：图标 + 关联的任务（点一下可以换）+ 倒计时
                 HStack(spacing: 8) {
-                    Image(systemName: r.paused ? "pause.circle.fill" : (r.kind.isBreak ? "cup.and.saucer.fill" : "timer"))
+                    // 休息时图标和休息页上当前的动作保持一致
+                    Image(systemName: r.paused ? "pause.circle.fill" : (r.kind.isBreak ? session.move(for: focus).icon : "timer"))
                         .font(.title3).foregroundStyle(Brand.orange)
                     titleBlock(r)
+                    if r.kind.isBreak { breakChips }
                     Spacer(minLength: 4)
-                    Text(String(format: "%02d:%02d", left / 60, left % 60))
-                        .font(.system(size: 24, weight: .semibold).monospacedDigit())
-                        .lineLimit(1).fixedSize()
+                    FocusTick(clock: focus.clock) { now in
+                        let left = max(Int(r.remainingMs(now) / 1000), 0)
+                        Text(String(format: "%02d:%02d", left / 60, left % 60))
+                            .font(.system(size: 24, weight: .semibold).monospacedDigit())
+                            .lineLimit(1).fixedSize()
+                    }
                 }
                 // 第二行：按钮平分整行宽度，窄的地方也不会被挤掉
                 HStack(spacing: 8) {
@@ -627,7 +633,8 @@ struct FocusRunBar: View {
         }
         return Group {
             if r.kind.isBreak {
-                block.frame(maxWidth: .infinity, alignment: .leading)
+                // 休息：名字后面紧跟着跟练 / 歌 / 环境音的状态，右边留给倒计时
+                block.layoutPriority(1)
             } else {
                 FocusTaskMenu(focus: focus) {
                     HStack(spacing: 4) {
@@ -638,6 +645,45 @@ struct FocusRunBar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    /// 休息中的状态：跟练倒计时、正在播放的歌、环境音。点一下可以停 / 暂停
+    @ViewBuilder private var breakChips: some View {
+        HStack(spacing: 5) {
+            if let end = session.practiceEnd {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    let left = Int(end.timeIntervalSince(ctx.date).rounded(.up))
+                    if left > 0 {
+                        chip(session.move(for: focus).icon, String(format: "%d:%02d", left / 60, left % 60), help: "跟练中，点一下停止") {
+                            session.practiceEnd = nil
+                        }
+                    }
+                }
+            }
+            if let t = music.track, t.playing {
+                chip("music.note", t.title, help: "\(t.title) · \(t.artist)，点一下暂停") { music.toggle(t.app) }
+                    .frame(maxWidth: 96)
+            }
+            if let k = sound.current {
+                chip(k.icon, nil, help: "\(k.label)，点一下关闭") { sound.stop() }
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func chip(_ icon: String, _ text: String?, help: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                if let text { Text(text).font(.system(size: 11, weight: .medium)).monospacedDigit().lineLimit(1) }
+            }
+            .foregroundStyle(Brand.orange)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Brand.orange.opacity(0.16), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private func pill(_ icon: String, _ text: String, on: Bool = false, filled: Bool = false, _ action: @escaping () -> Void) -> some View {

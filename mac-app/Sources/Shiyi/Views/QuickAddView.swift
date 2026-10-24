@@ -8,6 +8,8 @@ import SwiftUI
 struct QuickAddView: View {
     @EnvironmentObject var model: AppModel
     var compact = false
+    /// 专注中的「记录」：同一个输入窗口，但内容写进专注绑定的任务（没绑定就记到今天的 Daily Note），底栏显示任务名而不是类型
+    var record: FocusStore?
     /// 提交成功后的回调（弹层用来关闭自己）
     var onDone: (() -> Void)?
 
@@ -47,7 +49,7 @@ struct QuickAddView: View {
                         .focused($focused)
                         .padding(.horizontal, -5).padding(.vertical, -1)
                     if text.isEmpty {
-                        Text(compact ? "记点什么…" : "记点什么？待办、想法、日记都可以")
+                        Text(record != nil ? "专注时的想法、进展、卡点…" : (compact ? "记点什么…" : "记点什么？待办、想法、日记都可以"))
                             .font(.system(size: compact ? 14 : 16))
                             .foregroundStyle(.tertiary)
                             .allowsHitTesting(false)
@@ -59,7 +61,9 @@ struct QuickAddView: View {
 
             // 提示行：空的时候给几个例子，写了字就显示识别结果
             Group {
-                if text.trimmed.isEmpty {
+                if let record {
+                    recordHint(record)
+                } else if text.trimmed.isEmpty {
                     examples
                 } else {
                     recognized(a, k)
@@ -80,22 +84,30 @@ struct QuickAddView: View {
 
             // 底栏：类型 + 优先级 + 提交
             HStack(spacing: 8) {
-                kindMenu(a, k)
-                if k == .todo { priorityMenu }
-                if k.isSjz { sjzChip(k) }
+                if let record {
+                    taskChip(record)
+                } else {
+                    kindMenu(a, k)
+                    if k == .todo { priorityMenu }
+                    if k.isSjz { sjzChip(k) }
+                }
                 Spacer(minLength: 8)
                 if let onDone {
                     Button("取消", action: onDone)
                         .buttonStyle(.plain).foregroundStyle(.secondary).font(.callout)
                         .keyboardShortcut(.cancelAction)
                 }
-                submitButton(a, k)
+                if let record { recordSubmitButton(record) } else { submitButton(a, k) }
             }
             .padding(.horizontal, compact ? 12 : 14).padding(.top, compact ? 8 : 8).padding(.bottom, compact ? 8 : 12)
         }
         .frame(width: compact ? nil : 480)
+        .onChange(of: text) { _, new in
+            if let record, record.recordDraft != new { record.recordDraft = new }
+        }
         .onAppear {
             focused = true
+            if let record { text = record.recordDraft }
             if !model.quickAddText.isEmpty { text = model.quickAddText }
             override = model.quickAddKind
             defaultDate = model.quickAddDate
@@ -137,6 +149,59 @@ struct QuickAddView: View {
         .background(Color.indigo.opacity(0.1), in: Capsule())
         .layoutPriority(-1)
         .help("结审 · " + label)
+    }
+
+    // MARK: - 专注记录
+
+    private func recordGoesToTask(_ f: FocusStore) -> Bool { f.run?.taskId != nil }
+
+    /// 提示行：说明这条会记到哪里
+    private func recordHint(_ f: FocusStore) -> some View {
+        HStack(spacing: 6) {
+            Text(recordGoesToTask(f) ? "记到任务笔记的「进展记录」，并同步成滴答评论" : "没有关联待办：记到今天的 Daily Note")
+                .font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// 底栏左边：原来放类型（Daily Note）的位置，改成任务的名字；没关联任务时仍是 Daily Note
+    private func taskChip(_ f: FocusStore) -> some View {
+        let task = recordGoesToTask(f)
+        let name = task ? ((f.run?.title.isEmpty == false) ? f.run!.title : "未命名任务") : "Daily Note"
+        return HStack(spacing: 5) {
+            Image(systemName: task ? "scope" : CaptureKind.daily.icon).font(.system(size: 12, weight: .semibold))
+            Text(name).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.tail)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 4)
+        .background(Brand.orange.opacity(0.14), in: Capsule())
+        .foregroundStyle(Brand.orangeDeep)
+        .frame(maxWidth: 260, alignment: .leading)
+        .help(task ? "记到任务「\(name)」" : "记到今天的 Daily Note")
+    }
+
+    private func recordSubmitButton(_ f: FocusStore) -> some View {
+        let disabled = model.recording || text.trimmed.isEmpty
+        return Button {
+            let t = text.trimmed
+            guard !t.isEmpty else { return }
+            f.recordDraft = ""
+            text = ""
+            Task { await model.recordFocus(t) }
+            onDone?()
+        } label: {
+            HStack(spacing: 6) {
+                if model.recording { ProgressView().controlSize(.small) } else {
+                    Text(recordGoesToTask(f) ? "记录进展" : "记入 Daily Note").font(.callout.weight(.semibold))
+                }
+                Text("⌘↩").font(.caption2).opacity(0.7)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12).padding(.vertical, 5)
+            .background(Brand.orange.opacity(disabled ? 0.35 : 1), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.return, modifiers: .command)
+        .disabled(disabled)
     }
 
     private var examples: some View {

@@ -108,3 +108,78 @@ struct TimeField: View {
         .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 }
+
+/// 任务的「日期 + 具体时间」弹层：月历、快捷日期、时间开关、时分选择。
+/// 日期 / 时间的状态全部在这个视图自己里面，开关一拨时间那一行就跟着出现。
+struct TaskDatePopover: View {
+    @EnvironmentObject var model: AppModel
+    let task: DidaTask
+    let onClose: () -> Void
+
+    @State private var date: Date
+    @State private var hasTime: Bool
+    @State private var time: Date
+
+    init(task: DidaTask, onClose: @escaping () -> Void) {
+        self.task = task
+        self.onClose = onClose
+        _date = State(initialValue: task.date.flatMap(Day.parse) ?? Date())
+        var h = 9, m = 0
+        if let t = task.time {
+            let p = t.split(separator: ":").compactMap { Int($0) }
+            h = p.first ?? 9
+            m = p.count > 1 ? p[1] : 0
+        }
+        _hasTime = State(initialValue: task.time != nil)
+        _time = State(initialValue: Day.cal.date(bySettingHour: h, minute: m, second: 0, of: Date()) ?? Date())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            DayGridPicker(selection: $date)
+            HStack(spacing: 8) {
+                quick("今天", 0)
+                quick("明天", 1)
+                quick("后天", 2)
+                quick("下周", 7)
+            }
+            Divider()
+            HStack(spacing: 8) {
+                Label("具体时间", systemImage: "clock").font(.callout)
+                Spacer(minLength: 4)
+                // 始终显示；没打开开关时变灰、不能点
+                TimeField(time: $time)
+                    .opacity(hasTime ? 1 : 0.35)
+                    .allowsHitTesting(hasTime)
+                Toggle("", isOn: $hasTime).toggleStyle(.switch).labelsHidden().controlSize(.small)
+            }
+            Divider()
+            HStack {
+                if task.date != nil {
+                    Button("清除日期", role: .destructive) {
+                        onClose()
+                        Task { await model.edit(task, .clearDate) }
+                    }
+                }
+                Spacer()
+                Button("取消") { onClose() }
+                Button("确定") {
+                    onClose()
+                    let c = Day.cal.dateComponents([.hour, .minute], from: time)
+                    let t = hasTime ? String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0) : nil
+                    Task { await model.edit(task, .schedule(date: Day.string(date), time: t)) }
+                }
+                .buttonStyle(.borderedProminent).tint(Brand.orange)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(14).frame(width: 288)
+    }
+
+    private func quick(_ label: String, _ days: Int) -> some View {
+        Button { date = Day.parse(Day.add(Day.today(), days: days)) ?? Date() } label: {
+            Text(label).frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered).controlSize(.small)
+    }
+}

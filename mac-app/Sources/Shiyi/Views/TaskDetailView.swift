@@ -90,9 +90,6 @@ struct TaskDetailView: View {
     // MARK: - 可以直接改的属性
 
     @State private var showDate = false
-    @State private var editDate = Date()
-    @State private var editHasTime = false
-    @State private var editTime = Date()
 
     private var chips: some View {
         FlowRow(spacing: 8) {
@@ -106,19 +103,7 @@ struct TaskDetailView: View {
 
     private var editable: Bool { !current.done }
 
-    private func openDateEditor() {
-        let c = current
-        editDate = c.date.flatMap(Day.parse) ?? Date()
-        if let t = c.time {
-            let p = t.split(separator: ":").compactMap { Int($0) }
-            editTime = Day.cal.date(bySettingHour: p.first ?? 9, minute: p.count > 1 ? p[1] : 0, second: 0, of: Date()) ?? Date()
-            editHasTime = true
-        } else {
-            editTime = Day.cal.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
-            editHasTime = false
-        }
-        showDate = true
-    }
+    private func openDateEditor() { showDate = true }
 
     private var dateChip: some View {
         let c = current
@@ -133,55 +118,12 @@ struct TaskDetailView: View {
         }
         .buttonStyle(.plain).disabled(!editable)
         .help("修改日期和时间")
-        .popover(isPresented: $showDate, arrowEdge: .bottom) { datePopover }
-    }
-
-    private var datePopover: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            DayGridPicker(selection: $editDate)
-            HStack(spacing: 8) {
-                quick("今天", 0)
-                quick("明天", 1)
-                quick("后天", 2)
-                quick("下周", 7)
-            }
-            Divider()
-            HStack {
-                Label("具体时间", systemImage: "clock").font(.callout)
-                Spacer()
-                if editHasTime {
-                    TimeField(time: $editTime)
-                }
-                Toggle("", isOn: $editHasTime).toggleStyle(.switch).labelsHidden().controlSize(.small)
-            }
-            Divider()
-            HStack {
-                if current.date != nil {
-                    Button("清除日期", role: .destructive) {
-                        showDate = false
-                        Task { await model.edit(current, .clearDate) }
-                    }
-                }
-                Spacer()
-                Button("取消") { showDate = false }
-                Button("确定") {
-                    showDate = false
-                    let c = Day.cal.dateComponents([.hour, .minute], from: editTime)
-                    let t = editHasTime ? String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0) : nil
-                    Task { await model.edit(current, .schedule(date: Day.string(editDate), time: t)) }
-                }
-                .buttonStyle(.borderedProminent).tint(Brand.orange)
-                .keyboardShortcut(.defaultAction)
-            }
+        .popover(isPresented: $showDate, arrowEdge: .bottom) {
+            // 弹层单独做成一个视图：它自己持有日期 / 时间的状态。
+            // 之前把这些状态放在外面，弹层里「if 有具体时间」的分支不会跟着开关刷新，打开后看不到时间。
+            TaskDatePopover(task: current) { showDate = false }
+                .environmentObject(model)
         }
-        .padding(14).frame(width: 264)
-    }
-
-    private func quick(_ label: String, _ days: Int) -> some View {
-        Button { editDate = Day.parse(Day.add(Day.today(), days: days)) ?? Date() } label: {
-            Text(label).frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered).controlSize(.small)
     }
 
     private var priorityChip: some View {

@@ -55,13 +55,13 @@ struct SjzProjectDetailView: View {
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: "checkmark.shield")
-                .font(.system(size: 18, weight: .semibold)).foregroundStyle(Color.indigo)
+                .font(.system(size: 18, weight: .semibold)).foregroundStyle(Brand.orange)
                 .frame(width: 38, height: 38)
-                .background(Color.indigo.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(Brand.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).font(.title2.weight(.semibold)).lineLimit(2)
                 HStack(spacing: 6) {
-                    TagChip(text: "审计项目", tint: .indigo)
+                    TagChip(text: "审计项目", tint: Brand.orange)
                     if pinned { TagChip(text: "岛上保存到这里", tint: .green) }
                     Text("数据来自结审，只保存在本机").font(.caption).foregroundStyle(.tertiary)
                 }
@@ -85,7 +85,7 @@ struct SjzProjectDetailView: View {
             StatTile(value: "\(s?.open ?? 0)", label: "待办")
             StatTile(value: "\(s?.dueToday ?? 0)", label: "今天到期", tint: (s?.dueToday ?? 0) > 0 ? Brand.orange : .primary)
             StatTile(value: "\(s?.overdue ?? 0)", label: "逾期", tint: (s?.overdue ?? 0) > 0 ? .red : .primary)
-            StatTile(value: "\(s?.pendingReviews ?? 0)", label: "待复核", tint: (s?.pendingReviews ?? 0) > 0 ? .indigo : .primary)
+            StatTile(value: "\(s?.pendingReviews ?? 0)", label: "待复核", tint: (s?.pendingReviews ?? 0) > 0 ? Brand.orange : .primary)
         }
     }
 
@@ -271,11 +271,11 @@ extension SjzProjectDetailView {
                         SectionTitle(text: "来自拾忆", count: captures.count)
                         Spacer()
                         Menu {
-                            Picker("时间", selection: $capDays) {
-                                Text("全部时间").tag(0)
-                                Text("今天").tag(1)
-                                Text("近 7 天").tag(7)
-                                Text("近 30 天").tag(30)
+                            // 直接平铺成一级菜单（Picker 放在 Menu 里会再套一层「时间」二级菜单）
+                            ForEach([(0, "全部时间"), (1, "今天"), (7, "近 7 天"), (30, "近 30 天")], id: \.0) { d, label in
+                                Button { capDays = d } label: {
+                                    if capDays == d { Label(label, systemImage: "checkmark") } else { Text(label) }
+                                }
                             }
                         } label: {
                             Label(capDays == 0 ? "全部时间" : capDays == 1 ? "今天" : "近 \(capDays) 天", systemImage: "calendar")
@@ -289,8 +289,8 @@ extension SjzProjectDetailView {
                                 Text(n > 0 ? "\(label) \(n)" : label)
                                     .font(.caption.weight(.medium))
                                     .padding(.horizontal, 10).padding(.vertical, 4)
-                                    .background(capKind == k ? Color.indigo.opacity(0.16) : Color.primary.opacity(0.06), in: Capsule())
-                                    .foregroundStyle(capKind == k ? Color.indigo : .secondary)
+                                    .background(capKind == k ? Brand.orange.opacity(0.16) : Color.primary.opacity(0.06), in: Capsule())
+                                    .foregroundStyle(capKind == k ? Brand.orange : .secondary)
                             }
                             .buttonStyle(.plain)
                         }
@@ -315,23 +315,27 @@ extension SjzProjectDetailView {
     private func captureRow(_ c: SjzCapture) -> some View {
         Button { editing = c } label: {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: c.icon).font(.system(size: 13)).foregroundStyle(Color.indigo)
+                Image(systemName: c.icon).font(.system(size: 13)).foregroundStyle(Brand.orange)
                     .frame(width: 26, height: 26)
-                    .background(Color.indigo.opacity(0.1), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .background(Brand.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 5) {
                         Text(c.title.isEmpty ? c.summary : c.title).font(.callout.weight(.medium)).lineLimit(1)
                         if !c.statusLabel.isEmpty {
                             TagChip(text: c.statusLabel, tint: c.status == "verified" ? .green : c.status == "excluded" ? .gray : Brand.orange)
                         }
-                        if !c.editedAt.isEmpty { TagChip(text: "已编辑", tint: .indigo) }
+                        if !c.editedAt.isEmpty { TagChip(text: "已编辑", tint: .blue) }
                         if !c.taskId.isEmpty { TagChip(text: "任务 \(c.taskId)", tint: .teal) }
                         if !c.noteNo.isEmpty { TagChip(text: c.noteNo, tint: .blue) }
                     }
-                    if !c.summary.isEmpty && c.summary != c.title {
-                        Text(c.summary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    // 摘要和「类型 · 来源」放在同一行：摘要太长时先被截断，类型 · 来源始终完整
+                    HStack(spacing: 8) {
+                        if !c.summary.isEmpty && c.summary != c.title {
+                            Text(c.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Text("\(c.kindLabel) · \(c.source)").font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                            .layoutPriority(1)
                     }
-                    Text("\(c.kindLabel) · \(c.source)").font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
                 }
                 Spacer(minLength: 6)
                 Text(Self.timeLabel(c.date)).font(.caption2).foregroundStyle(.tertiary)
@@ -431,7 +435,7 @@ struct SjzCaptureEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Image(systemName: capture.icon).foregroundStyle(Color.indigo)
+                Image(systemName: capture.icon).foregroundStyle(Brand.orange)
                 Text("\(capture.kindLabel) · \(capture.id)").font(.headline)
                 Spacer()
                 Text("保存后写回结审，并在工作日志留痕").font(.caption).foregroundStyle(.tertiary)
@@ -596,7 +600,7 @@ struct SjzCaptureEditor: View {
                         .font(.system(size: level <= 1 ? 17 : level == 2 ? 15 : 14, weight: .semibold))
                 } else if line.hasPrefix(">") {
                     HStack(alignment: .top, spacing: 8) {
-                        RoundedRectangle(cornerRadius: 1.5).fill(Color.indigo.opacity(0.5)).frame(width: 3)
+                        RoundedRectangle(cornerRadius: 1.5).fill(Brand.orange.opacity(0.5)).frame(width: 3)
                         Text(inline(String(line.drop(while: { $0 == ">" || $0 == " " }))))
                             .font(.system(size: 13)).foregroundStyle(.secondary)
                     }

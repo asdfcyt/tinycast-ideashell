@@ -105,6 +105,7 @@ private struct IslandCollapsedView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var focus: FocusStore
     @ObservedObject var state: IslandState
+    @ObservedObject private var session = BreakSession.shared
 
     var body: some View {
         HStack(spacing: 0) {
@@ -121,14 +122,15 @@ private struct IslandCollapsedView: View {
 
     @ViewBuilder private var leading: some View {
         if let r = focus.run {
-            let nowMs = Int64(focus.now.timeIntervalSince1970 * 1000)
-            let progress = r.plannedMs > 0 ? Double(r.elapsedMs(nowMs)) / Double(r.plannedMs) : 0
             ZStack {
                 Circle().stroke(Color.white.opacity(0.2), lineWidth: 2)
-                Circle().trim(from: 0, to: progress)
-                    .stroke(r.kind.isBreak ? Color.green : Brand.orange, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                Image(systemName: r.paused ? "pause.fill" : (r.kind.isBreak ? "cup.and.saucer.fill" : "timer"))
+                FocusTick(clock: focus.clock) { nowMs in
+                    let progress = r.plannedMs > 0 ? Double(r.elapsedMs(nowMs)) / Double(r.plannedMs) : 0
+                    Circle().trim(from: 0, to: progress)
+                        .stroke(r.kind.isBreak ? Color.green : Brand.orange, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                Image(systemName: r.paused ? "pause.fill" : (r.kind.isBreak ? session.move(for: focus).icon : "timer"))
                     .font(.system(size: 7.5, weight: .bold)).foregroundStyle(.white)
             }
             .frame(width: 18, height: 18)
@@ -142,10 +144,11 @@ private struct IslandCollapsedView: View {
 
     @ViewBuilder private var trailing: some View {
         if let r = focus.run {
-            let ms = r.remainingMs(Int64(focus.now.timeIntervalSince1970 * 1000))
-            let left = max(Int(ms / 1000), 0)
-            Text(String(format: "%02d:%02d", left / 60, left % 60))
-                .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit().foregroundStyle(.white)
+            FocusTick(clock: focus.clock) { now in
+                let left = max(Int(r.remainingMs(now) / 1000), 0)
+                Text(String(format: "%02d:%02d", left / 60, left % 60))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit().foregroundStyle(.white)
+            }
         } else if model.hasDida, let ov = model.overview {
             HStack(spacing: 3) {
                 Text("\(ov.todayTasks().count)").foregroundStyle(.white)

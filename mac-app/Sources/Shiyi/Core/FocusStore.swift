@@ -18,7 +18,8 @@ final class FocusStore: ObservableObject {
     @Published private(set) var pendingBreak: FocusKind?
     /// 当前这一轮已经完成的番茄数（跨天清零）
     @Published private(set) var cycle: Int
-    @Published private(set) var now = Date()
+    /// 每秒一次的时钟：单独放一个对象，只有显示倒计时的那几小块订阅它，整个页面不再每秒重画
+    let clock = FocusClock()
     @Published var minutes: Int
     /// 刚结束的一次专注的成果小票（含期间的记录），专注页上显示一张可关闭的卡
     @Published var receipt: Celebration?
@@ -134,24 +135,30 @@ final class FocusStore: ObservableObject {
         setRun(s)
     }
 
+    /// 结束休息：同步完成，按钮点下去立刻生效，不经过任何 await
+    func endBreak() {
+        guard let s = run, s.kind.isBreak else { return }
+        let completed = s.isDue(nowMs)
+        setBreak(nil)
+        if s.kind == .longBreak { saveCycle(0) }
+        setRun(nil)
+        if completed {
+            Self.notify(title: "\(s.kind.label)结束", body: "准备好开始下一个专注了吗？")
+            onCompleted?(s.kind, 0)
+        }
+    }
+
     /// 结束并记录。倒计时走完或「提前结束」都走这里：按实际专注的时长记，不足 1 分钟不记。先落盘再上传。
     func finish() async {
-        guard !finishing, let s = run else { return }
+        guard let s = run else { return }
+        // 休息的结束不能被「上一次专注还在上传 / 刷新」挡住：上传卡住时 finishing 会一直是 true，休息就结束不了
+        if s.kind.isBreak { endBreak(); return }
+        guard !finishing else { return }
         finishing = true
         defer { finishing = false }
         let n = nowMs
         let elapsed = s.elapsedMs(n)
         let completed = s.isDue(n)
-        if s.kind.isBreak {
-            setBreak(nil)
-            if s.kind == .longBreak { saveCycle(0) }
-            setRun(nil)
-            if completed {
-                Self.notify(title: "\(s.kind.label)结束", body: "准备好开始下一个专注了吗？")
-                onCompleted?(s.kind, 0)
-            }
-            return
-        }
         if completed { onPomodoroCompleted() }
         setRun(nil)
         guard elapsed >= Self.minRecordMs else {
@@ -254,7 +261,7 @@ final class FocusStore: ObservableObject {
         BackgroundActivity.set(r != nil)
         if let r, let data = try? JSONEncoder().encode(r) { defaults.set(data, forKey: "focus.session") }
         else { defaults.removeObject(forKey: "focus.session") }
-        now = Date()
+        clock.set(Date())
         updateTicker()
         Self.cancelScheduled()
         if let r { if r.paused { Self.scheduleNag(r) } else { Self.schedule(r) } }
@@ -298,7 +305,7 @@ final class FocusStore: ObservableObject {
     }
 
     private func tick() {
-        now = Date()
+        clock.set(Date())
         if let s = run, s.isDue(nowMs) { Task { await finish() } }
     }
 
@@ -354,4 +361,13 @@ final class FocusStore: ObservableObject {
         defaults.set(day, forKey: "notify.goalDay")
         Notifier.post(id: "shiyi.focus.goal", title: "今日专注目标达成", body: "今天已经专注 \(FocusParser.formatMinutes(m))，目标 \(FocusParser.formatMinutes(goal))。")
     }
+}
+
+
+/// 每秒走一次的时钟（只在计时进行中才会被 FocusStore 驱动）
+@MainActor
+final class FocusClock: ObservableObject {
+    @Published private(set) var now = Date()
+    func set(_ d: Date) { now = d }
+    var nowMs: Int64 { Int64(now.timeIntervalSince1970 * 1000) }
 }

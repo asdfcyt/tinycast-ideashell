@@ -14,10 +14,11 @@ struct MenuBarLabel: View {
         var body: some View {
             HStack(spacing: 4) {
                 if let r = focus.run {
-                    let ms = r.remainingMs(Int64(focus.now.timeIntervalSince1970 * 1000))
-                    let left = max(Int(ms / 1000), 0)
                     Image(systemName: r.paused ? "pause.fill" : (r.kind.isBreak ? "cup.and.saucer.fill" : "timer"))
-                    Text(String(format: "%02d:%02d", left / 60, left % 60)).monospacedDigit()
+                    FocusTick(clock: focus.clock) { now in
+                        let left = max(Int(r.remainingMs(now) / 1000), 0)
+                        Text(String(format: "%02d:%02d", left / 60, left % 60)).monospacedDigit()
+                    }
                 } else {
                     Image(systemName: "checklist")
                     if model.hasDida, let ov = model.overview {

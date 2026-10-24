@@ -250,6 +250,7 @@ final class AppModel: ObservableObject {
         sjzKeyInput = cred.sjzKey
         llmKeyInput = cred.llmKey
         focus.onMessage = { [weak self] text in self?.showNotice(text) }
+        BreakSession.shared.attach(focus)
 
         if let json = LocalStore.read("backup.json"), let file = try? BackupService.decode(json) { backup = file }
         if let json = LocalStore.read("tasknotes.json"), let d = json.data(using: .utf8),

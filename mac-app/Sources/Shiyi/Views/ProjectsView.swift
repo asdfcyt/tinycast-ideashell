@@ -25,36 +25,54 @@ struct ProjectsView: View {
         }
     }
 
-    @ViewBuilder private var projectRows: some View {
-        ForEach(projects) { p in
-            HStack {
+    /// 一行项目：和最上面的「专注」入口同一套卡片样式，选中时橙色描边
+    private func projectCard(title: String, subtitle: String?, subtitleTint: Color = .secondary, chip: String, chipTint: Color, key: String) -> some View {
+        let on = selected == key
+        return Button { model.selectedProject = key } label: {
+            HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(p.keyword).font(.body.weight(.medium))
-                    if let n = p.next, !n.trimmed.isEmpty {
-                        Text(n).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(title).font(.body.weight(.medium)).lineLimit(1)
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle).font(.caption).foregroundStyle(subtitleTint).lineLimit(1)
                     }
                 }
-                Spacer()
-                TagChip(text: p.projectStatus.label, tint: statusColor(p.projectStatus))
+                Spacer(minLength: 4)
+                TagChip(text: chip, tint: chipTint)
             }
-            .padding(.vertical, 2)
-            .tag(p.keyword)
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(on ? Brand.orange.opacity(0.16) : Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(on ? Brand.orange.opacity(0.7) : .clear, lineWidth: 1.2))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func sectionTitle(_ text: String, count: Int, loading: Bool = false) -> some View {
+        HStack(spacing: 6) {
+            Text(text).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text("\(count)").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary).monospacedDigit()
+            if loading { ProgressView().controlSize(.mini) }
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+    }
+
+    @ViewBuilder private var projectRows: some View {
+        ForEach(projects) { p in
+            projectCard(title: p.keyword, subtitle: p.next?.trimmed, chip: p.projectStatus.label, chipTint: statusColor(p.projectStatus), key: p.keyword)
         }
     }
 
     @ViewBuilder private var sjzRows: some View {
         ForEach(sjzProjects) { p in
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(p.title).font(.body.weight(.medium)).lineLimit(1)
-                    Text("待办 \(p.open)" + (p.overdue > 0 ? " · 逾期 \(p.overdue)" : "") + (p.pendingReviews > 0 ? " · 待复核 \(p.pendingReviews)" : ""))
-                        .font(.caption).foregroundStyle(p.overdue > 0 ? Color.red : Color.secondary).lineLimit(1)
-                }
-                Spacer()
-                TagChip(text: p.name == model.sjzPin.project ? "当前" : "审计", tint: p.name == model.sjzPin.project ? .green : .indigo)
-            }
-            .padding(.vertical, 2)
-            .tag(SjzTasks.prefix + p.name)
+            let cur = p.name == model.sjzPin.project
+            projectCard(
+                title: p.title,
+                subtitle: "待办 \(p.open)" + (p.overdue > 0 ? " · 逾期 \(p.overdue)" : "") + (p.pendingReviews > 0 ? " · 待复核 \(p.pendingReviews)" : ""),
+                subtitleTint: p.overdue > 0 ? .red : .secondary,
+                chip: cur ? "当前" : "审计", chipTint: cur ? .green : Brand.orange,
+                key: SjzTasks.prefix + p.name)
         }
     }
 
@@ -64,16 +82,6 @@ struct ProjectsView: View {
                 FocusEntryRow(focus: model.focus, selected: selected == nil) { model.selectedProject = nil }
                     .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 6)
 
-                // 有审计项目时，下面的分组自带标题，这一行就不要了
-                if sjzProjects.isEmpty {
-                    HStack {
-                        Text("项目").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        if model.backupLoading { ProgressView().controlSize(.mini) }
-                        Spacer()
-                    }
-                    .padding(.horizontal, 18).padding(.top, 6).padding(.bottom, 2)
-                }
-
                 if let e = model.backupError { ErrorBanner(text: e) { Task { await model.loadBackup() } }.padding(8) }
                 if projects.isEmpty && sjzProjects.isEmpty {
                     EmptyHint(
@@ -82,22 +90,25 @@ struct ProjectsView: View {
                         detail: "项目来自手机端写进闪念贝壳的「拾忆备份」笔记。在手机上点「备份到闪念贝壳」后，回到这里刷新。"
                     )
                 } else {
-                    List(selection: $model.selectedProject) {
-                        if sjzProjects.isEmpty {
-                            projectRows
-                        } else {
-                            Section("审计项目 · 结审") { sjzRows }
-                            if !projects.isEmpty { Section("项目") { projectRows } }
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            if !sjzProjects.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    sectionTitle("审计项目 · 结审", count: sjzProjects.count)
+                                    sjzRows
+                                }
+                            }
+                            if !projects.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    sectionTitle("项目", count: projects.count, loading: model.backupLoading)
+                                    projectRows
+                                }
+                            }
                         }
+                        .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 10)
                     }
-                    .listStyle(.inset)
-        .scrollContentBackground(.hidden)
                 }
                 TicketWall(focus: model.focus)
-                if let d = model.backup?.exportedDate {
-                    Text("备份导出于 " + d.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption).foregroundStyle(.tertiary).padding(8)
-                }
             }
         } trailing: {
             Group {
@@ -128,9 +139,7 @@ private struct FocusEntryRow: View {
     let selected: Bool
     let action: () -> Void
 
-    private var nowMs: Int64 { Int64(focus.now.timeIntervalSince1970 * 1000) }
-
-    private var subtitle: String {
+    private func subtitle(_ nowMs: Int64) -> String {
         if let run = focus.run {
             let s = Int((Double(max(run.remainingMs(nowMs), 0)) / 1000).rounded(.up))
             let clock = String(format: "%02d:%02d", s / 60, s % 60)
@@ -149,7 +158,7 @@ private struct FocusEntryRow: View {
                     .frame(width: 26)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("专注").font(.body.weight(.semibold))
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                    FocusTick(clock: focus.clock) { Text(subtitle($0)).font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(1) }
                 }
                 Spacer(minLength: 0)
             }

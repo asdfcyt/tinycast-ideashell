@@ -32,15 +32,40 @@ struct StatTile: View {
     let value: String
     let label: String
     var tint: Color = .primary
+    /// 有值时用「数字大、单位小」的单行时长样式（9 时 56 分），避免窄卡里折行
+    var minutes: Int?
+
+    init(value: String, label: String, tint: Color = .primary) {
+        self.value = value; self.label = label; self.tint = tint; self.minutes = nil
+    }
+
+    init(minutes: Int, label: String, tint: Color = .primary) {
+        self.value = ""; self.label = label; self.tint = tint; self.minutes = minutes
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(value).font(.system(size: 28, weight: .semibold, design: .rounded)).foregroundStyle(tint)
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Group {
+                if let m = minutes { durationText(m) } else { Text(value).font(.system(size: 28, weight: .semibold, design: .rounded)) }
+            }
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+            Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard(radius: 16)
+    }
+
+    private func durationText(_ m: Int) -> Text {
+        let big = Font.system(size: 28, weight: .semibold, design: .rounded)
+        let unit = Font.system(size: 13, weight: .medium, design: .rounded)
+        func num(_ n: Int) -> Text { Text("\(n)").font(big) }
+        func u(_ t: String) -> Text { Text(t).font(unit) }
+        if m < 60 { return num(m) + u(" 分钟") }
+        if m % 60 == 0 { return num(m / 60) + u(" 小时") }
+        return num(m / 60) + u(" 小时 ") + num(m % 60) + u(" 分")
     }
 }
 

@@ -40,6 +40,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$OUT/Shiyi" "$APP/Contents/MacOS/Shiyi"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# 环境音（真实录音，CC0）
+[ -d Resources/Ambient ] && cp -R Resources/Ambient "$APP/Contents/Resources/Ambient"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -58,6 +60,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAppleEventsUsageDescription</key><string>休息时遥控「音乐」或 Spotify 的播放、暂停和切歌。</string>
     <key>NSServices</key>
     <array>
         <dict>
@@ -81,7 +84,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+# 用固定的开发证书签名（有就用），这样「辅助功能」等授权重新编译后不会失效；没有就退回临时签名
+SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development/ {print $2; exit}')
+codesign --force --deep --sign "${SIGN_ID:--}" "$APP" >/dev/null 2>&1 || codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
 echo "已生成：$PWD/$APP"
 
 if [ "${1:-}" = "run" ]; then
