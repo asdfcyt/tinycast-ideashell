@@ -44,6 +44,7 @@ extension AppModel {
                 let flat = RX(#"\s*\n\s*"#, multiline: false).replace(in: line, with: " ")
                 try await daily.append("〔专注〕" + flat, at: Date())
                 invalidateHistory()
+                Task { await loadDailyToday(ifStale: false) }
                 showNotice("已记到今天的 Daily Note")
             }
         } catch {

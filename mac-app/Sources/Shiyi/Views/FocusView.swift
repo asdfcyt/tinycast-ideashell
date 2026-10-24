@@ -9,7 +9,6 @@ struct FocusView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var focus: FocusStore
 
-    @State private var pickTask = false
     @State private var newTitle = ""
     @State private var adding = false
     @State private var confirmDiscard = false
@@ -27,13 +26,20 @@ struct FocusView: View {
             }
             if let e = focus.error { ErrorBanner(text: e) { Task { await focus.refresh() } } }
 
-            // 宽窗口：左边计时环 + 控制，右边「专注什么 / 记录 / 统计」；窄了折成单列
+            // 两栏（2:1）：左边计时环 + 控制，右边「专注什么 / 记录」；统计、近 7 天、最近几次各自整行放在下面。
+            // 窗口窄到放不下两栏时折成单列
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 20) {
-                    timerCard.frame(minWidth: 380, idealWidth: 400, maxWidth: 420)
-                    VStack(spacing: 16) { side }.frame(minWidth: 320, idealWidth: 340, maxWidth: .infinity)
+                VStack(spacing: 16) {
+                    RatioColumns(leading: 2.0 / 3.0, spacing: 16) {
+                        timerCard
+                        VStack(spacing: 12) { rightColumn }
+                    }
+                    todayCard
+                    weekCard
+                    recentCard
                 }
-                VStack(spacing: 16) { timerCard; side }
+                .frame(minWidth: 520)
+                VStack(spacing: 16) { timerCard; rightColumn; todayCard; weekCard; recentCard }
             }
         }
         .alert("放弃这次专注？", isPresented: $confirmDiscard) {
@@ -44,13 +50,9 @@ struct FocusView: View {
         }
     }
 
-    @ViewBuilder private var side: some View {
+    @ViewBuilder private var rightColumn: some View {
         if shownKind() == .focus { taskRow }
         recordCard
-        receiptCard
-        todayCard
-        weekCard
-        recentCard
     }
 
     private func shownKind() -> FocusKind { focus.shownKind }
@@ -186,88 +188,136 @@ struct FocusView: View {
         return nil
     }
 
+    /// 「专注什么」直接展开：搜索框 + 自由专注 + 推荐的待办（今天的、逾期的、接下来的），点一下就选上。
+    /// 搜索框可以搜所有未完成的待办；没有想要的就一键新建一个今天的待办并关联
     private var taskRow: some View {
-        Button { pickTask = true } label: {
-            HStack(spacing: 10) {
-                Image(systemName: linked == nil ? "scope" : "checkmark.circle").foregroundStyle(Brand.orange)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("专注什么").font(.caption).foregroundStyle(.secondary)
-                    Text(linked?.title ?? "自由专注（不关联待办）").font(.body.weight(.medium)).lineLimit(1)
-                }
-                Spacer()
-                if let s = linked?.subtitle { Text(s).font(.caption).foregroundStyle(.tertiary) }
-                Image(systemName: "chevron.up.chevron.down").font(.caption).foregroundStyle(.tertiary)
+        let current = focus.run?.taskId ?? focus.task?.id
+        let q = newTitle.trimmed
+        let found = q.isEmpty ? [] : searchResults(q)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "scope").font(.system(size: 12, weight: .semibold)).foregroundStyle(Brand.orange)
+                Text("专注什么").font(.callout.weight(.semibold))
+                Spacer(minLength: 0)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity)
-            .glassCard(radius: 14)
+            .padding(.horizontal, 6).padding(.bottom, 2)
+
+            // 搜索 / 新建
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.tertiary)
+                TextField(model.hasDida ? "搜索待办，或输入新建…" : "连接滴答清单后可搜索", text: $newTitle)
+                    .textFieldStyle(.plain).font(.callout)
+                    .disabled(!model.hasDida)
+                    .onSubmit {
+                        if let t = found.first { pick(t) } else { addTask() }
+                    }
+                if adding {
+                    ProgressView().controlSize(.small)
+                } else if !newTitle.isEmpty {
+                    Button { newTitle = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 12)).foregroundStyle(.tertiary) }
+                        .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(.bottom, 4)
+
+            if q.isEmpty {
+                pickRow(icon: current == nil ? "checkmark.circle.fill" : "circle.dashed", title: "自由专注", trailing: nil, on: current == nil) {
+                    focus.attach(nil)
+                }
+                if candidates.isEmpty {
+                    Text(model.hasDida ? "没有可选的待办" : "连接滴答清单后可以关联待办")
+                        .font(.caption).foregroundStyle(.tertiary).padding(.horizontal, 6).padding(.vertical, 6)
+                }
+                ForEach(candidates, id: \.0) { group in
+                    Text(group.0).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.tertiary)
+                        .padding(.horizontal, 6).padding(.top, 6)
+                    ForEach(group.1) { t in taskPick(t, current) }
+                }
+            } else {
+                if found.isEmpty {
+                    Text("没有匹配的待办").font(.caption).foregroundStyle(.tertiary).padding(.horizontal, 6).padding(.vertical, 4)
+                } else {
+                    Text("搜索结果 \(found.count)").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.tertiary)
+                        .padding(.horizontal, 6).padding(.top, 2)
+                    ForEach(found) { t in taskPick(t, current) }
+                }
+                if model.hasDida {
+                    Divider().padding(.vertical, 3)
+                    Button(action: addTask) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "plus.circle.fill").font(.system(size: 14)).foregroundStyle(Brand.orange)
+                            Text("新建「\(q)」并关联").font(.callout).lineLimit(1)
+                            Spacer(minLength: 4)
+                            Text("今天").font(.caption).foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 6).padding(.vertical, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).disabled(adding)
+                }
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard(radius: 14)
+    }
+
+    private func taskPick(_ t: DidaTask, _ current: String?) -> some View {
+        let sub = t.time ?? t.date.map { Day.label($0) }
+        return pickRow(icon: current == t.id ? "checkmark.circle.fill" : "circle", title: t.cleanTitle, trailing: sub, on: current == t.id) {
+            pick(t)
+        }
+    }
+
+    private func pick(_ t: DidaTask) {
+        focus.attach(t)
+        newTitle = ""
+    }
+
+    /// 在所有未完成的待办里按标题 / 标签 / 清单名搜索（空格分词，都要匹配），最多 8 条
+    private func searchResults(_ q: String) -> [DidaTask] {
+        guard let ov = model.overview else { return [] }
+        let words = q.lowercased().split(whereSeparator: { $0 == " " || $0 == "　" }).map(String.init)
+        guard !words.isEmpty else { return [] }
+        let all = ov.overdue + ov.upcoming + ov.undated
+        let hits = all.filter { t in
+            let hay = (t.cleanTitle + " " + t.tags.joined(separator: " ") + " " + (ov.projectName(t.projectId) ?? "")).lowercased()
+            return words.allSatisfy { hay.contains($0) }
+        }
+        return Array(hits.prefix(8))
+    }
+
+    private func pickRow(icon: String, title: String, trailing: String?, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.system(size: 14))
+                    .foregroundStyle(on ? Brand.orange : Color.secondary.opacity(0.7))
+                Text(title).font(.callout.weight(on ? .semibold : .regular)).lineLimit(1)
+                Spacer(minLength: 4)
+                if let trailing { Text(trailing).font(.caption).foregroundStyle(.tertiary).monospacedDigit() }
+            }
+            .padding(.horizontal, 6).padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(on ? Brand.orange.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $pickTask, arrowEdge: .bottom) { taskPicker }
     }
 
+    /// 推荐的待办：今天的最前，其次逾期、接下来、无日期，每组只列前几个
     private var candidates: [(String, [DidaTask])] {
         guard let ov = model.overview else { return [] }
         let today = Day.today()
+        let todayList = ov.upcoming.filter { $0.date == today }.sorted { ($0.time ?? "99:99") < ($1.time ?? "99:99") }
         return [
-            ("今天", ov.upcoming.filter { $0.date == today }),
-            ("逾期", ov.overdue),
-            ("接下来", ov.upcoming.filter { ($0.date ?? "") > today }),
-            ("无日期", Array(ov.undated.prefix(8))),
+            ("今天", Array(todayList.prefix(6))),
+            ("逾期", Array(ov.overdue.prefix(4))),
+            ("接下来", Array(ov.upcoming.filter { ($0.date ?? "") > today }.prefix(3))),
+            ("无日期", Array(ov.undated.prefix(3))),
         ].filter { !$0.1.isEmpty }
-    }
-
-    private var taskPicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                focus.attach(nil)
-                pickTask = false
-            } label: {
-                Label("自由专注（不关联待办）", systemImage: "scope")
-            }
-            .buttonStyle(.borderless)
-
-            HStack {
-                TextField("新建今天的待办并关联…", text: $newTitle)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(addTask)
-                Button(action: addTask) {
-                    if adding { ProgressView().controlSize(.small) } else { Text("添加") }
-                }
-                .disabled(newTitle.trimmed.isEmpty || adding || !model.hasDida)
-            }
-
-            Divider()
-            if candidates.isEmpty {
-                Text(model.hasDida ? "没有可选的待办" : "连接滴答清单后可以关联待办").font(.callout).foregroundStyle(.secondary)
-            }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(candidates, id: \.0) { group in
-                        Text(group.0).font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 6)
-                        ForEach(group.1) { t in
-                            Button {
-                                focus.attach(t)
-                                pickTask = false
-                            } label: {
-                                HStack {
-                                    Text(t.cleanTitle).lineLimit(1)
-                                    Spacer()
-                                    if let time = t.time { Text(time).font(.caption).foregroundStyle(.tertiary).monospacedDigit() }
-                                }
-                                .contentShape(Rectangle())
-                                .padding(.vertical, 3)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-            .frame(maxHeight: 280)
-        }
-        .padding(14)
-        .frame(width: 340)
     }
 
     private func addTask() {
@@ -282,7 +332,6 @@ struct FocusView: View {
                 let t = created ?? model.overview?.upcoming.first { $0.title == title && $0.date == Day.today() }
                 if let t { focus.attach(t) }
                 newTitle = ""
-                pickTask = false
             } catch {
                 model.showNotice("新建待办失败：" + error.localizedDescription)
             }
@@ -346,20 +395,6 @@ struct FocusView: View {
                     }
                 }
             }
-        }
-    }
-
-    /// 刚结束的一次专注的成果小票（和完成时「打印」出来的是同一张），可保存成图片 / 复制
-    @ViewBuilder private var receiptCard: some View {
-        if let r = focus.receipt, focus.run == nil {
-            VStack(spacing: 10) {
-                ResultTicketView(c: r)
-                    .shadow(color: .black.opacity(0.18), radius: 10, y: 5)
-                TicketActions(c: r) { focus.dismissReceipt() }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 
@@ -588,5 +623,32 @@ struct FocusDial<Center: View>: View {
         let m = min(max(Int((f * Double(maxMin)).rounded()), minMin), maxMin)
         last = Double(m) / Double(maxMin)
         if m != Int((fraction * Double(maxMin)).rounded()) { onMinutes(m) }
+    }
+}
+
+/// 两栏按比例分宽（leading : 1 - leading），顶对齐，高度取两栏里高的那个
+struct RatioColumns: Layout {
+    var leading: CGFloat = 2.0 / 3.0
+    var spacing: CGFloat = 16
+
+    private func widths(_ total: CGFloat) -> (CGFloat, CGFloat) {
+        let avail = max(total - spacing, 0)
+        return (avail * leading, avail * (1 - leading))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 2 else { return .zero }
+        let w = proposal.width ?? 520   // 没给宽度时报最小宽度，ViewThatFits 才会选两栏
+        let (lw, tw) = widths(w)
+        let a = subviews[0].sizeThatFits(ProposedViewSize(width: lw, height: nil))
+        let b = subviews[1].sizeThatFits(ProposedViewSize(width: tw, height: nil))
+        return CGSize(width: w, height: max(a.height, b.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        let (lw, tw) = widths(bounds.width)
+        subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY), anchor: .topLeading, proposal: ProposedViewSize(width: lw, height: nil))
+        subviews[1].place(at: CGPoint(x: bounds.minX + lw + spacing, y: bounds.minY), anchor: .topLeading, proposal: ProposedViewSize(width: tw, height: nil))
     }
 }

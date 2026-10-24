@@ -77,6 +77,11 @@ extension AppModel {
             r.dailyCount = max(0, r.dailyCount - 1)
             river = r
         }
+        // 今天页的「今天的笔记」也先去掉这一条
+        if date == Day.today(), var d = dailyToday, let j = d.entries.firstIndex(where: { $0.time == entry.time && $0.text == entry.text }) {
+            d.entries.remove(at: j)
+            dailyToday = d
+        }
         if let noteId {
             noteCache.removeValue(forKey: noteId)
             if pane.page != nil, case let .note(n)? = pane.page, n.id == noteId { pane.clear() }
@@ -88,6 +93,7 @@ extension AppModel {
             showNotice("删除失败：" + error.localizedDescription)
         }
         invalidateHistory()
+        if date == Day.today() { Task { await loadDailyToday(ifStale: false) } }
         await loadRiver(silent: true)
     }
 }

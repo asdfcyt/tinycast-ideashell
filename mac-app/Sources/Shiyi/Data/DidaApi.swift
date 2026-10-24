@@ -69,6 +69,11 @@ struct DidaApi {
         try await updateFields(task, ["tags": tags])
     }
 
+    /// 编辑任务：标题、备注、标签一次写回
+    func setDetails(_ task: DidaTask, title: String, content: String, tags: [String]) async throws {
+        try await updateFields(task, ["title": title, "content": content, "tags": tags])
+    }
+
     /// 清除日期（滴答约定：日期设成 1970-01-01 表示清除）
     func clearDate(_ task: DidaTask) async throws {
         let zero = "1970-01-01T00:00:00.000+0000"

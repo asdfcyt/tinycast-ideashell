@@ -54,6 +54,7 @@ struct ProjectsView: View {
                     .listStyle(.inset)
         .scrollContentBackground(.hidden)
                 }
+                TicketWall(focus: model.focus)
                 if let d = model.backup?.exportedDate {
                     Text("备份导出于 " + d.formatted(date: .abbreviated, time: .shortened))
                         .font(.caption).foregroundStyle(.tertiary).padding(8)

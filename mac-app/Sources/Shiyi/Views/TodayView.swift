@@ -19,18 +19,14 @@ private struct TodayContent: View {
     @State private var showQuickStart = false
 
     private var today: String { Day.today() }
-    @State private var dailyToday: DailyDay?
+    /// 今天的 Daily Note 放在 model 里缓存：切页回来直接显示，不清空重读
+    private var dailyToday: DailyDay? { model.dailyToday }
     /// 今天的笔记（Daily Note 单独在下面按条显示，这里不重复列那一篇）
     private var todayNotes: [NoteInfo] {
         model.timeline.filter { $0.day == today && $0.id != dailyToday?.noteId && !$0.tags.contains("daily-note") }
     }
     /// 今天 Daily Note 里最近的 5 条（新的在上）
     private var dailyRecent: [DailyEntry] { Array((dailyToday?.entries ?? []).filter { !$0.struck }.suffix(5).reversed()) }
-
-    private func loadDaily() async {
-        guard model.hasIdeashell else { return }
-        if let d = try? await model.daily.days(from: today, to: today) { dailyToday = d[today] }
-    }
 
     private var todayDone: [DidaTask] {
         (model.overview?.done ?? []).filter { $0.completedDate.map { Day.string($0) == today } ?? false }
@@ -87,13 +83,12 @@ private struct TodayContent: View {
         .task {
             async let m: Void = model.loadMemory()
             async let h: Void = model.loadHeat()
-            async let d: Void = loadDaily()
+            async let d: Void = model.loadDailyToday()
             _ = await (m, h, d)
         }
-        // 新记了笔记 / Daily Note、回到应用时，今天的 Daily Note 跟着更新
-        .task(id: model.timeline.map(\.id)) { await loadDaily() }
-        .onChange(of: model.showQuickAdd) { _, open in if !open { Task { await loadDaily() } } }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await loadDaily() } }
+        // 笔记列表变了（新记了笔记 / 刷新到别处写的）才强制重读；进页面、回到应用只在缓存过期时读
+        .onChange(of: model.timeline.map(\.id)) { _, _ in Task { await model.loadDailyToday(ifStale: false) } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await model.loadDailyToday() } }
     }
 
     // MARK: - 标题 + 排期工具
@@ -252,6 +247,8 @@ private struct TodayContent: View {
         let isDaily: Bool
         let noteId: String
         let title: String
+        /// 日记条目（普通笔记为 nil）：右键删除 / 转待办用
+        var entry: DailyEntry?
     }
 
     private var feed: [FeedItem] {
@@ -260,7 +257,7 @@ private struct TodayContent: View {
         }
         if let noteId = dailyToday?.noteId {
             for (i, e) in dailyRecent.enumerated() {
-                out.append(FeedItem(id: "d\(i)" + e.time, time: e.time, text: e.text, isDaily: true, noteId: noteId, title: today + " Daily Note"))
+                out.append(FeedItem(id: "d\(i)" + e.time, time: e.time, text: e.text, isDaily: true, noteId: noteId, title: today + " Daily Note", entry: e))
             }
         }
         return out.sorted { $0.time > $1.time }
@@ -295,9 +292,39 @@ private struct TodayContent: View {
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .contentShape(Rectangle())
                     .onTapGesture { model.openNote(it.noteId, title: it.title) }
+                    .contextMenu { feedMenu(it) }
                     if i < items.count - 1 { Divider().padding(.leading, 62) }
                 }
             }
+        }
+    }
+
+    /// 今天的笔记 / 日记条目的右键菜单
+    @ViewBuilder private func feedMenu(_ it: FeedItem) -> some View {
+        Button(it.isDaily ? "打开今天的 Daily Note" : "打开笔记") { model.openNote(it.noteId, title: it.title) }
+        Button("在闪念贝壳中打开") { model.open(noteURL(it.noteId)) }
+        Divider()
+        Button(it.isDaily ? "复制这条" : "复制标题") { model.copy(it.text) }
+        if let full = model.timeline.first(where: { $0.id == it.noteId })?.text?.trimmed, !it.isDaily, !full.isEmpty {
+            Button("复制全文") { model.copy(full) }
+        }
+        Button("转成待办") {
+            Task {
+                do {
+                    let a = CaptureParser.analyze(it.text)
+                    let msg = try await model.submitCapture(a, kind: .todo)
+                    model.showNotice(msg)
+                } catch {
+                    model.showNotice("转成待办失败：" + error.localizedDescription)
+                }
+            }
+        }
+        .disabled(!model.hasDida)
+        if let e = it.entry {
+            Button("新建笔记…") { model.newNoteDraft = NewNoteDraft(title: it.text) }
+                .disabled(!model.hasIdeashell)
+            Divider()
+            Button("删除这条日记…", role: .destructive) { model.requestDelete(.daily(date: today, entry: e, noteId: it.noteId)) }
         }
     }
 

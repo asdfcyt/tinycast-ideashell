@@ -126,6 +126,11 @@ final class AppModel: ObservableObject {
     /// 今天页热力图：最近 26 周每天 Daily Note 里记了几条
     @Published var heat: [String: Int] = [:]
     @Published var heatLoading = false
+    /// 今天页的「今天的笔记」：今天 Daily Note 的条目。放在这里而不是页面里，切走再切回来不会清空重读
+    @Published var dailyToday: DailyDay?
+    var dailyTodayDay = ""
+    /// 「从这条日记新建笔记」的弹窗（今天页和回顾页的右键菜单共用，由根视图弹出）
+    @Published var newNoteDraft: NewNoteDraft?
     /// 正在批量改期 / 自动排期
     @Published var scheduling = false
     /// 正在把专注中的一条记录写进任务笔记
@@ -171,6 +176,8 @@ final class AppModel: ObservableObject {
     @Published var quickAddTime: String?
     /// 日历时间轴上双击出来的「新建待办」草稿；有草稿时右侧面板是新建表单
     @Published var calendarDraft: CalendarDraft?
+    /// 右键「编辑任务…」：打开详情后由详情页弹出编辑框（存任务 id）
+    @Published var pendingEditTask: String?
     /// 日历右侧面板里选中的任务详情（点时间轴 / 当天列表里的任务，在右边展开，不再弹页面）
     let calPane = PaneState()
     /// 快速启动最近一次的梳理结果（30 分钟内再打开直接用）
@@ -228,6 +235,10 @@ final class AppModel: ObservableObject {
         overview = Self.readCache("overview.json")
         timeline = Self.readCache("timeline.json") ?? []
         heat = Self.readCache("heat.json") ?? [:]
+        if let c: DailyTodayCache = Self.readCache("daily-today.json"), c.day == Day.today() {
+            dailyToday = c.data
+            dailyTodayDay = c.day
+        }
         if !timeline.isEmpty { timelineDays = 2 }
         if !hasIdeashell && !hasDida { section = .settings }
     }
@@ -423,6 +434,12 @@ final class AppModel: ObservableObject {
         } else {
             present(.task(task))
         }
+    }
+
+    /// 打开任务详情并直接进入编辑
+    func editTask(_ task: DidaTask) {
+        openTask(task)
+        pendingEditTask = task.id
     }
 
     /// 弹出页面。已经在显示同一页就不重复叠一层（双击会连续触发两次）

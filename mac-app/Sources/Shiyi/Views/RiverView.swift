@@ -296,6 +296,8 @@ private struct DailyLine: View {
         }
         .contextMenu {
             Button("复制这条") { model.copy(entry.text) }
+            Button("新建笔记…") { model.newNoteDraft = NewNoteDraft(title: entry.text) }
+                .disabled(!model.hasIdeashell)
             if let id = noteId {
                 Button("在右侧查看") { model.paneNote(id, title: "Daily Note", entry: key) }
                 Button("弹出这天的 Daily Note") { model.openNote(id, title: "Daily Note") }

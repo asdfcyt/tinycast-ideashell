@@ -49,6 +49,7 @@ extension AppModel {
             guard !text.isEmpty else { throw McpError.tool("内容为空") }
             try await daily.append(text, at: Date())
             invalidateHistory()
+            Task { await loadDailyToday(ifStale: false) }
             Task { if section == .review { await loadRiver(silent: true) } }
             return "已记入今天的 Daily Note"
 

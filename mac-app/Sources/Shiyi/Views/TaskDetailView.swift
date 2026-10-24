@@ -12,6 +12,7 @@ struct TaskDetailView: View {
     private var current: DidaTask { model.localTask(task.id) ?? task }
     private var ref: TaskNoteRef? { model.taskNote(forTask: current) }
 
+    @State private var showEdit = false
     @State private var composing = false
     @State private var deliverable = ""
     @State private var purpose = ""
@@ -39,6 +40,15 @@ struct TaskDetailView: View {
         }
         .background(AmbientBackground())
         .task(id: ref?.noteId) { await loadNote() }
+        .sheet(isPresented: $showEdit) { TaskEditSheet(task: current).environmentObject(model) }
+        .onAppear { consumePendingEdit() }
+        .onChange(of: model.pendingEditTask) { consumePendingEdit() }
+    }
+
+    private func consumePendingEdit() {
+        guard model.pendingEditTask == task.id else { return }
+        model.pendingEditTask = nil
+        showEdit = true
     }
 
     // MARK: - 头部
@@ -71,6 +81,9 @@ struct TaskDetailView: View {
                 }
             }
             Spacer(minLength: 0)
+            Button { showEdit = true } label: { Label("编辑", systemImage: "square.and.pencil") }
+                .buttonStyle(.bordered).controlSize(.regular)
+                .help("编辑标题、备注、标签")
         }
     }
 
@@ -124,18 +137,22 @@ struct TaskDetailView: View {
     }
 
     private var datePopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            DatePicker("", selection: $editDate, displayedComponents: .date)
-                .datePickerStyle(.graphical).labelsHidden()
+        VStack(alignment: .leading, spacing: 14) {
+            DayGridPicker(selection: $editDate)
             HStack(spacing: 8) {
                 quick("今天", 0)
                 quick("明天", 1)
                 quick("后天", 2)
                 quick("下周", 7)
             }
-            Toggle("具体时间", isOn: $editHasTime).toggleStyle(.switch)
-            if editHasTime {
-                DatePicker("", selection: $editTime, displayedComponents: .hourAndMinute).labelsHidden()
+            Divider()
+            HStack {
+                Label("具体时间", systemImage: "clock").font(.callout)
+                Spacer()
+                if editHasTime {
+                    DatePicker("", selection: $editTime, displayedComponents: .hourAndMinute).labelsHidden()
+                }
+                Toggle("", isOn: $editHasTime).toggleStyle(.switch).labelsHidden().controlSize(.small)
             }
             Divider()
             HStack {
@@ -161,8 +178,10 @@ struct TaskDetailView: View {
     }
 
     private func quick(_ label: String, _ days: Int) -> some View {
-        Button(label) { editDate = Day.parse(Day.add(Day.today(), days: days)) ?? Date() }
-            .buttonStyle(.bordered).controlSize(.small)
+        Button { editDate = Day.parse(Day.add(Day.today(), days: days)) ?? Date() } label: {
+            Text(label).frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered).controlSize(.small)
     }
 
     private var priorityChip: some View {
@@ -372,6 +391,7 @@ struct TaskDetailView: View {
     private var actions: some View {
         FlowRow(spacing: 8) {
             Button { model.open(didaTaskURL(current.projectId, current.id)) } label: { Label("在滴答清单中打开", systemImage: "arrow.up.right.square") }
+            Button { showEdit = true } label: { Label("编辑任务", systemImage: "square.and.pencil") }
             Button { model.copy(current.cleanTitle) } label: { Label("复制标题", systemImage: "doc.on.doc") }
             if current.done {
                 Button { Task { await model.undoComplete(current) } } label: { Label("恢复为未完成", systemImage: "arrow.uturn.backward") }

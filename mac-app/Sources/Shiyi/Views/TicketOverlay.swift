@@ -223,6 +223,7 @@ final class TicketController {
 /// 专注页里小票下面的按钮：保存图片 / 复制 / 收起（浅色背景上用系统样式）
 struct TicketActions: View {
     let c: Celebration
+    var showClose = true
     let onClose: () -> Void
     @State private var savedURL: URL?
     @State private var copied = false
@@ -239,7 +240,7 @@ struct TicketActions: View {
             Button { copied = TicketExporter.copy(c) } label: {
                 Label(copied ? "已复制" : "复制", systemImage: copied ? "checkmark" : "doc.on.doc")
             }
-            Button(action: onClose) { Label("收起", systemImage: "xmark") }
+            if showClose { Button(action: onClose) { Label("收起", systemImage: "xmark") } }
         }
         .buttonStyle(.bordered).controlSize(.small)
         if failed { Text("保存失败，请检查「图片」文件夹的权限").font(.caption2).foregroundStyle(.red) }

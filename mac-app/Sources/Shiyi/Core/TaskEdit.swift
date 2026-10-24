@@ -9,6 +9,8 @@ enum TaskEdit {
     case list(String)
     /// 整体替换标签（用来改「项目」：项目靠标签 / 关键词归属）
     case tags([String])
+    /// 编辑任务：标题、备注、标签一起改
+    case details(title: String, content: String, tags: [String])
 }
 
 extension AppModel {
@@ -35,11 +37,14 @@ extension AppModel {
         case .clearDate: n.date = nil; n.time = nil
         case let .list(id): n.projectId = id
         case let .tags(t): n.tags = t
+        case let .details(title, content, tags): n.title = title; n.content = content; n.tags = tags
         }
         let before = overview
         if var ov = overview {
             ov = ov.withoutTask(task.id)
-            if !n.done {
+            if n.done {
+                if let i = ov.done.firstIndex(where: { $0.id == n.id }) { ov.done[i] = n }
+            } else {
                 if let d = n.date { if d < Day.today() { ov.overdue.append(n) } else { ov.upcoming.append(n) } } else { ov.undated.append(n) }
             }
             overview = ov
@@ -52,6 +57,7 @@ extension AppModel {
             case .clearDate: try await dida.clearDate(task)
             case let .list(id): try await dida.move(task, toProject: id)
             case let .tags(t): try await dida.setTags(task, t)
+            case let .details(title, content, tags): try await dida.setDetails(task, title: title, content: content, tags: tags)
             }
             invalidateHistory()
             showNotice("已修改")

@@ -17,6 +17,7 @@ struct TaskContextMenu: View {
     var body: some View {
         let t = self.t
         Button("查看详情") { model.openTask(t) }
+        Button("编辑任务…") { model.editTask(t) }
         if t.done {
             Button("恢复为未完成") { Task { await model.undoComplete(t) } }
         } else {

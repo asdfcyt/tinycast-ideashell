@@ -15,7 +15,8 @@ struct RootView: View {
                     Label(AppSection.settings.title, systemImage: AppSection.settings.icon).tag(AppSection.settings)
                 }
             }
-            .navigationSplitViewColumnWidth(min: 150, ideal: 170, max: 220)
+            .safeAreaInset(edge: .bottom, spacing: 0) { MiniCalendar() }
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
         } detail: {
             detail
                 .navigationTitle(model.section.title)
@@ -49,6 +50,9 @@ struct RootView: View {
         }
         .sheet(isPresented: Binding(get: { !model.sheetStack.isEmpty }, set: { if !$0 { model.closeSheets() } })) {
             DetailSheet().environmentObject(model).dismissOnOutsideClick()
+        }
+        .sheet(item: $model.newNoteDraft) { draft in
+            NewNoteSheet(draft: draft).environmentObject(model).dismissOnOutsideClick()
         }
         .animation(.easeInOut(duration: 0.2), value: model.lastUndo?.id)
         .animation(.easeInOut(duration: 0.2), value: model.notice)

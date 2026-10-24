@@ -288,7 +288,7 @@ private struct DottedLine: View {
 }
 
 /// 条形码：按流水号生成固定的粗细条（同一张小票每次画出来一样）
-private struct Barcode: View {
+struct Barcode: View {
     let seed: String
 
     var body: some View {
