@@ -391,18 +391,14 @@ struct ProjectDetailView: View {
         var all: [NoteInfo] = []
         var firstError: Error?
         let api = model.ideashell
-        await withTaskGroup(of: Result<[NoteInfo], Error>.self) { group in
-            for t in terms {
-                group.addTask {
-                    do { return .success(try await api.searchNotes(t, limit: 20)) }
-                    catch { return .failure(error) }
-                }
-            }
-            for await r in group {
-                switch r {
-                case let .success(ns): all += ns
-                case let .failure(e): firstError = e
-                }
+        let found: [Result<[NoteInfo], Error>] = await runConcurrently(terms.count) { i in
+            do { return .success(try await api.searchNotes(terms[i], limit: 20)) }
+            catch { return .failure(error) }
+        }
+        for r in found {
+            switch r {
+            case let .success(ns): all += ns
+            case let .failure(e): firstError = e
             }
         }
         var seen = Set<String>()

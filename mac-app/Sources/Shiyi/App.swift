@@ -18,10 +18,11 @@ struct ShiyiApp: App {
 
     var body: some Scene {
         Window("拾忆", id: "main") {
-            MainWindowHost()
-                .environmentObject(model)
-                .frame(minWidth: 900, minHeight: 600)
-                .task { model.start() }
+            CheapMeasureLayout {
+                MainWindowHost().environmentObject(model)
+            }
+            .frame(minWidth: 900, maxWidth: .infinity, minHeight: 600, maxHeight: .infinity)
+            .task { model.start() }
         }
         .defaultSize(width: 1120, height: 720)
 
@@ -46,5 +47,23 @@ private struct MainWindowHost: View {
     var body: some View {
         RootView()
             .onAppear { MainWindow.opener = { openWindow(id: "main") } }
+    }
+}
+
+/// 主窗口的 NSHostingView 会在每个布局周期里重新测量「最小 / 最大 / 理想尺寸」（NSHostingView.minSize → sizeThatFits）：
+/// 默认的容器要把整棵页面树（含 ScrollView 里的全部内容、ViewThatFits 的两套排版）再量一遍，
+/// 页面里任何一处刷新（每秒的专注计时、悬停、数据回来）都会触发 —— 这是 CPU 忽高忽低的主因。
+/// 这个容器报告尺寸时直接用上面给的提议，不去量里面的内容；真正排版（放置子视图）时才用提议的大小布局。
+private struct CheapMeasureLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        // 「无限」的提议（量最大尺寸时）换成一个足够大的有限值：窗口等于不设上限
+        func pick(_ v: CGFloat?) -> CGFloat { guard let v else { return 0 }; return v.isFinite ? v : 100_000 }
+        return CGSize(width: pick(proposal.width), height: pick(proposal.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for v in subviews {
+            v.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+        }
     }
 }

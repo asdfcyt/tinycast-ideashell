@@ -20,8 +20,11 @@ final class CaptureWatcher {
         stop()
         lastChange = NSPasteboard.general.changeCount
         clipTimer = Timer.scheduledTimer(withTimeInterval: 0.7, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.checkClipboard() }
+            // changeCount 没变（绝大多数时候）就直接返回，不必为此开一个 Task
+            MainActor.assumeIsolated { self?.checkClipboard() }
         }
+        // 剪贴板轮询不需要精确：放宽容差，让系统把它和别的定时器合并唤醒
+        clipTimer?.tolerance = 0.3
         watchDirectory()
     }
 

@@ -36,6 +36,13 @@ extension AppModel {
 
     /// 项目（搁置的不算）的进展：各项目相关任务的完成率（完成 ÷ 完成 + 未完成）求平均；没有可算的数据为 nil
     var projectProgress: Double? {
+        if let memo = projectProgressMemo { return memo }
+        let v = computeProjectProgress()
+        projectProgressMemo = .some(v)
+        return v
+    }
+
+    private func computeProjectProgress() -> Double? {
         guard let ov = overview else { return nil }
         let open = ov.overdue + ov.upcoming + ov.undated
         let each: [Double] = projects.filter { $0.projectStatus != .PAUSED }.compactMap { p in

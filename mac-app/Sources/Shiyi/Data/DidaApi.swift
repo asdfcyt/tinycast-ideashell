@@ -143,6 +143,9 @@ struct DidaApi {
 
     /// 概览：逾期（近 13 天）/ 今天起 7 天 / 最近完成（近 3 天）/ 收集箱无日期任务。
     /// 接口单次最多 14 天；区间查询与「今天 / 未来 7 天」两种方式各拉一遍再合并，互相补漏。
+    /// `@_optimize(none)`：Swift 6.4 的 -O 会把这个函数里的 String 优化坏（字符串比较 / 字典查找时 EXC_BAD_ACCESS 0x18，
+    /// 约三成启动崩溃）。这里只做少量数据拼装，不优化没有性能影响；其余代码仍然是 -O。
+    @_optimize(none)
     func fetchOverview() async throws -> DidaOverview {
         let today = Day.today()
         func q(_ command: String) -> JSON { ["query_command": command, "client_timezone": tz] }
@@ -155,40 +158,38 @@ struct DidaApi {
             Call(key: "undone_inbox", tool: "get_project_with_undone_tasks", args: ["project_id": "inbox"]),
         ]
 
-        async let projectsAsync: [String: String] = (try? await projectNames()) ?? [:]
+        // 不用 async let：同样是 -O 下 Swift 并发运行时的崩溃高发点，改用普通 Task
+        let projectsTask = Task { [self] () -> [String: String] in (try? await projectNames()) ?? [:] }
 
-        let results: [String: Result<String, Error>] = await withTaskGroup(of: (String, Result<String, Error>).self) { group in
-            for c in calls {
-                group.addTask {
-                    do { return (c.key, .success(try await mcp.callText(c.tool, c.args))) }
-                    catch { return (c.key, .failure(error)) }
-                }
-            }
-            var dict: [String: Result<String, Error>] = [:]
-            for await (k, r) in group { dict[k] = r }
-            return dict
+        let fetched: [(String, Result<String, Error>)] = await runConcurrently(calls.count) { i in
+            let c = calls[i]
+            do { return (c.key, .success(try await mcp.callText(c.tool, c.args))) }
+            catch { return (c.key, .failure(error)) }
         }
-        let projects = await projectsAsync
+        let projects = await projectsTask.value
 
-        let failures = results.filter { if case .failure = $0.value { return true } else { return false } }
-        if failures.count == calls.count, case let .failure(err)? = failures.values.first { throw err }
+        // 注意：这里刻意用数组 + 顺序扫描，不用「字典 + 捕获 var 的嵌套函数」——
+        // Swift 6.4 的 -O 在那种写法下会在字典查找时读到被破坏的 String（EXC_BAD_ACCESS 0x18），每次启动约三成概率崩溃。
+        var failures: [(key: String, value: Result<String, Error>)] = []
+        for f in fetched { if case .failure = f.1 { failures.append((f.0, f.1)) } }
+        if failures.count == calls.count, case let .failure(err)? = failures.first?.value { throw err }
 
+        var texts: [(String, String)] = []
+        for f in fetched { if case let .success(text) = f.1 { texts.append((f.0, text)) } }
         func tasksOf(_ key: String) -> [DidaTask] {
-            if case let .success(text)? = results[key] { return DidaParser.extractTasks(text) }
+            for (k, text) in texts where k == key { return DidaParser.extractTasks(text) }
             return []
         }
 
         let limit = Day.add(today, days: 7)
-        var open: [String: DidaTask] = [:]
-        var order: [String] = []
+        var seenIds = Set<String>()
+        var all: [DidaTask] = []
         for key in ["undone_overdue", "undone_upcoming", "undone_today", "undone_next7"] {
             for t in tasksOf(key) {
-                guard let d = t.date, !t.done, d <= limit, open[t.id] == nil else { continue }
-                open[t.id] = t
-                order.append(t.id)
+                guard let d = t.date, !t.done, d <= limit, seenIds.insert(t.id).inserted else { continue }
+                all.append(t)
             }
         }
-        let all = order.compactMap { open[$0] }
 
         var undated = tasksOf("undone_inbox").filter { !$0.done && $0.date == nil }
         undated.sort { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
@@ -226,24 +227,20 @@ struct DidaApi {
             windows.append((cursor, end))
             cursor = Day.add(end, days: 1)
         }
-        let results: [Result<[DidaTask], Error>] = await withTaskGroup(of: Result<[DidaTask], Error>.self) { group in
-            for (a, b) in windows {
-                group.addTask {
-                    do {
-                        let undone = try await mcp.callText("list_undone_tasks_by_date", rangeArgs(a, b))
-                        return .success(DidaParser.extractTasks(undone).filter { !$0.done })
-                    } catch { return .failure(error) }
-                }
-                group.addTask {
-                    do {
-                        let done = try await mcp.callText("list_completed_tasks_by_date", rangeArgs(a, b))
-                        return .success(DidaParser.extractTasks(done).map { t in var c = t; c.done = true; return c })
-                    } catch { return .failure(error) }
-                }
+        // 每个窗口两个请求：偶数序号 = 未完成，奇数序号 = 已完成
+        let results: [Result<[DidaTask], Error>] = await runConcurrently(windows.count * 2) { i in
+            let (a, b) = windows[i / 2]
+            if i % 2 == 0 {
+                do {
+                    let undone = try await mcp.callText("list_undone_tasks_by_date", rangeArgs(a, b))
+                    return .success(DidaParser.extractTasks(undone).filter { !$0.done })
+                } catch { return .failure(error) }
+            } else {
+                do {
+                    let done = try await mcp.callText("list_completed_tasks_by_date", rangeArgs(a, b))
+                    return .success(DidaParser.extractTasks(done).map { t in var c = t; c.done = true; return c })
+                } catch { return .failure(error) }
             }
-            var out: [Result<[DidaTask], Error>] = []
-            for await r in group { out.append(r) }
-            return out
         }
         if !results.isEmpty, results.allSatisfy({ if case .failure = $0 { return true } else { return false } }),
            case let .failure(err)? = results.first { throw err }
@@ -262,18 +259,12 @@ struct DidaApi {
             windows.append((cursor, end))
             cursor = Day.add(end, days: 1)
         }
-        let results: [Result<[DidaTask], Error>] = await withTaskGroup(of: Result<[DidaTask], Error>.self) { group in
-            for (a, b) in windows {
-                group.addTask {
-                    do {
-                        let text = try await mcp.callText("list_completed_tasks_by_date", rangeArgs(a, b))
-                        return .success(DidaParser.extractTasks(text).map { t in var c = t; c.done = true; return c })
-                    } catch { return .failure(error) }
-                }
-            }
-            var out: [Result<[DidaTask], Error>] = []
-            for await r in group { out.append(r) }
-            return out
+        let results: [Result<[DidaTask], Error>] = await runConcurrently(windows.count) { i in
+            let (a, b) = windows[i]
+            do {
+                let text = try await mcp.callText("list_completed_tasks_by_date", rangeArgs(a, b))
+                return .success(DidaParser.extractTasks(text).map { t in var c = t; c.done = true; return c })
+            } catch { return .failure(error) }
         }
         if !results.isEmpty, results.allSatisfy({ if case .failure = $0 { return true } else { return false } }),
            case let .failure(err)? = results.first { throw err }

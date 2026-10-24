@@ -296,8 +296,9 @@ final class FocusStore: ObservableObject {
         if run != nil, !(run?.paused ?? true) {
             guard ticker == nil else { return }
             ticker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.tick() }
+                MainActor.assumeIsolated { self?.tick() }
             }
+            ticker?.tolerance = 0.1
         } else {
             ticker?.invalidate()
             ticker = nil

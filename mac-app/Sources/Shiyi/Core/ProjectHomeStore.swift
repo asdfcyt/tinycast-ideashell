@@ -120,26 +120,21 @@ final class ProjectHomeStore: ObservableObject {
         let dida = model.dida, api = model.ideashell
 
         struct Row { var line: String; var open: Bool; var delivered: Bool; var min: Int }
-        let rows: [Row] = await withTaskGroup(of: (Int, Row).self) { group in
-            for (i, e) in notes.enumerated() {
-                group.addTask {
-                    let taskId = e.key.hasPrefix("dida:") ? String(e.key.dropFirst(5)) : e.key
-                    var state = "未知"
-                    if hasDida, !e.key.hasPrefix("cal:"), let t = await dida.fetchTask(taskId) { state = t.done ? "已交付" : "进行中" }
-                    let detail = try? await api.noteFull(e.value.noteId)
-                    let steps = detail.flatMap { NoteSections.stepProgress($0.content) }
-                    let min = focus?.byTask[taskId]?.weekMin ?? 0
-                    var parts = [state == "未知" ? "状态未知" : state]
-                    if let steps { parts.append("步骤 \(steps.done)/\(steps.total)") }
-                    if min > 0 { parts.append("近 7 天专注 \(FocusParser.formatMinutes(min))") }
-                    let name = e.value.deliverable?.nonEmpty ?? "任务笔记"
-                    return (i, Row(line: "- [\(name)](\(noteURL(e.value.noteId).absoluteString)) · " + parts.joined(separator: " · "),
-                                   open: state != "已交付", delivered: state == "已交付", min: min))
-                }
-            }
-            var out: [(Int, Row)] = []
-            for await r in group { out.append(r) }
-            return out.sorted { $0.0 < $1.0 }.map(\.1)
+        let noteList = Array(notes)
+        let rows: [Row] = await runConcurrently(noteList.count) { i in
+            let e = noteList[i]
+            let taskId = e.key.hasPrefix("dida:") ? String(e.key.dropFirst(5)) : e.key
+            var state = "未知"
+            if hasDida, !e.key.hasPrefix("cal:"), let t = await dida.fetchTask(taskId) { state = t.done ? "已交付" : "进行中" }
+            let detail = try? await api.noteFull(e.value.noteId)
+            let steps = detail.flatMap { NoteSections.stepProgress($0.content) }
+            let min = focus?.byTask[taskId]?.weekMin ?? 0
+            var parts = [state == "未知" ? "状态未知" : state]
+            if let steps { parts.append("步骤 \(steps.done)/\(steps.total)") }
+            if min > 0 { parts.append("近 7 天专注 \(FocusParser.formatMinutes(min))") }
+            let name = e.value.deliverable?.nonEmpty ?? "任务笔记"
+            return Row(line: "- [\(name)](\(noteURL(e.value.noteId).absoluteString)) · " + parts.joined(separator: " · "),
+                       open: state != "已交付", delivered: state == "已交付", min: min)
         }
         let weekMin = rows.reduce(0) { $0 + $1.min }
         let status = [

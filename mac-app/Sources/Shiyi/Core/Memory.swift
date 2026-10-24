@@ -28,28 +28,25 @@ extension AppModel {
         let api = ideashell
         var items: [MemoryItem] = []
         var failed = false
-        await withTaskGroup(of: (Int, [MemoryItem]?).self) { group in
-            for (i, o) in offsets.enumerated() {
-                guard let d = o.1 else { continue }
-                let start = Day.startOfDay(d)
-                let end = cal.date(byAdding: .day, value: 1, to: start) ?? start
-                let label = o.0, day = Day.string(d)
-                group.addTask {
-                    guard let r = try? await api.notesInRange(start, end) else { return (i, nil) }
-                    let notes = r.notes.filter { n in
-                        !BackupService.isBackupNote(n)
-                            && !n.tags.contains { $0.contains("daily-note") }
-                            && RX(#"^\d{4}-\d{2}-\d{2}$"#, multiline: false).first(in: n.title.trimmed) == nil
-                    }
-                    return (i, notes.prefix(3).map { MemoryItem(label: label, date: day, note: $0) })
-                }
-            }
-            var byIndex: [Int: [MemoryItem]] = [:]
-            for await (i, list) in group {
-                if let list { byIndex[i] = list } else { failed = true }
-            }
-            items = byIndex.keys.sorted().flatMap { byIndex[$0] ?? [] }
+        struct Query { var label: String; var day: String; var start: Date; var end: Date }
+        var queries: [Query] = []
+        for o in offsets {
+            guard let d = o.1 else { continue }
+            let start = Day.startOfDay(d)
+            let end = cal.date(byAdding: .day, value: 1, to: start) ?? start
+            queries.append(Query(label: o.0, day: Day.string(d), start: start, end: end))
         }
+        let lists: [[MemoryItem]?] = await runConcurrently(queries.count) { i in
+            let q = queries[i]
+            guard let r = try? await api.notesInRange(q.start, q.end) else { return nil as [MemoryItem]? }
+            let notes = r.notes.filter { n in
+                !BackupService.isBackupNote(n)
+                    && !n.tags.contains { $0.contains("daily-note") }
+                    && RX(#"^\d{4}-\d{2}-\d{2}$"#, multiline: false).first(in: n.title.trimmed) == nil
+            }
+            return notes.prefix(3).map { MemoryItem(label: q.label, date: q.day, note: $0) } as [MemoryItem]?
+        }
+        for l in lists { if let l { items += l } else { failed = true } }
         memory = Array(items.prefix(8))
         if !failed { stamp("memory", key: key) }
     }

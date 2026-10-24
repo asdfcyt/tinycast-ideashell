@@ -45,16 +45,16 @@ extension AppModel {
         let ideashell = self.ideashell, dida = self.dida, svc = self.daily
         let useNotes = hasIdeashell, useTodos = hasDida
 
-        async let notesR = Self.capture { () async throws -> NotesInRange in
+        let notesR = Task { await Self.capture { () async throws -> NotesInRange in
             useNotes ? try await ideashell.notesInRange(start, end) : NotesInRange(notes: [], truncated: false)
-        }
-        async let tasksR = Self.capture { () async throws -> [DidaTask] in
+        } }
+        let tasksR = Task { await Self.capture { () async throws -> [DidaTask] in
             useTodos ? try await dida.tasksInRange(from, to) : []
-        }
-        async let dailyR = Self.capture { () async throws -> [String: DailyDay] in
+        } }
+        let dailyR = Task { await Self.capture { () async throws -> [String: DailyDay] in
             useNotes ? try await svc.days(from: from, to: to) : [:]
-        }
-        let (nr, tr, dr) = await (notesR, tasksR, dailyR)
+        } }
+        let nr = await notesR.value, tr = await tasksR.value, dr = await dailyR.value
 
         var notes: [NoteInfo] = [], truncated = false, tasks: [DidaTask] = [], daily: [String: DailyDay] = [:]
         var errors: [String] = []

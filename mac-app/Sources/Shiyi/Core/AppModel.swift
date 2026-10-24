@@ -127,14 +127,21 @@ final class AppModel: ObservableObject {
 
     // 待办
     @Published var overview: DidaOverview? {
-        didSet { Notifier.shared.syncTodos(overview) }
+        didSet {
+            projectProgressMemo = nil
+            Notifier.shared.syncTodos(overview)
+        }
     }
+    /// 「项目进展」的算结果缓存：它要把每个项目和每条待办两两比对，今天页每次重绘都算会很吃 CPU；待办 / 项目变了才作废
+    var projectProgressMemo: Double??
     @Published var todosLoading = false
     @Published var todosError: String?
     @Published var lastUndo: DidaTask?
 
     // 备份（项目 / 任务笔记）
-    @Published var backup: BackupFile?
+    @Published var backup: BackupFile? {
+        didSet { projectProgressMemo = nil }
+    }
     /// 在 Mac 上创建的任务笔记（key 同备份里的 `dida:<taskId>`）；手机下次备份后会带上它们
     @Published var localTaskNotes: [String: TaskNoteRef] = [:]
     /// 本机新建 / 找回的项目主页（关键词 → 笔记 id），见 ProjectHome.swift
@@ -334,12 +341,11 @@ final class AppModel: ObservableObject {
         lastQuick = Date()
         if !startup { daily.clearPast() }
         let skipBackup = startup && (backupCacheAge().map { $0 < 1800 } ?? false) && backup != nil
-        async let a: Void = loadTimeline(silent: !timeline.isEmpty)
-        async let b: Void = loadOverview(silent: overview != nil)
-        async let c: Void = skipBackup ? () : loadBackup()
-        await a
-        await b
-        await c
+        await runAll([
+            { await self.loadTimeline(silent: !self.timeline.isEmpty) },
+            { await self.loadOverview(silent: self.overview != nil) },
+            { if !skipBackup { await self.loadBackup() } },
+        ])
         switch section {
         case .calendar: await loadCalendar(ifStale: startup)
         case .focus: await focus.settle(); await focus.refresh()
@@ -352,10 +358,10 @@ final class AppModel: ObservableObject {
     /// 定时刷新：待办 + 时间线最近部分
     func refreshQuick() async {
         lastQuick = Date()
-        async let a: Void = loadOverview(silent: true)
-        async let b: Void = loadTimeline(silent: true)
-        await a
-        await b
+        await runAll([
+            { await self.loadOverview(silent: true) },
+            { await self.loadTimeline(silent: true) },
+        ])
         applyHistoryChanges()
     }
 

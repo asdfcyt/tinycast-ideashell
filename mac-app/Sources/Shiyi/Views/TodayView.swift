@@ -29,7 +29,8 @@ private struct TodayContent: View {
     private var dailyRecent: [DailyEntry] { Array((dailyToday?.entries ?? []).filter { !$0.struck }.suffix(5).reversed()) }
 
     private var todayDone: [DidaTask] {
-        (model.overview?.done ?? []).filter { $0.completedDate.map { Day.string($0) == today } ?? false }
+        // 比对时间戳所在的日子，不必给每条已完成的待办格式化一次日期字符串（这个属性每次重绘会被读很多遍）
+        (model.overview?.done ?? []).filter { $0.completedDate.map { Day.cal.isDateInToday($0) } ?? false }
     }
 
     private var overdue: [DidaTask] {
@@ -81,10 +82,11 @@ private struct TodayContent: View {
         .sheet(isPresented: $showQuickStart) { QuickStartSheet().environmentObject(model).dismissOnOutsideClick() }
         .sheet(isPresented: $showPlan) { ReplanSheet(candidates: model.schedulable(includeOverdue: true)).environmentObject(model).dismissOnOutsideClick() }
         .task {
-            async let m: Void = model.loadMemory()
-            async let h: Void = model.loadHeat()
-            async let d: Void = model.loadDailyToday()
-            _ = await (m, h, d)
+            await runAll([
+                { await model.loadMemory() },
+                { await model.loadHeat() },
+                { await model.loadDailyToday() },
+            ])
         }
         // 笔记列表变了（新记了笔记 / 刷新到别处写的）才强制重读；进页面、回到应用只在缓存过期时读
         .onChange(of: model.timeline.map(\.id)) { _, _ in Task { await model.loadDailyToday(ifStale: false) } }
@@ -942,6 +944,19 @@ private struct HeatPanel: View {
     @EnvironmentObject var model: AppModel
     let weeks: Int
 
+    /// 今天页上任何数据变化都会重算这里的 body：只负责把输入交给 HeatGrid，输入没变就整块跳过（不再每次重算 180 天的日期字符串、重画画布）
+    var body: some View {
+        HeatGrid(weeks: weeks, counts: model.heat, loading: model.heatLoading, today: Day.today()).equatable()
+    }
+}
+
+private struct HeatGrid: View, Equatable {
+    let weeks: Int
+    let counts: [String: Int]
+    let loading: Bool
+    /// 今天（跨天后重算）
+    let today: String
+
     private func metrics(_ w: CGFloat) -> (cell: CGFloat, gap: CGFloat) {
         let n = CGFloat(weeks)
         let cell = min((w - (n - 1) * 3) / n, 20)
@@ -955,22 +970,24 @@ private struct HeatPanel: View {
     var body: some View {
         let r = AppModel.heatRange(weeks: weeks)
         let cal = Day.cal
-        let counts = model.heat
-        let today = Day.string(r.last)
         let days = (0 ..< weeks * 7).map { cal.date(byAdding: .day, value: $0, to: r.first) ?? r.first }
-        let vals = days.compactMap { counts[Day.string($0)] }.filter { $0 > 0 }.sorted()
+        // 每一天的日期字符串只格式化一次（下面统计和画布都用它）
+        let keys = days.map { Day.string($0) }
+        let vals = keys.compactMap { counts[$0] }.filter { $0 > 0 }.sorted()
         let at: (Double) -> Int = { q in vals.isEmpty ? 1 : vals[Int(Double(vals.count - 1) * q)] }
         // 档位按「有记录的日子」的条数分布来切（前 25% / 50% / 80%），记得多的人不会满屏深色
         let cuts = [at(0.25), at(0.5), at(0.8)]
-        let total = days.reduce(0) { $0 + (counts[Day.string($1)] ?? 0) }
+        let total = keys.reduce(0) { $0 + (counts[$1] ?? 0) }
         let month = cal.component(.month, from: r.last)
-        let monthDays = days.filter { cal.component(.month, from: $0) == month && Day.string($0) <= today && (counts[Day.string($0)] ?? 0) > 0 }.count
+        let monthDays = keys.indices.filter { i in
+            cal.component(.month, from: days[i]) == month && keys[i] <= today && (counts[keys[i]] ?? 0) > 0
+        }.count
 
         VStack(alignment: .leading, spacing: 8) {
             RailTitle(text: "Daily Note · 最近 \(weeks) 周")
             Panel {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(model.heatLoading && counts.isEmpty ? "正在读取…" : "本月记了 \(monthDays) 天 · 共 \(total) 条")
+                    Text(loading && counts.isEmpty ? "正在读取…" : "本月记了 \(monthDays) 天 · 共 \(total) 条")
                         .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     Canvas { ctx, size in
                         let (cell, gap) = metrics(size.width)
@@ -992,7 +1009,7 @@ private struct HeatPanel: View {
                         let (cell, gap) = metrics(size.width)
                         for w in 0 ..< weeks {
                             for d in 0 ..< 7 {
-                                let key = Day.string(days[w * 7 + d])
+                                let key = keys[w * 7 + d]
                                 if key > today { continue }
                                 let n = counts[key] ?? 0
                                 let color: Color = n <= 0 ? Color.primary.opacity(0.07)

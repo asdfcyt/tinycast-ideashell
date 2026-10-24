@@ -170,9 +170,9 @@ extension DidaApi {
     func focusWeek() async throws -> FocusSummary {
         let today = Day.today()
         let from = Day.add(today, days: -6), to = Day.add(today, days: 1)
-        async let pomo: Result<String, Error> = Self.attempt { try await focusRaw(from: from, toExclusive: to, type: 0) }
-        async let timing: Result<String, Error> = Self.attempt { try await focusRaw(from: from, toExclusive: to, type: 1) }
-        let a = await pomo, b = await timing
+        let pomo = Task { await Self.attempt { try await self.focusRaw(from: from, toExclusive: to, type: 0) } }
+        let timing = Task { await Self.attempt { try await self.focusRaw(from: from, toExclusive: to, type: 1) } }
+        let a = await pomo.value, b = await timing.value
         if case let .failure(e) = a, case .failure = b { throw e }
         return FocusParser.summarize([(true, (try? a.get()) ?? ""), (false, (try? b.get()) ?? "")], today: Date())
     }

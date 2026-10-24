@@ -252,25 +252,17 @@ final class DailyService: @unchecked Sendable {
             else { missing.append((d, id)) }
         }
         let api = self.api
-        let fetched: [(String, DailyDay?)] = await withTaskGroup(of: (String, DailyDay?).self) { group in
-            var iterator = missing.makeIterator()
-            var running = 0
-            var out: [(String, DailyDay?)] = []
-            func add() {
-                guard let (d, id) = iterator.next() else { return }
-                running += 1
-                group.addTask {
-                    guard let detail = try? await api.noteFull(id) else { return (d, nil) }
-                    return (d, DailyDay(noteId: id, entries: DailyFormat.entries(detail.content)))
-                }
+        // 每批最多 Self.parallel 个同时读
+        var fetched: [(String, DailyDay?)] = []
+        var from = 0
+        while from < missing.count {
+            let batch = Array(missing[from ..< min(from + Self.parallel, missing.count)])
+            from += batch.count
+            fetched += await runConcurrently(batch.count) { i in
+                let (d, id) = batch[i]
+                guard let detail = try? await api.noteFull(id) else { return (d, nil as DailyDay?) }
+                return (d, DailyDay(noteId: id, entries: DailyFormat.entries(detail.content)) as DailyDay?)
             }
-            for _ in 0 ..< Self.parallel { add() }
-            while running > 0, let r = await group.next() {
-                running -= 1
-                out.append(r)
-                add()
-            }
-            return out
         }
         var cachedNew = false
         for (d, day) in fetched {

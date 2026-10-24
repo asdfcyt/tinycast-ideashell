@@ -116,8 +116,9 @@ struct IdeashellApi {
             return notes
         }
         let mid = s + (e - s) / 2
-        async let left = walkRange(s, mid, flag)
-        async let right = walkRange(mid, e, flag)
-        return try await left + right
+        let left = Task { try await self.walkRange(s, mid, flag) }
+        let right = Task { try await self.walkRange(mid, e, flag) }
+        let l = await left.result, r = await right.result
+        return try l.get() + r.get()
     }
 }

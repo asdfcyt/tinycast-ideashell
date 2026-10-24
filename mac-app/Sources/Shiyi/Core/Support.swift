@@ -71,12 +71,14 @@ extension String {
 // MARK: - 日期（本地时区，yyyy-MM-dd 字符串当「日」）
 
 enum Day {
-    static var cal: Calendar {
+    /// 缓存一份：每次都新建 Calendar（还要取当前时区）在列表重绘里调用上千次，开销很可观。
+    /// 用会跟随系统更新的时区，换时区后也不用重启
+    static let cal: Calendar = {
         var c = Calendar(identifier: .gregorian)
-        c.timeZone = .current
+        c.timeZone = .autoupdatingCurrent
         c.firstWeekday = 2
         return c
-    }
+    }()
 
     private static let fmt: DateFormatter = {
         let f = DateFormatter()
@@ -188,4 +190,25 @@ enum NoteTime {
 
 extension Date {
     var hourOfDay: Int { Day.cal.component(.hour, from: self) }
+}
+
+// MARK: - 并发
+
+/// 并发执行几个无返回值的操作并等全部完成。取代 `async let`（同样会在 -O 下崩溃，崩在子任务 completeTask 里）。
+func runAll(_ ops: [() async -> Void]) async {
+    let tasks = ops.map { op in Task { await op() } }
+    for t in tasks { await t.value }
+}
+
+/// 并发执行 [count] 个任务，按序号返回结果（第 i 个结果对应 `work(i)`）。
+/// 不用 `withTaskGroup`：Swift 6.4 的 -O 编译下，TaskGroup 的子任务完成时会偶发访问已经释放的 group
+/// （swift_Concurrency 里 TaskGroup::offer / completeFuture 崩溃：pure virtual call 或 EXC_BAD_ACCESS），
+/// 所以改用普通 Task 并逐个等待结果；这几处都是「一批请求并发发出再全部等回来」，效果一样。
+func runConcurrently<T: Sendable>(_ count: Int, _ work: @escaping @Sendable (Int) async -> T) async -> [T] {
+    guard count > 0 else { return [] }
+    let tasks = (0 ..< count).map { i in Task { await work(i) } }
+    var out: [T] = []
+    out.reserveCapacity(count)
+    for t in tasks { out.append(await t.value) }
+    return out
 }

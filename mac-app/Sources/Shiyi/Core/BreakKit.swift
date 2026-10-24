@@ -638,7 +638,10 @@ final class BreakSession: ObservableObject {
             loop = Task { [weak self] in
                 while !Task.isCancelled {
                     self?.music.refresh()
-                    try? await Task.sleep(nanoseconds: 4_000_000_000)
+                    // 每一轮都要起 osascript 子进程（加载 MediaRemote，很吃 CPU）：
+                    // 应用在前台、或正有歌在放时 6 秒一轮（进度条本身按采样时间推算，不依赖轮询）；在后台又没放歌时放慢到 20 秒
+                    let lively = NSApp.isActive || self?.music.track?.playing == true
+                    try? await Task.sleep(nanoseconds: lively ? 6_000_000_000 : 20_000_000_000)
                 }
             }
         } else {
@@ -677,15 +680,15 @@ enum NeteaseLookup {
         } ?? songs.first { norm(($0["name"] as? String) ?? "") == norm(title) } ?? songs[0]
         guard let id = (pick["id"] as? NSNumber)?.intValue else { return (nil, []) }
 
-        async let detail = get("https://music.163.com/api/song/detail/?id=\(id)&ids=%5B\(id)%5D")
-        async let lyric = get("https://music.163.com/api/song/lyric?id=\(id)&lv=1&kv=1&tv=-1")
+        let detailTask = Task { await get("https://music.163.com/api/song/detail/?id=\(id)&ids=%5B\(id)%5D") }
+        let lyricTask = Task { await get("https://music.163.com/api/song/lyric?id=\(id)&lv=1&kv=1&tv=-1") }
         var image: NSImage?
-        if let d = await detail, let first = (d["songs"] as? [[String: Any]])?.first,
+        if let d = await detailTask.value, let first = (d["songs"] as? [[String: Any]])?.first,
            let pic = (first["album"] as? [String: Any])?["picUrl"] as? String, let u = URL(string: pic + "?param=480y480"),
            let (data, _) = try? await URLSession.shared.data(from: u) {
             image = NSImage(data: data)
         }
-        let lrc = ((await lyric)?["lrc"] as? [String: Any])?["lyric"] as? String ?? ""
+        let lrc = ((await lyricTask.value)?["lrc"] as? [String: Any])?["lyric"] as? String ?? ""
         return (image, parse(lrc))
     }
 

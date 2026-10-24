@@ -18,7 +18,10 @@ while IFS= read -r f; do SOURCES+=("$f"); done < <(find Sources -name '*.swift' 
 SDK=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk
 [ -d "$SDK" ] || SDK="$(xcrun --show-sdk-path)"
 
-# 不开优化：Swift 6.4 的 -O 编译出来的版本启动即崩（swift_Concurrency 里 pure virtual call），关掉优化稳定，这个 App 性能无影响。
+# 不要开 -O：本机 Swift 6.4 的 -O 会把字符串相关代码编译坏——启动时约三成概率崩溃（DidaApi.fetchOverview 里
+# 字符串比较 / 字典查找 EXC_BAD_ACCESS 0x18，以及 swift_Concurrency TaskGroup 完成路径崩溃），
+# 甚至不崩溃时也会读到错误的滴答任务数据（待办几乎拉不到）。-Onone 虽然 CPU 高一些，但结果正确。
+# 代码里已避免 withTaskGroup / async let（见 Core/Support.swift 的 runConcurrently / runAll），换工具链后可再试 -O。
 swiftc -Onone -parse-as-library -swift-version 5 -sdk "$SDK" \
     -target arm64-apple-macos14.0 \
     -module-name Shiyi \

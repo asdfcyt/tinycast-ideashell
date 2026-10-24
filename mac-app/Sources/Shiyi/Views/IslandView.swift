@@ -602,8 +602,13 @@ final class IslandController {
             state.notchHeight = 0
         }
         state.maxContentHeight = max(220, s.visibleFrame.height - state.topInset - 40)
+        // 比悬停区（+2）和拖拽投放区（+120 × +14）都大一圈：鼠标不在这块里时，全局的鼠标事件一律不处理
+        hoverRect = hoverZone(on: s, extraWidth: 130, extraHeight: 24)
         syncSjz()
     }
+
+    /// 收起时，只有鼠标在这块（刘海周围）里才需要处理鼠标 / 滚动 / 拖拽事件
+    private var hoverRect = NSRect.zero
 
     /// 同步「是否已连接结审」，并在后台刷新岛上显示的目标项目
     func syncSjzNow() { syncSjz() }
@@ -960,6 +965,7 @@ final class IslandController {
         let t = Timer(timeInterval: 20, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.checkDue() }
         }
+        t.tolerance = 5
         RunLoop.main.add(t, forMode: .common)
         dueTimer = t
     }
@@ -1010,22 +1016,24 @@ final class IslandController {
 
     private func installMonitors() {
         removeMonitors()
+        // 鼠标移动 / 拖拽 / 滚动的事件频率极高（每秒上百次）：全局监听回调本来就在主线程，直接同步判断，
+        // 收起状态下鼠标离刘海远就立刻返回，不再每个事件都开一个 Task、取屏幕、读 UserDefaults
         if let g = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved, handler: { [weak self] _ in
-            Task { @MainActor in self?.evaluate() }
+            MainActor.assumeIsolated { self?.mouseMoved() }
         }) { monitors.append(g) }
         if let l = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved, handler: { [weak self] e in
-            self?.evaluate()
+            self?.mouseMoved()
             return e
         }) { monitors.append(l) }
 
         // 其他应用里开始的拖拽：靠近刘海就展开成投放区
         if let g = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged, handler: { [weak self] _ in
-            Task { @MainActor in self?.evaluate(drag: true) }
+            MainActor.assumeIsolated { self?.mouseMoved(drag: true) }
         }) { monitors.append(g) }
 
         // 触控板双指下滑展开 / 上滑收起
         if let g = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel, handler: { [weak self] e in
-            Task { @MainActor in self?.handleScroll(e) }
+            MainActor.assumeIsolated { self?.handleScroll(e) }
         }) { monitors.append(g) }
         if let l = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel, handler: { [weak self] e in
             self?.handleScroll(e)
@@ -1058,11 +1066,18 @@ final class IslandController {
         collapse()
     }
 
+    /// 鼠标事件的入口：收起时鼠标不在刘海附近就什么都不做
+    private func mouseMoved(drag: Bool = false) {
+        if !state.expanded, !hoverRect.contains(NSEvent.mouseLocation) { return }
+        evaluate(drag: drag)
+    }
+
     private func startCheckTimer() {
         stopCheckTimer()
         let t = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.evaluate() }
         }
+        t.tolerance = 0.08
         RunLoop.main.add(t, forMode: .common)
         checkTimer = t
     }
@@ -1080,11 +1095,14 @@ final class IslandController {
 
     /// 触控板双指下滑（手指向下）展开；展开后在顶部一条上面、或内容不需要滚动时上滑收起
     private func handleScroll(_ e: NSEvent) {
-        guard DisplayMode.swipeEnabled, e.hasPreciseScrollingDeltas, let panel, let s = screen else { return }
+        // 先用最便宜的条件挡掉绝大多数滚动事件（滚动事件每秒上百个）
+        guard e.hasPreciseScrollingDeltas, let panel else { return }
         if e.phase == .began || e.phase == .mayBegin { scrollAccum = 0; scrollFired = false }
         if e.phase == .ended || e.phase == .cancelled { scrollAccum = 0; scrollFired = false; return }
         guard e.momentumPhase.isEmpty, !scrollFired else { return }
         let p = NSEvent.mouseLocation
+        if !state.expanded, !hoverRect.contains(p) { scrollAccum = 0; return }
+        guard DisplayMode.swipeEnabled, let s = screen else { return }
         // > 0：手指向下（不管系统是不是自然滚动）
         let dy = e.isDirectionInvertedFromDevice ? e.scrollingDeltaY : -e.scrollingDeltaY
         if !state.expanded {
