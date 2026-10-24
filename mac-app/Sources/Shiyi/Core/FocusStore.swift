@@ -30,6 +30,8 @@ final class FocusStore: ObservableObject {
 
     private let api: DidaApi
     private let hasDida: () -> Bool
+    /// 绑定了结审任务的专注：写回结审，不写滴答（由 AppModel 提供）
+    var sjzSink: ((PendingFocus) async throws -> Void)?
     private var ticker: Timer?
     private var finishing = false
     private let defaults = UserDefaults.standard
@@ -161,6 +163,7 @@ final class FocusStore: ObservableObject {
         await flush()
         let mins = max(Int((Double(elapsed) / 60000).rounded()), 1)
         let synced = pending.isEmpty
+        let toSjz = SjzTasks.owns(s.taskId ?? "")
         let head = completed ? "番茄完成" : "专注已记录"
         let recs = s.recordList
         // 今日累计：滴答里读回来的、本机小票里记的，取大的，再加上这一次
@@ -173,7 +176,7 @@ final class FocusStore: ObservableObject {
         )
         TicketStore.shared.add(c)
         receipt = c
-        onMessage?("\(head)：\(mins) 分钟" + (recs.isEmpty ? "" : "，\(recs.count) 条记录") + (synced ? "，已写入滴答" : "，已存在本机，稍后同步"))
+        onMessage?("\(head)：\(mins) 分钟" + (recs.isEmpty ? "" : "，\(recs.count) 条记录") + (synced ? (toSjz ? "，已写入结审" : "，已写入滴答") : "，已存在本机，稍后同步"))
         if completed {
             Self.notify(title: "番茄完成", body: "专注了 \(mins) 分钟" + (pendingBreak.map { "，休息一下（\($0.label)）" } ?? ""))
             onCompleted?(.focus, mins)
@@ -259,10 +262,17 @@ final class FocusStore: ObservableObject {
 
     /// 按顺序补传；碰到一条失败就停（多半是断网，别连着失败）
     private func flush() async {
-        guard hasDida() else { return }
         for p in pending {
-            do { try await api.createFocus(startMs: p.startMs, endMs: p.endMs, taskId: p.taskId) }
-            catch {
+            let sjz = SjzTasks.owns(p.taskId ?? "")
+            if !sjz && !hasDida() { continue }
+            do {
+                if sjz {
+                    guard let sink = sjzSink else { continue }
+                    try await sink(p)
+                } else {
+                    try await api.createFocus(startMs: p.startMs, endMs: p.endMs, taskId: p.taskId)
+                }
+            } catch {
                 self.error = "同步专注失败：" + error.localizedDescription
                 break
             }

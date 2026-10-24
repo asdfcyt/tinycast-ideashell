@@ -34,6 +34,8 @@ struct MenuBarLabel: View {
 /// 顶部一行放标题和图标按钮（快速记录 / 刷新 / 打开拾忆 / 退出），下面是三项小统计、专注条和紧凑的待办列表。
 struct MenuBarView: View {
     @EnvironmentObject var model: AppModel
+    /// 灵动岛里不显示收集箱（没有日期的待办），只显示定在今天的
+    var showInbox = true
     @State private var adding = false
 
     var body: some View {
@@ -229,7 +231,7 @@ struct MenuBarView: View {
     private func tasks(_ ov: DidaOverview) -> some View {
         let overdue = ov.overdue.sorted { ($0.date ?? "") < ($1.date ?? "") }
         let today = ov.todayTasks().sorted { ($0.time ?? "99:99") < ($1.time ?? "99:99") }
-        let inbox = ov.undated
+        let inbox = showInbox ? ov.undated : []
         return VStack(alignment: .leading, spacing: 0) {
             if let e = model.todosError { Text(e).font(.caption).foregroundStyle(.orange).padding(.horizontal, 12).padding(.vertical, 6) }
             sectionLabel("今天", today.count, .primary)

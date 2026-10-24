@@ -6,6 +6,10 @@ import SwiftUI
 /// 拖东西到岛上时出现：左半边「保存」（自动识别），右半边「暂存」；保存中 / 完成时显示结果
 struct IslandDropPane: View {
     @ObservedObject var state: IslandState
+    @EnvironmentObject var model: AppModel
+    @AppStorage(DisplayMode.shelfKey) private var shelfOn = true
+
+    private var withSjz: Bool { state.sjzOn && state.drop.showsZones }
 
     var body: some View {
         Group {
@@ -23,16 +27,30 @@ struct IslandDropPane: View {
                         .multilineTextAlignment(.center).lineLimit(2).padding(.horizontal, 12)
                 }
             default:
-                HStack(spacing: 10) {
-                    zoneBox(.save, icon: "square.and.arrow.down", title: "保存",
-                            lines: ["截图 → 笔记", "文字 / 链接 → 记录 / 待办"])
-                    zoneBox(.shelf, icon: "tray.and.arrow.down", title: "暂存",
-                            lines: ["先放在岛上", "稍后再拖出去"])
+                VStack(spacing: 8) {
+                    HStack(spacing: 10) {
+                        zoneBox(.save, icon: "square.and.arrow.down", title: "保存",
+                                lines: ["截图 → 笔记", "文字 / 链接 → 记录 / 待办"])
+                        if shelfOn {
+                            zoneBox(.shelf, icon: "tray.and.arrow.down", title: "暂存",
+                                    lines: ["先放在岛上", "稍后再拖出去"])
+                        }
+                    }
+                    .frame(height: withSjz ? 76 : nil)
+                    if withSjz {
+                        HStack(spacing: 8) {
+                            miniZone(.evidence, icon: "doc.badge.plus", title: "证据")
+                            miniZone(.regulation, icon: "book.closed", title: "法规")
+                            miniZone(.clue, icon: "lightbulb", title: "线索")
+                            miniZone(.data, icon: "tablecells", title: "数据")
+                        }
+                        .frame(height: 62)
+                    }
                 }
             }
         }
         // 高度写死（= dropHeight - 刘海 - 底部留白）：ZStack 里的待办层可能比它高，不能让它跟着撑
-        .frame(height: 86)
+        .frame(height: withSjz ? 146 : 86)
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
         .animation(.easeOut(duration: 0.15), value: state.drop)
@@ -43,6 +61,35 @@ struct IslandDropPane: View {
         return VStack(spacing: 7) { content() }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(shape.fill(Color.white.opacity(0.07)))
+    }
+
+    /// 结审那一排：证据 / 法规 / 线索，第二行显示保存到哪个项目
+    private func miniZone(_ zone: DropZone, icon: String, title: String) -> some View {
+        let active = state.drop == .hover && state.zone == zone
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        return VStack(spacing: 3) {
+            Image(systemName: icon).font(.system(size: 16))
+                .foregroundStyle(active ? Brand.orange : Color.white.opacity(0.7))
+            Text(active ? "松手存\(title)" : "结审 · \(title)").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+            Text(miniTarget(zone))
+                .font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.5)).lineLimit(1).padding(.horizontal, 6)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(shape.fill(Color.white.opacity(active ? 0.14 : 0.06)))
+        .overlay(shape.strokeBorder(active ? Brand.orange : Color.white.opacity(0.22), style: StrokeStyle(lineWidth: 1.2, dash: [5, 4])))
+        .animation(.easeOut(duration: 0.15), value: active)
+    }
+
+    /// 每个投放区的第二行：会存到哪里
+    private func miniTarget(_ zone: DropZone) -> String {
+        let pin = model.sjzPin
+        guard !pin.project.isEmpty else { return "未选择项目" }
+        switch zone {
+        case .evidence: return pin.noteLabel.isEmpty ? "新证据文件" : "追加 · " + pin.noteLabel
+        case .regulation: return pin.regulation.isEmpty ? "自动取名并新建" : "追加 · " + pin.regulation
+        case .data: return "原始材料 · 文件"
+        default: return pin.projectTitle.isEmpty ? pin.project : pin.projectTitle
+        }
     }
 
     private func zoneBox(_ zone: DropZone, icon: String, title: String, lines: [String]) -> some View {
@@ -66,7 +113,15 @@ struct IslandDropPane: View {
 /// 事件发生时岛自己弹出来的一条：刚截了图、番茄完成、待办到点……
 struct IslandActivityView: View {
     @ObservedObject var state: IslandState
+    @EnvironmentObject var model: AppModel
     let activity: IslandActivity
+    @AppStorage(DisplayMode.shelfKey) private var shelfOn = true
+
+    /// 截图提示 + 已连接结审：两行布局，多出「证据 / 法规」
+    private var isSjz: Bool {
+        if case .capture = activity { return state.sjzOn }
+        return false
+    }
 
     private struct Btn: Identifiable {
         let id = UUID()
@@ -79,6 +134,62 @@ struct IslandActivityView: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+        Group {
+            if isSjz { sjzBody } else { plainBody }
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity)
+        .frame(height: isSjz ? 104 : 62)
+        .background(shape.fill(Color.white.opacity(0.08)))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 14)
+        .overlay(alignment: .bottom) {
+            // 出纸口：小票从这里往下打印
+            if case .focusDone = activity { PaperSlot().frame(width: 150).padding(.bottom, 3) }
+        }
+    }
+
+    private var closeButton: some View {
+        Button { state.onActivityAction?(activity, .dismiss) } label: {
+            Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.5))
+                .frame(width: 18, height: 18)
+        }
+        .buttonStyle(.plain).help("忽略")
+    }
+
+    /// 截图提示（已连接结审）：上面缩略图 + 标题，下面一排按钮
+    private var sjzBody: some View {
+        VStack(spacing: 9) {
+            HStack(spacing: 12) {
+                leading
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).lineLimit(1)
+                    Text("结审：" + (model.sjzTargetTitle.isEmpty ? "未钉住项目" : model.sjzTargetTitle))
+                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                closeButton
+            }
+            HStack(spacing: 6) {
+                wide("存为笔记", prominent: true, .primary)
+                wide("存为证据", prominent: false, .evidence)
+                wide("存为法规", prominent: false, .regulation)
+                if shelfOn { wide("暂存", prominent: false, .secondary) }
+            }
+        }
+    }
+
+    private func wide(_ label: String, prominent: Bool, _ action: ActivityAction) -> some View {
+        Button { state.onActivityAction?(activity, action) } label: {
+            Text(label).font(.system(size: 12, weight: .semibold))
+                .frame(maxWidth: .infinity).frame(height: 26)
+                .foregroundStyle(prominent ? Brand.brown : Color.white)
+                .background(prominent ? Brand.orange : Color.white.opacity(0.14), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var plainBody: some View {
         HStack(spacing: 12) {
             leading
             VStack(alignment: .leading, spacing: 2) {
@@ -87,21 +198,7 @@ struct IslandActivityView: View {
             }
             Spacer(minLength: 4)
             ForEach(buttons) { b in button(b) }
-            Button { state.onActivityAction?(activity, .dismiss) } label: {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.5))
-                    .frame(width: 18, height: 18)
-            }
-            .buttonStyle(.plain).help("忽略")
-        }
-        .padding(.horizontal, 14)
-        .frame(maxWidth: .infinity)
-        .frame(height: 62)
-        .background(shape.fill(Color.white.opacity(0.08)))
-        .padding(.horizontal, 16)
-        .padding(.bottom, 14)
-        .overlay(alignment: .bottom) {
-            // 出纸口：小票从这里往下打印
-            if case .focusDone = activity { PaperSlot().frame(width: 150).padding(.bottom, 3) }
+            closeButton
         }
     }
 
@@ -132,6 +229,8 @@ struct IslandActivityView: View {
             icon("cup.and.saucer.fill", Brand.orange)
         case .todoDue:
             icon("bell.badge.fill", Brand.orange)
+        case let .audit(e):
+            icon(e.icon, .indigo)
         }
     }
 
@@ -145,6 +244,7 @@ struct IslandActivityView: View {
         case let .focusDone(m, _): return "番茄完成 · \(m) 分钟"
         case let .breakDone(k): return "\(k.label)结束"
         case let .todoDue(t, _): return t.cleanTitle
+        case let .audit(e): return e.title
         }
     }
 
@@ -156,14 +256,15 @@ struct IslandActivityView: View {
         case let .todoDue(t, lead):
             let time = t.time ?? ""
             return lead > 0 ? "\(lead) 分钟后 · \(time)" : "现在 · \(time)"
+        case let .audit(e): return "结审 · \(e.projectTitle) · \(e.detail)"
         }
     }
 
     private var buttons: [Btn] {
         switch activity {
         case .capture:
-            return [Btn(label: "存为笔记", help: "保存为笔记", prominent: true, action: .primary),
-                    Btn(label: "暂存", help: "放进暂存架", action: .secondary)]
+            return [Btn(label: "存为笔记", help: "保存为笔记", prominent: true, action: .primary)]
+                + (shelfOn ? [Btn(label: "暂存", help: "放进暂存架", action: .secondary)] : [])
         case let .focusDone(_, b):
             return b != nil
                 ? [Btn(label: "开始休息", help: "开始\(b!.label)", prominent: true, action: .primary),
@@ -175,6 +276,8 @@ struct IslandActivityView: View {
             return [Btn(label: "完成", help: "完成这个待办", prominent: true, action: .primary),
                     Btn(icon: "play.fill", help: "专注这件事", action: .secondary),
                     Btn(icon: "clock.arrow.circlepath", help: "推迟 1 小时", action: .tertiary)]
+        case .audit:
+            return [Btn(label: "打开结审", help: "打开结审", prominent: true, action: .primary)]
         }
     }
 
@@ -278,6 +381,11 @@ struct ShelfStrip: View {
             Button("打开") { shelf.open(item) }
             Button("复制") { shelf.copy(item) }
             Button("保存（自动识别）") { IslandController.shared.submit(shelf.rawDrop(for: item)) }
+            if AppModel.current?.hasSjz == true {
+                Button("保存为结审证据") { IslandController.shared.submit(shelf.rawDrop(for: item), to: .evidence) }
+                Button("保存为结审法规") { IslandController.shared.submit(shelf.rawDrop(for: item), to: .regulation) }
+                Button("记为结审线索") { IslandController.shared.submit(shelf.rawDrop(for: item), to: .clue) }
+            }
             Divider()
             Button("移除", role: .destructive) { shelf.remove(item) }
         }

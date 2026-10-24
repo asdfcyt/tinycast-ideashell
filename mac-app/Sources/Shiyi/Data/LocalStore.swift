@@ -31,12 +31,14 @@ final class CredentialStore: @unchecked Sendable {
     private var _dida: String
     private var _backupNoteId: String?
     private var _llmKey: String
+    private var _sjzKey: String
 
     private struct Disk: Codable {
         var ideashellKey: String = ""
         var didaToken: String = ""
         var backupNoteId: String?
         var llmKey: String?
+        var sjzKey: String?
     }
 
     init() {
@@ -47,12 +49,21 @@ final class CredentialStore: @unchecked Sendable {
         _dida = disk.didaToken
         _backupNoteId = disk.backupNoteId
         _llmKey = disk.llmKey ?? ""
+        _sjzKey = disk.sjzKey ?? ""
     }
 
     var ideashellKey: String { lock.withLock { _ideashell } }
     var didaToken: String { lock.withLock { _dida } }
     var backupNoteId: String? { lock.withLock { _backupNoteId } }
     var llmKey: String { lock.withLock { _llmKey } }
+    var sjzKey: String { lock.withLock { _sjzKey } }
+
+    func setSjzKey(_ k: String) {
+        lock.withLock {
+            _sjzKey = k
+            persist()
+        }
+    }
 
     func setLlmKey(_ k: String) {
         lock.withLock {
@@ -78,7 +89,7 @@ final class CredentialStore: @unchecked Sendable {
 
     /// 调用方已持有锁
     private func persist() {
-        let disk = Disk(ideashellKey: _ideashell, didaToken: _dida, backupNoteId: _backupNoteId, llmKey: _llmKey.isEmpty ? nil : _llmKey)
+        let disk = Disk(ideashellKey: _ideashell, didaToken: _dida, backupNoteId: _backupNoteId, llmKey: _llmKey.isEmpty ? nil : _llmKey, sjzKey: _sjzKey.isEmpty ? nil : _sjzKey)
         if let d = try? JSONEncoder().encode(disk), let s = String(data: d, encoding: .utf8) {
             LocalStore.write("credentials.json", s, secret: true)
         }

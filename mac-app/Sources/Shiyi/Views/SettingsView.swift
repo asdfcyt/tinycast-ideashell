@@ -10,6 +10,9 @@ struct SettingsView: View {
     @State private var showLlm = false
     @State private var testing = false
     @State private var testResult: (ok: Bool, text: String)?
+    @State private var showSjz = false
+    @State private var sjzTesting = false
+    @State private var sjzResult: (ok: Bool, text: String)?
 
     var body: some View {
         ScrollView {
@@ -17,6 +20,7 @@ struct SettingsView: View {
                 Text("设置").font(.largeTitle.bold())
 
                 accountsCard
+                sjzCard
                 displayCard
                 appearanceCard
                 aiCard
@@ -77,6 +81,113 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - 结审
+
+    private var sjzCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.shield")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.indigo)
+                        .frame(width: 30, height: 30)
+                        .background(Color.indigo.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 8) {
+                            Text("结审（审计工作台）").font(.headline)
+                            if model.sjzEnabled { TagChip(text: model.hasSjz ? "已连接" : "未填写", tint: model.hasSjz ? .green : .orange) }
+                        }
+                        Text(model.sjzEnabled
+                             ? "把截图、文字、链接存为结审的证据 / 法规 / 线索，并在待办里显示结审任务"
+                             : "已关闭：岛上不显示结审区，待办不合并结审任务，也不弹结审提醒")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 12)
+                    Toggle("", isOn: $model.sjzEnabled).toggleStyle(.switch).controlSize(.small).labelsHidden()
+                }
+
+                if model.sjzEnabled {
+                    Divider()
+                    sjzField("API Key") {
+                        HStack(spacing: 6) {
+                            Group {
+                                if showSjz { TextField("sjz_…", text: $model.sjzKeyInput) } else { SecureField("sjz_…", text: $model.sjzKeyInput) }
+                            }
+                            .textFieldStyle(.roundedBorder).font(.body.monospaced())
+                            Button { showSjz.toggle() } label: {
+                                Image(systemName: showSjz ? "eye.slash" : "eye").frame(width: 18)
+                            }
+                            .buttonStyle(.borderless).help(showSjz ? "隐藏" : "显示")
+                        }
+                    }
+                    sjzField("服务地址") {
+                        TextField(SjzApi.defaultEndpoint, text: $model.sjzEndpoint)
+                            .textFieldStyle(.roundedBorder).font(.body.monospaced())
+                    }
+                    HStack(spacing: 10) {
+                        Button {
+                            sjzTesting = true
+                            sjzResult = nil
+                            Task {
+                                await model.saveSjz()
+                                do {
+                                    let r = try await model.sjz.listProjects()
+                                    sjzResult = (true, "连接正常，\(r.projects.count) 个项目")
+                                } catch {
+                                    sjzResult = (false, error.localizedDescription)
+                                }
+                                sjzTesting = false
+                            }
+                        } label: { Text("保存并测试").frame(minWidth: 70) }
+                            .buttonStyle(.borderedProminent).tint(Brand.orange)
+                            .disabled(sjzTesting || model.sjzKeyInput.trimmed.isEmpty)
+                        if sjzTesting { ProgressView().controlSize(.small) }
+                        if let r = sjzResult {
+                            Label(r.text, systemImage: r.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .font(.caption).foregroundStyle(r.ok ? Color.green : Color.orange).lineLimit(2)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    Divider()
+                    HStack(spacing: 10) {
+                        Image(systemName: "pin")
+                            .font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.indigo)
+                            .frame(width: 30, height: 30)
+                            .background(Color.indigo.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("钉住项目")
+                            Text("灵动岛保存的证据、法规、线索都放进这个项目").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 12)
+                        Picker("", selection: Binding(
+                            get: { model.sjzPin.project },
+                            set: { name in Task { await model.sjzSetProject(name) } }
+                        )) {
+                            if model.sjzPin.project.isEmpty { Text("未钉住").tag("") }
+                            ForEach(model.sjzProjects, id: \.name) { Text($0.title).tag($0.name) }
+                            if !model.sjzPin.project.isEmpty, !model.sjzProjects.contains(where: { $0.name == model.sjzPin.project }) {
+                                Text(model.sjzPin.projectTitle.isEmpty ? model.sjzPin.project : model.sjzPin.projectTitle).tag(model.sjzPin.project)
+                            }
+                        }
+                        .labelsHidden().frame(width: 230)
+                        .disabled(!model.hasSjz)
+                    }
+                    Text("Key 在结审「设置 → 外部应用」里生成；保存证据、法规、记线索、回写任务还需在那里开启「允许写入」。结审的任务、专注和记录只存在结审与本机，不会写入滴答清单或闪念贝壳。")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .task { if model.hasSjz { await model.refreshSjzTarget(); await model.refreshSjzProjects() } }
+    }
+
+    private func sjzField<C: View>(_ label: String, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            content()
+        }
+    }
+
     private func credentialRow(
         icon: String, tint: Color, name: String, connected: Bool, placeholder: String,
         text: Binding<String>, reveal: Binding<Bool>, hint: String
@@ -121,6 +232,7 @@ struct SettingsView: View {
     @AppStorage(DisplayMode.swipeKey) private var islandSwipe = true
     @AppStorage(DisplayMode.captureKey) private var islandCapture = true
     @AppStorage(DisplayMode.activityKey) private var islandActivities = true
+    @AppStorage(DisplayMode.shelfKey) private var islandShelf = true
     @AppStorage(DisplayMode.hotkeyKey) private var islandHotkey: IslandHotkey = .optSpace
     @AppStorage(AppTheme.key) private var theme: AppTheme = .system
     @AppStorage(BackgroundPrefs.hideDockKey) private var hideDock = false
@@ -157,6 +269,7 @@ struct SettingsView: View {
                     islandRow("hand.draw", .purple, "触控板下滑展开", "在刘海上双指下滑展开；展开后在顶部一条上上滑收起", $islandSwipe)
                     islandRow("photo.badge.plus", Brand.orange, "截图提示", "刚截了图（或剪贴板里有新图片）时岛自动弹出，一键存为笔记、暂存，或拖走。截图在桌面时，首次使用 macOS 会请求访问桌面文件夹", $islandCapture)
                     islandRow("text.viewfinder", .teal, "识别截图里的文字", "把截图保存为笔记时，用系统自带的文字识别（本机完成，图片不外传）把图里的字附在笔记后面，之后能搜到", $ocrOn)
+                    islandRow("tray.full", .cyan, "暂存架", "展开页底部的暂存区，以及拖放时的「暂存」半边；关掉后拖放只保存，截图提示也不再有「暂存」", $islandShelf)
                     islandRow("bell.badge", .red, "状态提醒", "番茄 / 休息结束、待办到点时岛自动弹出，可直接完成、专注或推迟", $islandActivities)
                     HStack(spacing: 10) {
                         Image(systemName: "command")
@@ -176,7 +289,7 @@ struct SettingsView: View {
                     .padding(.vertical, 2)
                 }
                 Text(displayMode == .island
-                     ? "灵动岛里是和菜单栏弹窗一样的待办、专注小组件，底部是暂存架；平时在刘海两侧显示「今天 · 逾期」或专注进度。把截图、链接、文字拖到刘海：左半边保存（自动识别），右半边暂存。展开后 ⌘V 粘贴保存、⌘⇧V 粘贴暂存，Esc 或点击别处收起。"
+                     ? "灵动岛里是和菜单栏弹窗一样的待办、专注小组件，底部可选暂存架；平时在刘海两侧显示「今天 · 逾期」或专注进度。把截图、链接、文字拖到刘海：左半边保存（自动识别），右半边暂存（开启暂存架时）。展开后 ⌘V 粘贴保存、⌘⇧V 粘贴暂存，Esc 或点击别处收起。"
                      : "菜单栏图标显示「今天 · 逾期」或专注倒计时，点击弹出待办小组件。")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -314,6 +427,8 @@ struct SettingsView: View {
     @AppStorage("notify.lead") private var nLead = 10
     @AppStorage("notify.digest") private var nDigest = true
     @AppStorage("notify.overdue") private var nOverdue = true
+    @AppStorage("notify.sjz") private var nSjz = true
+    @AppStorage("sjz.summary") private var nSjzSummary = true
 
     private var notifyCard: some View {
         Card {
@@ -350,6 +465,12 @@ struct SettingsView: View {
                 }
                 notifyRow("sun.horizon", .purple, "早晚简报", "早上 8:30 今天的安排，晚上 9:00 还没完成的几件", $nDigest)
                 notifyRow("exclamationmark.circle", .red, "逾期提醒", "每天 10:00 提醒还有几件逾期", $nOverdue)
+
+                if model.hasSjz {
+                    notifyGroup("结审")
+                    notifyRow("checkmark.shield", .indigo, "结审提醒", "调研完成、任务到期或逾期、待复核、线索久未跟进、取证单缺证据时，灵动岛弹出提醒（数据只存在本机）", $nSjz)
+                    notifyRow("moon.stars", .indigo, "每晚工作小结", "21 点后把当天从拾忆写入的证据 / 法规 / 线索 / 数据、专注时长和完成任务写进结审项目的工作日志", $nSjzSummary)
+                }
 
                 Text("待办提醒在待办刷新后重新安排，退出拾忆后也会按时响。如果收不到，请在「系统设置 → 通知」里允许拾忆。")
                     .font(.caption).foregroundStyle(.secondary)

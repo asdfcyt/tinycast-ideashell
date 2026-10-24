@@ -137,7 +137,7 @@ struct TaskDetailView: View {
     }
 
     private var datePopover: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             DayGridPicker(selection: $editDate)
             HStack(spacing: 8) {
                 quick("今天", 0)
@@ -150,7 +150,7 @@ struct TaskDetailView: View {
                 Label("具体时间", systemImage: "clock").font(.callout)
                 Spacer()
                 if editHasTime {
-                    DatePicker("", selection: $editTime, displayedComponents: .hourAndMinute).labelsHidden()
+                    TimeField(time: $editTime)
                 }
                 Toggle("", isOn: $editHasTime).toggleStyle(.switch).labelsHidden().controlSize(.small)
             }
@@ -174,7 +174,7 @@ struct TaskDetailView: View {
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(16).frame(width: 300)
+        .padding(14).frame(width: 264)
     }
 
     private func quick(_ label: String, _ days: Int) -> some View {
@@ -253,7 +253,10 @@ struct TaskDetailView: View {
     // MARK: - 任务笔记
 
     @ViewBuilder private var taskNoteSection: some View {
-        if let ref {
+        if SjzTasks.owns(current.id) {
+            // 结审任务的专注记录、进展都写在任务说明的「进展记录」里（结审），不建闪念贝壳笔记
+            EmptyView()
+        } else if let ref {
             Card {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 8) {

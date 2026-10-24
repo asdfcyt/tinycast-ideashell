@@ -13,6 +13,17 @@ extension AppModel {
         recording = true
         defer { recording = false }
 
+        // 结审任务：记录只写回结审（任务说明的「进展记录」+ 项目工作日志），不进闪念贝壳和滴答
+        if let tid = run.taskId, let p = SjzTasks.parse(tid) {
+            do {
+                try await sjz.recordTaskActivity(project: p.project, id: p.task, text: line)
+                await refreshSjzOverview(force: true)
+                showNotice("已记到结审任务")
+            } catch {
+                showNotice("没能写进结审：" + error.localizedDescription + "（已记在本次专注里）")
+            }
+            return true
+        }
         guard hasIdeashell else {
             showNotice("已记在本次专注里；填写闪念贝壳后才能写进笔记")
             return true

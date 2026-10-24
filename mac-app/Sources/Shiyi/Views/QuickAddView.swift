@@ -126,7 +126,7 @@ struct QuickAddView: View {
     /// 类型：默认自动识别，点开可以手动改
     private func kindMenu(_ a: CaptureAnalysis, _ k: CaptureKind) -> some View {
         Menu {
-            ForEach(CaptureKind.allCases) { c in
+            ForEach(CaptureKind.available(sjz: model.hasSjz)) { c in
                 Button {
                     override = (c == a.recommended && a.forced == nil) ? nil : c
                 } label: {
@@ -208,6 +208,10 @@ struct QuickAddView: View {
             ForEach(a.tags, id: \.self) { chip("number", $0, tint: .accentColor) }
             if let f = a.folderName { chip("folder", f, tint: .accentColor) }
             if k == .daily { chip("clock", "追加到今天的 Daily Note", tint: .secondary) }
+            if k.isSjz {
+                let t = model.sjzTargetTitle.isEmpty ? "未选择项目" : model.sjzTargetTitle
+                chip("checkmark.shield", "结审 · " + t, tint: .indigo)
+            }
             if k == .note && a.tags.isEmpty && a.folderName == nil { chip("doc.text", "新建一条笔记", tint: .secondary) }
             Spacer(minLength: 0)
         }
@@ -229,6 +233,9 @@ struct QuickAddView: View {
         case .todo: return "添加待办"
         case .daily: return "记入 Daily Note"
         case .note: return "保存笔记"
+        case .clue: return "记为线索"
+        case .evidence: return "保存为证据"
+        case .regulation: return "保存为法规"
         }
     }
 

@@ -16,6 +16,8 @@ enum DisplayMode: String, CaseIterable, Identifiable {
     static let captureKey = "ui.islandCapture"
     /// 灵动岛：专注完成、待办到点等状态提醒
     static let activityKey = "ui.islandActivities"
+    /// 灵动岛：暂存架（展开页底部、拖放右半边、截图提示的「暂存」）
+    static let shelfKey = "ui.islandShelf"
     /// 灵动岛：全局快捷键
     static let hotkeyKey = "ui.islandHotkey"
 
@@ -31,6 +33,7 @@ enum DisplayMode: String, CaseIterable, Identifiable {
     static var swipeEnabled: Bool { flag(swipeKey) }
     static var captureEnabled: Bool { flag(captureKey) }
     static var activitiesEnabled: Bool { flag(activityKey) }
+    static var shelfEnabled: Bool { flag(shelfKey) }
     static var hotkey: IslandHotkey {
         IslandHotkey(rawValue: UserDefaults.standard.string(forKey: hotkeyKey) ?? "") ?? .optSpace
     }

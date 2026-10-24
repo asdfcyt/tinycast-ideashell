@@ -14,21 +14,68 @@ struct ProjectsView: View {
         }
     }
 
+    /// 结审里的审计项目（开启结审后显示在最上面）
+    private var sjzProjects: [SjzProjectStat] {
+        guard model.hasSjz else { return [] }
+        // 只显示正在做的：有未完成任务，或就是当前钉住的项目
+        let list = (model.sjzOverview?.projects ?? []).filter { $0.open > 0 || $0.name == model.sjzPin.project }
+        return list.sorted { a, b in
+            let pa = a.name == model.sjzPin.project, pb = b.name == model.sjzPin.project
+            return pa != pb ? pa : a.title.localizedCompare(b.title) == .orderedAscending
+        }
+    }
+
+    @ViewBuilder private var projectRows: some View {
+        ForEach(projects) { p in
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(p.keyword).font(.body.weight(.medium))
+                    if let n = p.next, !n.trimmed.isEmpty {
+                        Text(n).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                Spacer()
+                TagChip(text: p.projectStatus.label, tint: statusColor(p.projectStatus))
+            }
+            .padding(.vertical, 2)
+            .tag(p.keyword)
+        }
+    }
+
+    @ViewBuilder private var sjzRows: some View {
+        ForEach(sjzProjects) { p in
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(p.title).font(.body.weight(.medium)).lineLimit(1)
+                    Text("待办 \(p.open)" + (p.overdue > 0 ? " · 逾期 \(p.overdue)" : "") + (p.pendingReviews > 0 ? " · 待复核 \(p.pendingReviews)" : ""))
+                        .font(.caption).foregroundStyle(p.overdue > 0 ? Color.red : Color.secondary).lineLimit(1)
+                }
+                Spacer()
+                TagChip(text: p.name == model.sjzPin.project ? "当前" : "审计", tint: p.name == model.sjzPin.project ? .green : .indigo)
+            }
+            .padding(.vertical, 2)
+            .tag(SjzTasks.prefix + p.name)
+        }
+    }
+
     var body: some View {
         TwoPane(leadingFraction: 0.28, leadingMin: 230, leadingMax: 340, trailingMin: 420) {
             VStack(spacing: 0) {
                 FocusEntryRow(focus: model.focus, selected: selected == nil) { model.selectedProject = nil }
                     .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 6)
 
-                HStack {
-                    Text("项目").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    if model.backupLoading { ProgressView().controlSize(.mini) }
-                    Spacer()
+                // 有审计项目时，下面的分组自带标题，这一行就不要了
+                if sjzProjects.isEmpty {
+                    HStack {
+                        Text("项目").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        if model.backupLoading { ProgressView().controlSize(.mini) }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 18).padding(.top, 6).padding(.bottom, 2)
                 }
-                .padding(.horizontal, 18).padding(.top, 6).padding(.bottom, 2)
 
                 if let e = model.backupError { ErrorBanner(text: e) { Task { await model.loadBackup() } }.padding(8) }
-                if projects.isEmpty {
+                if projects.isEmpty && sjzProjects.isEmpty {
                     EmptyHint(
                         icon: "folder",
                         title: model.backupLoading ? "正在读取手机备份…" : "还没有项目",
@@ -36,19 +83,11 @@ struct ProjectsView: View {
                     )
                 } else {
                     List(selection: $model.selectedProject) {
-                        ForEach(projects) { p in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(p.keyword).font(.body.weight(.medium))
-                                    if let n = p.next, !n.trimmed.isEmpty {
-                                        Text(n).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                    }
-                                }
-                                Spacer()
-                                TagChip(text: p.projectStatus.label, tint: statusColor(p.projectStatus))
-                            }
-                            .padding(.vertical, 2)
-                            .tag(p.keyword)
+                        if sjzProjects.isEmpty {
+                            projectRows
+                        } else {
+                            Section("审计项目 · 结审") { sjzRows }
+                            if !projects.isEmpty { Section("项目") { projectRows } }
                         }
                     }
                     .listStyle(.inset)
@@ -62,7 +101,9 @@ struct ProjectsView: View {
             }
         } trailing: {
             Group {
-                if let k = selected, let p = model.projects.first(where: { $0.keyword == k }) {
+                if let k = selected, k.hasPrefix(SjzTasks.prefix) {
+                    SjzProjectDetailView(name: String(k.dropFirst(SjzTasks.prefix.count))).id(k)
+                } else if let k = selected, let p = model.projects.first(where: { $0.keyword == k }) {
                     ProjectDetailView(project: p).id(k)
                 } else {
                     FocusPage()

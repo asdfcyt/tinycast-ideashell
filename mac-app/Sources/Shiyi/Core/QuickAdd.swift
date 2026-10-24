@@ -53,6 +53,21 @@ extension AppModel {
             Task { if section == .review { await loadRiver(silent: true) } }
             return "已记入今天的 Daily Note"
 
+        case .clue, .evidence, .regulation:
+            // 结审：不经过闪念贝壳 / 滴答，直接存进钉住的审计项目
+            guard hasSjz else { throw McpError.tool("先到「设置」开启并连接结审") }
+            let text = a.text.trimmed
+            guard !text.isEmpty else { throw McpError.tool("内容为空") }
+            if kind == .clue {
+                await refreshSjzTarget()
+                let place = sjzTargetTitle.isEmpty ? "" : "（\(sjzTargetTitle)）"
+                _ = try await sjz.addClue(project: nil, text: text, tags: a.tags)
+                return "已记入线索" + place
+            }
+            var raw = RawDrop()
+            raw.text = text
+            return try await submitSjz(raw, to: kind == .evidence ? .evidence : .regulation)
+
         case .note:
             guard hasIdeashell else { throw McpError.noCredential }
             let body = a.body.trimmed

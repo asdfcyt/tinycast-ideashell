@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 /// 拖拽时落在岛的哪一半：左 = 保存（自动识别），右 = 暂存
-enum DropZone { case save, shelf }
+enum DropZone { case save, shelf, evidence, regulation, clue, data }
 
 /// 刚截的一张图 / 剪贴板里的新图片：岛上弹出提示，可以一键保存、暂存，或直接拖走
 struct CaptureOffer: Identifiable, Equatable {
@@ -21,6 +21,7 @@ enum IslandActivity: Identifiable, Equatable {
     case focusDone(minutes: Int, nextBreak: FocusKind?)
     case breakDone(FocusKind)
     case todoDue(DidaTask, leadMin: Int)
+    case audit(SjzEvent)
 
     var id: String {
         switch self {
@@ -28,6 +29,7 @@ enum IslandActivity: Identifiable, Equatable {
         case let .focusDone(m, _): return "focusDone-\(m)-\(Date().timeIntervalSince1970)"
         case let .breakDone(k): return "breakDone-" + k.rawValue
         case let .todoDue(t, _): return "todo-" + t.id
+        case let .audit(e): return "audit-" + e.id
         }
     }
 
@@ -37,8 +39,9 @@ enum IslandActivity: Identifiable, Equatable {
         case .capture: return 9
         case .focusDone, .breakDone: return 25
         case .todoDue: return 30
+        case .audit: return 20
         }
     }
 }
 
-enum ActivityAction { case primary, secondary, tertiary, dismiss }
+enum ActivityAction { case primary, secondary, tertiary, evidence, regulation, dismiss }

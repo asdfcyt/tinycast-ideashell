@@ -63,10 +63,10 @@ struct CalendarView: View {
                 .clipped()
             }
             .toolbar {
-                // 日 / 周 / 月 / 年 放在标题栏正中间（和系统日历一样）
+                // 日 / 周 / 月 / 年 放在标题栏最右边
                 // 系统原生分段控件。工具栏里的分段控件按文字撑开宽度、忽略 .frame，所以在文字两边补空格，
                 // 让每一段（和选中的那一块）比默认的宽一些（约 52pt）
-                ToolbarItem(placement: .principal) {
+                ToolbarItem(placement: .primaryAction) {
                     Picker("视图", selection: Binding(get: { model.calendarMode }, set: { model.setCalendarMode($0) })) {
                         ForEach(CalendarMode.allCases) { Text("\u{3000}" + $0.rawValue + "\u{3000}").tag($0) }
                     }

@@ -12,6 +12,7 @@ enum NotifyPrefs {
             "notify.lead": 10,       // 提前几分钟再提醒一次（0 = 不提前）
             "notify.digest": true,   // 早间简报 + 晚间收尾
             "notify.overdue": true,  // 逾期提醒
+            "notify.sjz": true,      // 结审提醒：调研完成、任务到期、待复核
         ])
     }
 

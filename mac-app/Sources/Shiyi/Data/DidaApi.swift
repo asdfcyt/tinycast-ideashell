@@ -7,6 +7,7 @@ struct DidaApi {
     private var tz: String { TimeZone.current.identifier }
 
     func complete(_ task: DidaTask) async throws {
+        if SjzTasks.owns(task.id) { try await SjzTasks.apply(task, .complete); return }
         _ = try await mcp.callText("complete_task", ["project_id": task.projectId, "task_id": task.id])
     }
 
@@ -32,11 +33,13 @@ struct DidaApi {
 
     /// 删除任务（滴答里会进「已删除」）
     func deleteTask(_ task: DidaTask) async throws {
+        if SjzTasks.owns(task.id) { throw SjzTasks.readonly("删除") }
         _ = try await mcp.callText("delete_task", ["project_id": task.projectId, "task_id": task.id])
     }
 
     /// 改期；time 为 nil 表示全天（当天 9:00 提醒），否则准点提醒
     func reschedule(_ task: DidaTask, date: String, time: String?) async throws {
+        if SjzTasks.owns(task.id) { try await SjzTasks.apply(task, .due(date)); return }
         let due = Day.dueString(date, time: time)
         _ = try await mcp.callText("update_task", [
             "task_id": task.id,
@@ -61,32 +64,38 @@ struct DidaApi {
 
     /// 优先级：0 无 / 1 低 / 3 中 / 5 高
     func setPriority(_ task: DidaTask, _ priority: Int) async throws {
+        if SjzTasks.owns(task.id) { try await SjzTasks.apply(task, .priority(priority)); return }
         try await updateFields(task, ["priority": priority])
     }
 
     /// 整体替换标签（不带 #）
     func setTags(_ task: DidaTask, _ tags: [String]) async throws {
+        if SjzTasks.owns(task.id) { throw SjzTasks.readonly("修改标签") }
         try await updateFields(task, ["tags": tags])
     }
 
     /// 编辑任务：标题、备注、标签一次写回
     func setDetails(_ task: DidaTask, title: String, content: String, tags: [String]) async throws {
+        if SjzTasks.owns(task.id) { try await SjzTasks.apply(task, .details(title: title, content: content)); return }
         try await updateFields(task, ["title": title, "content": content, "tags": tags])
     }
 
     /// 清除日期（滴答约定：日期设成 1970-01-01 表示清除）
     func clearDate(_ task: DidaTask) async throws {
+        if SjzTasks.owns(task.id) { throw SjzTasks.readonly("清除截止日") }
         let zero = "1970-01-01T00:00:00.000+0000"
         try await updateFields(task, ["startDate": zero, "dueDate": zero])
     }
 
     /// 移动到另一个清单（含收集箱）
     func move(_ task: DidaTask, toProject: String) async throws {
+        if SjzTasks.owns(task.id) { throw SjzTasks.readonly("换清单") }
         _ = try await mcp.callText("move_task", ["moves": [["fromProjectId": task.projectId, "toProjectId": toProject, "taskId": task.id] as JSON]])
     }
 
     /// 给任务写一条评论（在滴答 / 手机上也能看到最新进展）；滴答评论最长 1024 个字符
     func addComment(projectId: String, taskId: String, text: String) async throws {
+        if SjzTasks.owns(taskId) { throw SjzTasks.readonly("写评论") }
         let t = text.trimmed
         let title = t.count > 1000 ? String(t.prefix(1000)) + "…" : t
         _ = try await mcp.callText("add_comment", ["project_id": projectId, "task_id": taskId, "title": title])
@@ -94,6 +103,7 @@ struct DidaApi {
 
     /// 改任务备注（整段覆盖）
     func setContent(_ task: DidaTask, content: String) async throws {
+        if SjzTasks.owns(task.id) { try await SjzTasks.apply(task, .details(title: nil, content: content)); return }
         _ = try await mcp.callText("update_task", [
             "task_id": task.id,
             "task": ["id": task.id, "projectId": task.projectId, "content": content] as JSON,
@@ -103,6 +113,7 @@ struct DidaApi {
 
     /// 把已完成的任务恢复为未完成（撤销完成）
     func reopen(_ task: DidaTask) async throws {
+        if SjzTasks.owns(task.id) { try await SjzTasks.apply(task, .reopen); return }
         _ = try await mcp.callText("update_task", [
             "task_id": task.id,
             "task": ["id": task.id, "projectId": task.projectId, "status": 0],
@@ -201,6 +212,7 @@ struct DidaApi {
 
     /// 查单个任务；查不到返回 nil
     func fetchTask(_ taskId: String) async -> DidaTask? {
+        if SjzTasks.owns(taskId) { return await MainActor.run { AppModel.current?.localTask(taskId) } }
         guard let text = try? await mcp.callText("get_task_by_id", ["task_id": taskId]) else { return nil }
         return DidaParser.extractTasks(text).first
     }

@@ -31,6 +31,14 @@ enum DropPhase: Equatable {
     case hover
     case working
     case done(String, ok: Bool)
+
+    /// 空闲 / 悬停时显示投放区；保存中与结果页只需要一块小面板
+    var showsZones: Bool {
+        switch self {
+        case .idle, .hover: return true
+        case .working, .done: return false
+        }
+    }
 }
 
 /// 展开后显示什么：待办小组件 / 投放区 / 实时活动
@@ -47,11 +55,16 @@ final class IslandState: ObservableObject {
     @Published var notchHeight: CGFloat = 0
     @Published var maxContentHeight: CGFloat = 560
     @Published var mode: IslandMode = .widget
-    @Published var drop: DropPhase = .idle
+    @Published var drop: DropPhase = .idle {
+        didSet { if drop.showsZones != oldValue.showsZones { onLayoutChange?() } }
+    }
     @Published var zone: DropZone = .save
+    /// 已连接结审：投放区多一排「证据 / 法规 / 线索」，截图提示多几个按钮
+    @Published var sjzOn = false
     @Published var activity: IslandActivity?
 
     var onContentHeight: ((CGFloat) -> Void)?
+    var onLayoutChange: (() -> Void)?
     var onTapCollapsed: (() -> Void)?
     var onActivityAction: ((IslandActivity, ActivityAction) -> Void)?
 
@@ -66,8 +79,11 @@ final class IslandState: ObservableObject {
     var topInset: CGFloat { hasNotch ? notchHeight : barHeight }
     var shownContentHeight: CGFloat { min(contentHeight, maxContentHeight) }
     var widgetHeight: CGFloat { topInset + shownContentHeight + 14 }
-    var dropHeight: CGFloat { topInset + 100 }
-    var activityHeight: CGFloat { topInset + 76 }
+    var dropHeight: CGFloat { topInset + (sjzOn && drop.showsZones ? 160 : 100) }
+    var activityHeight: CGFloat {
+        if sjzOn, case .capture? = activity { return topInset + 118 }
+        return topInset + 76
+    }
     var targetHeight: CGFloat {
         switch mode {
         case .widget: return widgetHeight
@@ -146,14 +162,22 @@ private struct IslandCollapsedView: View {
 private struct IslandExpandedView: View {
     @ObservedObject var state: IslandState
     @ObservedObject private var shelf = ShelfStore.shared
+    @EnvironmentObject private var model: AppModel
+    @AppStorage(DisplayMode.shelfKey) private var shelfOn = true
 
     var body: some View {
         ZStack(alignment: .top) {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    MenuBarView()
-                    Divider().padding(.horizontal, 12)
-                    ShelfStrip(shelf: shelf)
+                    MenuBarView(showInbox: false)
+                    if model.hasSjz {
+                        Divider().padding(.horizontal, 12)
+                        SjzPinStrip()
+                    }
+                    if shelfOn {
+                        Divider().padding(.horizontal, 12)
+                        ShelfStrip(shelf: shelf)
+                    }
                 }
                 .frame(width: 380)
                 .clipped()
@@ -425,6 +449,10 @@ final class IslandController {
         started = true
         self.model = model
         state.onContentHeight = { [weak self] h in self?.contentHeightChanged(h) }
+        state.onLayoutChange = { [weak self] in
+            guard let self, self.state.expanded, self.state.mode == .drop else { return }
+            self.resizeExpanded()
+        }
         state.onTapCollapsed = { [weak self] in self?.expand() }
         state.onActivityAction = { [weak self] a, act in self?.perform(a, act) }
         captureWatcher.onOffer = { [weak self] offer in self?.present(.capture(offer)) }
@@ -571,6 +599,17 @@ final class IslandController {
             state.notchHeight = 0
         }
         state.maxContentHeight = max(220, s.visibleFrame.height - state.topInset - 40)
+        syncSjz()
+    }
+
+    /// 同步「是否已连接结审」，并在后台刷新岛上显示的目标项目
+    func syncSjzNow() { syncSjz() }
+
+    private func syncSjz() {
+        guard let model else { return }
+        let on = model.hasSjz
+        if state.sjzOn != on { state.sjzOn = on }
+        if on { Task { await model.refreshSjzTarget() } }
     }
 
     private func screenChanged() {
@@ -709,8 +748,35 @@ final class IslandController {
     // MARK: 保存 / 暂存
 
     /// 保存（万能输入规则）或暂存，并在岛上显示结果
-    func submit(_ raw: RawDrop, toShelf: Bool = false) {
-        guard panel != nil, let model else { return }
+    func submit(_ raw: RawDrop, toShelf wantShelf: Bool = false) {
+        guard let model else { return }
+        let toShelf = wantShelf && DisplayMode.shelfEnabled
+        run(raw) {
+            if toShelf {
+                let n = await ShelfStore.shared.add(raw)
+                return n > 0 ? "已放进暂存架（\(n) 项）" : "没有可以暂存的内容"
+            }
+            return try await model.submitDrop(raw)
+        }
+    }
+
+    /// 保存到结审（证据 / 法规 / 线索）
+    func submit(_ raw: RawDrop, to target: SjzTarget) {
+        guard let model else { return }
+        run(raw) {
+            do {
+                return try await model.submitSjz(raw, to: target)
+            } catch SjzError.needRegulation {
+                // 没有法规名：先放进暂存架，等在岛上钉住 / 新建法规后再保存
+                let n = await ShelfStore.shared.add(raw)
+                throw McpError.tool(n > 0 ? "还没钉住法规，已放进暂存架。在岛上「法规」里搜索或新建后，右键暂存项再保存" : "还没钉住法规")
+            }
+        }
+    }
+
+    /// 在岛上显示「处理中 → 结果」
+    private func run(_ raw: RawDrop, _ work: @escaping () async throws -> String) {
+        guard panel != nil else { return }
         activityWork?.cancel(); activityWork = nil
         finishWork?.cancel(); finishWork = nil
         collapseWork?.cancel(); collapseWork = nil
@@ -724,13 +790,7 @@ final class IslandController {
         showDropResult()
         Task { @MainActor in
             do {
-                let msg: String
-                if toShelf {
-                    let n = await ShelfStore.shared.add(raw)
-                    msg = n > 0 ? "已放进暂存架（\(n) 项）" : "没有可以暂存的内容"
-                } else {
-                    msg = try await model.submitDrop(raw)
-                }
+                let msg = try await work()
                 state.drop = .done(msg, ok: true)
                 scheduleFinishDrop(after: 1.6)
             } catch {
@@ -750,8 +810,8 @@ final class IslandController {
         let w = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.finishWork = nil
-            self.state.drop = .idle
             self.collapse()
+            self.state.drop = .idle
         }
         finishWork = w
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: w)
@@ -775,11 +835,20 @@ final class IslandController {
     private func dragEntered(_ info: NSDraggingInfo) -> NSDragOperation {
         // 从岛里拖出去的东西（暂存架、截图缩略图）再拖回来，不当作投放
         guard info.draggingSource == nil, DropReader.accepts(info.draggingPasteboard) else { return [] }
-        if let c = container {
-            state.zone = c.convert(info.draggingLocation, from: nil).x < c.bounds.midX ? .save : .shelf
-        }
+        if let c = container { state.zone = zone(at: c.convert(info.draggingLocation, from: nil), in: c) }
         if state.mode != .drop || !state.expanded { enterDropMode() }
         return .copy
+    }
+
+    /// 鼠标在投放区的哪一格：上排 左保存 / 右暂存；连接了结审时下排 证据 / 法规 / 线索
+    private func zone(at p: NSPoint, in c: NSView) -> DropZone {
+        let shelfOn = DisplayMode.shelfEnabled
+        guard state.sjzOn, state.drop.showsZones else { return (p.x < c.bounds.midX || !shelfOn) ? .save : .shelf }
+        let fromTop = c.bounds.height - p.y - state.topInset
+        if fromTop < 80 { return (p.x < c.bounds.midX || !shelfOn) ? .save : .shelf }
+        let left = (c.bounds.width - state.expandedWidth) / 2 + 16
+        let rel = (p.x - left) / (state.expandedWidth - 32)
+        return rel < 0.25 ? .evidence : (rel < 0.5 ? .regulation : (rel < 0.75 ? .clue : .data))
     }
 
     private func dragExited() {
@@ -789,11 +858,20 @@ final class IslandController {
     private func handleDrop(_ info: NSDraggingInfo) -> Bool {
         guard info.draggingSource == nil, DropReader.accepts(info.draggingPasteboard) else { return false }
         let raw = DropReader.read(info.draggingPasteboard)
-        submit(raw, toShelf: state.zone == .shelf)
+        switch state.zone {
+        case .save: submit(raw)
+        case .shelf: submit(raw, toShelf: true)
+        case .evidence: submit(raw, to: .evidence)
+        case .regulation: submit(raw, to: .regulation)
+        case .clue: submit(raw, to: .clue)
+        case .data: submit(raw, to: .data)
+        }
         return true
     }
 
     // MARK: 实时活动
+
+    func presentAudit(_ e: SjzEvent) { present(.audit(e)) }
 
     /// 弹出一条活动；用户正在用岛（展开着小组件 / 正在保存）时不打断
     @discardableResult
@@ -802,6 +880,7 @@ final class IslandController {
         if case .capture = a, !DisplayMode.captureEnabled { return false }
         if state.expanded, state.mode == .drop { return false }
         if state.expanded, state.mode == .widget, mouseInsidePanel() { return false }
+        syncSjz()
         state.activity = a
         activityHover = false
         if state.expanded { switchMode(.activity) } else { expand(mode: .activity) }
@@ -841,7 +920,11 @@ final class IslandController {
         if action == .dismiss { collapse(); return }
         switch a {
         case let .capture(o):
-            submit(o.raw, toShelf: action == .secondary)
+            switch action {
+            case .evidence: submit(o.raw, to: .evidence)
+            case .regulation: submit(o.raw, to: .regulation)
+            default: submit(o.raw, toShelf: action == .secondary)
+            }
         case let .focusDone(_, nextBreak):
             if action == .primary {
                 if nextBreak != nil { model.focus.start() } else { model.focus.quickFocus(model.focus.focusMinutes) }
@@ -852,6 +935,9 @@ final class IslandController {
             collapse()
         case .breakDone:
             model.focus.quickFocus(model.focus.focusMinutes)
+            collapse()
+        case .audit:
+            model.openSjzApp()
             collapse()
         case let .todoDue(task, _):
             switch action {

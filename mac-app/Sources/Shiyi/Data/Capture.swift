@@ -2,13 +2,22 @@ import Foundation
 
 enum CaptureKind: String, CaseIterable, Identifiable {
     case todo = "待办", daily = "Daily Note", note = "笔记"
+    /// 结审（开启并连接后才出现）：线索 / 证据 / 法规，直接存进当前钉住的审计项目
+    case clue = "结审线索", evidence = "结审证据", regulation = "结审法规"
     var id: String { rawValue }
+
+    var isSjz: Bool { self == .clue || self == .evidence || self == .regulation }
+
+    static func available(sjz: Bool) -> [CaptureKind] { allCases.filter { sjz || !$0.isSjz } }
 
     var icon: String {
         switch self {
         case .todo: return "checkmark.circle"
         case .daily: return "text.append"
         case .note: return "note.text"
+        case .clue: return "lightbulb"
+        case .evidence: return "doc.badge.plus"
+        case .regulation: return "book.closed"
         }
     }
 }
@@ -34,11 +43,16 @@ struct CaptureAnalysis {
 /// - `#标签`、`@文件夹` 会被抽出（要求前面是行首或空白，避免误伤 C#、邮箱）
 /// - 自动判断：待办 = 含「今天及以后的明确时间」或「明天及以后的日期」；笔记 = 带标签 / 文件夹；其余追加到 Daily Note
 enum CaptureParser {
+    /// 结审已启用并连接时，才识别「线索 / 证据 / 法规」前缀（由 AppModel 同步）
+    nonisolated(unsafe) static var sjzOn = false
     private static let sep = #"(?:\s*[:：,，]\s*|\s+)"#
     private static let prefixes: [(RX, CaptureKind)] = [
         (RX("^(?:待办|todo|提醒我?)" + sep, multiline: false, ignoreCase: true), .todo),
         (RX("^(?:日记|daily)" + sep, multiline: false, ignoreCase: true), .daily),
         (RX("^(?:笔记|note)" + sep, multiline: false, ignoreCase: true), .note),
+        (RX("^(?:线索|clue)" + sep, multiline: false, ignoreCase: true), .clue),
+        (RX("^(?:证据|evidence)" + sep, multiline: false, ignoreCase: true), .evidence),
+        (RX("^(?:法规|regulation)" + sep, multiline: false, ignoreCase: true), .regulation),
     ]
     private static let reTag = RX(#"(^|[\s\u3000])#([^\s#@]+)"#, multiline: false)
     private static let reFolder = RX(#"(^|[\s\u3000])@([^\s#@]+)"#, multiline: false)
@@ -47,7 +61,9 @@ enum CaptureParser {
     static func analyze(_ input: String, now: Date = Date()) -> CaptureAnalysis {
         var text = input.trimmed
         var forced: CaptureKind?
+        let sjzOn = Self.sjzOn
         for (re, kind) in prefixes {
+            if kind.isSjz && !sjzOn { continue }
             if let m = re.first(in: text), m.range.location == 0 {
                 forced = kind
                 text = re.replace(in: text, with: "").trimmed

@@ -79,6 +79,8 @@ final class AppModel: ObservableObject {
     let dida: DidaApi
     private let ideashellMcp: McpClient
     private let didaMcp: McpClient
+    /// 结审（审计工作台）的 MCP 服务：地址和 API Key 在设置里填，见 Data/SjzApi.swift
+    var sjz: SjzApi
 
     @Published var section: AppSection = .today
     @Published var sheetStack: [SheetPage] = []
@@ -87,6 +89,27 @@ final class AppModel: ObservableObject {
     // 凭证（设置页编辑用）
     @Published var ideashellKeyInput: String
     @Published var didaTokenInput: String
+    @Published var sjzKeyInput: String
+    @Published var sjzEndpoint: String = UserDefaults.standard.string(forKey: SjzApi.endpointKey) ?? SjzApi.defaultEndpoint
+    /// 结审里当前钉住的项目 / 取证单 / 法规（保存证据、法规、线索都以它为准）
+    @Published var sjzEnabled: Bool = (UserDefaults.standard.object(forKey: "sjz.enabled") as? Bool) ?? true {
+        didSet {
+            guard oldValue != sjzEnabled else { return }
+            UserDefaults.standard.set(sjzEnabled, forKey: "sjz.enabled")
+            CaptureParser.sjzOn = hasSjz
+            IslandController.shared.syncSjzNow()
+            Task { @MainActor in
+                await refreshSjzOverview(force: true)
+                if sjzEnabled { await refreshSjzTarget(); await refreshSjzProjects() }
+            }
+        }
+    }
+    @Published var sjzPin = SjzPin()
+    /// 结审任务概览：只缓存在本机，不写入滴答清单 / 闪念贝壳
+    @Published var sjzOverview: SjzOverview? = AppModel.readCache("sjz-overview.json")
+    @Published var sjzProjects: [SjzApi.Project] = []
+    /// 岛上显示的保存目标（项目名）；设置里读到后缓存
+    @Published var sjzTargetTitle: String = ""
     // AI 模型（OpenAI 兼容接口）：Key 存本机凭证文件，地址和模型名存偏好
     @Published var llmKeyInput: String
     @Published var llmBaseUrl: String = UserDefaults.standard.string(forKey: "llm.baseUrl") ?? "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -218,11 +241,13 @@ final class AppModel: ObservableObject {
         let dm = McpClient(endpoint: McpEndpoints.dida) { cred.didaToken }
         ideashellMcp = im
         didaMcp = dm
+        sjz = SjzApi.make(endpoint: UserDefaults.standard.string(forKey: SjzApi.endpointKey) ?? SjzApi.defaultEndpoint) { cred.sjzKey }
         ideashell = IdeashellApi(mcp: im)
         dida = DidaApi(mcp: dm)
         focus = FocusStore(api: DidaApi(mcp: dm)) { !cred.didaToken.trimmed.isEmpty }
         ideashellKeyInput = cred.ideashellKey
         didaTokenInput = cred.didaToken
+        sjzKeyInput = cred.sjzKey
         llmKeyInput = cred.llmKey
         focus.onMessage = { [weak self] text in self?.showNotice(text) }
 
@@ -264,6 +289,8 @@ final class AppModel: ObservableObject {
 
     var hasIdeashell: Bool { !credentials.ideashellKey.trimmed.isEmpty }
     var hasDida: Bool { !credentials.didaToken.trimmed.isEmpty }
+    /// 已启用并填了 Key（关掉开关后，岛上的结审区、结审任务、提醒都会消失）
+    var hasSjz: Bool { sjzEnabled && !credentials.sjzKey.trimmed.isEmpty }
 
     // MARK: - 启动 / 定时刷新
 
@@ -276,6 +303,9 @@ final class AppModel: ObservableObject {
         loadAIInsights()
         Task { await refreshAll(startup: true) }
         Task { await loadHolidays() }
+        startSjzEvents()
+        CaptureParser.sjzOn = hasSjz
+        focus.sjzSink = { [weak self] p in try await self?.sjzRecordFocus(p) }
         Task { await focus.settle(); await focus.refresh(); stamp("focus", key: "f") }
         // 定时刷新（后台也做：灵动岛 / 菜单栏上的数字要一直是新的）；回到前台时，离上次刷新超过 2 分钟再补一次
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
@@ -502,6 +532,7 @@ final class AppModel: ObservableObject {
     /// 在 Mac 上给任务新建任务笔记（与安卓端同一份模板）：建笔记 → 记下对应关系 → 把链接写回滴答任务备注
     @discardableResult
     func createTaskNote(_ task: DidaTask, deliverable: String, purpose: String, steps: String) async -> Bool {
+        if SjzTasks.owns(task.id) { showNotice("结审任务的记录保存在结审里，不创建任务笔记"); return false }
         guard hasIdeashell else { showNotice("先到「设置」填写闪念贝壳 API Key"); return false }
         guard !creatingTaskNote else { return false }
         creatingTaskNote = true
@@ -571,7 +602,7 @@ final class AppModel: ObservableObject {
         if !silent { todosLoading = true }
         defer { todosLoading = false }
         do {
-            let fresh = try await dida.fetchOverview()
+            let fresh = mergeSjz(try await dida.fetchOverview())
             overview = fresh
             let fp = Self.fingerprint(fresh)
             if overviewFP != 0 && fp != overviewFP { historyDirty = true }

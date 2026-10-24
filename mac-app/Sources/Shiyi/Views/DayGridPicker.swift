@@ -22,14 +22,14 @@ struct DayGridPicker: View {
     var body: some View {
         let today = Day.today()
         let picked = Day.string(selection)
-        VStack(spacing: 8) {
+        VStack(spacing: 4) {
             HStack(spacing: 2) {
-                Text(title).font(.system(size: 15, weight: .semibold))
+                Text(title).font(.system(size: 13, weight: .semibold))
                 Spacer(minLength: 4)
                 nav("chevron.left") { shift(-1) }
                 Button { month = Date(); selection = Day.startOfDay(Date()) } label: {
-                    Text("今天").font(.system(size: 12, weight: .medium))
-                        .padding(.horizontal, 8).padding(.vertical, 3)
+                    Text("今天").font(.system(size: 11, weight: .medium))
+                        .padding(.horizontal, 7).padding(.vertical, 2)
                         .background(Color.primary.opacity(0.07), in: Capsule())
                 }
                 .buttonStyle(.plain)
@@ -37,10 +37,10 @@ struct DayGridPicker: View {
             }
             HStack(spacing: 0) {
                 ForEach(heads, id: \.self) { h in
-                    Text(h).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                    Text(h).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).frame(maxWidth: .infinity)
                 }
             }
-            LazyVGrid(columns: columns, spacing: 2) {
+            LazyVGrid(columns: columns, spacing: 0) {
                 ForEach(AppModel.calendarGrid(for: month), id: \.self) { day in cell(day, today: today, picked: picked) }
             }
         }
@@ -52,12 +52,12 @@ struct DayGridPicker: View {
         let on = day == picked
         let isToday = day == today
         return ZStack {
-            if on { Circle().fill(Brand.orange).frame(width: 30, height: 30) }
+            if on { Circle().fill(Brand.orange).frame(width: 24, height: 24) }
             Text("\(Day.cal.component(.day, from: d))")
-                .font(.system(size: 14, weight: on || isToday ? .bold : .regular)).monospacedDigit()
+                .font(.system(size: 12, weight: on || isToday ? .bold : .regular)).monospacedDigit()
                 .foregroundStyle(on ? Color.white : (isToday ? Color.red : (inMonth ? Color.primary : Color.secondary.opacity(0.4))))
         }
-        .frame(height: 34)
+        .frame(height: 26)
         .contentShape(Rectangle())
         .onTapGesture {
             selection = d
@@ -67,13 +67,44 @@ struct DayGridPicker: View {
 
     private func nav(_ icon: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: icon).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
-                .frame(width: 24, height: 24).contentShape(Rectangle())
+            Image(systemName: icon).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                .frame(width: 22, height: 22).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
     private func shift(_ n: Int) {
         month = Day.cal.date(byAdding: .month, value: n, to: month) ?? month
+    }
+}
+
+/// 时间选择（时 : 分）。系统的 DatePicker(.hourAndMinute) 在弹层刚打开时是空白的，这里用两个菜单自己做。
+struct TimeField: View {
+    @Binding var time: Date
+
+    private var hour: Int { Day.cal.component(.hour, from: time) }
+    private var minute: Int { Day.cal.component(.minute, from: time) }
+
+    private var minutes: [Int] { Array(Set(Array(stride(from: 0, to: 60, by: 5)) + [minute])).sorted() }
+
+    private func set(hour h: Int? = nil, minute m: Int? = nil) {
+        time = Day.cal.date(bySettingHour: h ?? hour, minute: m ?? minute, second: 0, of: time) ?? time
+    }
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Menu {
+                ForEach(0 ..< 24, id: \.self) { h in Button(String(format: "%02d", h)) { set(hour: h) } }
+            } label: { Text(String(format: "%02d", hour)).frame(width: 24) }
+            Text(":").foregroundStyle(.secondary)
+            Menu {
+                ForEach(minutes, id: \.self) { m in Button(String(format: "%02d", m)) { set(minute: m) } }
+            } label: { Text(String(format: "%02d", minute)).frame(width: 24) }
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+        .font(.system(size: 14, weight: .medium)).monospacedDigit()
+        .fixedSize()
+        .padding(.horizontal, 8).padding(.vertical, 3)
+        .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 }
