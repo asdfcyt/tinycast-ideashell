@@ -58,10 +58,10 @@ enum CaptureParser {
     private static let reFolder = RX(#"(^|[\s\u3000])@([^\s#@]+)"#, multiline: false)
     private static let reMultiSpace = RX(#"[ \t]{2,}"#, multiline: false)
 
-    static func analyze(_ input: String, now: Date = Date()) -> CaptureAnalysis {
+    static func analyze(_ input: String, now: Date = Date(), sjz: Bool? = nil) -> CaptureAnalysis {
         var text = input.trimmed
         var forced: CaptureKind?
-        let sjzOn = Self.sjzOn
+        let sjzOn = sjz ?? Self.sjzOn
         for (re, kind) in prefixes {
             if kind.isSjz && !sjzOn { continue }
             if let m = re.first(in: text), m.range.location == 0 {

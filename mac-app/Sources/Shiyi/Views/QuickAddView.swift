@@ -21,7 +21,7 @@ struct QuickAddView: View {
     @State private var okText: String?
     @FocusState private var focused: Bool
 
-    private var analysis: CaptureAnalysis { CaptureParser.analyze(text) }
+    private var analysis: CaptureAnalysis { CaptureParser.analyze(text, sjz: model.hasSjz) }
     private func kind(_ a: CaptureAnalysis) -> CaptureKind { override ?? a.kind }
 
     /// 输入框高度：一行起步，按内容（粗估折行）长到最多 5 行，再多就在框里滚动
@@ -82,6 +82,7 @@ struct QuickAddView: View {
             HStack(spacing: 8) {
                 kindMenu(a, k)
                 if k == .todo { priorityMenu }
+                if k.isSjz { sjzChip(k) }
                 Spacer(minLength: 8)
                 if let onDone {
                     Button("取消", action: onDone)
@@ -108,10 +109,40 @@ struct QuickAddView: View {
 
     // MARK: - 组件
 
+    /// 开启结审后，示例里带上线索 / 证据 / 法规前缀
+    private var exampleList: [String] {
+        if model.hasSjz { return compact ? ["明天 15:00 开会", "线索 …", "证据 …", "法规 …"] : ["明天 15:00 开会", "线索 …", "证据 …", "法规 …", "笔记 @项目 …"] }
+        return ["明天 15:00 开会", "#读书 一句话想法", "笔记 @项目 …"]
+    }
+
+    /// 结审去向：线索 → 项目；证据 → 钉住的取证单 / 新证据文件；法规 → 钉住的法规 / 自动取名。放在底栏，空间不够时从末尾截断
+    private func sjzChip(_ k: CaptureKind) -> some View {
+        let pin = model.sjzPin
+        let project = model.sjzTargetTitle.isEmpty ? "未选择项目" : model.sjzTargetTitle
+        var label = project
+        if !model.sjzTargetTitle.isEmpty {
+            switch k {
+            case .evidence: label += " · " + (pin.noteLabel.isEmpty ? "新证据文件" : pin.noteLabel)
+            case .regulation: label += " · " + (pin.regulation.isEmpty ? "自动取名" : pin.regulation)
+            default: break
+            }
+        }
+        return HStack(spacing: 4) {
+            Image(systemName: "checkmark.shield").font(.system(size: 10))
+            Text(label).lineLimit(1).truncationMode(.tail)
+        }
+        .font(.caption)
+        .foregroundStyle(Color.indigo)
+        .padding(.horizontal, 8).padding(.vertical, 3)
+        .background(Color.indigo.opacity(0.1), in: Capsule())
+        .layoutPriority(-1)
+        .help("结审 · " + label)
+    }
+
     private var examples: some View {
         HStack(spacing: 6) {
             Text("试试").font(.caption).foregroundStyle(.tertiary)
-            ForEach(["明天 15:00 开会", "#读书 一句话想法", "笔记 @项目 …"], id: \.self) { e in
+            ForEach(exampleList, id: \.self) { e in
                 Button { text = e.hasSuffix("…") ? String(e.dropLast()) : e; focused = true } label: {
                     Text(e).font(.caption).foregroundStyle(.secondary)
                         .padding(.horizontal, 9).padding(.vertical, 3)
@@ -208,10 +239,6 @@ struct QuickAddView: View {
             ForEach(a.tags, id: \.self) { chip("number", $0, tint: .accentColor) }
             if let f = a.folderName { chip("folder", f, tint: .accentColor) }
             if k == .daily { chip("clock", "追加到今天的 Daily Note", tint: .secondary) }
-            if k.isSjz {
-                let t = model.sjzTargetTitle.isEmpty ? "未选择项目" : model.sjzTargetTitle
-                chip("checkmark.shield", "结审 · " + t, tint: .indigo)
-            }
             if k == .note && a.tags.isEmpty && a.folderName == nil { chip("doc.text", "新建一条笔记", tint: .secondary) }
             Spacer(minLength: 0)
         }

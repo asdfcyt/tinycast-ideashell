@@ -38,6 +38,9 @@ enum AIPlanner {
         client: LlmClient, tasks: [DidaTask], busy: [DidaTask], perDay: Int, skipWeekends: Bool,
         projectName: (String) -> String?
     ) async throws -> AIPlanResult {
+        // 结审任务只留在本机，不发给 AI 服务
+        let tasks = tasks.filter { !SjzTasks.owns($0.id) }
+        let busy = busy.filter { !SjzTasks.owns($0.id) }
         let today = Day.today()
         let wk = ["日", "一", "二", "三", "四", "五", "六"]
         func weekday(_ d: String) -> String {

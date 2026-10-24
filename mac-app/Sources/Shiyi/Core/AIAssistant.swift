@@ -182,7 +182,7 @@ enum AIAssistant {
         let ov = model.overview
         var all: [DidaTask] = []
         var seen = Set<String>()
-        for t in (ov?.overdue ?? []) + (ov?.upcoming ?? []) + extra + (ov?.undated ?? []) where !t.done && seen.insert(t.id).inserted {
+        for t in (ov?.overdue ?? []) + (ov?.upcoming ?? []) + extra + (ov?.undated ?? []) where !t.done && !SjzTasks.owns(t.id) && seen.insert(t.id).inserted {
             all.append(t)
         }
         let overdue = all.filter { ($0.date ?? "9999") < today }.sorted { ($0.date ?? "") < ($1.date ?? "") }.prefix(25)

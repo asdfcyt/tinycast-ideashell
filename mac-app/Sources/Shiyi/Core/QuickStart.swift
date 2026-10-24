@@ -53,9 +53,9 @@ enum QuickStartPlanner {
         let ov = model.overview
 
         // 待办：今天 + 逾期（最久的 10 条）+ 收集箱（5 条），用 t1、t2… 的短 id
-        let todayTasks = (ov?.todayTasks(today) ?? []).sorted { ($0.time ?? "99:99") < ($1.time ?? "99:99") }
-        let overdue = (ov?.overdue ?? []).sorted { ($0.date ?? "") < ($1.date ?? "") }.prefix(10)
-        let inbox = (ov?.undated ?? []).prefix(5)
+        let todayTasks = (ov?.todayTasks(today) ?? []).filter { !SjzTasks.owns($0.id) }.sorted { ($0.time ?? "99:99") < ($1.time ?? "99:99") }
+        let overdue = (ov?.overdue ?? []).filter { !SjzTasks.owns($0.id) }.sorted { ($0.date ?? "") < ($1.date ?? "") }.prefix(10)
+        let inbox = (ov?.undated ?? []).filter { !SjzTasks.owns($0.id) }.prefix(5)
         var idMap: [String: DidaTask] = [:]
         var n = 0
         func encode(_ t: DidaTask, kind: String) -> [String: Any] {

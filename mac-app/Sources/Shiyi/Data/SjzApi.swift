@@ -226,6 +226,26 @@ struct SjzApi {
         return ((r["task"] as? JSON)?["id"] as? String) ?? ""
     }
 
+    /// 项目文书中心：当前审计阶段 + 按阶段列出各类文书的成果（只有编号 / 标题 / 状态，不含正文）
+    func documents(project: String) async throws -> SjzDocs {
+        let r = try await call("list_documents", ["project": project])
+        var d = SjzDocs()
+        d.phase = (r["phase"] as? String) ?? ""
+        d.phases = ((r["phases"] as? [JSON]) ?? []).map { p in
+            SjzPhase(key: (p["key"] as? String) ?? "", label: (p["label"] as? String) ?? "", current: (p["current"] as? Bool) ?? false,
+                     items: ((p["items"] as? [JSON]) ?? []).map { i in
+                SjzDocType(code: (i["code"] as? String) ?? "", label: (i["label"] as? String) ?? "",
+                           required: (i["required"] as? Bool) ?? false, count: (i["count"] as? Int) ?? 0, issued: (i["issued"] as? Int) ?? 0,
+                           docs: ((i["docs"] as? [JSON]) ?? []).compactMap { x in
+                    guard let path = x["path"] as? String else { return nil }
+                    return SjzDocItem(path: path, title: (x["title"] as? String) ?? "", docNo: (x["docNo"] as? String) ?? "",
+                                      statusLabel: (x["statusLabel"] as? String) ?? "", updated: (x["updated"] as? String) ?? "")
+                })
+            })
+        }
+        return d
+    }
+
     /// 保存为证据 / 法规；items 里每项是 `{type: text, text}` 或 `{type: image, name, data(base64)}`
     func save(regulation: Bool, project: String?, items: [JSON], title: String, source: String, url: String?, snapshot: Bool) async throws -> String {
         var a: JSON = ["items": items, "title": title, "source": source, "snapshot": snapshot]
@@ -318,6 +338,43 @@ struct SjzCapture: Identifiable, Hashable {
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
+}
+
+struct SjzDocs {
+    var phase = ""
+    var phases: [SjzPhase] = []
+    var total: Int { phases.reduce(0) { $0 + $1.count } }
+}
+
+struct SjzPhase: Identifiable, Hashable {
+    let key: String
+    let label: String
+    let current: Bool
+    let items: [SjzDocType]
+    var id: String { key }
+    var count: Int { items.reduce(0) { $0 + $1.count } }
+    var issued: Int { items.reduce(0) { $0 + $1.issued } }
+    /// 必备但还没建立的文书
+    var missing: [SjzDocType] { items.filter { $0.required && $0.count == 0 } }
+}
+
+struct SjzDocType: Identifiable, Hashable {
+    let code: String
+    let label: String
+    let required: Bool
+    let count: Int
+    let issued: Int
+    let docs: [SjzDocItem]
+    var id: String { code }
+}
+
+struct SjzDocItem: Identifiable, Hashable {
+    let path: String
+    let title: String
+    let docNo: String
+    let statusLabel: String
+    let updated: String
+    var id: String { path }
 }
 
 struct SjzDigest {

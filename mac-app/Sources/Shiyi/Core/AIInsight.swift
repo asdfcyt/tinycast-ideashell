@@ -101,7 +101,7 @@ enum AIInsightPlanner {
             stats["onTimeDone"] = r.onTime
             stats["lateDone"] = r.lateDone
         }
-        if let o = model.overview { stats["overdueNow"] = o.overdue.count }
+        if let o = model.overview { stats["overdueNow"] = o.overdue.filter { !SjzTasks.owns($0.id) }.count }
 
         let payload: [String: Any] = ["range": "\(from) ~ \(today)", "stats": stats, "notes": notesJson, "completedTasks": doneJson]
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])

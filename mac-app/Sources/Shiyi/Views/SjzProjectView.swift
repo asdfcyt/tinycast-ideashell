@@ -5,15 +5,14 @@ struct SjzProjectDetailView: View {
     @EnvironmentObject var model: AppModel
     let name: String
 
-    @State private var digest: SjzDigest?
-    @State private var digestLoaded = false
+    @State private var docs: SjzDocs?
+    @State private var selPhase = ""
     @State private var captures: [SjzCapture] = []
     @State private var capsLoaded = false
     @State private var capKind = ""
     @State private var capQuery = ""
     @State private var capDays = 0
     @State private var editing: SjzCapture?
-    @State private var converted: Set<String> = []
 
     private var stat: SjzProjectStat? { model.sjzOverview?.projects.first { $0.name == name } }
     private var title: String { stat?.title ?? name }
@@ -33,7 +32,7 @@ struct SjzProjectDetailView: View {
                 statsRow
                 tasksCard
                 capturesCard
-                researchCard
+                docsCard
             }
             .padding(24)
             .frame(maxWidth: 780, alignment: .leading)
@@ -41,11 +40,10 @@ struct SjzProjectDetailView: View {
         }
         .background(AmbientBackground())
         .task(id: name) {
-            digest = nil
-            digestLoaded = false
+            docs = nil
+            selPhase = ""
             await model.refreshSjzOverview()
-            digest = try? await model.sjz.researchDigest(project: name)
-            digestLoaded = true
+            docs = try? await model.sjz.documents(project: name)
             await loadCaptures()
         }
         .sheet(item: $editing) { c in
@@ -113,40 +111,142 @@ struct SjzProjectDetailView: View {
             }
         }
     }
-
-    @ViewBuilder private var researchCard: some View {
-        if let d = digest {
-            Card {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        SectionTitle(text: "审前调研")
-                        if !d.direction.isEmpty { TagChip(text: d.direction, tint: .indigo) }
-                        Spacer()
-                        Text("入选 \(d.written) 条" + (d.rounds.count > 1 ? " · \(d.rounds.count) 轮" : ""))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    if !d.summary.trimmed.isEmpty { Text(d.summary.trimmed).font(.callout).lineLimit(8) }
-                    if !d.focusPoints.isEmpty {
-                        Text("关注点").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 2)
-                        ForEach(Array(d.focusPoints.prefix(5).enumerated()), id: \.offset) { _, t in
-                            bulletRow(t, prefix: "关注点")
-                        }
-                    }
-                    if !d.gaps.isEmpty {
-                        Text("仍待查清").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 2)
-                        ForEach(Array(d.gaps.prefix(5).enumerated()), id: \.offset) { _, t in
-                            bulletRow(t, prefix: "待查清")
-                        }
-                    }
-                }
-            }
-        } else if digestLoaded {
-            EmptyView()
-        }
-    }
 }
 
 extension SjzProjectDetailView {
+    @ViewBuilder fileprivate var docsCard: some View {
+        if let d = docs, d.total > 0 || !d.phase.isEmpty {
+            let order = d.phases.map(\.key)
+            let curIdx = order.firstIndex(of: d.phase) ?? -1
+            let sel = d.phases.first { $0.key == (selPhase.isEmpty ? d.phase : selPhase) } ?? d.phases.first
+            Card {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 8) {
+                        SectionTitle(text: "文书中心", count: d.total)
+                        Spacer()
+                        Button { model.openSjzApp() } label: { Label("在结审里打开", systemImage: "arrow.up.forward.app") }
+                            .buttonStyle(.borderless).font(.caption)
+                    }
+                    if d.phases.count > 1 {
+                        HStack(alignment: .top, spacing: 0) {
+                            ForEach(Array(d.phases.enumerated()), id: \.element.id) { idx, p in
+                                timelineNode(p, idx: idx, curIdx: curIdx, last: idx == d.phases.count - 1, selected: p.key == sel?.key)
+                            }
+                        }
+                    }
+                    if let p = sel {
+                        Divider().opacity(0.6)
+                        VStack(alignment: .leading, spacing: 12) {
+                            let rows = p.items.filter { $0.count > 0 || $0.required }
+                            if rows.isEmpty { Text("这个阶段还没有文书").font(.callout).foregroundStyle(.tertiary) }
+                            ForEach(rows) { t in docTypeBlock(t) }
+                        }
+                    }
+                    Text("只显示编号、标题和状态，文书正文不会出现在拾忆里。").font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    /// 横向时间线的一个节点：线 + 圆点（已完成绿 ✓ / 当前橙 / 未开始灰），下面是阶段名和成果数
+    private func timelineNode(_ p: SjzPhase, idx: Int, curIdx: Int, last: Bool, selected: Bool) -> some View {
+        let done = curIdx >= 0 && idx < curIdx
+        let cur = p.current
+        let green = Color.green.opacity(0.75)
+        let gray = Color.secondary.opacity(0.28)
+        return Button { selPhase = p.key } label: {
+            VStack(spacing: 7) {
+                HStack(spacing: 0) {
+                    Rectangle().fill(idx == 0 ? Color.clear : (done || cur ? green : gray)).frame(height: 2)
+                    ZStack {
+                        if cur { Circle().fill(Brand.orange.opacity(0.2)).frame(width: 26, height: 26) }
+                        Circle().fill(cur ? Brand.orange : (done ? Color.green.opacity(0.85) : Color(nsColor: .controlBackgroundColor)))
+                            .frame(width: 14, height: 14)
+                        if !cur && !done { Circle().strokeBorder(Color.secondary.opacity(0.4), lineWidth: 1.5).frame(width: 14, height: 14) }
+                        if done { Image(systemName: "checkmark").font(.system(size: 8, weight: .heavy)).foregroundStyle(.white) }
+                    }
+                    .frame(width: 26, height: 26)
+                    Rectangle().fill(last ? Color.clear : (done ? green : gray)).frame(height: 2)
+                }
+                VStack(spacing: 2) {
+                    Text(p.label).font(.callout.weight(selected || cur ? .semibold : .regular))
+                        .foregroundStyle(selected || cur ? Color.primary : Color.secondary)
+                    Text(p.count > 0 ? "\(p.count) 份成果" : (cur ? "进行中" : "暂无")).font(.caption2)
+                        .foregroundStyle(cur && p.count == 0 ? Brand.orange : Color.secondary.opacity(0.7))
+                    Capsule().fill(selected ? Brand.orange : Color.clear).frame(width: 18, height: 2.5).padding(.top, 2)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func statusTint(_ label: String) -> Color {
+        if label == "草稿" || label == "讨论稿" { return .secondary }
+        if ["已签发", "定稿", "正式版", "已归档", "复核通过", "已发出"].contains(label) { return .green }
+        return Brand.orange
+    }
+
+    private func docTypeBlock(_ t: SjzDocType) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(t.label).font(.callout.weight(.semibold)).foregroundStyle(t.count == 0 ? Color.secondary : Color.primary)
+                if t.count > 0 {
+                    Text("\(t.count) 份").font(.caption).foregroundStyle(.secondary)
+                    if t.issued > 0 { TagChip(text: "已定稿 \(t.issued)", tint: .green) }
+                }
+                Spacer()
+                if t.count == 0 && t.required {
+                    Text("必备 · 待建立").font(.caption).foregroundStyle(Brand.orange)
+                }
+            }
+            ForEach(t.docs) { it in docFile(it, typeLabel: t.label) }
+            if t.count > t.docs.count { Text("还有 \(t.count - t.docs.count) 份，在结审里查看").font(.caption2).foregroundStyle(.tertiary) }
+        }
+    }
+
+    /// 一份文书：像一张文件——左边纸张图标，中间标题和编号 / 更新日期，右边状态
+    private func docFile(_ it: SjzDocItem, typeLabel: String) -> some View {
+        let tint = statusTint(it.statusLabel)
+        let meta = [it.docNo, typeLabel, it.updated.isEmpty ? "" : "更新于 " + it.updated].filter { !$0.isEmpty }.joined(separator: " · ")
+        return Button { model.openSjzApp() } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color(nsColor: .textBackgroundColor))
+                    RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+                    VStack(spacing: 3) {
+                        ForEach(0..<4, id: \.self) { n in
+                            Capsule().fill(Color.secondary.opacity(0.3)).frame(width: n == 0 ? 14 : (n == 3 ? 10 : 18), height: 2)
+                                .frame(width: 18, alignment: .leading)
+                        }
+                    }
+                    .offset(y: 3)
+                    Rectangle().fill(tint.opacity(0.85)).frame(width: 18, height: 3).offset(y: -12)
+                }
+                .frame(width: 28, height: 36)
+                .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(it.title.isEmpty ? it.path : it.title).font(.callout.weight(.medium)).foregroundStyle(.primary).lineLimit(1)
+                    Text(meta).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                if !it.statusLabel.isEmpty {
+                    Text(it.statusLabel).font(.caption.weight(.medium))
+                        .foregroundStyle(tint)
+                        .padding(.horizontal, 9).padding(.vertical, 3)
+                        .background(tint.opacity(0.12), in: Capsule())
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("在结审里打开")
+    }
+
     private func loadCaptures() async {
         captures = (try? await model.sjz.captures(project: name)) ?? captures
         capsLoaded = true
@@ -262,27 +362,6 @@ extension SjzProjectDetailView {
         let f = DateFormatter()
         f.dateFormat = Calendar.current.isDateInToday(d) ? "今天 HH:mm" : "MM-dd HH:mm"
         return f.string(from: d)
-    }
-
-    @ViewBuilder fileprivate func bulletRow(_ t: String, prefix: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Label(t, systemImage: "circle.fill").labelStyle(BulletStyle()).font(.callout)
-            Spacer(minLength: 6)
-            if converted.contains(t) {
-                Label("已转任务", systemImage: "checkmark").font(.caption).foregroundStyle(.green)
-            } else {
-                Button("转为任务") {
-                    Task {
-                        do {
-                            _ = try await model.sjz.createTask(project: name, subject: String(t.prefix(60)), description: "\(prefix)（审前调研）：\(t)")
-                            converted.insert(t)
-                            await model.refreshSjzOverview(force: true)
-                        } catch { model.showNotice(error.localizedDescription) }
-                    }
-                }
-                .buttonStyle(.borderless).font(.caption)
-            }
-        }
     }
 }
 
@@ -575,14 +654,5 @@ struct SjzCaptureEditor: View {
         if let linkNote { f["linkNote"] = linkNote.path }
         guard !f.isEmpty else { dismiss(); return }
         await run { try await model.sjz.updateCapture(project: project, id: capture.id, fields: f) }
-    }
-}
-
-private struct BulletStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            configuration.icon.font(.system(size: 4)).foregroundStyle(.tertiary).offset(y: -2)
-            configuration.title
-        }
     }
 }

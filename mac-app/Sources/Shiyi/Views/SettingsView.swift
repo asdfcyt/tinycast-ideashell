@@ -123,6 +123,10 @@ struct SettingsView: View {
                     sjzField("服务地址") {
                         TextField(SjzApi.defaultEndpoint, text: $model.sjzEndpoint)
                             .textFieldStyle(.roundedBorder).font(.body.monospaced())
+                        if !Self.isLoopback(model.sjzEndpoint) {
+                            Label("这不是本机地址，审计数据会经网络传输。结审默认只在本机提供服务，建议用 127.0.0.1。", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption).foregroundStyle(Color.orange)
+                        }
                     }
                     HStack(spacing: 10) {
                         Button {
@@ -179,6 +183,11 @@ struct SettingsView: View {
             }
         }
         .task { if model.hasSjz { await model.refreshSjzTarget(); await model.refreshSjzProjects() } }
+    }
+
+    private static func isLoopback(_ endpoint: String) -> Bool {
+        guard let host = URL(string: endpoint.trimmed)?.host?.lowercased() else { return true }
+        return host == "127.0.0.1" || host == "localhost" || host == "::1"
     }
 
     private func sjzField<C: View>(_ label: String, @ViewBuilder _ content: () -> C) -> some View {

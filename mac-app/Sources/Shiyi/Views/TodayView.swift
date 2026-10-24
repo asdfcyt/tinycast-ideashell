@@ -311,7 +311,7 @@ private struct TodayContent: View {
         Button("转成待办") {
             Task {
                 do {
-                    let a = CaptureParser.analyze(it.text)
+                    let a = CaptureParser.analyze(it.text, sjz: model.hasSjz)
                     let msg = try await model.submitCapture(a, kind: .todo)
                     model.showNotice(msg)
                 } catch {

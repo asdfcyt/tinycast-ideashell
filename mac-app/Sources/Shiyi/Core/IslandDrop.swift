@@ -186,12 +186,12 @@ extension AppModel {
             guard !body.isEmpty else {
                 throw McpError.tool(prepared.skipped > 0 ? "暂不支持这类文件（支持图片和文本文件）" : "没有读到可以保存的内容")
             }
-            let a = CaptureParser.analyze(body)
+            let a = CaptureParser.analyze(body, sjz: hasSjz)
             return try await submitCapture(a, kind: a.kind)
         }
 
         guard hasIdeashell else { throw McpError.noCredential }
-        let a = CaptureParser.analyze(body)
+        let a = CaptureParser.analyze(body, sjz: hasSjz)
         var folder: IdeashellApi.Folder?
         let folders = (try? await ideashell.listFolders()) ?? []
         if let name = a.folderName {
