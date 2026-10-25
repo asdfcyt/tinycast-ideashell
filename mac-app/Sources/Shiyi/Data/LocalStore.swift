@@ -32,6 +32,8 @@ final class CredentialStore: @unchecked Sendable {
     private var _backupNoteId: String?
     private var _llmKey: String
     private var _sjzKey: String
+    private var _tencentId: String
+    private var _tencentKey: String
 
     private struct Disk: Codable {
         var ideashellKey: String = ""
@@ -39,6 +41,8 @@ final class CredentialStore: @unchecked Sendable {
         var backupNoteId: String?
         var llmKey: String?
         var sjzKey: String?
+        var tencentId: String?
+        var tencentKey: String?
     }
 
     init() {
@@ -50,6 +54,8 @@ final class CredentialStore: @unchecked Sendable {
         _backupNoteId = disk.backupNoteId
         _llmKey = disk.llmKey ?? ""
         _sjzKey = disk.sjzKey ?? ""
+        _tencentId = disk.tencentId ?? ""
+        _tencentKey = disk.tencentKey ?? ""
     }
 
     var ideashellKey: String { lock.withLock { _ideashell } }
@@ -57,6 +63,17 @@ final class CredentialStore: @unchecked Sendable {
     var backupNoteId: String? { lock.withLock { _backupNoteId } }
     var llmKey: String { lock.withLock { _llmKey } }
     var sjzKey: String { lock.withLock { _sjzKey } }
+    var tencentId: String { lock.withLock { _tencentId } }
+    var tencentKey: String { lock.withLock { _tencentKey } }
+
+    /// 腾讯云语音识别的 SecretId / SecretKey
+    func setTencent(id: String, key: String) {
+        lock.withLock {
+            _tencentId = id
+            _tencentKey = key
+            persist()
+        }
+    }
 
     func setSjzKey(_ k: String) {
         lock.withLock {
@@ -89,7 +106,7 @@ final class CredentialStore: @unchecked Sendable {
 
     /// 调用方已持有锁
     private func persist() {
-        let disk = Disk(ideashellKey: _ideashell, didaToken: _dida, backupNoteId: _backupNoteId, llmKey: _llmKey.isEmpty ? nil : _llmKey, sjzKey: _sjzKey.isEmpty ? nil : _sjzKey)
+        let disk = Disk(ideashellKey: _ideashell, didaToken: _dida, backupNoteId: _backupNoteId, llmKey: _llmKey.isEmpty ? nil : _llmKey, sjzKey: _sjzKey.isEmpty ? nil : _sjzKey, tencentId: _tencentId.isEmpty ? nil : _tencentId, tencentKey: _tencentKey.isEmpty ? nil : _tencentKey)
         if let d = try? JSONEncoder().encode(disk), let s = String(data: d, encoding: .utf8) {
             LocalStore.write("credentials.json", s, secret: true)
         }

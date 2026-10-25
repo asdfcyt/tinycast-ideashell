@@ -1,9 +1,15 @@
+import AppKit
 import SwiftUI
 
 /// 品牌色（取自安卓端 Theme.kt 的浅色主题）
 enum Brand {
     static let orange = Color(red: 0xE8 / 255, green: 0x79 / 255, blue: 0x4A / 255)
-    static let orangeDeep = Color(red: 0xA9 / 255, green: 0x44 / 255, blue: 0x1C / 255)
+    /// 深橙：浅色下是深褐橙；暗色下换成浅一些的橙，不然在深色玻璃 / 深色底上看不清
+    static let orangeDeep = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0xF5 / 255, green: 0xA2 / 255, blue: 0x7A / 255, alpha: 1)
+            : NSColor(red: 0xA9 / 255, green: 0x44 / 255, blue: 0x1C / 255, alpha: 1)
+    })
     static let brown = Color(red: 0x2A / 255, green: 0x21 / 255, blue: 0x18 / 255)
 }
 

@@ -59,7 +59,8 @@ enum TodoParser {
 
     private static let period = "(凌晨|早上|早晨|上午|中午|下午|晚上|傍晚)?\\s*"
     private static let reTimeColon = rx(period + #"([0-9]{1,2})[:：]([0-9]{2})"#)
-    private static let reTimeDian = rx(period + #"(\#(N))\s*[点時时](?:\s*(半)|\s*([0-9]{1,2})\s*分?|\s*([零〇一二三四五六七八九十]{1,3})分)?"#)
+    /// 「十点钟」「3点整」的「钟 / 整」要一起吃掉，不然标题里会留下一个「钟」
+    private static let reTimeDian = rx(period + #"(\#(N))\s*[点時时](?:钟|整)?(?:\s*(半)|\s*([0-9]{1,2})\s*分?|\s*([零〇一二三四五六七八九十]{1,3})分)?"#)
     private static let rePeriodOnly = rx("(凌晨|早上|早晨|上午|中午|下午|晚上|傍晚)(?![茶饭餐])")
 
     private static let periodDefault: [String: String] = [
@@ -345,9 +346,10 @@ enum TodoParser {
             else if dian.hasGroup(5) { guard let mm = num(dian.group(5)) else { return nil }; minute = mm }
             else { minute = 0 }
             hit = dian.group(0)
-            // 「一点东西」「买一点」不是 1 点：中文的「一点」没有时段、也没有半 / 分时不当作时间
+            // 「一点东西」「买一点」不是 1 点：中文的「一点」没有时段、也没有半 / 分时不当作时间（带「钟 / 整」的「一点钟」「一点整」是）
             let chinese = Int(dian.group(2)) == nil
-            if chinese && per == nil && hour == 1 && !dian.hasGroup(3) && !dian.hasGroup(4) && !dian.hasGroup(5) { return nil }
+            let explicit = hit.contains("钟") || hit.contains("整")
+            if chinese && per == nil && hour == 1 && !explicit && !dian.hasGroup(3) && !dian.hasGroup(4) && !dian.hasGroup(5) { return nil }
         }
         if (per == "下午" || per == "晚上" || per == "傍晚") && hour < 12 { hour += 12 }
         if per == "中午" && hour < 11 { hour += 12 }

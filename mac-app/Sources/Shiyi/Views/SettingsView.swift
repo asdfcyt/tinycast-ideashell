@@ -24,6 +24,7 @@ struct SettingsView: View {
                 displayCard
                 appearanceCard
                 aiCard
+                VoiceSettingsCard()
                 focusCard
                 notifyCard
                 backupCard
@@ -623,6 +624,8 @@ struct SettingsView: View {
                 SectionTitle(text: "快捷键")
                 shortcut("⌘ N", "万能输入：写笔记 / 记待办，自动识别")
                 shortcut("⌘ R", "刷新当前页")
+                Divider()
+                QuickAddHotkeyRow()
             }
         }
     }

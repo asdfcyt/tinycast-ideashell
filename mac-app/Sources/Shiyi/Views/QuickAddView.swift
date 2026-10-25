@@ -12,6 +12,10 @@ struct QuickAddView: View {
     var record: FocusStore?
     /// 提交成功后的回调（弹层用来关闭自己）
     var onDone: (() -> Void)?
+    /// 输入内容变化（全局悬浮输入窗用它留住草稿）
+    var onDraftChange: ((String) -> Void)?
+    /// 提交成功（参数是结果文案）。设置后不再调 onDone 关闭，而是在输入框下面显示结果，由调用方决定什么时候关（全局悬浮输入窗用）
+    var onSubmitted: ((String) -> Void)?
 
     @State private var text = ""
     @State private var override: CaptureKind?
@@ -21,7 +25,8 @@ struct QuickAddView: View {
     @State private var submitting = false
     @State private var error: String?
     @State private var okText: String?
-    @FocusState private var focused: Bool
+    /// 每加一次就把焦点还给输入框
+    @State private var focusTick = 0
 
     private var analysis: CaptureAnalysis { CaptureParser.analyze(text, sjz: model.hasSjz) }
     private func kind(_ a: CaptureAnalysis) -> CaptureKind { override ?? a.kind }
@@ -43,15 +48,17 @@ struct QuickAddView: View {
                         .foregroundStyle(Brand.orange).frame(width: 20, height: 24)
                 }
                 ZStack(alignment: .topLeading) {
-                    TextEditor(text: $text)
-                        .font(.system(size: compact ? 14 : 16))
-                        .scrollContentBackground(.hidden)
-                        .focused($focused)
-                        .padding(.horizontal, -5).padding(.vertical, -1)
+                    ComposerTextView(
+                        text: $text,
+                        fontSize: compact ? 14 : 16,
+                        focusTick: focusTick,
+                        onSubmit: { submitFromKeyboard() }
+                    )
                     if text.isEmpty {
                         Text(record != nil ? "专注时的想法、进展、卡点…" : (compact ? "记点什么…" : "记点什么？待办、想法、日记都可以"))
                             .font(.system(size: compact ? 14 : 16))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
                             .allowsHitTesting(false)
                     }
                 }
@@ -104,9 +111,10 @@ struct QuickAddView: View {
         .frame(width: compact ? nil : 480)
         .onChange(of: text) { _, new in
             if let record, record.recordDraft != new { record.recordDraft = new }
+            onDraftChange?(new)
         }
         .onAppear {
-            focused = true
+            focusTick += 1
             if let record { text = record.recordDraft }
             if !model.quickAddText.isEmpty { text = model.quickAddText }
             override = model.quickAddKind
@@ -179,21 +187,32 @@ struct QuickAddView: View {
         .help(task ? "记到任务「\(name)」" : "记到今天的 Daily Note")
     }
 
+    /// 输入框里按回车：和点提交按钮一样
+    private func submitFromKeyboard() {
+        if let record { if !model.recording { recordSubmit(record) }; return }
+        let a = analysis
+        submit(a, kind(a))
+    }
+
+    private func recordSubmit(_ f: FocusStore) {
+        let t = text.trimmed
+        guard !t.isEmpty else { return }
+        f.recordDraft = ""
+        text = ""
+        Task { await model.recordFocus(t) }
+        onDone?()
+    }
+
     private func recordSubmitButton(_ f: FocusStore) -> some View {
         let disabled = model.recording || text.trimmed.isEmpty
         return Button {
-            let t = text.trimmed
-            guard !t.isEmpty else { return }
-            f.recordDraft = ""
-            text = ""
-            Task { await model.recordFocus(t) }
-            onDone?()
+            recordSubmit(f)
         } label: {
             HStack(spacing: 6) {
                 if model.recording { ProgressView().controlSize(.small) } else {
                     Text(recordGoesToTask(f) ? "记录进展" : "记入 Daily Note").font(.callout.weight(.semibold))
                 }
-                Text("⌘↩").font(.caption2).opacity(0.7)
+                Text("↩").font(.caption2).opacity(0.7)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 12).padding(.vertical, 5)
@@ -208,7 +227,7 @@ struct QuickAddView: View {
         HStack(spacing: 6) {
             Text("试试").font(.caption).foregroundStyle(.tertiary)
             ForEach(exampleList, id: \.self) { e in
-                Button { text = e.hasSuffix("…") ? String(e.dropLast()) : e; focused = true } label: {
+                Button { text = e.hasSuffix("…") ? String(e.dropLast()) : e; focusTick += 1 } label: {
                     Text(e).font(.caption).foregroundStyle(.secondary)
                         .padding(.horizontal, 9).padding(.vertical, 3)
                         .background(Color.primary.opacity(0.06), in: Capsule())
@@ -279,7 +298,7 @@ struct QuickAddView: View {
         } label: {
             HStack(spacing: 6) {
                 if submitting { ProgressView().controlSize(.small) } else { Text(submitLabel(k)).font(.callout.weight(.semibold)) }
-                Text("⌘↩").font(.caption2).opacity(0.7)
+                Text("↩").font(.caption2).opacity(0.7)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 12).padding(.vertical, 5)
@@ -335,29 +354,26 @@ struct QuickAddView: View {
 
     private func submit(_ a: CaptureAnalysis, _ k: CaptureKind) {
         guard !submitting, !text.trimmed.isEmpty else { return }
-        submitting = true
         error = nil
         okText = nil
-        let pri = priority
-        let def = defaultDate
-        let defTime = defaultTime
-        Task {
-            defer { submitting = false }
-            do {
-                let msg = try await model.submitCapture(a, kind: k, priority: pri, defaultDate: def, defaultTime: defTime)
-                text = ""
-                override = nil
-                priority = 0
-                if let onDone {
-                    model.showNotice(msg)
-                    onDone()
-                } else {
-                    okText = msg
-                    focused = true
-                }
-            } catch {
-                self.error = "提交失败：" + error.localizedDescription
+        // 先记到本机发件箱（立刻返回），写进滴答 / 闪念贝壳在后台做；失败会自动重试，真失败了再提示
+        _ = CaptureOutbox.shared.takeSubmitted()   // 清掉之前遗留的，撤销只针对这一次
+        do {
+            let msg = try CaptureOutbox.shared.submit(a, kind: k, priority: priority, defaultDate: defaultDate, defaultTime: defaultTime, model: model)
+            text = ""
+            override = nil
+            priority = 0
+            if let onSubmitted {
+                onSubmitted(msg)
+            } else if let onDone {
+                model.showNotice(msg)
+                onDone()
+            } else {
+                okText = msg
+                focusTick += 1
             }
+        } catch {
+            self.error = "提交失败：" + error.localizedDescription
         }
     }
 }

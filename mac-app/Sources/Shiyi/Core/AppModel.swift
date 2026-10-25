@@ -246,6 +246,8 @@ final class AppModel: ObservableObject {
     lazy var daily = DailyService(api: ideashell)
 
     var noteCache: [String: NoteDetail] = [:]
+    /// 最近一次 `submitCapture` 创建出来的东西（发件箱用它支持「撤销」）
+    var lastCreated: UndoRecord?
     private var refreshTimer: Timer?
     private var activeObserver: NSObjectProtocol?
     private var lastQuick = Date()
@@ -316,6 +318,10 @@ final class AppModel: ObservableObject {
         AppModel.current = self
         focus.onTicket = { TicketController.shared.present($0) }
         IslandController.shared.start(model: self)
+        QuickAddPanelController.shared.start(model: self)
+        CaptureOutbox.shared.resume(model: self)
+        VoiceController.shared.start(model: self)
+        VoicePanelHost.shared.start()
         restoreHistoryCaches()
         loadAIInsights()
         Task { await refreshAll(startup: true) }
@@ -334,6 +340,7 @@ final class AppModel: ObservableObject {
     }
 
     private func onBecameActive() async {
+        CaptureOutbox.shared.resume(model: self)
         guard Date().timeIntervalSince(lastQuick) > 120 else { return }
         await refreshQuick()
         // 当前页的历史数据超过缓存时间才重读

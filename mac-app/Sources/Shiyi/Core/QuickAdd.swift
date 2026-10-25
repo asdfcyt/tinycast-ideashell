@@ -29,7 +29,7 @@ extension AppModel {
             // 自己写了日期就按自己写的；没写日期、用的是日历带进来的日子，就用点出来的时间
             let time = date == nil ? nil : (a.todo.time ?? (a.todo.date == nil ? defaultTime : nil))
             if hasDida {
-                try await dida.createTask(title: title, date: date, time: time, priority: priority)
+                if let t = try await dida.createTask(title: title, date: date, time: time, priority: priority) { lastCreated = .todo(t) }
                 invalidateHistory()
                 Task {
                     await loadOverview(silent: true)
@@ -47,7 +47,11 @@ extension AppModel {
             guard hasIdeashell else { throw McpError.noCredential }
             let text = a.text.trimmed
             guard !text.isEmpty else { throw McpError.tool("内容为空") }
-            try await daily.append(text, at: Date())
+            let now = Date()
+            try await daily.append(text, at: now)
+            let c = Day.cal.dateComponents([.hour, .minute], from: now)
+            let flat = text.components(separatedBy: .newlines).map(\.trimmed).filter { !$0.isEmpty }.joined(separator: " ")
+            lastCreated = .daily(date: Day.string(now), entry: DailyEntry(time: String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0), text: flat))
             invalidateHistory()
             Task { await loadDailyToday(ifStale: false) }
             Task { if section == .review { await loadRiver(silent: true) } }
