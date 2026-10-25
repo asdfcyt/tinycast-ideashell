@@ -10,7 +10,7 @@ struct DailyEntry: Hashable, Codable {
 }
 
 /// 某一天的 Daily Note：笔记 id + 条目（按写入顺序）
-struct DailyDay: Codable {
+struct DailyDay: Codable, Equatable {
     var noteId: String
     var entries: [DailyEntry]
 }

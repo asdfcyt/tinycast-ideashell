@@ -202,11 +202,10 @@ extension AppModel {
         if var ov = overview {
             let today = Day.today()
             for (t, d, tm) in moves {
-                ov = ov.withoutTask(t.id)
                 var n = t
                 n.date = d
                 n.time = tm
-                if d < today { ov.overdue.append(n) } else { ov.upcoming.append(n) }
+                ov = ov.placing(n, today: today)
             }
             overview = ov
         }

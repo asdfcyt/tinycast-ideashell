@@ -41,11 +41,11 @@ extension AppModel {
         }
         let before = overview
         if var ov = overview {
-            ov = ov.withoutTask(task.id)
             if n.done {
+                ov = ov.withoutTask(task.id)
                 if let i = ov.done.firstIndex(where: { $0.id == n.id }) { ov.done[i] = n }
             } else {
-                if let d = n.date { if d < Day.today() { ov.overdue.append(n) } else { ov.upcoming.append(n) } } else { ov.undated.append(n) }
+                ov = ov.placing(n)
             }
             overview = ov
         }

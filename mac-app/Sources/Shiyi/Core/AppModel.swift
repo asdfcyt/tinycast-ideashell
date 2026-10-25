@@ -106,37 +106,44 @@ final class AppModel: ObservableObject {
     }
     @Published var sjzPin = SjzPin()
     /// 结审任务概览：只缓存在本机，不写入滴答清单 / 闪念贝壳
-    @Published var sjzOverview: SjzOverview? = AppModel.readCache("sjz-overview.json")
+    @Changed var sjzOverview: SjzOverview? = AppModel.readCache("sjz-overview.json")
     @Published var sjzProjects: [SjzApi.Project] = []
     /// 岛上显示的保存目标（项目名）；设置里读到后缓存
-    @Published var sjzTargetTitle: String = ""
+    @Changed var sjzTargetTitle: String = ""
     // AI 模型（OpenAI 兼容接口）：Key 存本机凭证文件，地址和模型名存偏好
     @Published var llmKeyInput: String
     @Published var llmBaseUrl: String = UserDefaults.standard.string(forKey: "llm.baseUrl") ?? "https://dashscope.aliyuncs.com/compatible-mode/v1"
     @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? "qwen-plus"
 
     // 笔记时间线
-    @Published var timeline: [NoteInfo] = []
-    @Published var timelineDays = 0
-    @Published var notesLoading = false
-    @Published var notesError: String?
-    @Published var notesTruncated = false
+    @Changed var timeline: [NoteInfo] = [] {
+        didSet { todayMemo = nil }
+    }
+    @Changed var timelineDays = 0
+    @Changed var notesLoading = false
+    @Changed var notesError: String?
+    @Changed var notesTruncated = false
     @Published var searchQuery = ""
-    @Published var searchResults: [NoteInfo]?
-    @Published var searching = false
+    @Changed var searchResults: [NoteInfo]?
+    @Changed var searching = false
 
     // 待办
-    @Published var overview: DidaOverview? {
+    @Changed var overview: DidaOverview? {
         didSet {
+            // 读回来的和原来一样（编辑 / 删除后的静默刷新常常如此）就什么都不做
+            guard oldValue != overview else { return }
+            todayMemo = nil
             projectProgressMemo = nil
             Notifier.shared.syncTodos(overview)
         }
     }
     /// 「项目进展」的算结果缓存：它要把每个项目和每条待办两两比对，今天页每次重绘都算会很吃 CPU；待办 / 项目变了才作废
     var projectProgressMemo: Double??
-    @Published var todosLoading = false
-    @Published var todosError: String?
-    @Published var lastUndo: DidaTask?
+    /// 今天页的过滤 / 排序结果缓存，见 TodayData.swift；待办 / 笔记 / 今天的 Daily Note 变了就作废
+    var todayMemo: (day: String, data: TodayData)?
+    @Changed var todosLoading = false
+    @Changed var todosError: String?
+    @Changed var lastUndo: DidaTask?
 
     // 备份（项目 / 任务笔记）
     @Published var backup: BackupFile? {
@@ -148,23 +155,25 @@ final class AppModel: ObservableObject {
     @Published var localHomes: [String: String] = [:]
     /// AI 洞察（按统计范围 7 / 14 / 30 天各存一份），见 AIInsight.swift
     @Published var aiInsights: [Int: AIInsight] = [:]
-    @Published var aiInsightLoading = false
-    @Published var aiInsightError: String?
-    @Published var creatingTaskNote = false
+    @Changed var aiInsightLoading = false
+    @Changed var aiInsightError: String?
+    @Changed var creatingTaskNote = false
     /// 今天页的「往日回顾」：1 周 / 1 个月 / 3 个月 / 1 年前的今天写过的笔记
-    @Published var memory: [MemoryItem] = []
+    @Changed var memory: [MemoryItem] = []
     /// 今天页热力图：最近 26 周每天 Daily Note 里记了几条
-    @Published var heat: [String: Int] = [:]
-    @Published var heatLoading = false
+    @Changed var heat: [String: Int] = [:]
+    @Changed var heatLoading = false
     /// 今天页的「今天的笔记」：今天 Daily Note 的条目。放在这里而不是页面里，切走再切回来不会清空重读
-    @Published var dailyToday: DailyDay?
+    @Changed var dailyToday: DailyDay? {
+        didSet { todayMemo = nil }
+    }
     var dailyTodayDay = ""
     /// 「从这条日记新建笔记」的弹窗（今天页和回顾页的右键菜单共用，由根视图弹出）
     @Published var newNoteDraft: NewNoteDraft?
     /// 正在批量改期 / 自动排期
-    @Published var scheduling = false
+    @Changed var scheduling = false
     /// 正在把专注中的一条记录写进任务笔记
-    @Published var recording = false
+    @Changed var recording = false
     /// 每日专注目标（分钟），今天页的专注环以它为满环；设置里改
     @Published var focusGoalMin: Int = {
         let v = UserDefaults.standard.integer(forKey: "focus.goalMin")
@@ -174,33 +183,33 @@ final class AppModel: ObservableObject {
     }
     /// 项目「提及的笔记」的搜索结果缓存（只在内存里）
     var mentionCache: [String: (at: Date, notes: [NoteInfo])] = [:]
-    @Published var backupLoading = false
-    @Published var backupError: String?
+    @Changed var backupLoading = false
+    @Changed var backupError: String?
 
     // 回顾
     @Published var reviewDays = 14
     @Published var review: ReviewData?
-    @Published var reviewLoading = false
-    @Published var reviewError: String?
+    @Changed var reviewLoading = false
+    @Changed var reviewError: String?
 
     // 日历
     @Published var calendarMonth: Date = Day.startOfDay(Date())
     @Published var calendarMode: CalendarMode = .month
     /// 日历里选中的那一天（日 / 周视图以它为准）
     @Published var calendarDay: String = Day.today()
-    @Published var calendarTasks: [String: DidaTask] = [:]
-    @Published var calendarNotes: [String: [NoteInfo]] = [:]
-    @Published var calendarLoading = false
+    @Changed var calendarTasks: [String: DidaTask] = [:]
+    @Changed var calendarNotes: [String: [NoteInfo]] = [:]
+    @Changed var calendarLoading = false
     /// 日历已读过的日期范围（及读取时间），用来判断切到周 / 日视图时要不要重读
     var calendarCover: (from: String, to: String, at: Date)?
-    @Published var calendarError: String?
+    @Changed var calendarError: String?
 
     // 快速记录
     @Published var showQuickAdd = false
     /// 打开万能输入时预填的文字 / 指定类型 / 默认日期（日历里「添加待办」用）
     @Published var quickAddText = ""
     @Published var quickAddKind: CaptureKind?
-    @Published var notice: String?
+    @Changed var notice: String?
     @Published var quickAddDate: String?
     /// 日历时间轴上点出来的时间（HH:mm），万能输入里没写时间的待办用它
     @Published var quickAddTime: String?
@@ -227,13 +236,13 @@ final class AppModel: ObservableObject {
     var loadStamps: [String: (key: String, at: Date)] = [:]
     @Published var riverPreset: RangePreset = .last7
     @Published var river: TimelineData?
-    @Published var riverLoading = false
-    @Published var riverError: String?
+    @Changed var riverLoading = false
+    @Changed var riverError: String?
     /// 被用户翻转过「展开 / 收起」的日子（默认只展开今天、昨天）
     @Published var riverFlipped: Set<String> = []
 
     // 日历：法定节假日 / 调休
-    @Published var holidays: [String: HolidayEntry] = [:]
+    @Changed var holidays: [String: HolidayEntry] = [:]
     lazy var daily = DailyService(api: ideashell)
 
     var noteCache: [String: NoteDetail] = [:]
@@ -591,8 +600,12 @@ final class AppModel: ObservableObject {
     }
 
     func localTask(_ id: String) -> DidaTask? {
+        // 不拼接数组：右键菜单 / 行视图每次求值都会调用，拼一次就是复制全部待办
         if let ov = overview {
-            if let t = (ov.overdue + ov.upcoming + ov.undated + ov.done).first(where: { $0.id == id }) { return t }
+            if let t = ov.overdue.first(where: { $0.id == id }) { return t }
+            if let t = ov.upcoming.first(where: { $0.id == id }) { return t }
+            if let t = ov.undated.first(where: { $0.id == id }) { return t }
+            if let t = ov.done.first(where: { $0.id == id }) { return t }
         }
         return calendarTasks[id]
     }
@@ -610,11 +623,12 @@ final class AppModel: ObservableObject {
         defer { todosLoading = false }
         do {
             let fresh = mergeSjz(try await dida.fetchOverview())
+            let changed = fresh != overview
             overview = fresh
             let fp = Self.fingerprint(fresh)
             if overviewFP != 0 && fp != overviewFP { historyDirty = true }
             overviewFP = fp
-            if fresh.warning == nil { Self.writeCache("overview.json", fresh) }
+            if changed && fresh.warning == nil { Self.writeCache("overview.json", fresh) }
             todosError = overview?.warning
         } catch {
             if !silent || overview == nil { todosError = error.localizedDescription }

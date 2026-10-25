@@ -47,15 +47,15 @@ class LlmClient(
         get() = !credentials.llmKey.isNullOrBlank()
 
     /** 发一轮「系统提示 + 用户内容」，返回模型回复的文字；要求回复是 JSON 对象 */
-    suspend fun chatJson(system: String, user: String): String {
+    suspend fun chatJson(system: String, user: String, timeoutSec: Long? = null): String {
         val key = credentials.llmKey
         if (key.isNullOrBlank()) throw LlmException("还没有填写大模型 API Key")
         val s = settings.current
         val url = s.llmBaseUrl.trimEnd('/') + "/chat/completions"
 
         // 先带 response_format=json_object；个别服务不认这个参数（返回 400）就去掉再试一次
-        val first = send(url, key, s.llmModel, system, user, jsonMode = true)
-        val reply = if (first.code == 400) send(url, key, s.llmModel, system, user, jsonMode = false) else first
+        val first = send(url, key, s.llmModel, system, user, jsonMode = true, timeoutSec)
+        val reply = if (first.code == 400) send(url, key, s.llmModel, system, user, jsonMode = false, timeoutSec) else first
         if (reply.code !in 200..299) throw LlmException(describeHttpError(reply.code, reply.body))
 
         val root = try {
@@ -70,7 +70,7 @@ class LlmClient(
         return content?.trim().takeUnless { it.isNullOrEmpty() } ?: throw LlmException("大模型没有返回内容")
     }
 
-    private suspend fun send(url: String, key: String, model: String, system: String, user: String, jsonMode: Boolean): LlmReply {
+    private suspend fun send(url: String, key: String, model: String, system: String, user: String, jsonMode: Boolean, timeoutSec: Long?): LlmReply {
         val payload = buildJsonObject {
             put("model", model)
             put("temperature", 0.1)
@@ -91,7 +91,12 @@ class LlmClient(
             throw LlmException("大模型接口地址不正确，请检查设置")
         }
         return try {
-            withContext(Dispatchers.IO) { client.newCall(request).await() }
+            // 语音整理要快（默认 8 秒）；排期 / 梳理今天这类较长的请求由调用方放宽超时
+            val c = if (timeoutSec == null) client else client.newBuilder()
+                .readTimeout(timeoutSec, TimeUnit.SECONDS)
+                .callTimeout(timeoutSec, TimeUnit.SECONDS)
+                .build()
+            withContext(Dispatchers.IO) { c.newCall(request).await() }
         } catch (_: IOException) {
             throw LlmException("网络不可用或大模型响应超时")
         }
@@ -122,3 +127,16 @@ private suspend fun Call.await(): LlmReply = suspendCancellableCoroutine { cont 
 }
 
 internal class LlmReply(val code: Int, val body: String)
+
+/** 从大模型回复里取出 JSON 对象（兼容 ```json 代码块 / 前后多余文字）；取不到为 null */
+fun extractJsonObject(text: String): JsonObject? {
+    val t = text.trim()
+    val start = t.indexOf('{')
+    val end = t.lastIndexOf('}')
+    if (start < 0 || end <= start) return null
+    return try {
+        Json.parseToJsonElement(t.substring(start, end + 1)) as? JsonObject
+    } catch (_: Exception) {
+        null
+    }
+}

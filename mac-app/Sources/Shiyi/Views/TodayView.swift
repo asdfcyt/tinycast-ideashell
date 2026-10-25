@@ -19,32 +19,14 @@ private struct TodayContent: View {
     @State private var showQuickStart = false
 
     private var today: String { Day.today() }
-    /// 今天的 Daily Note 放在 model 里缓存：切页回来直接显示，不清空重读
+    /// 过滤 / 排序后的数据按版本缓存在 model 里（见 TodayData.swift），这里读多少遍都不再重算
     private var dailyToday: DailyDay? { model.dailyToday }
-    /// 今天的笔记（Daily Note 单独在下面按条显示，这里不重复列那一篇）
-    private var todayNotes: [NoteInfo] {
-        model.timeline.filter { $0.day == today && $0.id != dailyToday?.noteId && !$0.tags.contains("daily-note") }
-    }
-    /// 今天 Daily Note 里最近的 5 条（新的在上）
-    private var dailyRecent: [DailyEntry] { Array((dailyToday?.entries ?? []).filter { !$0.struck }.suffix(5).reversed()) }
-
-    private var todayDone: [DidaTask] {
-        // 比对时间戳所在的日子，不必给每条已完成的待办格式化一次日期字符串（这个属性每次重绘会被读很多遍）
-        (model.overview?.done ?? []).filter { $0.completedDate.map { Day.cal.isDateInToday($0) } ?? false }
-    }
-
-    private var overdue: [DidaTask] {
-        (model.overview?.overdue ?? []).sorted { ($0.date ?? "") < ($1.date ?? "") }
-    }
-
-    private var todayTasks: [DidaTask] {
-        (model.overview?.todayTasks(today) ?? []).sorted {
-            let a = $0.time ?? "99:99", b = $1.time ?? "99:99"
-            return a != b ? a < b : $0.priority > $1.priority
-        }
-    }
-
-    private var undated: [DidaTask] { model.overview?.undated ?? [] }
+    private var todayNotes: [NoteInfo] { model.todayData().todayNotes }
+    private var dailyRecent: [DailyEntry] { model.todayData().dailyRecent }
+    private var todayDone: [DidaTask] { model.todayData().todayDone }
+    private var overdue: [DidaTask] { model.todayData().overdue }
+    private var todayTasks: [DidaTask] { model.todayData().todayTasks }
+    private var undated: [DidaTask] { model.todayData().undated }
     private var remaining: Int { overdue.count + todayTasks.count }
     private var todoTotal: Int { todayTasks.count + undated.count + todayDone.count }
     private var loaded: Bool { model.overview != nil || !model.hasDida }

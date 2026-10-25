@@ -45,13 +45,15 @@ extension AppModel {
             overview = ov
         }
         calendarTasks.removeValue(forKey: task.id)
-        if var r = river {
+        // 只有真的有东西要去掉才赋值：@Published 的数组赋值（哪怕没变）也会让整个界面重画一遍
+        if var r = river, r.days.contains(where: { $0.todos.contains { $0.id == task.id } }) {
             for i in r.days.indices { r.days[i].todos.removeAll { $0.id == task.id } }
             river = r
         }
         if pane.isTask(task.id) { pane.clear() }
         if calPane.isTask(task.id) { calPane.clear() }
-        sheetStack.removeAll { if case let .task(t) = $0 { return t.id == task.id }; return false }
+        let hasSheet: (SheetPage) -> Bool = { if case let .task(t) = $0 { return t.id == task.id }; return false }
+        if sheetStack.contains(where: hasSheet) { sheetStack.removeAll(where: hasSheet) }
 
         do {
             try await dida.deleteTask(task)

@@ -13,6 +13,10 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import com.carpe.ideashell.ui.glass.glassChip
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -104,7 +108,7 @@ import java.util.Locale
 /**
  * 「今天」页（设计系统「环」· 漫步）。信息很少，每一块只说一件事：
  * - 仪表卡：三层细环（专注 / 待办 / 项目进展）+ 近半年的记录热力图（Daily Note 每天的条数）；
- * - 随机漫步：从 5 年笔记里随机翻出一条旧的，「换一条」再翻（参考 flomo）；
+ * - 重新规划 / 快速启动：两个 AI 入口（逾期待办重新排期；梳理今天并开始一个小目标的专注）；
  * - 每日回顾：1 周前 / 1 个月前 / 1 年前的今天写过的笔记，横向滑动；
  * - 下一件：只留最近要做的一件待办，其余去「待办」页。
  * 输入统一由右下角的「+」完成（见 MainActivity），这里不再放输入框。
@@ -119,6 +123,7 @@ fun HomeScreen(
     onOpenNote: (String) -> Unit,
     onOpenRevisit: () -> Unit,
     viewModel: HomeViewModel = viewModel(factory = HomeViewModel.Factory.instance),
+    aiAssist: AiAssistViewModel = viewModel(factory = AiAssistViewModel.Factory.instance),
 ) {
     val connected by viewModel.connected.collectAsStateWithLifecycle()
     val focusRunning by viewModel.focusRunning.collectAsStateWithLifecycle()
@@ -131,8 +136,9 @@ fun HomeScreen(
     val memory by viewModel.memory.collectAsStateWithLifecycle()
     val heat by viewModel.heat.collectAsStateWithLifecycle()
     val revisitToday by viewModel.revisitToday.collectAsStateWithLifecycle()
-    val walkNote = viewModel.walkNote
     var recentOpen by rememberSaveable { mutableStateOf(false) }
+    var replanOpen by rememberSaveable { mutableStateOf(false) }
+    var quickStartOpen by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     val today = remember { LocalDate.now() }
 
@@ -159,6 +165,8 @@ fun HomeScreen(
             }
         }
     }
+
+    LaunchedEffect(Unit) { aiAssist.messages.collect { snackbar.showSnackbar(it) } }
 
     // 有待同步 / 同步中的记录时，每秒刷新一次，让「N 秒后同步」倒计时走起来
     val hasUnsent = recent.any { it.status == CaptureStatus.PENDING.name || it.status == CaptureStatus.SENDING.name }
@@ -193,6 +201,18 @@ fun HomeScreen(
     }
     // 还在撤销窗口内的最新一条：显示在最上面，和「记一条」的反馈放在同一个位置
     val fresh = recent.firstOrNull { it.status == CaptureStatus.PENDING.name && it.readyAt > now }
+
+    if (replanOpen) ReplanSheet(aiAssist, onDismiss = { replanOpen = false })
+    if (quickStartOpen) {
+        QuickStartSheet(
+            vm = aiAssist,
+            onDismiss = { quickStartOpen = false },
+            onStarted = {
+                quickStartOpen = false
+                onOpenFocus()
+            },
+        )
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -274,6 +294,15 @@ fun HomeScreen(
                 )
             }
 
+            item(key = "ai-actions") {
+                AiActions(
+                    overdueCount = overdueTasks.size + undatedTasks.size,
+                    onReplan = { replanOpen = true },
+                    onQuickStart = { quickStartOpen = true },
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                )
+            }
+
             if (overview != null && nextTask != null) {
                 item(key = "next") {
                     NextRow(
@@ -291,18 +320,6 @@ fun HomeScreen(
             if (reviews.isNotEmpty()) {
                 item(key = "reviews") {
                     ReviewRow(reviews, onOpenNote = onOpenNote)
-                }
-            }
-
-            if (walkNote != null) {
-                item(key = "walk") {
-                    WalkCard(
-                        note = walkNote,
-                        canShuffle = (memory?.pool?.size ?: 0) > 1,
-                        onShuffle = viewModel::shuffleWalk,
-                        onOpen = { onOpenNote(walkNote.id) },
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
                 }
             }
 
@@ -666,76 +683,9 @@ private fun Heatmap(today: LocalDate, heat: HeatState, modifier: Modifier = Modi
     }
 }
 
-// ───────────────────────── 随机漫步 / 每日回顾 ─────────────────────────
+// ───────────────────────── 每日回顾 ─────────────────────────
 
 private class ReviewItem(val label: String, val date: LocalDate, val note: NoteInfo)
-
-private fun metaLine(date: LocalDate?, tags: List<String>): String =
-    listOfNotNull(date?.toString(), tags.firstOrNull()?.let { "#$it" }).joinToString(" · ")
-
-/** 随机漫步：和「每日回顾」一样有分组标题（右侧「换一条」），下面是橙色紧凑卡（高度固定）：日期 · 标签、标题 1 行、摘要 2 行，超出用省略号 */
-@Composable
-private fun WalkCard(note: NoteInfo, canShuffle: Boolean, onShuffle: () -> Unit, onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    val ink = Brand.Brown
-    val summary = note.summary?.trim().orEmpty().takeIf { it.isNotEmpty() && it != note.title.trim() }
-    val meta = metaLine(note.localDate, note.tags)
-    Column(modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 0.dp).padding(bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("随机漫步", fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
-            if (canShuffle) {
-                Text(
-                    "换一条",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onShuffle)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                )
-            }
-        }
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(WALK_HEIGHT)
-                .clip(RoundedCornerShape(20.dp))
-                .background(Brand.Orange)
-                .clickable(onClick = onOpen)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            if (meta.isNotEmpty()) {
-                Text(meta, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Text(
-                note.title.ifBlank { summary.orEmpty() },
-                fontSize = 15.sp,
-                lineHeight = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (summary != null && note.title.isNotBlank()) {
-                Text(
-                    summary,
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = ink,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-}
-
-private val WALK_HEIGHT = 112.dp
 
 /** 1 周前 / 1 个月前 / 1 年前的今天写过的笔记，横向滑动的小卡 */
 @Composable
@@ -778,6 +728,136 @@ private fun ReviewRow(list: List<ReviewItem>, onOpenNote: (String) -> Unit) {
             }
         }
     }
+}
+
+// ───────────────────────── 重新规划 / 快速启动 ─────────────────────────
+
+/**
+ * 今天页的两个 AI 入口，做成并排的两张「卡」：
+ * - 快速启动：橙色渐变主卡（主推），大号闪电水印，一点就开始；
+ * - 重新规划：玻璃卡，右上角红色角标提示有几件待排。
+ * 按下时卡片轻轻缩一下，松手回弹。
+ */
+@Composable
+private fun AiActions(overdueCount: Int, onReplan: () -> Unit, onQuickStart: () -> Unit, modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(26.dp)
+    Row(modifier.fillMaxWidth().height(100.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        // 快速启动（主卡，略宽）
+        PressCard(
+            onClick = onQuickStart,
+            shape = shape,
+            background = Modifier.background(
+                androidx.compose.ui.graphics.Brush.linearGradient(listOf(Brand.OrangeMid, Brand.Orange)),
+            ),
+            modifier = Modifier.weight(1.1f).fillMaxHeight(),
+        ) {
+            Icon(
+                painterResource(R.drawable.ic_bolt),
+                contentDescription = null,
+                tint = Brand.Brown.copy(alpha = 0.10f),
+                modifier = Modifier.align(Alignment.BottomEnd).offset(x = 14.dp, y = 16.dp).size(92.dp),
+            )
+            Box(
+                Modifier.padding(start = 14.dp, top = 12.dp).size(30.dp).clip(CircleShape).background(Brand.Brown),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(painterResource(R.drawable.ic_bolt), null, tint = Brand.Orange, modifier = Modifier.size(17.dp))
+            }
+            Text(
+                "AI",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = Brand.Brown,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 12.dp, end = 12.dp)
+                    .clip(CircleShape)
+                    .background(Brand.Brown.copy(alpha = 0.14f))
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+            Column(Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 12.dp, end = 10.dp)) {
+                Text("快速启动", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = Brand.Brown, maxLines = 1)
+                Text("理一理今天，马上开始", fontSize = 11.sp, color = Brand.Brown.copy(alpha = 0.72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+
+        // 重新规划（玻璃卡）
+        PressCard(
+            onClick = onReplan,
+            shape = shape,
+            background = Modifier.glassChip(shape),
+            modifier = Modifier.weight(1f).fillMaxHeight(),
+        ) {
+            Icon(
+                painterResource(R.drawable.ic_calendar),
+                contentDescription = null,
+                tint = scheme.onSurface.copy(alpha = 0.06f),
+                modifier = Modifier.align(Alignment.BottomEnd).offset(x = 12.dp, y = 14.dp).size(84.dp),
+            )
+            Box(
+                Modifier.padding(start = 14.dp, top = 12.dp).size(30.dp).clip(CircleShape).background(Brand.Orange.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(painterResource(R.drawable.ic_calendar), null, tint = Brand.OrangeDeep, modifier = Modifier.size(17.dp))
+            }
+            if (overdueCount > 0) {
+                Text(
+                    if (overdueCount > 99) "99+" else overdueCount.toString(),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 12.dp, end = 12.dp)
+                        .clip(CircleShape)
+                        .background(scheme.error)
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+            }
+            Column(Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 12.dp, end = 10.dp)) {
+                Text("重新规划", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = scheme.onSurface, maxLines = 1)
+                Text(
+                    if (overdueCount > 0) "先拆解，再排期 · 含逾期的" else "先拆解，再排进今天",
+                    fontSize = 11.sp,
+                    color = scheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/** 按下缩一点、松手回弹的卡片；不画系统水波，用缩放当反馈 */
+@Composable
+private fun PressCard(
+    onClick: () -> Unit,
+    shape: androidx.compose.ui.graphics.Shape,
+    background: Modifier,
+    modifier: Modifier = Modifier,
+    content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit,
+) {
+    val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by source.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.95f else 1f,
+        animationSpec = androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 520f),
+        label = "pressScale",
+    )
+    Box(
+        modifier = modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(shape)
+            .then(background)
+            .clickable(
+                interactionSource = source,
+                indication = null,
+                role = androidx.compose.ui.semantics.Role.Button,
+                onClick = onClick,
+            ),
+        content = content,
+    )
 }
 
 // ───────────────────────── 下一件 ─────────────────────────

@@ -54,6 +54,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -618,8 +622,18 @@ fun GlassSheet(
         scrimColor = Color.Black.copy(alpha = if (blurOk) 0.22f else 0.32f),
     ) {
         if (blurOk) SheetBlurBehind(closing = closing, restPx = blurPx)
-        content()
+        // 抽屉已经展开到顶，内容滚到底后继续往上滑 / 甩，剩下的力不要交给抽屉：
+        // 否则抽屉会带着初速度弹起再落回来（上下弹动）。往下的（拉下来关闭）照常交给抽屉。
+        Column(Modifier.nestedScroll(remember { NoPullUpConnection })) { content() }
     }
+}
+
+private object NoPullUpConnection : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
+        if (available.y < 0f) Offset(0f, available.y) else Offset.Zero
+
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity =
+        if (available.y < 0f) Velocity(0f, available.y) else Velocity.Zero
 }
 
 /** 抽屉刚弹出时的磨砂峰值（像素）：一上来就够糊，然后回落到 [SheetBlurPx] */

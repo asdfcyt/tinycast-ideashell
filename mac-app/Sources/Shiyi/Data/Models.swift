@@ -59,13 +59,18 @@ struct DidaTask: Identifiable, Hashable, Codable {
 
     /// 旧版本写在标题里的 `!重要` `!紧急` 标记不显示
     var cleanTitle: String {
-        let a = RX(#"\s*[!！]重要"#, multiline: false).replace(in: title, with: "")
-        let b = RX(#"\s*[!！]紧急"#, multiline: false).replace(in: a, with: "").trimmed
+        // 绝大多数标题没有标记：先用字符判断挡掉，别每次都跑正则（列表每重绘一次，每一行都会调用）
+        guard title.contains(where: { $0 == "!" || $0 == "！" }) else { return title }
+        let a = Self.importantRE.replace(in: title, with: "")
+        let b = Self.urgentRE.replace(in: a, with: "").trimmed
         return b.isEmpty ? title : b
     }
+
+    private static let importantRE = RX(#"\s*[!！]重要"#, multiline: false)
+    private static let urgentRE = RX(#"\s*[!！]紧急"#, multiline: false)
 }
 
-struct DidaOverview: Codable {
+struct DidaOverview: Codable, Equatable {
     var overdue: [DidaTask] = []
     var upcoming: [DidaTask] = []
     var undated: [DidaTask] = []
@@ -82,6 +87,22 @@ struct DidaOverview: Codable {
         c.overdue.removeAll { $0.id == id }
         c.upcoming.removeAll { $0.id == id }
         c.undated.removeAll { $0.id == id }
+        return c
+    }
+
+    /// 把改过的任务放到它现在该在的分组里（逾期 / 今天起 / 无日期）。分组没变就原位替换，
+    /// 这样静默刷新读回来的顺序和这里一致，整份数据「没变」，界面就不用再刷新一遍。
+    func placing(_ n: DidaTask, today: String = Day.today()) -> DidaOverview {
+        var c = self
+        if let i = c.overdue.firstIndex(where: { $0.id == n.id }), let d = n.date, d < today { c.overdue[i] = n; return c }
+        if let i = c.upcoming.firstIndex(where: { $0.id == n.id }), let d = n.date, d >= today { c.upcoming[i] = n; return c }
+        if let i = c.undated.firstIndex(where: { $0.id == n.id }), n.date == nil { c.undated[i] = n; return c }
+        c = c.withoutTask(n.id)
+        if let d = n.date {
+            if d < today { c.overdue.append(n) } else { c.upcoming.append(n) }
+        } else {
+            c.undated.append(n)
+        }
         return c
     }
 

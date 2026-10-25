@@ -78,6 +78,21 @@ class NotesRepository(
     }
 
 
+    /** 最近 [days] 天（含今天）的笔记，不含备份笔记；「快速启动」梳理今天时用 */
+    suspend fun recentNotes(days: Int): List<NoteInfo> {
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now()
+        val found = ideashell.notesInRange(
+            today.minusDays((days - 1).toLong()).atStartOfDay(zone).toInstant(),
+            today.plusDays(1).atStartOfDay(zone).toInstant(),
+        )
+        return found.notes.filterNot { BackupService.isBackupNote(it) }
+    }
+
+    /** 区间内每天的 Daily Note（笔记 id + 条目） */
+    suspend fun dailyDays(from: LocalDate, to: LocalDate): Map<LocalDate, com.carpe.ideashell.data.ideashell.DailyDay> =
+        dailyNotes.daysInRange(from, to)
+
     suspend fun search(query: String): List<NoteInfo> = ideashell.searchNotes(query.trim(), 20)
 
     private var memoryCache: MemoryData? = null

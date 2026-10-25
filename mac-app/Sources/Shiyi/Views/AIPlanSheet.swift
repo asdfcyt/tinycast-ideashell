@@ -70,7 +70,7 @@ struct AIPlanSheet: View {
         switch phase {
         case .loading: return "先看看你的待办，再问几个问题"
         case .ask: return "按 GTD + OKR 带你过一遍：收集 → 目标 → 澄清 → 优先级 → 容量 → 取舍"
-        case .result: return "确认前不会改动滴答，每一项都可以取消勾选"
+        case .result: return "确认前不会改动，每一项都可以取消勾选"
         case .failed: return "出错了"
         }
     }

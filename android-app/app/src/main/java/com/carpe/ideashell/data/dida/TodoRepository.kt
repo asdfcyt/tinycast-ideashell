@@ -274,6 +274,23 @@ class TodoRepository(
         }
     }
 
+    /** 新建任务（AI 规划拆出来的子任务）；备注 / 标签建好后再补写，补写失败不影响任务本身 */
+    suspend fun createTask(
+        title: String,
+        date: String?,
+        time: String?,
+        priority: Int,
+        content: String,
+        tags: List<String>,
+    ): Result<Unit> = attempt {
+        val created = api.createTask(title, date, time, priority)
+        if (created != null) {
+            if (content.isNotBlank()) runCatching { api.setContent(created, content) }
+            if (tags.isNotEmpty()) runCatching { api.setTags(created, tags) }
+        }
+        refresh(force = true)
+    }
+
     suspend fun setPriority(task: DidaTask, priority: Int): Result<Unit> {
         if (task.isCalendar) return CALENDAR_READONLY
         val before = _state.value.overview

@@ -42,6 +42,8 @@ enum TaskNoteBuilder {
     /// 滴答任务备注里的「任务笔记：<链接>」→ 笔记 id（安卓端换机后也是这样找回对应关系的）
     static func linkedNoteId(in content: String) -> String? {
         guard content.contains("任务笔记") else { return nil }
-        return RX(#"任务笔记[：:]\s*https?://[^\s/]+/boards/([a-f0-9]+)"#, multiline: false, ignoreCase: true).first(in: content)?.group(1)
+        return linkRE.first(in: content)?.group(1)
     }
+
+    private static let linkRE = RX(#"任务笔记[：:]\s*https?://[^\s/]+/boards/([a-f0-9]+)"#, multiline: false, ignoreCase: true)
 }

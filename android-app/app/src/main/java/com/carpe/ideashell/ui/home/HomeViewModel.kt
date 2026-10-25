@@ -22,9 +22,7 @@ import com.carpe.ideashell.data.dida.DidaOverview
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.dida.FocusSummary
 import com.carpe.ideashell.data.focus.FocusRun
-import com.carpe.ideashell.data.ideashell.NoteInfo
 import com.carpe.ideashell.domain.MemoryData
-import com.carpe.ideashell.domain.MemoryLane
 import com.carpe.ideashell.data.project.ProjectStatus
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -152,10 +150,6 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     private val _memory = MutableStateFlow<MemoryData?>(container.notes.memoryCached())
     val memory: StateFlow<MemoryData?> = _memory.asStateFlow()
 
-    /** 「随机漫步」当前这一条 */
-    var walkNote by mutableStateOf<NoteInfo?>(null)
-        private set
-
     init {
         container.todos.refresh()
         refreshFocus()
@@ -213,23 +207,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     fun refreshMemory() {
         if (!container.credentials.ideashellConnected.value) {
             _memory.value = null
-            walkNote = null
             return
         }
         viewModelScope.launch {
-            runCatching { container.notes.memory() }.onSuccess { m ->
-                _memory.value = m
-                if (walkNote == null || m.pool.none { it.id == walkNote?.id }) {
-                    walkNote = MemoryLane.pickRandom(m.pool, MemoryLane.sameDayIds(m))
-                }
-            }
+            runCatching { container.notes.memory() }.onSuccess { m -> _memory.value = m }
         }
-    }
-
-    /** 换一条随机笔记（避开往年今日里已有的，也避开当前这条） */
-    fun shuffleWalk() {
-        val m = _memory.value ?: return
-        walkNote = MemoryLane.pickRandom(m.pool, MemoryLane.sameDayIds(m) + listOfNotNull(walkNote?.id))
     }
 
     fun refreshTodos() = container.todos.refresh(force = true)
