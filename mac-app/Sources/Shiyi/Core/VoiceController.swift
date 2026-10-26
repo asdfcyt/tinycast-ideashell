@@ -337,6 +337,27 @@ final class VoiceController: ObservableObject {
 
     // MARK: 录音
 
+    /// 菜单栏「语音」菜单：待机时开始录音，录音中结束
+    func toggleFromMenu() {
+        switch phase {
+        case .idle: holdStart = nil; begin()
+        case .listening: finish()
+        case .preview: confirm()
+        case .info, .failed: dismiss()
+        case .organizing: break
+        }
+    }
+
+    var menuTitle: String {
+        switch phase {
+        case .idle: return "开始语音输入"
+        case .listening: return "结束录音"
+        case .preview: return "保存当前结果"
+        case .info, .failed: return "关闭"
+        case .organizing: return "正在整理…"
+        }
+    }
+
     /// 预览里按空格 / 点「说话修改」：再说一句话，按这句指令改现有的记录
     func refineByVoice() {
         guard phase == .preview else { return }
@@ -363,7 +384,7 @@ final class VoiceController: ObservableObject {
         heardSpeech = false
         lastVoice = Date()
         let engine = VoiceSettings.engine
-        engineLabel = engine == .apple ? (ModernSpeech.ready ? "系统·新版" : "系统·旧版") : engine.short
+        engineLabel = engine.short
         phase = .listening
         starting = true
         pendingStop = false

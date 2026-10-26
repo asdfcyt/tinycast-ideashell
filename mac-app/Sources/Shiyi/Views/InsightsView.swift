@@ -609,7 +609,7 @@ struct InsightsView: View {
                 if !model.hasLlm {
                     HStack(spacing: 8) {
                         Text("需要先配置 AI 模型").font(.callout).foregroundStyle(.secondary)
-                        Button("去设置") { model.section = .settings }.buttonStyle(.link)
+                        Button("去设置") { SettingsWindow.show(.ai) }.buttonStyle(.link)
                     }
                 }
                 if let e = model.aiInsightError { ErrorBanner(text: e) { Task { await model.generateAIInsight() } } }

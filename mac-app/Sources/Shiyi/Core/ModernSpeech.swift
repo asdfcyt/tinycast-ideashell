@@ -5,20 +5,29 @@ import Speech
 /// macOS 26+ 的新一代系统识别（SpeechAnalyzer + SpeechTranscriber）。
 /// 比老的 SFSpeechRecognizer 好在：本地模型、不会因为停顿几秒就把一段识别「结束」，长时间连续说话 / 中间停顿都在同一个会话里。
 /// 语言模型要先下载好才能用：启动时在后台准备，准备好之前（或系统不支持）自动用老的识别。
+/// 新版识别的准备状态（设置页显示当前用的是哪个引擎）
+@MainActor
+final class ModernSpeechState: ObservableObject {
+    static let shared = ModernSpeechState()
+    enum Phase { case unsupported, preparing, ready }
+    @Published fileprivate(set) var phase: Phase = .unsupported
+    fileprivate(set) var locale: Locale?
+}
+
 enum ModernSpeech {
-    @MainActor private(set) static var ready = false
-    @MainActor private(set) static var locale: Locale?
-    @MainActor private static var warming = false
+    @MainActor static var ready: Bool { ModernSpeechState.shared.phase == .ready }
+    @MainActor static var locale: Locale? { ModernSpeechState.shared.locale }
 
     /// 后台检查并安装中文识别模型
     @MainActor static func warmUp() {
-        guard #available(macOS 26, *), !ready, !warming else { return }
-        warming = true
+        guard #available(macOS 26, *) else { return }
+        let st = ModernSpeechState.shared
+        guard st.phase == .unsupported else { return }
+        st.phase = .preparing
         Task { @MainActor in
             let loc = await ModernSession.prepare()
-            locale = loc
-            ready = loc != nil
-            warming = false
+            st.locale = loc
+            st.phase = loc != nil ? .ready : .unsupported
         }
     }
 }

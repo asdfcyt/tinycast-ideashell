@@ -25,6 +25,13 @@ struct ShiyiApp: App {
             .task { model.start() }
         }
         .defaultSize(width: 1120, height: 720)
+        .commands { AppCommands(model: model) }
+
+        // 设置：独立的弹出窗口（⌘,），左边分类导航、右边内容
+        Window("设置", id: "settings") {
+            SettingsRoot().environmentObject(model)
+        }
+        .defaultSize(width: 880, height: 620)
 
         // 灵动岛模式下不插入菜单栏图标；灵动岛由 IslandController 在 model.start() 里按设置启停
         // set 故意留空：MenuBarExtra 会把状态项的可见性回写进来，写回 AppStorage 会和 body 重算形成死循环
@@ -46,7 +53,10 @@ private struct MainWindowHost: View {
 
     var body: some View {
         RootView()
-            .onAppear { MainWindow.opener = { openWindow(id: "main") } }
+            .onAppear {
+                MainWindow.opener = { openWindow(id: "main") }
+                SettingsWindow.opener = { openWindow(id: "settings") }
+            }
     }
 }
 

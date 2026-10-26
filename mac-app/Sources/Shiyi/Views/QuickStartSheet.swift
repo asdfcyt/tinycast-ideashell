@@ -88,7 +88,7 @@ struct QuickStartSheet: View {
                 Text(text).font(.callout).fixedSize(horizontal: false, vertical: true)
             }
             if !model.hasLlm {
-                Button("去设置 AI 模型") { dismiss(); model.section = .settings }.buttonStyle(.borderedProminent).tint(Brand.orange)
+                Button("去设置 AI 模型") { dismiss(); SettingsWindow.show(.ai) }.buttonStyle(.borderedProminent).tint(Brand.orange)
             }
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading)

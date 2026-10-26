@@ -82,7 +82,15 @@ final class AppModel: ObservableObject {
     /// 结审（审计工作台）的 MCP 服务：地址和 API Key 在设置里填，见 Data/SjzApi.swift
     var sjz: SjzApi
 
-    @Published var section: AppSection = .today
+    /// 「设置」不再是主窗口里的一页，而是独立的设置窗口：选中它就弹出设置窗口，主窗口停在原来的页面
+    @Published var section: AppSection = .today {
+        didSet {
+            if section == .settings {
+                section = oldValue
+                SettingsWindow.show()
+            }
+        }
+    }
     @Published var sheetStack: [SheetPage] = []
     @Published var selectedProject: String?
 

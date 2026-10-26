@@ -336,7 +336,7 @@ struct ReplanSheet: View {
                     Spacer(minLength: 0)
                 }
                 HStack(spacing: 12) {
-                    if !model.hasLlm { Button("去设置") { dismiss(); model.section = .settings }.buttonStyle(.link) }
+                    if !model.hasLlm { Button("去设置") { dismiss(); SettingsWindow.show(.ai) }.buttonStyle(.link) }
                     Button("知道了") { aiError = nil }.buttonStyle(.link)
                 }
                 .font(.callout)

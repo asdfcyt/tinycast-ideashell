@@ -20,42 +20,26 @@ struct QuickAddHotkeyRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                Image(systemName: "keyboard")
-                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(Brand.orange)
-                    .frame(width: 30, height: 30)
-                    .background(Brand.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("全局万能输入")
-                    Text("在任何 App 里按下，弹出悬浮输入框；回车保存后自动消失，Esc 关闭")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 12)
-                Picker("", selection: $choice) {
-                    ForEach(QuickAddHotkey.allCases) { Text($0.label).tag($0) }
-                }
-                .labelsHidden().frame(width: 130)
-            }
-
-            if choice == .custom {
+        VStack(alignment: .leading, spacing: 6) {
+            SRow("全局万能输入", hint: "在任何 App 里按下，弹出悬浮输入框；回车保存后自动消失，Esc 关闭") {
                 HStack(spacing: 10) {
-                    Spacer(minLength: 0)
-                    Button {
-                        if recording { stopRecording() } else { startRecording() }
-                    } label: {
-                        Text(recording ? "按下新的组合键…（Esc 取消）" : customLabel)
-                            .font(.callout.monospaced().weight(.medium))
-                            .frame(minWidth: 170)
+                    if choice == .custom {
+                        Button {
+                            if recording { stopRecording() } else { startRecording() }
+                        } label: {
+                            Text(recording ? "按下新的组合键…（Esc 取消）" : customLabel)
+                                .font(.system(size: 12, design: .monospaced).weight(.medium))
+                        }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .tint(recording ? Brand.orange : nil)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(recording ? Brand.orange : nil)
+                    SPick(selection: $choice, options: QuickAddHotkey.allCases.map { ($0, $0.label) })
                 }
             }
 
             if let msg = hint ?? panel.registerError {
                 Label(msg, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption).foregroundStyle(Color.orange)
+                    .font(.system(size: 11.5)).foregroundStyle(Color.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

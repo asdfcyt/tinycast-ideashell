@@ -24,12 +24,6 @@ struct RootView: View {
                 .sheet(isPresented: $model.showQuickAdd) {
                     QuickAddView(onDone: { model.showQuickAdd = false }).environmentObject(model).dismissOnOutsideClick()
                 }
-                .background {
-                    // ⌘N 一直可用（侧边栏收起时加号按钮也跟着收起）
-                    Button("") { model.openQuickAddHere() }
-                        .keyboardShortcut("n", modifiers: .command)
-                        .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
-                }
                 .toolbar {
                     // 加号在标题栏最前面
                     ToolbarItem(placement: .navigation) {
@@ -44,7 +38,6 @@ struct RootView: View {
                             if isLoading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
                         }
                         .help("刷新（⌘R）")
-                        .keyboardShortcut("r", modifiers: .command)
                     }
                 }
         }
@@ -75,7 +68,7 @@ struct RootView: View {
         case .review: ReviewView()
         case .insights: InsightsView()
         case .focus: ProjectsView()
-        case .settings: SettingsView()
+        case .settings: EmptyView()
         }
     }
 }
