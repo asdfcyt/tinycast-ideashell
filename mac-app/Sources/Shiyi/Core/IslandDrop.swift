@@ -138,7 +138,7 @@ enum DropImages {
     }
 
     /// png / jpeg 且不超限：原样上传；否则转 PNG；还是太大就降成 JPEG 并逐级缩小
-    private static func fit(_ data: Data, name: String) -> (name: String, data: Data)? {
+    static func fit(_ data: Data, name: String) -> (name: String, data: Data)? {
         guard let src = CGImageSourceCreateWithData(data as CFData, nil),
               let type = CGImageSourceGetType(src) as String? else { return nil }
         let base = (name as NSString).deletingPathExtension

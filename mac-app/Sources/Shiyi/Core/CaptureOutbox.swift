@@ -28,6 +28,9 @@ final class CaptureOutbox {
         var defaultTime: String?
         var attempts = 0
         var createdAt = Date()
+        /// 混排的图片（落在本机 outbox-images/，重试和重启后也不丢）；旧版本的任务没有这两项
+        var imageFiles: [String]?
+        var imageNames: [String]?
     }
 
     private var jobs: [Job] = []
@@ -74,10 +77,11 @@ final class CaptureOutbox {
     }
 
     /// 提交一条：同步检查 + 落本机，立刻返回给用户看的文案；真正写入在后台。检查不过会抛错。
-    func submit(_ a: CaptureAnalysis, kind: CaptureKind, priority: Int, defaultDate: String?, defaultTime: String?, model: AppModel) throws -> String {
+    func submit(_ a: CaptureAnalysis, kind: CaptureKind, priority: Int, defaultDate: String?, defaultTime: String?, images: [ComposerImage] = [], model: AppModel) throws -> String {
         loadIfNeeded()
         self.model = model
         let message: String
+        if !images.isEmpty, !kind.isSjz { throw McpError.tool("图片只能保存到结审（线索 / 想法 / 证据 / 法规），请先切换类型") }
         switch kind {
         case .todo:
             let title = a.todo.content.trimmed
@@ -94,21 +98,55 @@ final class CaptureOutbox {
             guard model.hasIdeashell else { throw McpError.noCredential }
             guard !a.body.trimmed.isEmpty else { throw McpError.tool("内容为空") }
             message = "已保存笔记"
-        case .clue, .evidence, .regulation:
+        case .clue, .idea, .evidence, .regulation:
             guard model.hasSjz else { throw McpError.tool("先到「设置」开启并连接结审") }
-            guard !a.text.trimmed.isEmpty else { throw McpError.tool("内容为空") }
-            message = kind == .clue ? "已记入线索" : (kind == .evidence ? "已保存为证据" : "已保存为法规")
+            guard !a.text.trimmed.isEmpty || !images.isEmpty else { throw McpError.tool("内容为空") }
+            let pin = model.sjzPin
+            switch kind {
+            case .clue: message = pin.clueId.isEmpty ? "已记入线索" : "已追加到线索 \(pin.clueId)"
+            case .idea: message = "已记入工作日志"
+            case .evidence: message = pin.noteLabel.isEmpty ? "已保存为证据" : "已追加到取证单 \(pin.noteNo.isEmpty ? pin.noteTitle : pin.noteNo)"
+            default: message = pin.regulation.isEmpty ? "已保存为法规" : "已追加到《\(pin.regulation)》"
+            }
         }
-        let job = Job(
+        var job = Job(
             kind: kind.rawValue, text: a.text, body: a.body, tags: a.tags, folderName: a.folderName,
             todoContent: a.todo.content, todoDate: a.todo.date, todoTime: a.todo.time,
             priority: priority, defaultDate: defaultDate, defaultTime: defaultTime
         )
+        if !images.isEmpty {
+            let dir = Self.imageDir
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            var files: [String] = [], names: [String] = []
+            for (i, im) in images.enumerated() {
+                let f = "\(job.id.uuidString)-\(i).bin"
+                guard (try? im.data.write(to: dir.appendingPathComponent(f), options: .atomic)) != nil else { continue }
+                files.append(f); names.append(im.name)
+            }
+            job.imageFiles = files
+            job.imageNames = names
+        }
         jobs.append(job)
         submittedIds.append(job.id)
         persist()
         drain(model: model)
         return message
+    }
+
+    // MARK: 混排图片
+
+    private static var imageDir: URL { LocalStore.dir.appendingPathComponent("outbox-images", isDirectory: true) }
+
+    private func loadImages(_ job: Job) -> [ComposerImage] {
+        let names = job.imageNames ?? []
+        return (job.imageFiles ?? []).enumerated().compactMap { i, f in
+            guard let d = try? Data(contentsOf: Self.imageDir.appendingPathComponent(f)) else { return nil }
+            return ComposerImage(name: i < names.count ? names[i] : "图片-\(i + 1)", data: d)
+        }
+    }
+
+    private func dropImages(_ job: Job) {
+        for f in job.imageFiles ?? [] { try? FileManager.default.removeItem(at: Self.imageDir.appendingPathComponent(f)) }
     }
 
     // MARK: 后台发送
@@ -138,9 +176,10 @@ final class CaptureOutbox {
                 do {
                     model.lastCreated = nil
                     inflight = job.id
-                    _ = try await model.submitCapture(analysis, kind: kind, priority: job.priority, defaultDate: job.defaultDate, defaultTime: job.defaultTime)
+                    _ = try await model.submitCapture(analysis, kind: kind, priority: job.priority, defaultDate: job.defaultDate, defaultTime: job.defaultTime, images: loadImages(job))
                     inflight = nil
                     jobs.removeAll { $0.id == job.id }
+                    dropImages(job)
                     persist()
                     let record = model.lastCreated
                     model.lastCreated = nil
@@ -162,6 +201,7 @@ final class CaptureOutbox {
                         return
                     }
                     jobs.removeAll { $0.id == job.id }
+                    dropImages(job)
                     persist()
                     fail(job, error, model: model)
                 }
@@ -236,7 +276,8 @@ final class CaptureOutbox {
             if inflight == id {
                 retracted.insert(id)
                 undone += 1
-            } else if jobs.contains(where: { $0.id == id }) {
+            } else if let queued = jobs.first(where: { $0.id == id }) {
+                dropImages(queued)
                 jobs.removeAll { $0.id == id }
                 persist()
                 undone += 1
@@ -275,7 +316,7 @@ final class CaptureOutbox {
     }
 
     private func fail(_ job: Job, _ error: Error, model: AppModel) {
-        let brief = (job.todoContent.isEmpty ? job.text : job.todoContent).trimmed.prefix(24)
+        let brief = ComposerImage.stripMarker(job.todoContent.isEmpty ? job.text : job.todoContent).trimmed.prefix(24)
         let msg = "「\(brief)」没有保存成功：\(error.localizedDescription)"
         model.showNotice(msg)
         Notifier.post(id: "shiyi.outbox", title: "记到拾忆失败", body: msg)

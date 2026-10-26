@@ -152,7 +152,21 @@ struct DayInfo {
         return parts.joined(separator: " · ")
     }
 
+    nonisolated(unsafe) private static var cache: [String: DayInfo] = [:]
+    private static let cacheLock = NSLock()
+
+    /// 月历每次重新布局（拖窗口、展开侧边栏）都会为 42 个格子各算一遍，结果只和日期、节假日有关，缓存起来
     static func of(_ day: String, holiday: HolidayEntry?) -> DayInfo {
+        let key = day + "|" + (holiday.map { $0.name + ($0.off ? "1" : "0") } ?? "")
+        cacheLock.lock()
+        if let c = cache[key] { cacheLock.unlock(); return c }
+        cacheLock.unlock()
+        let v = compute(day, holiday: holiday)
+        cacheLock.lock(); cache[key] = v; cacheLock.unlock()
+        return v
+    }
+
+    private static func compute(_ day: String, holiday: HolidayEntry?) -> DayInfo {
         let lunar = LunarCalendar.of(day)
         let festival = LunarCalendar.lunarFestival(day) ?? LunarCalendar.solarFestival(day)
         let term = LunarCalendar.solarTerm(day)

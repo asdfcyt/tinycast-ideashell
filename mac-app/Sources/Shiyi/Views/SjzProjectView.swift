@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 「项目」页里的审计项目（来自结审）。数据只来自结审：任务、专注和记录都写回结审，不进滴答和闪念贝壳。
@@ -248,8 +249,30 @@ extension SjzProjectDetailView {
     }
 
     private func loadCaptures() async {
-        captures = (try? await model.sjz.captures(project: name)) ?? captures
+        let all = (try? await model.sjz.captures(project: name)) ?? captures
+        let cleared = clearedIds
+        captures = all.filter { !cleared.contains($0.id) }
         capsLoaded = true
+    }
+
+    // 「清除记录」：只是不再在拾忆这份列表里显示（记下已清除的记录编号，存在本机），结审里的文件原样保留
+    private var clearedKey: String { "sjz.clearedCaptures." + name }
+    private var clearedIds: Set<String> { Set(UserDefaults.standard.stringArray(forKey: clearedKey) ?? []) }
+
+    private func clearCaptureRecords() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "清除拾忆里的这些记录？"
+        alert.informativeText = "只清除拾忆这里「来自拾忆」的列表（共 \(captures.count) 条），结审里的证据、法规、线索等文件不会被删除，也不受影响。"
+        let ok = alert.addButton(withTitle: "清除")
+        ok.hasDestructiveAction = true
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        UserDefaults.standard.set(Array(clearedIds.union(captures.map(\.id))), forKey: clearedKey)
+        captures = []
+        capKind = ""
+        capQuery = ""
+        model.showNotice("已清除拾忆里的记录，结审里的文件没有动")
     }
 
     private var filteredCaptures: [SjzCapture] {
@@ -270,6 +293,9 @@ extension SjzProjectDetailView {
                     HStack(spacing: 8) {
                         SectionTitle(text: "来自拾忆", count: captures.count)
                         Spacer()
+                        Button { clearCaptureRecords() } label: { Label("清除记录", systemImage: "trash") }
+                            .buttonStyle(.borderless).font(.caption).foregroundStyle(.secondary)
+                            .help("只清除拾忆里的这份列表，不删除结审里的文件")
                         Menu {
                             // 直接平铺成一级菜单（Picker 放在 Menu 里会再套一层「时间」二级菜单）
                             ForEach([(0, "全部时间"), (1, "今天"), (7, "近 7 天"), (30, "近 30 天")], id: \.0) { d, label in
@@ -283,7 +309,7 @@ extension SjzProjectDetailView {
                         .menuStyle(.borderlessButton).fixedSize().font(.caption)
                     }
                     HStack(spacing: 6) {
-                        ForEach([("", "全部"), ("evidence", "证据"), ("regulation", "法规"), ("clue", "线索"), ("data", "数据")], id: \.0) { k, label in
+                        ForEach([("", "全部"), ("evidence", "证据"), ("regulation", "法规"), ("clue", "线索"), ("idea", "想法"), ("data", "数据")], id: \.0) { k, label in
                             let n = k.isEmpty ? captures.count : captures.filter { $0.kind == k }.count
                             Button { capKind = k } label: {
                                 Text(n > 0 ? "\(label) \(n)" : label)
@@ -344,8 +370,8 @@ extension SjzProjectDetailView {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button("编辑并写回结审") { editing = c }
-            if c.kind == "clue" {
+            Button(c.kind == "idea" ? "查看" : "编辑并写回结审") { editing = c }
+            if c.kind == "clue", c.status != "converted" {
                 Divider()
                 ForEach([("pending", "待核实"), ("verified", "已核实"), ("excluded", "排除")], id: \.0) { st, label in
                     Button(label + (c.status == st ? " ✓" : "")) { Task { await setClue(c, st) } }
@@ -369,7 +395,7 @@ extension SjzProjectDetailView {
     }
 }
 
-/// 来自拾忆的一条记录：二次编辑并写回结审（正文 / 标题 / 来源 / 关联取证单；线索可改状态、转任务或取证单草稿）
+/// 来自拾忆的一条记录：二次编辑并写回结审（正文 / 标题 / 来源 / 关联取证单；线索可改状态、转任务）
 struct SjzCaptureEditor: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -430,6 +456,8 @@ struct SjzCaptureEditor: View {
     private var content: String { Self.join(segs) }
 
     private var isClue: Bool { capture.kind == "clue" }
+    /// 想法已经写进结审的工作日志：这里只读，要改请到结审的工作日志里改
+    private var isIdea: Bool { capture.kind == "idea" }
     private var canLink: Bool { capture.kind == "evidence" || capture.kind == "regulation" }
 
     var body: some View {
@@ -438,19 +466,26 @@ struct SjzCaptureEditor: View {
                 Image(systemName: capture.icon).foregroundStyle(Brand.orange)
                 Text("\(capture.kindLabel) · \(capture.id)").font(.headline)
                 Spacer()
-                Text("保存后写回结审，并在工作日志留痕").font(.caption).foregroundStyle(.tertiary)
+                Text(isIdea ? "想法已写进结审的工作日志，这里只读" : isClue ? "保存后直接改结审里的线索文件，不写工作日志" : "保存后写回结审，并在工作日志留痕").font(.caption).foregroundStyle(.tertiary)
             }
-            field("标题", text: $title)
-            field("来源", text: $source)
+            if !isIdea {
+                field("标题", text: $title)
+                field("来源", text: $source)
+            }
             if isClue {
                 HStack(spacing: 8) {
                     Text("状态").font(.caption).foregroundStyle(.secondary)
-                    Picker("", selection: $status) {
-                        Text("待核实").tag("pending")
-                        Text("已核实").tag("verified")
-                        Text("排除").tag("excluded")
+                    if capture.status == "converted" {
+                        TagChip(text: "已转疑点", tint: .blue)
+                        Text("状态请在结审里调整").font(.caption).foregroundStyle(.tertiary)
+                    } else {
+                        Picker("", selection: $status) {
+                            Text("待核实").tag("pending")
+                            Text("已核实").tag("verified")
+                            Text("排除").tag("excluded")
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 220)
                     }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: 220)
                     Spacer()
                 }
             }
@@ -502,9 +537,7 @@ struct SjzCaptureEditor: View {
                 HStack(spacing: 8) {
                     Button { Task { await run { try await model.sjz.clueToTask(project: project, id: capture.id) } } } label: { Label("转为任务", systemImage: "checkmark.circle") }
                         .disabled(!capture.taskId.isEmpty || busy)
-                    Button { Task { await run { try await model.sjz.clueToNote(project: project, id: capture.id) } } } label: { Label("生成取证单草稿", systemImage: "doc.badge.plus") }
-                        .disabled(busy)
-                    Text("线索不能直接成为审计疑点，需要在结审里确认").font(.caption).foregroundStyle(.tertiary)
+                    Text("转为疑点（同时生成取证单草稿）请在结审的「疑点 → 线索」里做").font(.caption).foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.bordered).controlSize(.small)
             }
@@ -536,8 +569,8 @@ struct SjzCaptureEditor: View {
     }
 
     private var dirty: Bool {
-        title != capture.title || source != capture.source || (editable && loaded && content != original)
-            || (isClue && status != capture.status) || linkNote != nil
+        !isIdea && (title != capture.title || source != capture.source || (editable && loaded && content != original)
+            || (isClue && status != capture.status) || linkNote != nil)
     }
 
     @ViewBuilder private var previewBlocks: some View {

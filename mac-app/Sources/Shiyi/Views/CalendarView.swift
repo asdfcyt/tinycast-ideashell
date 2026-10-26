@@ -136,6 +136,7 @@ struct CalendarView: View {
                                     holidayNext: col < 6 ? model.holidays[grid[row * 7 + col + 1]] : nil,
                                     dropping: dropTarget == day
                                 )
+                                .equatable()
                                 .frame(height: rowH)
                                 .onTapGesture { model.selectCalendarDay(day) }
                                 .contextMenu {
@@ -335,7 +336,7 @@ enum CalendarPalette {
 
 // MARK: - 一格
 
-private struct DayCell: View {
+private struct DayCell: View, Equatable {
     @EnvironmentObject var model: AppModel
     let day: String
     let inMonth: Bool
@@ -348,6 +349,14 @@ private struct DayCell: View {
     let holidayPrev: HolidayEntry?
     let holidayNext: HolidayEntry?
     let dropping: Bool
+
+    /// 只有格子自己的数据变了才重新生成内容：拖窗口 / 展开侧边栏时只是格子尺寸变，不用把 42 个格子的内容全部重算
+    static func == (a: DayCell, b: DayCell) -> Bool {
+        a.day == b.day && a.inMonth == b.inMonth && a.selected == b.selected && a.weekend == b.weekend
+            && a.height == b.height && a.noteCount == b.noteCount && a.dropping == b.dropping
+            && a.holiday == b.holiday && a.holidayPrev == b.holidayPrev && a.holidayNext == b.holidayNext
+            && a.tasks == b.tasks
+    }
 
     private var isToday: Bool { day == Day.today() }
     private var info: DayInfo { DayInfo.of(day, holiday: holiday) }
@@ -382,18 +391,26 @@ private struct DayCell: View {
         let hidden = all.count - shown.count
 
         VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(info.label)
-                    .font(.system(size: 11))
-                    .foregroundStyle((info.highlight ? Brand.orangeDeep : Color.secondary).opacity(fade))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Text(numberText)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(numberColor)
-                    .padding(.horizontal, isToday ? 6 : 0)
-                    .padding(.vertical, isToday ? 1 : 0)
-                    .background(isToday ? Color.red : .clear, in: Capsule())
+            // 放得下就「农历 / 节日 + 日期」，放不下只留日期（日期永远不换行，不被挤掉）
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    labelText
+                    Spacer(minLength: 0)
+                    numberView
+                }
+                if info.highlight {
+                    // 节日 / 节气名放不下时退回普通的农历日（和系统日历一样：「廿一10月1日」）
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(LunarCalendar.dayText(LunarCalendar.of(day)))
+                            .font(.system(size: 11)).foregroundStyle(Color.secondary.opacity(fade)).lineLimit(1)
+                        Spacer(minLength: 0)
+                        numberView
+                    }
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Spacer(minLength: 0)
+                    numberView
+                }
             }
             .padding(.horizontal, 6)
             .padding(.top, 4)
@@ -423,6 +440,23 @@ private struct DayCell: View {
         }
         .clipped()
         .contentShape(Rectangle())
+    }
+
+    private var labelText: some View {
+        Text(info.label)
+            .font(.system(size: 11))
+            .foregroundStyle((info.highlight ? Brand.orangeDeep : Color.secondary).opacity(fade))
+            .lineLimit(1)
+    }
+
+    private var numberView: some View {
+        Text(numberText)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(numberColor)
+            .lineLimit(1)
+            .padding(.horizontal, isToday ? 6 : 0)
+            .padding(.vertical, isToday ? 1 : 0)
+            .background(isToday ? Color.red : .clear, in: Capsule())
     }
 
     private var numberColor: Color {

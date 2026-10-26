@@ -73,6 +73,13 @@ extension AppModel {
     func sjzUnpinNote() async { await sjzAct { try await sjz.setPin(note: NSNull()); return nil } }
     func sjzUnpinRegulation() async { await sjzAct { try await sjz.setPin(regulation: NSNull()); return nil } }
 
+    /// 钉住一条已有线索：之后记的线索追加到它
+    func sjzPin(clue hit: SjzCapture) async {
+        await sjzAct { try await sjz.setPin(clue: ["id": hit.id, "title": hit.title] as JSON); return nil }
+    }
+
+    func sjzUnpinClue() async { await sjzAct { try await sjz.setPin(clue: NSNull()); return nil } }
+
     func sjzCreateNote(_ title: String) async {
         await sjzAct { try await sjz.createNote(title: title) }
     }
@@ -234,9 +241,12 @@ extension AppModel {
         let place = sjzTargetTitle.isEmpty ? "" : "（\(sjzTargetTitle)）"
 
         if target == .clue {
-            guard !body.isEmpty else { throw McpError.tool("线索只能记录文字，图片请存为证据") }
-            _ = try await sjz.addClue(project: project, text: body)
-            return "已记入线索" + place
+            // 线索是独立的 Markdown，可以带图片；钉住了线索就追加到它
+            var clueItems: [JSON] = prepared.images.map { ["type": "image", "name": $0.name, "data": $0.data.base64EncodedString()] }
+            if !body.isEmpty { clueItems.append(["type": "text", "text": body]) }
+            guard !clueItems.isEmpty else { throw McpError.tool("没有读到可以记录的内容") }
+            let msg = try await sjz.addClue(project: project, items: clueItems)
+            return msg + place
         }
         guard !body.isEmpty || !prepared.images.isEmpty else {
             throw McpError.tool(prepared.skipped > 0 ? "暂不支持这类文件（支持图片和文本文件）" : "没有读到可以保存的内容")
@@ -265,6 +275,63 @@ extension AppModel {
         }
         do {
             let msg = try await sjz.save(regulation: target == .regulation, project: project, items: items, title: title,
+                                         source: source, url: link, snapshot: link != nil)
+            return msg + place
+        } catch let McpError.tool(m) where m.contains("法规名称") {
+            throw SjzError.needRegulation
+        }
+    }
+
+    /// 万能输入 → 结审（线索 / 想法 / 证据 / 法规）。文字和图片按输入框里的先后顺序混排保存。
+    /// `text` 里每个 U+FFFC 对应 `images` 里的一张图。线索 / 证据 / 法规钉住了对象就追加到它，想法写进当天工作日志。
+    func submitSjzCompose(text: String, tags: [String], images: [ComposerImage], kind: CaptureKind) async throws -> String {
+        guard hasSjz else { throw McpError.tool("先到「设置」开启并连接结审") }
+        await refreshSjzTarget()
+        let place = sjzTargetTitle.isEmpty ? "" : "（\(sjzTargetTitle)）"
+        let fitted = await Task.detached(priority: .userInitiated) {
+            images.map { DropImages.fit($0.data, name: $0.name) }
+        }.value
+        var items: [JSON] = []
+        var texts: [String] = []
+        let parts = text.components(separatedBy: ComposerImage.marker)
+        var next = 0
+        for (i, part) in parts.enumerated() {
+            let t = part.trimmed
+            if !t.isEmpty { items.append(["type": "text", "text": t]); texts.append(t) }
+            if i < parts.count - 1 {
+                if next < fitted.count, let img = fitted[next] {
+                    items.append(["type": "image", "name": img.name, "data": img.data.base64EncodedString()])
+                }
+                next += 1
+            }
+        }
+        guard !items.isEmpty else { throw McpError.tool("没有读到可以保存的内容") }
+        let body = texts.joined(separator: "\n\n")
+        let hasImage = items.contains { ($0["type"] as? String) == "image" }
+
+        switch kind {
+        case .clue:
+            return try await sjz.addClue(project: nil, items: items, tags: tags) + place
+        case .idea:
+            return try await sjz.addIdea(project: nil, items: items) + place
+        default:
+            break
+        }
+
+        // 证据 / 法规：单独一个网址 → 存成「网址」并抓取网页快照
+        let link = hasImage ? nil : Self.singleLink(body)
+        if let link, let i = items.firstIndex(where: { ($0["type"] as? String) == "text" }) { items[i]["url"] = link }
+        let source: String
+        if let link, let host = URL(string: link)?.host { source = host.replacingOccurrences(of: "www.", with: "") }
+        else if hasImage && body.isEmpty { source = "屏幕截图" }
+        else { source = "拾忆" }
+        let first = body.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmed ?? ""
+        var title = link == nil ? String(first.prefix(30)) : ""
+        if kind == .regulation {
+            title = sjzPin.regulation.isEmpty ? Self.guessRegulationName(body: body, link: link, file: nil) : ""
+        }
+        do {
+            let msg = try await sjz.save(regulation: kind == .regulation, project: nil, items: items, title: title,
                                          source: source, url: link, snapshot: link != nil)
             return msg + place
         } catch let McpError.tool(m) where m.contains("法规名称") {

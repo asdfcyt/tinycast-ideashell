@@ -2,11 +2,12 @@ import Foundation
 
 enum CaptureKind: String, CaseIterable, Identifiable {
     case todo = "待办", daily = "Daily Note", note = "笔记"
-    /// 结审（开启并连接后才出现）：线索 / 证据 / 法规，直接存进当前钉住的审计项目
-    case clue = "结审线索", evidence = "结审证据", regulation = "结审法规"
+    /// 结审（开启并连接后才出现），直接存进当前钉住的审计项目：
+    /// 线索（独立 Markdown，可转疑点）/ 想法（阅读笔记，写进当天工作日志）/ 证据 / 法规
+    case clue = "结审线索", idea = "结审想法", evidence = "结审证据", regulation = "结审法规"
     var id: String { rawValue }
 
-    var isSjz: Bool { self == .clue || self == .evidence || self == .regulation }
+    var isSjz: Bool { self == .clue || self == .idea || self == .evidence || self == .regulation }
 
     static func available(sjz: Bool) -> [CaptureKind] { allCases.filter { sjz || !$0.isSjz } }
 
@@ -16,6 +17,7 @@ enum CaptureKind: String, CaseIterable, Identifiable {
         case .daily: return "text.append"
         case .note: return "note.text"
         case .clue: return "lightbulb"
+        case .idea: return "text.bubble"
         case .evidence: return "doc.badge.plus"
         case .regulation: return "book.closed"
         }
@@ -43,7 +45,7 @@ struct CaptureAnalysis {
 /// - `#标签`、`@文件夹` 会被抽出（要求前面是行首或空白，避免误伤 C#、邮箱）
 /// - 自动判断：待办 = 含「今天及以后的明确时间」或「明天及以后的日期」；笔记 = 带标签 / 文件夹；其余追加到 Daily Note
 enum CaptureParser {
-    /// 结审已启用并连接时，才识别「线索 / 证据 / 法规」前缀（由 AppModel 同步）
+    /// 结审已启用并连接时，才识别「线索 / 想法 / 证据 / 法规」前缀（由 AppModel 同步）
     nonisolated(unsafe) static var sjzOn = false
     private static let sep = #"(?:\s*[:：,，]\s*|\s+)"#
     private static let prefixes: [(RX, CaptureKind)] = [
@@ -51,6 +53,7 @@ enum CaptureParser {
         (RX("^(?:日记|daily)" + sep, multiline: false, ignoreCase: true), .daily),
         (RX("^(?:笔记|note)" + sep, multiline: false, ignoreCase: true), .note),
         (RX("^(?:线索|clue)" + sep, multiline: false, ignoreCase: true), .clue),
+        (RX("^(?:想法|idea)" + sep, multiline: false, ignoreCase: true), .idea),
         (RX("^(?:证据|evidence)" + sep, multiline: false, ignoreCase: true), .evidence),
         (RX("^(?:法规|regulation)" + sep, multiline: false, ignoreCase: true), .regulation),
     ]

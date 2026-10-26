@@ -2,9 +2,10 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject var model: AppModel
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             ScrollView {
                 VStack(spacing: 2) {
                     ForEach(AppSection.allCases.filter { $0 != .settings }) { s in sideRow(s) }
@@ -39,6 +40,7 @@ struct RootView: View {
                     }
                 }
         }
+        .modifier(SplitWindowBehavior(visibility: $columnVisibility, detailMin: 760, sidebarWidth: 210))
         .sheet(isPresented: Binding(get: { !model.sheetStack.isEmpty }, set: { if !$0 { model.closeSheets() } })) {
             DetailSheet().environmentObject(model).dismissOnOutsideClick()
         }

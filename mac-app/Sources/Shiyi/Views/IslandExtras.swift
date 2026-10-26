@@ -87,6 +87,7 @@ struct IslandDropPane: View {
         switch zone {
         case .evidence: return pin.noteLabel.isEmpty ? "新证据文件" : "追加 · " + pin.noteLabel
         case .regulation: return pin.regulation.isEmpty ? "自动取名并新建" : "追加 · " + pin.regulation
+        case .clue: return pin.clueId.isEmpty ? "新线索" : "追加 · " + pin.clueLabel
         case .data: return "原始材料 · 文件"
         default: return pin.projectTitle.isEmpty ? pin.project : pin.projectTitle
         }

@@ -45,16 +45,21 @@ struct SjzApi {
             pin.noteNo = (n["no"] as? String) ?? ""
             pin.noteTitle = (n["title"] as? String) ?? ""
         }
+        if let c = r["clue"] as? JSON {
+            pin.clueId = (c["id"] as? String) ?? ""
+            pin.clueTitle = (c["title"] as? String) ?? ""
+        }
         pin.snapshot = (r["snapshot"] as? Bool) ?? true
         return pin
     }
 
-    /// 钉住项目 / 取证单 / 法规；note、regulation 传 NSNull 表示取消钉住
-    func setPin(project: String? = nil, note: Any? = nil, regulation: Any? = nil) async throws {
+    /// 钉住项目 / 取证单 / 法规 / 线索；note、regulation、clue 传 NSNull 表示取消钉住
+    func setPin(project: String? = nil, note: Any? = nil, regulation: Any? = nil, clue: Any? = nil) async throws {
         var a: JSON = [:]
         if let project { a["project"] = project }
         if let note { a["note"] = note }
         if let regulation { a["regulation"] = regulation }
+        if let clue { a["clue"] = clue }
         _ = try await call("set_capture_pin", a)
     }
 
@@ -159,11 +164,20 @@ struct SjzApi {
         return ((r["now"] as? String) ?? since, list)
     }
 
-    func addClue(project: String?, text: String, tags: [String] = []) async throws -> String {
-        var a: JSON = ["text": text, "tags": tags]
+    /// 记线索（items 可以文字图片混排）。结审里钉住了线索就追加到它，否则新建一条
+    func addClue(project: String?, items: [JSON], tags: [String] = []) async throws -> String {
+        var a: JSON = ["items": items, "tags": tags]
         if let project, !project.isEmpty { a["project"] = project }
         let r = try await call("add_clue", a)
         return (r["message"] as? String) ?? "已记录线索"
+    }
+
+    /// 记想法：写进项目当天的工作日志（不进线索）
+    func addIdea(project: String?, items: [JSON]) async throws -> String {
+        var a: JSON = ["items": items]
+        if let project, !project.isEmpty { a["project"] = project }
+        let r = try await call("add_idea", a)
+        return (r["message"] as? String) ?? "已记入工作日志"
     }
 
     // MARK: 拾忆来源台账
@@ -202,10 +216,6 @@ struct SjzApi {
 
     func clueToTask(project: String, id: String) async throws -> String {
         ((try await call("clue_to_task", ["project": project, "id": id]))["message"] as? String) ?? "已转为任务"
-    }
-
-    func clueToNote(project: String, id: String) async throws -> String {
-        ((try await call("clue_to_note", ["project": project, "id": id]))["message"] as? String) ?? "已生成取证单草稿"
     }
 
     func saveData(project: String?, files: [(name: String, data: Data)], note: String = "") async throws -> String {
@@ -263,9 +273,12 @@ struct SjzPin: Equatable {
     var noteNo = ""
     var noteTitle = ""
     var regulation = ""
+    var clueId = ""
+    var clueTitle = ""
     var snapshot = true
 
     var noteLabel: String { [noteNo, noteTitle].filter { !$0.isEmpty }.joined(separator: " ") }
+    var clueLabel: String { [clueId, clueTitle].filter { !$0.isEmpty }.joined(separator: " ") }
 }
 
 struct SjzNoteHit: Identifiable, Hashable {
@@ -329,9 +342,9 @@ struct SjzCapture: Identifiable, Hashable {
     let at: String
     let editedAt: String
 
-    var kindLabel: String { ["evidence": "证据", "regulation": "法规", "clue": "线索", "data": "数据"][kind] ?? kind }
-    var icon: String { ["evidence": "doc.text.image", "regulation": "book.closed", "clue": "lightbulb", "data": "tablecells"][kind] ?? "doc" }
-    var statusLabel: String { ["pending": "待核实", "verified": "已核实", "excluded": "已排除"][status] ?? "" }
+    var kindLabel: String { ["evidence": "证据", "regulation": "法规", "clue": "线索", "idea": "想法", "data": "数据"][kind] ?? kind }
+    var icon: String { ["evidence": "doc.text.image", "regulation": "book.closed", "clue": "lightbulb", "idea": "text.bubble", "data": "tablecells"][kind] ?? "doc" }
+    var statusLabel: String { ["pending": "待核实", "verified": "已核实", "excluded": "已排除", "converted": "已转疑点"][status] ?? "" }
     var date: Date? { ISO8601DateFormatter().date(from: at) ?? SjzCapture.fallback.date(from: at) }
     private static let fallback: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()

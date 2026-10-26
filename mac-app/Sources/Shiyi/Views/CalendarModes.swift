@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 日历的四种视图（和系统日历一样：日 / 周 / 月 / 年）
@@ -20,6 +21,13 @@ struct HourGridView: View {
     @State private var hover = HoverBox()
     private final class HoverBox { var y: CGFloat = 0 }
 
+    /// 时间格（可滚动区域）实际的内容宽度：顶上的日期行 / 全天行用同样的宽度，列才对得齐（滚动条会占掉一部分宽度）
+    @State private var gridW: CGFloat = 0
+    private struct GridWidthKey: PreferenceKey {
+        static let defaultValue: CGFloat = 0
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+    }
+
     private let rowH: CGFloat = 52
     private let gutter: CGFloat = 46
     /// 待办没有时长，画成 45 分钟高的色块
@@ -28,10 +36,10 @@ struct HourGridView: View {
     var body: some View {
         VStack(spacing: 0) {
             if days.count > 1 {
-                dayHeaders
+                dayHeaders.frame(width: gridW > 0 ? gridW : nil).frame(maxWidth: .infinity, alignment: .leading)
                 Divider()
             }
-            allDayRow
+            allDayRow.frame(width: gridW > 0 ? gridW : nil).frame(maxWidth: .infinity, alignment: .leading)
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -43,7 +51,9 @@ struct HourGridView: View {
                         }
                     }
                     .frame(height: rowH * 24)
+                    .background(GeometryReader { g in Color.clear.preference(key: GridWidthKey.self, value: g.size.width) })
                 }
+                .onPreferenceChange(GridWidthKey.self) { gridW = $0 }
                 .onAppear { proxy.scrollTo(startHour, anchor: .top) }
                 .onChange(of: days) { _, _ in proxy.scrollTo(startHour, anchor: .top) }
             }
@@ -86,6 +96,8 @@ struct HourGridView: View {
                         model.startCalendarDraft(date: d, minutes: nil)
                     }
                 }
+                // 和下面时间格里列与列之间的分隔线同宽，列才对得齐
+                if d != days.last { Color.clear.frame(width: 1, height: 1) }
             }
         }
     }
@@ -98,7 +110,8 @@ struct HourGridView: View {
     private var allDayRow: some View {
         HStack(alignment: .top, spacing: 0) {
             Text("全天").font(.system(size: 10)).foregroundStyle(.secondary)
-                .frame(width: gutter, alignment: .trailing).padding(.trailing, 6).padding(.top, 6)
+                .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 6).padding(.top, 6)
+                .frame(width: gutter)
             ForEach(days, id: \.self) { d in
                 let allDay = model.calendarTasks(on: d).filter { $0.time == nil }
                 let notes = model.calendarNotes[d]?.count ?? 0
@@ -128,6 +141,7 @@ struct HourGridView: View {
                 .padding(.horizontal, 2).padding(.vertical, 4)
                 .frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
                 .background(d == model.calendarDay && days.count > 1 ? Brand.orange.opacity(0.06) : .clear)
+                if d != days.last { Divider() }
             }
         }
     }

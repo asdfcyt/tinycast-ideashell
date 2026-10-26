@@ -184,14 +184,13 @@ private struct TodayContent: View {
     }
 
     private var todaySection: some View {
-        let rest = Array(todayTasks.dropFirst(next?.overdue == false ? 1 : 0))
+        // 今天的待办全部列出来（包括上面「下一件」卡片里的那一件），标题上的数字和列表对得上
+        let rest = todayTasks
         return TaskSection(title: "今天", count: todayTasks.count) {
             EmptyView()
         } content: {
             if todayTasks.isEmpty {
                 Text(todayDone.isEmpty ? "今天没有待办" : "今天的待办都完成了").font(.callout).foregroundStyle(.secondary).padding(14)
-            } else if rest.isEmpty {
-                Text("上面这一件做完，今天就清空了").font(.callout).foregroundStyle(.secondary).padding(14)
             } else {
                 ForEach(Array(rest.enumerated()), id: \.element.id) { i, t in
                     TaskLine(task: t, focus: focus)

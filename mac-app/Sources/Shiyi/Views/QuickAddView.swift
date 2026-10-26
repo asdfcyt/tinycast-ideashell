@@ -18,6 +18,10 @@ struct QuickAddView: View {
     var onSubmitted: ((String) -> Void)?
 
     @State private var text = ""
+    /// 输入框里插入的图片（结审类型支持图文混排）：text 里每个 U+FFFC 对应一张
+    @State private var images: [ComposerImage] = []
+    /// 输入框里内容实际排出来的高度（ComposerTextView 量出来的）
+    @State private var contentH: CGFloat = 0
     @State private var override: CaptureKind?
     @State private var defaultDate: String?
     @State private var defaultTime: String?
@@ -29,12 +33,16 @@ struct QuickAddView: View {
     @State private var focusTick = 0
 
     private var analysis: CaptureAnalysis { CaptureParser.analyze(text, sjz: model.hasSjz) }
-    private func kind(_ a: CaptureAnalysis) -> CaptureKind { override ?? a.kind }
+    /// 自动识别的类型：贴了图片又没写前缀，按「证据」处理（和截图保存一致）
+    private func autoKind(_ a: CaptureAnalysis) -> CaptureKind { !images.isEmpty && model.hasSjz ? .evidence : a.recommended }
+    private func kind(_ a: CaptureAnalysis) -> CaptureKind { override ?? a.forced ?? autoKind(a) }
 
-    /// 输入框高度：一行起步，按内容（粗估折行）长到最多 5 行，再多就在框里滚动
+    /// 输入框高度：一行起步，按内容（粗估折行）长到最多 5 行，再多就在框里滚动；带图片时按缩略图再加高
     private var editorHeight: CGFloat {
-        let lines = text.components(separatedBy: "\n").reduce(0) { $0 + max(1, Int((Double($1.count) / 26).rounded(.up))) }
-        return CGFloat(min(max(lines, 1), 5)) * 21 + 6
+        let maxH: CGFloat = images.isEmpty ? 5 * 21 + 6 : 360
+        if contentH > 0 { return min(max(contentH + 4, 26), maxH) }
+        let lines = ComposerImage.stripMarker(text).components(separatedBy: "\n").reduce(0) { $0 + max(1, Int((Double($1.count) / 26).rounded(.up))) }
+        return min(CGFloat(max(lines, 1)) * 21 + 6, maxH)
     }
 
     var body: some View {
@@ -50,6 +58,9 @@ struct QuickAddView: View {
                 ZStack(alignment: .topLeading) {
                     ComposerTextView(
                         text: $text,
+                        images: $images,
+                        contentHeight: $contentH,
+                        allowsImages: model.hasSjz && record == nil,
                         fontSize: compact ? 14 : 16,
                         focusTick: focusTick,
                         onSubmit: { submitFromKeyboard() }
@@ -62,7 +73,7 @@ struct QuickAddView: View {
                             .allowsHitTesting(false)
                     }
                 }
-                .frame(height: compact ? 70 : editorHeight)
+                .frame(height: compact ? max(editorHeight, 70) : editorHeight)
             }
             .padding(.horizontal, compact ? 12 : 18).padding(.top, compact ? 8 : 14)
 
@@ -70,13 +81,17 @@ struct QuickAddView: View {
             Group {
                 if let record {
                     recordHint(record)
+                } else if k.isSjz {
+                    sjzTarget(a, k)
                 } else if text.trimmed.isEmpty {
                     examples
                 } else {
                     recognized(a, k)
                 }
             }
-            .frame(minHeight: 24, alignment: .leading)
+            // 搜索已有证据 / 法规 / 线索会把这一行撑高：必须放在 frame 外面固定高度，否则窗口还没长高时这一行会被压回一行，列表溢出去盖住底栏
+            .frame(maxWidth: .infinity, minHeight: 24, alignment: .topLeading)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, compact ? 12 : 18).padding(.top, 6)
 
             if let error {
@@ -111,7 +126,7 @@ struct QuickAddView: View {
         .frame(width: compact ? nil : 480)
         .onChange(of: text) { _, new in
             if let record, record.recordDraft != new { record.recordDraft = new }
-            onDraftChange?(new)
+            onDraftChange?(ComposerImage.stripMarker(new))
         }
         .onAppear {
             focusTick += 1
@@ -129,24 +144,15 @@ struct QuickAddView: View {
 
     // MARK: - 组件
 
-    /// 开启结审后，示例里带上线索 / 证据 / 法规前缀
+    /// 开启结审后，示例里带上线索 / 想法 / 证据 / 法规前缀
     private var exampleList: [String] {
-        if model.hasSjz { return compact ? ["明天 15:00 开会", "线索 …", "证据 …", "法规 …"] : ["明天 15:00 开会", "线索 …", "证据 …", "法规 …", "笔记 @项目 …"] }
+        if model.hasSjz { return compact ? ["明天 15:00 开会", "线索 …", "想法 …", "证据 …"] : ["明天 15:00 开会", "线索 …", "想法 …", "证据 …", "法规 …"] }
         return ["明天 15:00 开会", "#读书 一句话想法", "笔记 @项目 …"]
     }
 
-    /// 结审去向：线索 → 项目；证据 → 钉住的取证单 / 新证据文件；法规 → 钉住的法规 / 自动取名。放在底栏，空间不够时从末尾截断
+    /// 结审项目：放在底栏，空间不够时从末尾截断（具体追加到哪一份见上面的「去向」行）
     private func sjzChip(_ k: CaptureKind) -> some View {
-        let pin = model.sjzPin
-        let project = model.sjzTargetTitle.isEmpty ? "未选择项目" : model.sjzTargetTitle
-        var label = project
-        if !model.sjzTargetTitle.isEmpty {
-            switch k {
-            case .evidence: label += " · " + (pin.noteLabel.isEmpty ? "新证据文件" : pin.noteLabel)
-            case .regulation: label += " · " + (pin.regulation.isEmpty ? "自动取名" : pin.regulation)
-            default: break
-            }
-        }
+        let label = model.sjzTargetTitle.isEmpty ? "未选择项目" : model.sjzTargetTitle
         return HStack(spacing: 4) {
             Image(systemName: "checkmark.shield").font(.system(size: 10))
             Text(label).lineLimit(1).truncationMode(.tail)
@@ -157,6 +163,34 @@ struct QuickAddView: View {
         .background(Color.indigo.opacity(0.1), in: Capsule())
         .layoutPriority(-1)
         .help("结审 · " + label)
+    }
+
+    /// 结审去向行（提示行的位置）：证据 → 钉住的取证单；法规 → 钉住的法规；线索 → 钉住的线索，都能搜索已有的并追加；想法 → 当天工作日志
+    @ViewBuilder private func sjzTarget(_ a: CaptureAnalysis, _ k: CaptureKind) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !a.tags.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(a.tags, id: \.self) { chip("number", $0, tint: Brand.orange) }
+                    Spacer(minLength: 0)
+                }
+                .font(.caption)
+            }
+            switch k {
+            case .evidence: SjzPinStrip(kinds: [.note], padded: false)
+            case .regulation: SjzPinStrip(kinds: [.regulation], padded: false)
+            case .clue: SjzPinStrip(kinds: [.clue], padded: false)
+            default:
+                HStack(spacing: 6) {
+                    chip("text.book.closed", "写进「\(model.sjzTargetTitle.isEmpty ? "当前项目" : model.sjzTargetTitle)」当天的工作日志", tint: .secondary)
+                    Spacer(minLength: 0)
+                }
+                .font(.caption)
+            }
+            if !images.isEmpty {
+                Text("\(images.count) 张图片 · 按在文字里的位置混排保存").font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - 专注记录
@@ -243,7 +277,7 @@ struct QuickAddView: View {
         Menu {
             ForEach(CaptureKind.available(sjz: model.hasSjz)) { c in
                 Button {
-                    override = (c == a.recommended && a.forced == nil) ? nil : c
+                    override = (c == autoKind(a) && a.forced == nil) ? nil : c
                 } label: {
                     if c == k { Label(c.rawValue, systemImage: "checkmark") } else { Label(c.rawValue, systemImage: c.icon) }
                 }
@@ -345,6 +379,7 @@ struct QuickAddView: View {
         case .daily: return "记入 Daily Note"
         case .note: return "保存笔记"
         case .clue: return "记为线索"
+        case .idea: return "记为想法"
         case .evidence: return "保存为证据"
         case .regulation: return "保存为法规"
         }
@@ -359,8 +394,9 @@ struct QuickAddView: View {
         // 先记到本机发件箱（立刻返回），写进滴答 / 闪念贝壳在后台做；失败会自动重试，真失败了再提示
         _ = CaptureOutbox.shared.takeSubmitted()   // 清掉之前遗留的，撤销只针对这一次
         do {
-            let msg = try CaptureOutbox.shared.submit(a, kind: k, priority: priority, defaultDate: defaultDate, defaultTime: defaultTime, model: model)
+            let msg = try CaptureOutbox.shared.submit(a, kind: k, priority: priority, defaultDate: defaultDate, defaultTime: defaultTime, images: images, model: model)
             text = ""
+            images = []
             override = nil
             priority = 0
             if let onSubmitted {

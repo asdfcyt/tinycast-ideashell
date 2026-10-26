@@ -21,7 +21,7 @@ struct ShiyiApp: App {
             CheapMeasureLayout {
                 MainWindowHost().environmentObject(model)
             }
-            .frame(minWidth: 900, maxWidth: .infinity, minHeight: 600, maxHeight: .infinity)
+            .frame(minWidth: 760, maxWidth: .infinity, minHeight: 600, maxHeight: .infinity)
             .task { model.start() }
         }
         .defaultSize(width: 1120, height: 720)
