@@ -14,6 +14,10 @@ struct SjzProjectDetailView: View {
     @State private var capQuery = ""
     @State private var capDays = 0
     @State private var editing: SjzCapture?
+    @State private var newTitle = ""
+    @State private var newDue = ""
+    @State private var newStart = ""
+    @State private var adding = false
 
     private var stat: SjzProjectStat? { model.sjzOverview?.projects.first { $0.name == name } }
     private var title: String { stat?.title ?? name }
@@ -69,7 +73,7 @@ struct SjzProjectDetailView: View {
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 6) {
-                Button { model.openSjzApp() } label: { Label("打开结审", systemImage: "arrow.up.forward.app") }
+                Button { model.openSjzApp(project: name, to: "/projects?detail=" + AppModel.urlEnc(name)) } label: { Label("打开结审", systemImage: "arrow.up.forward.app") }
                     .buttonStyle(.bordered)
                 if !pinned {
                     Button { Task { await model.sjzSetProject(name) } } label: { Label("设为当前项目", systemImage: "pin") }
@@ -78,6 +82,41 @@ struct SjzProjectDetailView: View {
             }
             .font(.callout)
         }
+    }
+
+    /// 新建任务：直接写进结审这个项目（和结审里的任务是同一份）
+    private var addTaskRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "plus.circle.fill").foregroundStyle(Brand.orange)
+            TextField("新建任务，回车添加到结审", text: $newTitle)
+                .textFieldStyle(.plain).font(.callout)
+                .onSubmit { Task { await addTask() } }
+            DayPickerButton(title: "开始", icon: "flag", value: $newStart)
+                .help("计划开始日（甘特图横条的起点）")
+            DayPickerButton(title: "截止", icon: "calendar", value: $newDue)
+                .help("截止日")
+            Button("添加") { Task { await addTask() } }
+                .disabled(newTitle.trimmed.isEmpty || adding)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .padding(.bottom, 4)
+    }
+
+    private func addTask() async {
+        let t = newTitle.trimmed
+        guard !t.isEmpty, !adding else { return }
+        adding = true
+        defer { adding = false }
+        do {
+            if !newStart.isEmpty, !newDue.isEmpty, newStart > newDue { model.showNotice("开始日不能晚于截止日"); return }
+            try await model.sjz.createTask(project: name, subject: t, startDate: newStart, dueDate: newDue)
+            newTitle = ""
+            newDue = ""
+            newStart = ""
+            model.showNotice("已添加到结审的任务")
+            await model.refreshSjzOverview(force: true)
+        } catch { model.showNotice(error.localizedDescription) }
     }
 
     private var statsRow: some View {
@@ -94,6 +133,7 @@ struct SjzProjectDetailView: View {
         Card {
             VStack(alignment: .leading, spacing: 6) {
                 SectionTitle(text: "相关待办", count: tasks.count)
+                addTaskRow
                 if tasks.isEmpty {
                     Text("这个项目没有未完成的任务").font(.callout).foregroundStyle(.tertiary).padding(.vertical, 4)
                 }
@@ -125,7 +165,7 @@ extension SjzProjectDetailView {
                     HStack(spacing: 8) {
                         SectionTitle(text: "文书中心", count: d.total)
                         Spacer()
-                        Button { model.openSjzApp() } label: { Label("在结审里打开", systemImage: "arrow.up.forward.app") }
+                        Button { model.openSjzApp(project: name, to: "/documents") } label: { Label("在结审里打开", systemImage: "arrow.up.forward.app") }
                             .buttonStyle(.borderless).font(.caption)
                     }
                     if d.phases.count > 1 {
@@ -211,7 +251,7 @@ extension SjzProjectDetailView {
     private func docFile(_ it: SjzDocItem, typeLabel: String) -> some View {
         let tint = statusTint(it.statusLabel)
         let meta = [it.docNo, typeLabel, it.updated.isEmpty ? "" : "更新于 " + it.updated].filter { !$0.isEmpty }.joined(separator: " · ")
-        return Button { model.openSjzApp() } label: {
+        return Button { model.openSjzDoc(project: name, path: it.path) } label: {
             HStack(spacing: 12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color(nsColor: .textBackgroundColor))
@@ -309,7 +349,7 @@ extension SjzProjectDetailView {
                         .menuStyle(.borderlessButton).fixedSize().font(.caption)
                     }
                     HStack(spacing: 6) {
-                        ForEach([("", "全部"), ("evidence", "证据"), ("regulation", "法规"), ("clue", "线索"), ("idea", "想法"), ("data", "数据")], id: \.0) { k, label in
+                        ForEach([("", "全部"), ("idea", "想法"), ("evidence", "证据"), ("regulation", "法规"), ("data", "数据"), ("clue", "线索")], id: \.0) { k, label in
                             let n = k.isEmpty ? captures.count : captures.filter { $0.kind == k }.count
                             Button { capKind = k } label: {
                                 Text(n > 0 ? "\(label) \(n)" : label)
@@ -370,14 +410,38 @@ extension SjzProjectDetailView {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button(c.kind == "idea" ? "查看" : "编辑并写回结审") { editing = c }
+            Button("编辑并写回结审") { editing = c }
             if c.kind == "clue", c.status != "converted" {
                 Divider()
                 ForEach([("pending", "待核实"), ("verified", "已核实"), ("excluded", "排除")], id: \.0) { st, label in
                     Button(label + (c.status == st ? " ✓" : "")) { Task { await setClue(c, st) } }
                 }
             }
+            if c.kind == "clue" || c.kind == "idea" {
+                Divider()
+                if c.kind == "clue" {
+                    if c.status == "converted" {
+                        Button("撤回为线索（删除取证单草稿）") { Task { await runCapture { try await model.sjz.clueRevert(project: name, id: c.id) } } }
+                    } else {
+                        Button("生成取证单草稿") { Task { await runCapture { try await model.sjz.clueToNote(project: name, id: c.id) } } }
+                    }
+                }
+                if c.taskId.isEmpty {
+                    Button("转为任务") { Task { await runCapture { try await model.sjz.clueToTask(project: name, id: c.id) } } }
+                } else {
+                    Button("已转为任务 \(c.taskId)") {}.disabled(true)
+                }
+            }
         }
+    }
+
+    private func runCapture(_ work: () async throws -> String) async {
+        do {
+            let m = try await work()
+            model.showNotice(m)
+            await model.refreshSjzOverview(force: true)
+            await loadCaptures()
+        } catch { model.showNotice(error.localizedDescription) }
     }
 
     private func setClue(_ c: SjzCapture, _ status: String) async {
@@ -456,9 +520,18 @@ struct SjzCaptureEditor: View {
     private var content: String { Self.join(segs) }
 
     private var isClue: Bool { capture.kind == "clue" }
-    /// 想法已经写进结审的工作日志：这里只读，要改请到结审的工作日志里改
+    /// 想法：只有正文可改（标题自动取首行），保存时同步改写结审工作日志里的那一条
     private var isIdea: Bool { capture.kind == "idea" }
     private var canLink: Bool { capture.kind == "evidence" || capture.kind == "regulation" }
+    /// 证据 / 法规 / 想法都可以关联到线索（线索生成取证单时带入）
+    private var canClueLink: Bool { capture.kind == "evidence" || capture.kind == "regulation" || capture.kind == "idea" }
+    @State private var clueIds: [String] = []
+    @State private var clueList: [SjzCapture] = []
+
+    private func clueName(_ id: String) -> String {
+        guard let c = clueList.first(where: { $0.id == id }) else { return id }
+        return "\(c.id) \(c.title.isEmpty ? c.summary : c.title)" + (c.status == "converted" ? "（已出取证单）" : "")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -466,7 +539,7 @@ struct SjzCaptureEditor: View {
                 Image(systemName: capture.icon).foregroundStyle(Brand.orange)
                 Text("\(capture.kindLabel) · \(capture.id)").font(.headline)
                 Spacer()
-                Text(isIdea ? "想法已写进结审的工作日志，这里只读" : isClue ? "保存后直接改结审里的线索文件，不写工作日志" : "保存后写回结审，并在工作日志留痕").font(.caption).foregroundStyle(.tertiary)
+                Text(isIdea ? "保存后同步改写结审工作日志里的这一条（配图只能保留或删除）" : isClue ? "保存后直接改结审里的线索文件，不写工作日志" : "保存后写回结审，并在工作日志留痕").font(.caption).foregroundStyle(.tertiary)
             }
             if !isIdea {
                 field("标题", text: $title)
@@ -476,7 +549,7 @@ struct SjzCaptureEditor: View {
                 HStack(spacing: 8) {
                     Text("状态").font(.caption).foregroundStyle(.secondary)
                     if capture.status == "converted" {
-                        TagChip(text: "已转疑点", tint: .blue)
+                        TagChip(text: "已出取证单", tint: .blue)
                         Text("状态请在结审里调整").font(.caption).foregroundStyle(.tertiary)
                     } else {
                         Picker("", selection: $status) {
@@ -533,17 +606,39 @@ struct SjzCaptureEditor: View {
                     Spacer()
                 }
             }
-            if isClue {
-                HStack(spacing: 8) {
-                    Button { Task { await run { try await model.sjz.clueToTask(project: project, id: capture.id) } } } label: { Label("转为任务", systemImage: "checkmark.circle") }
-                        .disabled(!capture.taskId.isEmpty || busy)
-                    Text("转为疑点（同时生成取证单草稿）请在结审的「疑点 → 线索」里做").font(.caption).foregroundStyle(.tertiary)
+            if canClueLink {
+                HStack(alignment: .top, spacing: 8) {
+                    Text("关联线索").font(.caption).foregroundStyle(.secondary).padding(.top, 5)
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(clueIds, id: \.self) { id in
+                            HStack(spacing: 6) {
+                                Image(systemName: "lightbulb").font(.system(size: 10)).foregroundStyle(Brand.orange)
+                                Text(clueName(id)).font(.callout).lineLimit(1)
+                                Button { clueIds.removeAll { $0 == id } } label: {
+                                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+                                }
+                                .buttonStyle(.plain).help("取消关联")
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Color.primary.opacity(0.06), in: Capsule())
+                        }
+                        Menu {
+                            let rest = clueList.filter { !clueIds.contains($0.id) }
+                            if rest.isEmpty { Text("没有可关联的线索") }
+                            ForEach(rest) { c in
+                                Button("\(c.id) \(c.title.isEmpty ? c.summary : c.title)") { clueIds.append(c.id) }
+                            }
+                        } label: {
+                            Label(clueIds.isEmpty ? "关联到线索…" : "再关联一条…", systemImage: "plus")
+                        }
+                        .menuStyle(.borderlessButton).fixedSize()
+                    }
+                    Spacer()
                 }
-                .buttonStyle(.bordered).controlSize(.small)
             }
             if !message.isEmpty { Text(message).font(.caption).foregroundStyle(Brand.orange) }
             HStack {
-                Button("在结审里打开") { model.openSjzApp() }.buttonStyle(.borderless).font(.callout)
+                Button("在结审里打开") { model.openSjzCapture(project: project, capture) }.buttonStyle(.borderless).font(.callout)
                 Spacer()
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("保存并写回") { Task { await save() } }
@@ -560,17 +655,18 @@ struct SjzCaptureEditor: View {
                 if let d = try? await model.sjz.captureDetail(project: project, id: capture.id) {
                     segs = Self.parse(d.content); original = Self.join(segs); editable = d.editable
                     images = d.images.compactMapValues { NSImage(data: $0) }
-                    if isClue || d.images.isEmpty && d.content.count < 200 { preview = false }
                 }
             }
             notes = (try? await model.sjz.searchNotes("")) ?? []
+            clueIds = capture.clueIds
+            if canClueLink { clueList = (try? await model.sjz.captures(project: project, kind: "clue", limit: 100)) ?? [] }
             loaded = true
         }
     }
 
     private var dirty: Bool {
-        !isIdea && (title != capture.title || source != capture.source || (editable && loaded && content != original)
-            || (isClue && status != capture.status) || linkNote != nil)
+        (title != capture.title || source != capture.source || (editable && loaded && content != original)
+            || (isClue && status != capture.status) || linkNote != nil || (canClueLink && clueIds != capture.clueIds))
     }
 
     @ViewBuilder private var previewBlocks: some View {
@@ -689,7 +785,175 @@ struct SjzCaptureEditor: View {
         if editable, loaded, content != original { f["content"] = content }
         if isClue, status != capture.status { f["status"] = status }
         if let linkNote { f["linkNote"] = linkNote.path }
+        if canClueLink, clueIds != capture.clueIds { f["clueIds"] = clueIds }
         guard !f.isEmpty else { dismiss(); return }
         await run { try await model.sjz.updateCapture(project: project, id: capture.id, fields: f) }
+    }
+}
+
+
+
+/// 选日期的小按钮：点开是一个小日历，可选任意一天，下面有「今天 / 明天 / 下周一」快捷项。value 为 yyyy-MM-dd，空串 = 没设
+struct DayPickerButton: View {
+    let title: String
+    let icon: String
+    @Binding var value: String
+    @State private var open = false
+
+    private var label: String { value.isEmpty ? title : "\(title) \(value.dropFirst(5))" }
+
+    var body: some View {
+        Button { open = true } label: {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 11))
+                Text(label)
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(value.isEmpty ? Color.secondary : Brand.orange)
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(value.isEmpty ? Color.primary.opacity(0.06) : Brand.orange.opacity(0.14), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            DayPickerCalendar(selected: value, title: title) { picked in
+                value = picked
+                open = false
+            }
+        }
+    }
+}
+
+/// 自绘的小日历：月份切换、今天描边、选中橙色实心圆，周一在最前
+private struct DayPickerCalendar: View {
+    let selected: String
+    let title: String
+    let onPick: (String) -> Void
+
+    @State private var month: Date
+    @State private var hovered: String?
+
+    private static let cal: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.firstWeekday = 2
+        return c
+    }()
+    private static let titleFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy年M月"
+        return f
+    }()
+
+    init(selected: String, title: String, onPick: @escaping (String) -> Void) {
+        self.selected = selected
+        self.title = title
+        self.onPick = onPick
+        let base = Day.parse(selected) ?? Date()
+        let c = Self.cal
+        _month = State(initialValue: c.date(from: c.dateComponents([.year, .month], from: base)) ?? base)
+    }
+
+    private var cells: [Date] {
+        let c = Self.cal
+        let offset = (c.component(.weekday, from: month) + 5) % 7
+        let start = c.date(byAdding: .day, value: -offset, to: month) ?? month
+        return (0..<42).compactMap { c.date(byAdding: .day, value: $0, to: start) }
+    }
+
+    var body: some View {
+        let today = Day.today()
+        VStack(spacing: 10) {
+            HStack(spacing: 4) {
+                Text(Self.titleFmt.string(from: month)).font(.system(size: 14, weight: .semibold))
+                Spacer()
+                navButton("chevron.left") { shift(-1) }
+                Button { month = firstOfMonth(Date()) } label: {
+                    Circle().fill(Brand.orange.opacity(0.7)).frame(width: 6, height: 6).frame(width: 22, height: 22).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).help("回到本月")
+                navButton("chevron.right") { shift(1) }
+            }
+            .padding(.horizontal, 2)
+
+            VStack(spacing: 2) {
+                HStack(spacing: 0) {
+                    ForEach(["一", "二", "三", "四", "五", "六", "日"], id: \.self) { w in
+                        Text(w).font(.system(size: 11)).foregroundStyle(.tertiary).frame(maxWidth: .infinity)
+                    }
+                }
+                let days = cells
+                ForEach(0..<6, id: \.self) { row in
+                    HStack(spacing: 0) {
+                        ForEach(0..<7, id: \.self) { col in dayCell(days[row * 7 + col], today: today) }
+                    }
+                }
+            }
+
+            Divider().opacity(0.6)
+            HStack(spacing: 6) {
+                chip("今天") { onPick(today) }
+                chip("明天") { onPick(Day.add(today, days: 1)) }
+                chip("下周一") { onPick(nextMonday(today)) }
+                Spacer(minLength: 0)
+                if !selected.isEmpty {
+                    Button { onPick("") } label: { Text("清除").font(.caption.weight(.medium)).foregroundStyle(.red.opacity(0.85)) }
+                        .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 268)
+    }
+
+    private func dayCell(_ d: Date, today: String) -> some View {
+        let c = Self.cal
+        let key = Day.string(d)
+        let inMonth = c.isDate(d, equalTo: month, toGranularity: .month)
+        let isSel = key == selected
+        let isToday = key == today
+        return Button { onPick(key) } label: {
+            Text("\(c.component(.day, from: d))")
+                .font(.system(size: 13, weight: isSel || isToday ? .semibold : .regular))
+                .foregroundStyle(isSel ? Color.white : isToday ? Brand.orange : inMonth ? Color.primary : Color.secondary.opacity(0.4))
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(isSel ? Brand.orange : (hovered == key ? Brand.orange.opacity(0.14) : Color.clear)))
+                .overlay(Circle().strokeBorder(Brand.orange.opacity(0.7), lineWidth: isToday && !isSel ? 1.2 : 0))
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 ? key : (hovered == key ? nil : hovered) }
+    }
+
+    private func navButton(_ icon: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                .frame(width: 22, height: 22).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func chip(_ text: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text).font(.caption.weight(.medium)).foregroundStyle(Brand.orange)
+                .padding(.horizontal, 9).padding(.vertical, 4)
+                .background(Brand.orange.opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func shift(_ n: Int) {
+        month = Self.cal.date(byAdding: .month, value: n, to: month) ?? month
+    }
+
+    private func firstOfMonth(_ d: Date) -> Date {
+        let c = Self.cal
+        return c.date(from: c.dateComponents([.year, .month], from: d)) ?? d
+    }
+
+    private func nextMonday(_ today: String) -> String {
+        let wd = Self.cal.component(.weekday, from: Day.parse(today) ?? Date())  // 1 = 周日
+        let n = (9 - wd) % 7
+        return Day.add(today, days: n == 0 ? 7 : n)
     }
 }

@@ -335,7 +335,11 @@ struct TaskDetailView: View {
 
     private var actions: some View {
         FlowRow(spacing: 8) {
-            Button { model.open(didaTaskURL(current.projectId, current.id)) } label: { Label("在滴答清单中打开", systemImage: "arrow.up.right.square") }
+            if SjzTasks.owns(current.id) {
+                Button { model.openSjzTask(current.id) } label: { Label("在结审中打开", systemImage: "arrow.up.forward.app") }
+            } else {
+                Button { model.open(didaTaskURL(current.projectId, current.id)) } label: { Label("在滴答清单中打开", systemImage: "arrow.up.right.square") }
+            }
             Button { showEdit = true } label: { Label("编辑任务", systemImage: "square.and.pencil") }
             Button { model.copy(current.cleanTitle) } label: { Label("复制标题", systemImage: "doc.on.doc") }
             if current.done {

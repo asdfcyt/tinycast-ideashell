@@ -50,7 +50,11 @@ struct TaskContextMenu: View {
             }
         }
         Divider()
-        Button("在滴答清单中打开") { model.open(didaTaskURL(t.projectId, t.id)) }
+        if SjzTasks.owns(t.id) {
+            Button("在结审中打开") { model.openSjzTask(t.id) }
+        } else {
+            Button("在滴答清单中打开") { model.open(didaTaskURL(t.projectId, t.id)) }
+        }
         Button("复制标题") { model.copy(t.cleanTitle) }
         Divider()
         Button("删除…", role: .destructive) { model.requestDelete(.task(t)) }

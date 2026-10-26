@@ -11,6 +11,10 @@ enum TaskEdit {
     case tags([String])
     /// 编辑任务：标题、备注、标签一起改
     case details(title: String, content: String, tags: [String])
+    /// 结审任务的计划开始日（nil = 清除）；滴答任务没有这个概念
+    case startDate(String?)
+    /// 结审任务所属的审计阶段
+    case phase(String)
 }
 
 extension AppModel {
@@ -29,7 +33,9 @@ extension AppModel {
 
     /// 改任务：界面先动，再写进滴答，失败了回滚并提示
     func edit(_ task: DidaTask, _ change: TaskEdit) async {
-        guard hasDida else { return }
+        guard hasDida || SjzTasks.owns(task.id) else { return }
+        if case .startDate = change, !SjzTasks.owns(task.id) { return }
+        if case .phase = change, !SjzTasks.owns(task.id) { return }
         var n = localTask(task.id) ?? task
         switch change {
         case let .priority(p): n.priority = p
@@ -38,6 +44,8 @@ extension AppModel {
         case let .list(id): n.projectId = id
         case let .tags(t): n.tags = t
         case let .details(title, content, tags): n.title = title; n.content = content; n.tags = tags
+        case let .startDate(d): n.startDate = d
+        case let .phase(p): n.phase = p
         }
         let before = overview
         if var ov = overview {
@@ -62,8 +70,27 @@ extension AppModel {
             case let .list(id): op = .move(id)
             case let .tags(t): op = .tags(t)
             case let .details(title, content, tags): op = .details(title: title, content: content, tags: tags)
+            case .startDate, .phase: return
             }
             SyncQueue.shared.enqueue(task, op, model: self)
+            return
+        }
+        if SjzTasks.owns(task.id) {
+            // 结审任务：本机已改好，进结审同步队列后立刻返回，不等网络、也不去重拉滴答概览
+            do {
+                switch change {
+                case let .priority(p): try await dida.setPriority(task, p)
+                case let .schedule(d, t): try await dida.reschedule(task, date: d, time: t)
+                case .clearDate: try await dida.clearDate(task)
+                case let .details(title, content, tags): try await dida.setDetails(task, title: title, content: content, tags: tags)
+                case let .startDate(d): try await dida.setStartDate(task, d)
+                case let .phase(p): try await dida.setPhase(task, p)
+                case .list, .tags: break
+                }
+            } catch {
+                overview = before
+                showNotice("修改失败：" + error.localizedDescription)
+            }
             return
         }
         do {
@@ -74,6 +101,8 @@ extension AppModel {
             case let .list(id): try await dida.move(task, toProject: id)
             case let .tags(t): try await dida.setTags(task, t)
             case let .details(title, content, tags): try await dida.setDetails(task, title: title, content: content, tags: tags)
+            case let .startDate(d): try await dida.setStartDate(task, d)
+            case let .phase(p): try await dida.setPhase(task, p)
             }
             await loadOverview(silent: true)
             if section == .calendar { await loadCalendar() }

@@ -54,6 +54,10 @@ struct DidaTask: Identifiable, Hashable, Codable {
     var completedAt: Int64?
     var createdAt: Int64?
     var repeatFlag: String?
+    /// 结审任务的计划开始日 yyyy-MM-dd（只有结审任务有；甘特图用）
+    var startDate: String?
+    /// 结审任务所属的审计阶段 key（preparation / implementation / reporting / rectification）
+    var phase: String?
 
     var completedDate: Date? { completedAt.map { Date(timeIntervalSince1970: Double($0) / 1000) } }
 

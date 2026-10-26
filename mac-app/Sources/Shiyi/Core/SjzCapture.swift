@@ -92,6 +92,11 @@ extension AppModel {
             if sjzOverview != nil { sjzOverview = nil; applySjzTasks() }
             return
         }
+        // 还有改动没发给结审：强制刷新就先发完；普通刷新先别读，免得把刚改的界面盖回旧数据
+        if SjzSyncQueue.shared.isBusy {
+            guard force else { return }
+            guard await SjzSyncQueue.shared.flushNow() else { return }
+        }
         if !force, Date().timeIntervalSince(Self.lastOverview) < 20 { return }
         Self.lastOverview = Date()
         guard let ov = try? await sjz.overview() else { return }
@@ -198,13 +203,89 @@ extension AppModel {
                                          at: Date(timeIntervalSince1970: Double(p.startMs) / 1000))
     }
 
-    func openSjzApp() {
-        let fm = FileManager.default
-        for path in [NSHomeDirectory() + "/Applications/结审.app", "/Applications/结审.app"] where fm.fileExists(atPath: path) {
-            NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: path), configuration: NSWorkspace.OpenConfiguration())
+    /// 打开结审。带上项目和页面路径时，直接定位到结审里的明确位置（`sjz://open?team=…&to=…`），
+    /// 比如某个任务、某条线索、某份文书；没装结审 App 时退回用浏览器打开本机 Web 服务。
+    func openSjzApp(project: String? = nil, to path: String = "/") {
+        let query = "team=\(Self.urlEnc(project ?? ""))&to=\(Self.urlEnc(path))"
+        if let url = URL(string: "sjz://open?" + query), NSWorkspace.shared.urlForApplication(toOpen: url) != nil {
+            NSWorkspace.shared.open(url)
             return
         }
-        if let u = URL(string: sjzEndpoint.replacingOccurrences(of: "/mcp", with: "")) { NSWorkspace.shared.open(u) }
+        if project == nil && path == "/" {
+            let fm = FileManager.default
+            for app in [NSHomeDirectory() + "/Applications/结审.app", "/Applications/结审.app"] where fm.fileExists(atPath: app) {
+                NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: app), configuration: NSWorkspace.OpenConfiguration())
+                return
+            }
+        }
+        let base = sjzEndpoint.replacingOccurrences(of: "/mcp", with: "")
+        if let u = URL(string: base + "/open?" + query) { NSWorkspace.shared.open(u) }
+    }
+
+    static func urlEnc(_ s: String) -> String {
+        s.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? s
+    }
+
+    /// 在结审里打开某个任务（拾忆待办里的 `sjz:<项目>:<任务>`）
+    func openSjzTask(_ taskId: String) {
+        guard let t = SjzTasks.parse(taskId) else { openSjzApp(); return }
+        openSjzApp(project: t.project, to: "/tasks?task=" + Self.urlEnc(t.task))
+    }
+
+    /// 在结审里打开台账里的一项：线索 → 线索编辑；证据 / 法规 / 数据 → 对应文件；想法 → 当天工作日志
+    func openSjzCapture(project: String, _ c: SjzCapture) {
+        switch c.kind {
+        case "clue":
+            openSjzApp(project: project, to: "/suspicious?clue=" + Self.urlEnc(c.id))
+        case "idea":
+            openSjzApp(project: project, to: c.logRel.isEmpty ? "/" : "/documents?open=" + Self.urlEnc(c.logRel))
+        default:
+            openSjzApp(project: project, to: c.path.isEmpty ? "/documents" : "/documents?open=" + Self.urlEnc(c.path))
+        }
+    }
+
+    /// 提醒事件 → 结审里对应的页面
+    func openSjzEvent(_ e: SjzEvent) {
+        let page: String
+        if e.type.hasPrefix("research") { page = "/research" }
+        else if e.type.hasPrefix("task") { page = "/tasks" }
+        else if e.type.hasPrefix("clue") { page = "/suspicious?tab=clues" }
+        else if e.type.hasPrefix("evidence") { page = "/evidence?tab=note" }
+        else { page = "/" }
+        openSjzApp(project: e.project.isEmpty ? nil : e.project, to: page)
+    }
+
+    /// 结审 → 拾忆：`shiyi://task?project=&id=` 打开任务，`shiyi://project?project=` 打开审计项目
+    func handleDeepLink(_ url: URL) {
+        guard url.scheme == "shiyi" else { return }
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func q(_ k: String) -> String { items.first { $0.name == k }?.value ?? "" }
+        let project = q("project")
+        MainWindow.show()
+        guard !project.isEmpty else { return }
+        switch url.host ?? "" {
+        case "task":
+            let tid = "\(SjzTasks.prefix)\(project):\(q("id"))"
+            Task {
+                if localTask(tid) == nil { await refreshSjzOverview(force: true) }
+                if let t = localTask(tid) {
+                    openTask(t)
+                } else {
+                    // 已完成或不在待办里：退回到项目页
+                    section = .focus
+                    selectedProject = SjzTasks.prefix + project
+                    showNotice("这个任务不在未完成的待办里，已打开所在项目")
+                }
+            }
+        default:
+            section = .focus
+            selectedProject = SjzTasks.prefix + project
+        }
+    }
+
+    /// 在结审里打开一份文书（项目内相对路径）
+    func openSjzDoc(project: String, path: String) {
+        openSjzApp(project: project, to: "/documents?open=" + Self.urlEnc(path))
     }
 
     func saveSjz() async {
@@ -396,6 +477,9 @@ enum SjzTasks {
         case due(String)
         case priority(Int)
         case details(title: String?, content: String)
+        case start(String?)
+        case phase(String)
+        case delete
     }
 
     static func owns(_ id: String) -> Bool { id.hasPrefix(prefix) }
@@ -410,7 +494,7 @@ enum SjzTasks {
         default: level = 3
         }
         return DidaTask(id: "\(prefix)\(t.project):\(t.id)", projectId: "\(prefix)\(t.project)", title: t.subject, content: t.detail,
-                        date: t.dueDate.isEmpty ? nil : t.dueDate, priority: level, tags: ["结审"])
+                        date: t.dueDate.isEmpty ? nil : t.dueDate, priority: level, tags: ["结审"], startDate: t.startDate, phase: t.phase)
     }
 
     static func parse(_ id: String) -> (project: String, task: String)? {
@@ -419,24 +503,10 @@ enum SjzTasks {
         return (String(rest[..<i]), String(rest[rest.index(after: i)...]))
     }
 
+    /// 改结审任务：界面和本机缓存先动，改动记进 `SjzSyncQueue`，停手后在后台打包一次发给结审
     @MainActor
     static func apply(_ task: DidaTask, _ change: Change) async throws {
-        guard let model = AppModel.current, let p = parse(task.id) else { throw McpError.tool("找不到这条结审任务") }
-        switch change {
-        case .complete:
-            try await model.sjz.completeTask(project: p.project, id: p.task)
-            SjzDaily.add(p.project, "done", 1)
-        case .reopen:
-            try await model.sjz.updateTask(project: p.project, id: p.task, fields: ["status": "pending"])
-        case let .due(d):
-            try await model.sjz.updateTask(project: p.project, id: p.task, fields: ["dueDate": d])
-        case let .priority(n):
-            try await model.sjz.updateTask(project: p.project, id: p.task, fields: ["priority": n >= 5 ? "high" : n >= 3 ? "medium" : "low"])
-        case let .details(title, content):
-            var f: JSON = ["description": content]
-            if let title { f["subject"] = title }
-            try await model.sjz.updateTask(project: p.project, id: p.task, fields: f)
-        }
-        await model.refreshSjzOverview(force: true)
+        guard let model = AppModel.current, parse(task.id) != nil else { throw McpError.tool("找不到这条结审任务") }
+        SjzSyncQueue.shared.enqueue(task, change, model: model)
     }
 }

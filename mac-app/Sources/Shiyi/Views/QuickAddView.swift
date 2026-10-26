@@ -14,6 +14,8 @@ struct QuickAddView: View {
     var onDone: (() -> Void)?
     /// 输入内容变化（全局悬浮输入窗用它留住草稿）
     var onDraftChange: ((String) -> Void)?
+    /// 手动选的类型变化（全局悬浮输入窗用它连同草稿一起留住类型）
+    var onKindChange: ((CaptureKind?) -> Void)?
     /// 提交成功（参数是结果文案）。设置后不再调 onDone 关闭，而是在输入框下面显示结果，由调用方决定什么时候关（全局悬浮输入窗用）
     var onSubmitted: ((String) -> Void)?
 
@@ -23,6 +25,9 @@ struct QuickAddView: View {
     /// 输入框里内容实际排出来的高度（ComposerTextView 量出来的）
     @State private var contentH: CGFloat = 0
     @State private var override: CaptureKind?
+    /// 上一次提交的结审类型（想法 / 证据 / 法规 / 线索）：再打开万能输入时默认还是它，直到 Tab 切回自动或写了前缀
+    @State private var sticky: CaptureKind?
+    private static let stickyKey = "quickAdd.lastSjzKind"
     @State private var defaultDate: String?
     @State private var defaultTime: String?
     @State private var priority = 0
@@ -35,7 +40,8 @@ struct QuickAddView: View {
     private var analysis: CaptureAnalysis { CaptureParser.analyze(text, sjz: model.hasSjz) }
     /// 自动识别的类型：贴了图片又没写前缀，按「证据」处理（和截图保存一致）
     private func autoKind(_ a: CaptureAnalysis) -> CaptureKind { !images.isEmpty && model.hasSjz ? .evidence : a.recommended }
-    private func kind(_ a: CaptureAnalysis) -> CaptureKind { override ?? a.forced ?? autoKind(a) }
+    private func kind(_ a: CaptureAnalysis) -> CaptureKind { override ?? a.forced ?? sticky ?? autoKind(a) }
+    private func clearSticky() { sticky = nil; UserDefaults.standard.removeObject(forKey: Self.stickyKey) }
 
     /// 输入框高度：一行起步，按内容（粗估折行）长到最多 5 行，再多就在框里滚动；带图片时按缩略图再加高
     private var editorHeight: CGFloat {
@@ -63,10 +69,12 @@ struct QuickAddView: View {
                         allowsImages: model.hasSjz && record == nil,
                         fontSize: compact ? 14 : 16,
                         focusTick: focusTick,
-                        onSubmit: { submitFromKeyboard() }
+                        onSubmit: { submitFromKeyboard() },
+                        onTab: { reverse in cycleKind(reverse: reverse) },
+                        onBackspaceEmpty: { exitKind() }
                     )
                     if text.isEmpty {
-                        Text(record != nil ? "专注时的想法、进展、卡点…" : (compact ? "记点什么…" : "记点什么？待办、想法、日记都可以"))
+                        Text(record != nil ? "专注时的想法、进展、卡点…" : (compact ? "记点什么…（Tab 切换类型）" : (model.hasSjz ? "记点什么？按 Tab 切换 想法 / 证据 / 法规 / 线索" : "记点什么？待办、想法、日记都可以，Tab 切换类型")))
                             .font(.system(size: compact ? 14 : 16))
                             .foregroundStyle(.secondary)
                             .padding(.top, 2)
@@ -124,6 +132,7 @@ struct QuickAddView: View {
             .padding(.horizontal, compact ? 12 : 14).padding(.top, compact ? 8 : 8).padding(.bottom, compact ? 8 : 12)
         }
         .frame(width: compact ? nil : 480)
+        .onChange(of: override) { _, new in onKindChange?(new) }
         .onChange(of: text) { _, new in
             if let record, record.recordDraft != new { record.recordDraft = new }
             onDraftChange?(ComposerImage.stripMarker(new))
@@ -133,6 +142,8 @@ struct QuickAddView: View {
             if let record { text = record.recordDraft }
             if !model.quickAddText.isEmpty { text = model.quickAddText }
             override = model.quickAddKind
+            if override == nil, record == nil, model.hasSjz,
+               let raw = UserDefaults.standard.string(forKey: Self.stickyKey), let k = CaptureKind(rawValue: raw), k.isSjz { sticky = k }
             defaultDate = model.quickAddDate
             defaultTime = model.quickAddTime
             model.quickAddTime = nil
@@ -146,7 +157,7 @@ struct QuickAddView: View {
 
     /// 开启结审后，示例里带上线索 / 想法 / 证据 / 法规前缀
     private var exampleList: [String] {
-        if model.hasSjz { return compact ? ["明天 15:00 开会", "线索 …", "想法 …", "证据 …"] : ["明天 15:00 开会", "线索 …", "想法 …", "证据 …", "法规 …"] }
+        if model.hasSjz { return compact ? ["明天 15:00 开会", "想法 …", "证据 …", "线索 …"] : ["明天 15:00 开会", "想法 …", "证据 …", "法规 …", "线索 …"] }
         return ["明天 15:00 开会", "#读书 一句话想法", "笔记 @项目 …"]
     }
 
@@ -176,15 +187,24 @@ struct QuickAddView: View {
                 .font(.caption)
             }
             switch k {
-            case .evidence: SjzPinStrip(kinds: [.note], padded: false)
-            case .regulation: SjzPinStrip(kinds: [.regulation], padded: false)
+            case .evidence:
+                VStack(alignment: .leading, spacing: 6) {
+                    SjzPinStrip(kinds: [.note, .clue], padded: false, associates: true)
+                }
+            case .regulation:
+                VStack(alignment: .leading, spacing: 6) {
+                    SjzPinStrip(kinds: [.regulation, .clue], padded: false, associates: true)
+                }
             case .clue: SjzPinStrip(kinds: [.clue], padded: false)
             default:
-                HStack(spacing: 6) {
-                    chip("text.book.closed", "写进「\(model.sjzTargetTitle.isEmpty ? "当前项目" : model.sjzTargetTitle)」当天的工作日志", tint: .secondary)
-                    Spacer(minLength: 0)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        chip("text.book.closed", "写进「\(model.sjzTargetTitle.isEmpty ? "当前项目" : model.sjzTargetTitle)」当天的工作日志", tint: .secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .font(.caption)
+                    SjzPinStrip(kinds: [.clue], padded: false, associates: true)
                 }
-                .font(.caption)
             }
             if !images.isEmpty {
                 Text("\(images.count) 张图片 · 按在文字里的位置混排保存").font(.caption2).foregroundStyle(.tertiary)
@@ -222,6 +242,25 @@ struct QuickAddView: View {
     }
 
     /// 输入框里按回车：和点提交按钮一样
+    /// Tab / Shift+Tab 切换类型：结审开着时在「自动 → 想法 → 证据 → 法规 → 线索」里转圈，否则在「自动 → 待办 → Daily Note → 笔记」里转圈
+    private func cycleKind(reverse: Bool) {
+        guard record == nil else { return }
+        let steps: [CaptureKind?] = model.hasSjz ? [nil, .idea, .evidence, .regulation, .clue] : [nil, .todo, .daily, .note]
+        let cur: CaptureKind? = override ?? analysis.forced ?? sticky
+        let i = steps.firstIndex { $0 == cur } ?? 0
+        let next = steps[(i + (reverse ? steps.count - 1 : 1)) % steps.count]
+        override = next
+        if next == nil { clearSticky() }
+    }
+
+    /// 输入框是空的还按删除键：退出 Tab 选的类型，回到自动识别
+    private func exitKind() -> Bool {
+        guard record == nil, override != nil || sticky != nil else { return false }
+        override = nil
+        clearSticky()
+        return true
+    }
+
     private func submitFromKeyboard() {
         if let record { if !model.recording { recordSubmit(record) }; return }
         let a = analysis
@@ -269,6 +308,9 @@ struct QuickAddView: View {
                 .buttonStyle(.plain)
             }
             Spacer(minLength: 0)
+            if !compact {
+                Text("⇥ 切换类型").font(.caption2).foregroundStyle(.tertiary)
+            }
         }
     }
 
@@ -277,20 +319,22 @@ struct QuickAddView: View {
         Menu {
             ForEach(CaptureKind.available(sjz: model.hasSjz)) { c in
                 Button {
-                    override = (c == autoKind(a) && a.forced == nil) ? nil : c
+                    if c == autoKind(a) && a.forced == nil { override = nil; clearSticky() } else { override = c }
                 } label: {
                     if c == k { Label(c.rawValue, systemImage: "checkmark") } else { Label(c.rawValue, systemImage: c.icon) }
                 }
             }
-            if override != nil {
+            if override != nil || sticky != nil {
                 Divider()
-                Button("恢复自动识别") { override = nil }
+                Button("恢复自动识别") { override = nil; clearSticky() }
             }
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: k.icon).font(.system(size: 12, weight: .semibold))
                 Text(k.rawValue).font(.callout.weight(.medium))
-                if override == nil && !text.trimmed.isEmpty {
+                if override == nil && sticky != nil && a.forced == nil {
+                    Text("上次").font(.caption2).foregroundStyle(.secondary)
+                } else if override == nil && !text.trimmed.isEmpty {
                     Text("自动").font(.caption2).foregroundStyle(.secondary)
                 }
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.tertiary)
@@ -300,7 +344,7 @@ struct QuickAddView: View {
             .foregroundStyle(Brand.orangeDeep)
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-        .help("类型（自动识别，也可以手动改）")
+        .help("类型（自动识别；在输入框里按 Tab / Shift+Tab 快速切换）")
     }
 
     private var priorityMenu: some View {
@@ -395,6 +439,10 @@ struct QuickAddView: View {
         _ = CaptureOutbox.shared.takeSubmitted()   // 清掉之前遗留的，撤销只针对这一次
         do {
             let msg = try CaptureOutbox.shared.submit(a, kind: k, priority: priority, defaultDate: defaultDate, defaultTime: defaultTime, images: images, model: model)
+            // 记住这次的结审类型，下次打开还是它（非结审类型就回到自动识别）
+            if model.hasSjz {
+                if k.isSjz { UserDefaults.standard.set(k.rawValue, forKey: Self.stickyKey); sticky = k } else { clearSticky() }
+            }
             text = ""
             images = []
             override = nil

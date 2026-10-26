@@ -944,8 +944,8 @@ final class IslandController {
         case .breakDone:
             model.focus.quickFocus(model.focus.focusMinutes)
             collapse()
-        case .audit:
-            model.openSjzApp()
+        case let .audit(e):
+            model.openSjzEvent(e)
             collapse()
         case let .todoDue(task, _):
             switch action {

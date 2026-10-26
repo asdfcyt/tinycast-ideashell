@@ -101,7 +101,9 @@ struct SjzApi {
                 guard let id = x["id"] as? String else { continue }
                 tasks.append(SjzTaskLite(id: id, project: pn, projectTitle: pt, subject: (x["subject"] as? String) ?? "",
                                          dueDate: (x["dueDate"] as? String) ?? "", priority: (x["priority"] as? String) ?? "medium",
-                                         detail: (x["description"] as? String) ?? ""))
+                                         detail: (x["description"] as? String) ?? "",
+                                         startDate: (x["startDate"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+                                         phase: (x["phase"] as? String).flatMap { $0.isEmpty ? nil : $0 }))
             }
         }
         ov.projects = ((r["projects"] as? [JSON]) ?? []).map { p in
@@ -121,6 +123,30 @@ struct SjzApi {
         a["project"] = project
         a["id"] = id
         _ = try await call("update_task", a)
+    }
+
+    /// 在结审项目里新建任务，返回任务编号
+    @discardableResult
+    func createTask(project: String, subject: String, description: String = "", startDate: String = "", dueDate: String = "", priority: String = "medium") async throws -> String {
+        var a: JSON = ["project": project, "subject": subject, "priority": priority]
+        if !startDate.isEmpty { a["startDate"] = startDate }
+        if !description.isEmpty { a["description"] = description }
+        if !dueDate.isEmpty { a["dueDate"] = dueDate }
+        let r = try await call("create_task", a)
+        return ((r["task"] as? JSON)?["id"] as? String) ?? ""
+    }
+
+    /// 批量改 / 删任务（后台打包同步用）：一次请求，返回逐条结果 `(project, id, ok, error)`
+    func syncTasks(updates: [JSON], deletes: [JSON]) async throws -> [(project: String, id: String, ok: Bool, error: String)] {
+        let r = try await call("sync_tasks", ["updates": updates, "deletes": deletes])
+        return ((r["results"] as? [JSON]) ?? []).map {
+            (($0["project"] as? String) ?? "", ($0["id"] as? String) ?? "", ($0["ok"] as? Bool) ?? false, ($0["error"] as? String) ?? "")
+        }
+    }
+
+    /// 删除结审任务（不可恢复；由线索 / 想法转出的任务，对应记录的「已转任务」标记会一并清除）
+    func deleteTask(project: String, id: String) async throws {
+        _ = try await call("delete_task", ["project": project, "id": id])
     }
 
     /// 把专注时长 / 专注中的记录写回结审任务（只存结审，不走滴答和闪念贝壳）
@@ -194,7 +220,8 @@ struct SjzApi {
                               source: (c["source"] as? String) ?? "", path: (c["path"] as? String) ?? "",
                               noteNo: (c["noteNo"] as? String) ?? "", notePath: (c["notePath"] as? String) ?? "",
                               status: (c["status"] as? String) ?? "", taskId: (c["taskId"] as? String) ?? "",
-                              at: (c["at"] as? String) ?? "", editedAt: (c["editedAt"] as? String) ?? "")
+                              at: (c["at"] as? String) ?? "", editedAt: (c["editedAt"] as? String) ?? "",
+                              clueIds: (c["clueIds"] as? [String]) ?? [], logRel: (c["logRel"] as? String) ?? "")
         }
     }
 
@@ -212,6 +239,16 @@ struct SjzApi {
         a["project"] = project
         a["id"] = id
         return ((try await call("update_capture", a))["message"] as? String) ?? "已更新"
+    }
+
+    /// 线索直接生成取证单草稿（不再经过疑点）
+    func clueToNote(project: String, id: String) async throws -> String {
+        ((try await call("clue_to_note", ["project": project, "id": id]))["message"] as? String) ?? "已生成取证单草稿"
+    }
+
+    /// 撤回线索的转换：线索恢复待核实，取证单草稿删除
+    func clueRevert(project: String, id: String) async throws -> String {
+        ((try await call("clue_revert", ["project": project, "id": id]))["message"] as? String) ?? "已撤回"
     }
 
     func clueToTask(project: String, id: String) async throws -> String {
@@ -300,10 +337,12 @@ struct SjzTaskLite: Identifiable, Hashable, Codable {
     let id: String
     let project: String
     let projectTitle: String
-    let subject: String
-    let dueDate: String
-    let priority: String
+    var subject: String
+    var dueDate: String
+    var priority: String
     var detail: String = ""
+    var startDate: String? = nil
+    var phase: String? = nil
 }
 
 /// 结审的任务概览（只缓存在本机，不会同步到滴答清单 / 闪念贝壳）。`next` 是全部未完成任务，已合并进拾忆的待办
@@ -341,10 +380,14 @@ struct SjzCapture: Identifiable, Hashable {
     let taskId: String
     let at: String
     let editedAt: String
+    /// 证据 / 法规 / 想法关联的线索（台账编号）
+    var clueIds: [String] = []
+    /// 想法所在的工作日志文件（项目内相对路径）
+    var logRel: String = ""
 
     var kindLabel: String { ["evidence": "证据", "regulation": "法规", "clue": "线索", "idea": "想法", "data": "数据"][kind] ?? kind }
     var icon: String { ["evidence": "doc.text.image", "regulation": "book.closed", "clue": "lightbulb", "idea": "text.bubble", "data": "tablecells"][kind] ?? "doc" }
-    var statusLabel: String { ["pending": "待核实", "verified": "已核实", "excluded": "已排除", "converted": "已转疑点"][status] ?? "" }
+    var statusLabel: String { ["pending": "待核实", "verified": "已核实", "excluded": "已排除", "converted": "已出取证单"][status] ?? "" }
     var date: Date? { ISO8601DateFormatter().date(from: at) ?? SjzCapture.fallback.date(from: at) }
     private static let fallback: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -416,6 +459,8 @@ struct SjzEvent: Identifiable, Equatable {
         case "task.overdue": return "exclamationmark.circle.fill"
         case "task.due_today": return "bell.badge.fill"
         case "clue.stale": return "lightbulb.slash"
+        case "clue.task_done": return "checkmark.circle.fill"
+        case "clue.verified_idle": return "clock.badge.exclamationmark"
         case "evidence.gap": return "doc.badge.ellipsis"
         default: return "checkmark.shield.fill"
         }

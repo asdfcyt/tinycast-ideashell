@@ -4,7 +4,7 @@ enum CaptureKind: String, CaseIterable, Identifiable {
     case todo = "待办", daily = "Daily Note", note = "笔记"
     /// 结审（开启并连接后才出现），直接存进当前钉住的审计项目：
     /// 线索（独立 Markdown，可转疑点）/ 想法（阅读笔记，写进当天工作日志）/ 证据 / 法规
-    case clue = "结审线索", idea = "结审想法", evidence = "结审证据", regulation = "结审法规"
+    case idea = "结审想法", evidence = "结审证据", regulation = "结审法规", clue = "结审线索"
     var id: String { rawValue }
 
     var isSjz: Bool { self == .clue || self == .idea || self == .evidence || self == .regulation }

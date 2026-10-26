@@ -63,11 +63,12 @@ private struct PanelHeightKey: PreferenceKey {
 private struct QuickAddPanelRoot: View {
     let onDone: () -> Void
     let onDraft: (String) -> Void
+    let onKind: (CaptureKind?) -> Void
     let onSubmitted: (String) -> Void
     let onHeight: (CGFloat) -> Void
 
     var body: some View {
-        QuickAddView(onDone: onDone, onDraftChange: onDraft, onSubmitted: onSubmitted)
+        QuickAddView(onDone: onDone, onDraftChange: onDraft, onKindChange: onKind, onSubmitted: onSubmitted)
             .glassCard(radius: 20)
             .background(GeometryReader { g in
                 Color.clear.preference(key: PanelHeightKey.self, value: g.size.height)
@@ -103,6 +104,8 @@ final class QuickAddPanelController: ObservableObject {
     private var suspended = false
 
     private var draft = ""
+    /// 草稿对应的手动类型（比如已经选了「想法」）：重新唤出时一起恢复，不然会变回自动识别的 Daily Note
+    private var draftKind: CaptureKind?
     private var hiddenAt = Date.distantPast
     private var closeWork: DispatchWorkItem?
     private var revealPending = false
@@ -172,10 +175,12 @@ final class QuickAddPanelController: ObservableObject {
         let p = panel ?? makePanel()
         panel = p
 
-        if !draft.isEmpty, Date().timeIntervalSince(hiddenAt) < 300 {
+        if (!draft.isEmpty || draftKind != nil), Date().timeIntervalSince(hiddenAt) < 300 {
             model.quickAddText = draft
+            model.quickAddKind = draftKind
         } else {
             draft = ""
+            draftKind = nil
         }
 
         let root = QuickAddPanelRoot(
@@ -186,6 +191,7 @@ final class QuickAddPanelController: ObservableObject {
                 // 保存成功后的收尾倒计时里又开始写了：别关
                 if !text.isEmpty { self.closeWork?.cancel(); self.closeWork = nil }
             },
+            onKind: { [weak self] k in self?.draftKind = k },
             onSubmitted: { [weak self] msg in
                 // 保存成功：输入窗马上收起，只留一个结果提示
                 self?.hide()

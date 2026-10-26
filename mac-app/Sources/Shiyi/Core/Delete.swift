@@ -16,7 +16,9 @@ extension AppModel {
         switch r {
         case let .task(t):
             alert.messageText = "删除这个待办？"
-            alert.informativeText = "「\(t.cleanTitle.prefix(60))」会从滴答清单里删除。"
+            alert.informativeText = SjzTasks.owns(t.id)
+                ? "「\(t.cleanTitle.prefix(60))」会从结审里删除，不能恢复。"
+                : "「\(t.cleanTitle.prefix(60))」会从滴答清单里删除。"
         case let .daily(date, e, _):
             alert.messageText = "删除这条日记？"
             alert.informativeText = "将从 \(date) 的 Daily Note 里删掉：\n\n\(e.text.prefix(120))"
@@ -35,7 +37,7 @@ extension AppModel {
 
     /// 删除待办：界面上先去掉，再删滴答里的，失败了回滚
     func deleteTask(_ task: DidaTask) async {
-        guard hasDida else { showNotice("先到「设置」填写滴答清单 API 口令"); return }
+        guard hasDida || SjzTasks.owns(task.id) else { showNotice("先到「设置」填写滴答清单 API 口令"); return }
         let beforeOverview = overview
         let beforeCalendar = calendarTasks
         let beforeRiver = river

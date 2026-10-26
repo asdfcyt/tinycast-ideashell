@@ -329,6 +329,7 @@ final class AppModel: ObservableObject {
         QuickAddPanelController.shared.start(model: self)
         CaptureOutbox.shared.resume(model: self)
         SyncQueue.shared.resume(model: self)
+        SjzSyncQueue.shared.resume(model: self)
         VoiceController.shared.start(model: self)
         VoicePanelHost.shared.start()
         restoreHistoryCaches()

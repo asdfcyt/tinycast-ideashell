@@ -12,6 +12,8 @@ struct SjzPinStrip: View {
     var kinds: [SjzPinKind] = [.note, .regulation, .clue]
     /// 灵动岛里自带四周留白；万能输入里由外层控制
     var padded = true
+    /// 线索那一行是「关联到哪条线索」（证据 / 法规 / 想法）而不是「追加到哪条线索」（线索类型）
+    var associates = false
 
     @State private var picking: SjzPinKind?
     @State private var query = ""
@@ -40,7 +42,7 @@ struct SjzPinStrip: View {
 
     // MARK: 钉住的取证单 / 法规 / 线索
 
-    private func title(_ k: SjzPinKind) -> String { k == .note ? "证据" : k == .regulation ? "法规" : "线索" }
+    private func title(_ k: SjzPinKind) -> String { k == .note ? "证据" : k == .regulation ? "法规" : (associates ? "关联线索" : "线索") }
     private func icon(_ k: SjzPinKind) -> String { k == .note ? "doc.text" : k == .regulation ? "book.closed" : "lightbulb" }
     private func value(_ k: SjzPinKind) -> String { k == .note ? pin.noteLabel : k == .regulation ? pin.regulation : pin.clueLabel }
     private func placeholder(_ k: SjzPinKind) -> String {
@@ -48,7 +50,7 @@ struct SjzPinStrip: View {
         switch k {
         case .note: return "未钉住 · 存为单独证据文件"
         case .regulation: return "未钉住 · 保存时自动取名并新建"
-        case .clue: return "未钉住 · 新建一条线索"
+        case .clue: return associates ? "未钉住 · 不关联线索" : "未钉住 · 新建一条线索"
         }
     }
     private func unpin(_ k: SjzPinKind) {
@@ -66,7 +68,7 @@ struct SjzPinStrip: View {
         let active = picking == kind
         return HStack(spacing: 6) {
             Text(title(kind)).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.secondary)
-                .frame(width: 26, alignment: .leading)
+                .frame(width: associates ? 46 : 26, alignment: .leading)
             HStack(spacing: 5) {
                 Image(systemName: icon(kind)).font(.system(size: 10))
                     .foregroundStyle(v.isEmpty ? Color.secondary : Brand.orange)
@@ -89,7 +91,7 @@ struct SjzPinStrip: View {
                                 in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
             .buttonStyle(.plain)
-            .help(kind == .note ? "搜索或新建取证单" : kind == .regulation ? "搜索或新建法规" : "搜索已有线索，钉住后追加")
+            .help(kind == .note ? "搜索或新建取证单" : kind == .regulation ? "搜索或新建法规" : associates ? "选一条线索：新记的内容会关联到它" : "搜索已有线索，钉住后追加")
             .disabled(pin.project.isEmpty)
         }
     }

@@ -37,11 +37,16 @@ struct ComposerTextView: NSViewRepresentable {
     var focusTick = 0
     /// 回车提交（Shift / Option + 回车换行）；输入法候选状态下的回车仍是上屏，不会触发
     var onSubmit: (() -> Void)?
+    /// Tab / Shift+Tab（参数是否反向）：设置后不再往文字里插制表符，交给外面切换类型；输入法候选状态下不触发
+    var onTab: ((Bool) -> Void)?
+    /// 输入框为空时按删除键：返回 true 表示外面处理了（比如退出 Tab 选的类型），不再往下走
+    var onBackspaceEmpty: (() -> Bool)?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let tv = ComposerNSTextView()
+        // 明确用 TextKit 1：读 layoutManager 会让 TextKit 2 的文本框中途降级，正在输入的五笔 / 拼音候选会被提前上屏（打出「i测试」）
+        let tv = ComposerNSTextView(usingTextLayoutManager: false)
         tv.delegate = context.coordinator
         tv.onTextChange = { [weak coordinator = context.coordinator, weak tv] in
             guard let coordinator, let tv else { return }
@@ -114,6 +119,12 @@ struct ComposerTextView: NSViewRepresentable {
         init(_ parent: ComposerTextView) { self.parent = parent }
 
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            if let tab = parent.onTab {
+                if selector == #selector(NSResponder.insertTab(_:)) { tab(false); return true }
+                if selector == #selector(NSResponder.insertBacktab(_:)) { tab(true); return true }
+            }
+            if selector == #selector(NSResponder.deleteBackward(_:)), let back = parent.onBackspaceEmpty,
+               textView.string.isEmpty, !textView.hasMarkedText(), back() { return true }
             guard selector == #selector(NSResponder.insertNewline(_:)), let submit = parent.onSubmit else { return false }
             let flags = NSApp.currentEvent?.modifierFlags ?? []
             if flags.contains(.shift) || flags.contains(.option) { return false }

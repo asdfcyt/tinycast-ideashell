@@ -33,7 +33,7 @@ struct DidaApi {
 
     /// 删除任务（滴答里会进「已删除」）
     func deleteTask(_ task: DidaTask) async throws {
-        if SjzTasks.owns(task.id) { throw SjzTasks.readonly("删除") }
+        if SjzTasks.owns(task.id) { try await SjzTasks.apply(task, .delete); return }
         _ = try await mcp.callText("delete_task", ["project_id": task.projectId, "task_id": task.id])
     }
 
@@ -80,9 +80,21 @@ struct DidaApi {
         try await updateFields(task, ["title": title, "content": content, "tags": tags])
     }
 
+    /// 结审任务的计划开始日（滴答任务没有）
+    func setStartDate(_ task: DidaTask, _ date: String?) async throws {
+        guard SjzTasks.owns(task.id) else { return }
+        try await SjzTasks.apply(task, .start(date))
+    }
+
+    /// 结审任务所属的审计阶段
+    func setPhase(_ task: DidaTask, _ phase: String) async throws {
+        guard SjzTasks.owns(task.id) else { return }
+        try await SjzTasks.apply(task, .phase(phase))
+    }
+
     /// 清除日期（滴答约定：日期设成 1970-01-01 表示清除）
     func clearDate(_ task: DidaTask) async throws {
-        if SjzTasks.owns(task.id) { throw SjzTasks.readonly("清除截止日") }
+        if SjzTasks.owns(task.id) { try await SjzTasks.apply(task, .due("")); return }
         let zero = "1970-01-01T00:00:00.000+0000"
         try await updateFields(task, ["startDate": zero, "dueDate": zero])
     }

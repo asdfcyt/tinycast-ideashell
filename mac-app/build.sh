@@ -66,6 +66,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>NSAppleEventsUsageDescription</key><string>休息时遥控「音乐」或 Spotify 的播放、暂停和切歌。</string>
     <key>NSMicrophoneUsageDescription</key><string>语音输入：按下快捷键说话，整理成待办 / 日记 / 笔记。</string>
     <key>NSSpeechRecognitionUsageDescription</key><string>把你说的话转成文字（优先在本机识别）。</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>com.carpe.shiyi.mac.open</string>
+            <key>CFBundleURLSchemes</key><array><string>shiyi</string></array>
+        </dict>
+    </array>
     <key>NSServices</key>
     <array>
         <dict>

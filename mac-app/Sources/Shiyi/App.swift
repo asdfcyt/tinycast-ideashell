@@ -23,6 +23,7 @@ struct ShiyiApp: App {
             }
             .frame(minWidth: 760, maxWidth: .infinity, minHeight: 600, maxHeight: .infinity)
             .task { model.start() }
+            .onOpenURL { model.handleDeepLink($0) }
         }
         .defaultSize(width: 1120, height: 720)
         .commands { AppCommands(model: model) }
