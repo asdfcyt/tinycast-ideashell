@@ -119,8 +119,17 @@ final class CaptureOutbox {
         retryWork?.cancel()
         Task { @MainActor in
             defer { draining = false }
+            // 稍等一下，让紧接着提交的几条一起发（连着记几个待办 = 一次批量请求）
+            if !jobs.isEmpty { try? await Task.sleep(nanoseconds: 1_200_000_000) }
             while let job = jobs.first {
                 guard let kind = CaptureKind(rawValue: job.kind) else { jobs.removeFirst(); persist(); continue }
+                // 连着的几条待办 → 滴答的批量新建，一次请求发完
+                if kind == .todo, model.hasDida, let inbox = model.inboxId {
+                    let group = Array(jobs.prefix(while: { $0.kind == CaptureKind.todo.rawValue }).prefix(20))
+                    if group.count >= 2 {
+                        if await sendTodoBatch(group, inbox: inbox, model: model) { continue } else { return }
+                    }
+                }
                 let analysis = CaptureAnalysis(
                     text: job.text, body: job.body, tags: job.tags, folderName: job.folderName,
                     todo: ParsedTodo(content: job.todoContent, date: job.todoDate, time: job.todoTime),
@@ -157,6 +166,56 @@ final class CaptureOutbox {
                     fail(job, error, model: model)
                 }
             }
+        }
+    }
+
+    /// 一批待办一次发完。返回 false = 遇到网络问题，已安排重试，本轮先停
+    private func sendTodoBatch(_ group: [Job], inbox: String, model: AppModel) async -> Bool {
+        struct Spec { let title: String; let date: String?; let time: String? }
+        let specs = group.map { j -> Spec in
+            let date = j.todoDate ?? j.defaultDate
+            let time = date == nil ? nil : (j.todoTime ?? (j.todoDate == nil ? j.defaultTime : nil))
+            return Spec(title: j.todoContent.trimmed, date: date, time: time)
+        }
+        let json = zip(group, specs).map { DidaApi.newTaskJSON(projectId: inbox, title: $1.title, date: $1.date, time: $1.time, priority: $0.priority) }
+        do {
+            inflight = group.first?.id
+            let ids = try await model.dida.batchAdd(json)
+            inflight = nil
+            for (i, j) in group.enumerated() {
+                // 发的过程中被撤销了（已经不在队列里）：发完立刻删掉
+                let wasRetracted = !jobs.contains { $0.id == j.id } || retracted.remove(j.id) != nil
+                jobs.removeAll { $0.id == j.id }
+                if let id = ids[i] {
+                    let t = DidaTask(id: id, projectId: inbox, title: specs[i].title, date: specs[i].date, time: specs[i].time, priority: j.priority)
+                    if wasRetracted {
+                        await model.deleteTask(t)
+                    } else {
+                        completed[j.id] = .todo(t)
+                        completedOrder.append(j.id)
+                        if completedOrder.count > 60 { completed.removeValue(forKey: completedOrder.removeFirst()) }
+                    }
+                } else {
+                    fail(j, McpError.tool("滴答没有接受这条待办"), model: model)
+                }
+            }
+            persist()
+            model.invalidateHistory()
+            Task { await model.syncSettled() }
+            return true
+        } catch {
+            inflight = nil
+            for j in group { retracted.remove(j.id) }
+            if Self.isTransient(error), (group.map(\.attempts).max() ?? 0) + 1 < Self.maxAttempts {
+                let attempt = group.map(\.attempts).max() ?? 0
+                for j in group { if let i = jobs.firstIndex(where: { $0.id == j.id }) { jobs[i].attempts += 1 } }
+                persist()
+                scheduleRetry(model: model, attempt: attempt)
+                return false
+            }
+            for j in group { jobs.removeAll { $0.id == j.id }; fail(j, error, model: model) }
+            persist()
+            return true
         }
     }
 

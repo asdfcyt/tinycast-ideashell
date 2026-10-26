@@ -73,7 +73,7 @@ struct TaskDetailView: View {
                     .foregroundColor(current.done ? .secondary : .primary)
                     + Text(current.tags.isEmpty ? "" : "  " + current.tags.map { "#" + $0 }.joined(separator: " "))
                     .font(.callout.weight(.medium))
-                    .foregroundColor(.accentColor))
+                    .foregroundColor(Brand.orange))
                     .strikethrough(current.done)
                     .textSelection(.enabled)
                 if current.done, let d = current.completedDate {
@@ -176,7 +176,7 @@ struct TaskDetailView: View {
                 Button("在「项目」里查看") { if let cur { model.goToProject(cur.keyword) } }
             }
         } label: {
-            chipLabel(icon: "folder", text: cur.map { "项目 · " + $0.keyword } ?? "归入项目", tint: cur == nil ? .secondary : .accentColor)
+            chipLabel(icon: "folder", text: cur.map { "项目 · " + $0.keyword } ?? "归入项目", tint: cur == nil ? .secondary : Brand.orange)
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().disabled(!editable || model.projects.isEmpty)
         .help("改变所属项目（通过标签归属）")

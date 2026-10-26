@@ -32,6 +32,7 @@ extension AppModel {
 
     func loadRiver(silent: Bool = false, ifStale: Bool = false) async {
         guard hasIdeashell || hasDida else { return }
+        guard await SyncQueue.shared.settle() else { return }
         let stampKey = "\(riverPreset.rawValue)|\(Day.today())"
         if ifStale, river != nil, isFresh("river", key: stampKey) { return }
         guard beginLoad("river", ifStale: ifStale) else { return }
@@ -96,15 +97,20 @@ extension AppModel {
         var moved = task
         moved.date = day
         calendarTasks[taskId] = moved
-        do {
-            try await dida.reschedule(task, date: day, time: task.time)
-            loadStamps.removeValue(forKey: "river")
-            loadStamps.removeValue(forKey: "review")
-            showNotice("已改到 \(Day.label(day))")
-            await loadOverview(silent: true)
-        } catch {
-            if let old { calendarTasks[taskId] = old } else { calendarTasks.removeValue(forKey: taskId) }
-            calendarError = "改期失败：" + error.localizedDescription
+        if var ov = overview { ov = ov.placing(moved); overview = ov }
+        loadStamps.removeValue(forKey: "river")
+        loadStamps.removeValue(forKey: "review")
+        showNotice("已改到 \(Day.label(day))")
+        if SyncQueue.handles(task) {
+            SyncQueue.shared.enqueue(task, .schedule(date: day, time: task.time), model: self)
+        } else {
+            do {
+                try await dida.reschedule(task, date: day, time: task.time)
+                await loadOverview(silent: true)
+            } catch {
+                if let old { calendarTasks[taskId] = old } else { calendarTasks.removeValue(forKey: taskId) }
+                calendarError = "改期失败：" + error.localizedDescription
+            }
         }
     }
 }

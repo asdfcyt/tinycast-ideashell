@@ -80,7 +80,7 @@ struct MarkdownView: View {
                     }
                 case let .quote(s):
                     HStack(spacing: 10) {
-                        RoundedRectangle(cornerRadius: 1.5).fill(Color.accentColor.opacity(0.5)).frame(width: 3)
+                        RoundedRectangle(cornerRadius: 1.5).fill(Brand.orange.opacity(0.5)).frame(width: 3)
                         inline(s).foregroundStyle(.secondary)
                     }
                 case let .code(s):

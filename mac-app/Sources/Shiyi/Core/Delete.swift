@@ -55,10 +55,14 @@ extension AppModel {
         let hasSheet: (SheetPage) -> Bool = { if case let .task(t) = $0 { return t.id == task.id }; return false }
         if sheetStack.contains(where: hasSheet) { sheetStack.removeAll(where: hasSheet) }
 
+        invalidateHistory()
+        showNotice("已删除「" + String(task.cleanTitle.prefix(24)) + "」")
+        if SyncQueue.handles(task) {
+            SyncQueue.shared.enqueue(task, .delete, model: self)
+            return
+        }
         do {
             try await dida.deleteTask(task)
-            invalidateHistory()
-            showNotice("已删除「" + String(task.cleanTitle.prefix(24)) + "」")
             await loadOverview(silent: true)
             if section == .calendar { await loadCalendar() }
             if section == .review { await loadRiver(silent: true) }

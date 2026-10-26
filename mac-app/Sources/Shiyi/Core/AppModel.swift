@@ -328,6 +328,7 @@ final class AppModel: ObservableObject {
         IslandController.shared.start(model: self)
         QuickAddPanelController.shared.start(model: self)
         CaptureOutbox.shared.resume(model: self)
+        SyncQueue.shared.resume(model: self)
         VoiceController.shared.start(model: self)
         VoicePanelHost.shared.start()
         restoreHistoryCaches()
@@ -349,6 +350,7 @@ final class AppModel: ObservableObject {
 
     private func onBecameActive() async {
         CaptureOutbox.shared.resume(model: self)
+        SyncQueue.shared.resume(model: self)
         guard Date().timeIntervalSince(lastQuick) > 120 else { return }
         await refreshQuick()
         // 当前页的历史数据超过缓存时间才重读
@@ -634,6 +636,8 @@ final class AppModel: ObservableObject {
 
     func loadOverview(silent: Bool = false) async {
         guard hasDida else { return }
+        // 还有没发出去的改动：先打包发完（发不出去就先别读，免得读回旧数据盖掉界面）
+        guard await SyncQueue.shared.settle() else { return }
         if !silent { todosLoading = true }
         defer { todosLoading = false }
         do {
@@ -650,6 +654,7 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// 完成待办：界面先动，改动进同步队列，稍后和别的改动一起批量发给滴答
     func complete(_ task: DidaTask) async {
         guard var ov = overview else { return }
         ov = ov.withoutTask(task.id)
@@ -659,33 +664,46 @@ final class AppModel: ObservableObject {
         ov.done.insert(finished, at: 0)
         overview = ov
         if var c = calendarTasks[task.id] { c.done = true; calendarTasks[task.id] = c }
-        do {
-            try await dida.complete(task)
-            invalidateHistory()
-            lastUndo = finished
-            Task {
-                try? await Task.sleep(nanoseconds: 800_000_000)
+        invalidateHistory()
+        lastUndo = finished
+        Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            if lastUndo?.id == task.id { lastUndo = nil }
+        }
+        if SyncQueue.handles(task) {
+            SyncQueue.shared.enqueue(task, .complete, model: self)
+        } else {
+            do {
+                try await dida.complete(task)
+                await loadOverview(silent: true)
+            } catch {
+                todosError = "完成失败：\(error.localizedDescription)"
                 await loadOverview(silent: true)
             }
-            Task {
-                try? await Task.sleep(nanoseconds: 6_000_000_000)
-                if lastUndo?.id == task.id { lastUndo = nil }
-            }
-        } catch {
-            todosError = "完成失败：\(error.localizedDescription)"
-            await loadOverview(silent: true)
         }
     }
 
     func undoComplete(_ task: DidaTask) async {
-        do {
-            try await dida.reopen(task)
-            invalidateHistory()
-            if var c = calendarTasks[task.id] { c.done = false; calendarTasks[task.id] = c }
-            if lastUndo?.id == task.id { lastUndo = nil }
-            await loadOverview(silent: true)
-        } catch {
-            todosError = "撤销失败：\(error.localizedDescription)"
+        invalidateHistory()
+        if var c = calendarTasks[task.id] { c.done = false; calendarTasks[task.id] = c }
+        if lastUndo?.id == task.id { lastUndo = nil }
+        if var ov = overview, let i = ov.done.firstIndex(where: { $0.id == task.id }) {
+            // 先在界面上放回待办里
+            var back = ov.done[i]
+            back.done = false
+            back.completedAt = nil
+            ov.done.remove(at: i)
+            overview = ov.placing(back)
+        }
+        if SyncQueue.handles(task) {
+            SyncQueue.shared.enqueue(task, .reopen, model: self)
+        } else {
+            do {
+                try await dida.reopen(task)
+                await loadOverview(silent: true)
+            } catch {
+                todosError = "撤销失败：\(error.localizedDescription)"
+            }
         }
     }
 
@@ -860,6 +878,7 @@ final class AppModel: ObservableObject {
     }
 
     func loadCalendar(ifStale: Bool = false) async {
+        guard await SyncQueue.shared.settle() else { return }
         guard hasDida || hasIdeashell else { return }
         let days = calendarVisibleDays()
         guard let from = days.first, let to = days.last else { return }

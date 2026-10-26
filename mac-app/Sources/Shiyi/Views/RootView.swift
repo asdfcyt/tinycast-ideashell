@@ -5,15 +5,13 @@ struct RootView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: Binding<AppSection?>(get: { model.section }, set: { if let v = $0 { model.section = v } })) {
-                ForEach(AppSection.allCases.filter { $0 != .settings }) { s in
-                    Label(s.title, systemImage: s.icon)
-                        .badge(badge(s))
-                        .tag(s)
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(AppSection.allCases.filter { $0 != .settings }) { s in sideRow(s) }
+                    Spacer().frame(height: 14)
+                    sideRow(.settings)
                 }
-                Section {
-                    Label(AppSection.settings.title, systemImage: AppSection.settings.icon).tag(AppSection.settings)
-                }
+                .padding(.horizontal, 10).padding(.top, 6)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { MiniCalendar() }
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
@@ -49,6 +47,14 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: model.lastUndo?.id)
         .animation(.easeInOut(duration: 0.2), value: model.notice)
+    }
+
+    private func sideRow(_ s: AppSection) -> some View {
+        SidebarRow(title: s.title, selected: model.section == s, badge: badge(s), fontSize: 14, action: { model.section = s }) { on in
+            Image(systemName: s.icon).font(.system(size: 15))
+                .foregroundStyle(on ? Color.white : Brand.orange)
+                .frame(width: 22)
+        }
     }
 
     private var isLoading: Bool { model.notesLoading || model.todosLoading || model.backupLoading || model.riverLoading || model.calendarLoading }

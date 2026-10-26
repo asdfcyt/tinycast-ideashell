@@ -50,6 +50,22 @@ extension AppModel {
             overview = ov
         }
         if calendarTasks[task.id] != nil { calendarTasks[task.id] = n }
+        invalidateHistory()
+        showNotice("已修改")
+        if SyncQueue.handles(task) {
+            // 本机已经改好，进同步队列，稍后和别的改动一起批量发
+            let op: SyncQueue.Op
+            switch change {
+            case let .priority(p): op = .priority(p)
+            case let .schedule(d, t): op = .schedule(date: d, time: t)
+            case .clearDate: op = .clearDate
+            case let .list(id): op = .move(id)
+            case let .tags(t): op = .tags(t)
+            case let .details(title, content, tags): op = .details(title: title, content: content, tags: tags)
+            }
+            SyncQueue.shared.enqueue(task, op, model: self)
+            return
+        }
         do {
             switch change {
             case let .priority(p): try await dida.setPriority(task, p)
@@ -59,8 +75,6 @@ extension AppModel {
             case let .tags(t): try await dida.setTags(task, t)
             case let .details(title, content, tags): try await dida.setDetails(task, title: title, content: content, tags: tags)
             }
-            invalidateHistory()
-            showNotice("已修改")
             await loadOverview(silent: true)
             if section == .calendar { await loadCalendar() }
         } catch {

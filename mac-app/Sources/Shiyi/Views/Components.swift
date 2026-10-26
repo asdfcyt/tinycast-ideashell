@@ -5,7 +5,7 @@ import SwiftUI
 
 struct TagChip: View {
     let text: String
-    var tint: Color = .accentColor
+    var tint: Color = Brand.orange
 
     var body: some View {
         Text(text)
@@ -279,5 +279,41 @@ struct TapWhen: ViewModifier {
 
     func body(content: Content) -> some View {
         if enabled { content.onTapGesture(perform: action) } else { content }
+    }
+}
+
+
+/// 侧边栏的一行：自己画选中态（主题色），不依赖系统强调色
+struct SidebarRow<Icon: View>: View {
+    let title: String
+    let selected: Bool
+    var badge: Int = 0
+    var fontSize: CGFloat = 13
+    /// 选中色：主窗口用主题橙，设置窗口跟随系统强调色
+    var tint: Color = Brand.orange
+    let action: () -> Void
+    @ViewBuilder var icon: (Bool) -> Icon
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                icon(selected)
+                Text(title).font(.system(size: fontSize, weight: selected ? .semibold : .regular))
+                Spacer(minLength: 4)
+                if badge > 0 {
+                    Text("\(badge)").font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .foregroundStyle(selected ? Color.white.opacity(0.9) : Color.secondary)
+                }
+            }
+            .foregroundStyle(selected ? Color.white : Color.primary)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? tint : (hover ? Color.primary.opacity(0.06) : Color.clear),
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
     }
 }

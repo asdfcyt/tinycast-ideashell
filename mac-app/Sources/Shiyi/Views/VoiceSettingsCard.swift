@@ -171,7 +171,7 @@ struct VoiceHotkeyRow: View {
                                 .font(.system(size: 12, design: .monospaced).weight(.medium))
                         }
                         .buttonStyle(.bordered).controlSize(.small)
-                        .tint(recording ? Brand.orange : nil)
+                        .tint(recording ? Color.accentColor : nil)
                     }
                     SPick(selection: $choice, options: VoiceHotkey.allCases.map { ($0, $0.label) })
                 }

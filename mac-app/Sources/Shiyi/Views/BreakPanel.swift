@@ -121,7 +121,7 @@ struct BreakPanel: View {
                 Button { session.practiceEnd = nil; session.offset += 1 } label: {
                     Label("换一个", systemImage: "arrow.triangle.2.circlepath").font(.callout)
                 }
-                .buttonStyle(.bordered).tint(onCover ? Color.white : Color.accentColor)
+                .buttonStyle(.bordered).tint(onCover ? Color.white : Brand.orange)
                 Spacer(minLength: 0)
             }
         }

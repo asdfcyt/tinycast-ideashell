@@ -209,17 +209,18 @@ extension AppModel {
             }
             overview = ov
         }
+        // 都进同步队列，然后一次性打包发出去（一次请求改完所有）；结审任务在本机，直接改
         var ok = 0, failed = 0
         for (t, d, tm) in moves {
-            do {
-                try await dida.reschedule(t, date: d, time: tm)
+            if SyncQueue.handles(t) {
+                SyncQueue.shared.enqueue(t, .schedule(date: d, time: tm), model: self)
                 ok += 1
-            } catch {
-                failed += 1
+            } else {
+                do { try await dida.reschedule(t, date: d, time: tm); ok += 1 } catch { failed += 1 }
             }
         }
         invalidateHistory()
-        showNotice(message(ok, failed))
-        await loadOverview(silent: true)
+        let drained = await SyncQueue.shared.flushNow()
+        showNotice(drained ? message(ok, failed) : "已改 \(ok) 件，网络不通，恢复后会自动同步")
     }
 }

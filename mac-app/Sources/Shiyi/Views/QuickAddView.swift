@@ -320,8 +320,8 @@ struct QuickAddView: View {
                     chip("tray", "无日期 · 收集箱", tint: .secondary)
                 }
             }
-            ForEach(a.tags, id: \.self) { chip("number", $0, tint: .accentColor) }
-            if let f = a.folderName { chip("folder", f, tint: .accentColor) }
+            ForEach(a.tags, id: \.self) { chip("number", $0, tint: Brand.orange) }
+            if let f = a.folderName { chip("folder", f, tint: Brand.orange) }
             if k == .daily { chip("clock", "追加到今天的 Daily Note", tint: .secondary) }
             if k == .note && a.tags.isEmpty && a.folderName == nil { chip("doc.text", "新建一条笔记", tint: .secondary) }
             Spacer(minLength: 0)

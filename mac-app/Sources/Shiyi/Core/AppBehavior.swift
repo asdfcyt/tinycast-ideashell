@@ -137,6 +137,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 关掉最后一个窗口，应用不退出
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// 退出前把同步队列里还没发出去的改动发完（最多等 4 秒；没发完的已经落盘，下次启动继续发）
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard MainActor.assumeIsolated({ SyncQueue.shared.isBusy }) else { return .terminateNow }
+        var replied = false
+        let reply = {
+            guard !replied else { return }
+            replied = true
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        Task { @MainActor in
+            _ = await SyncQueue.shared.flushNow()
+            reply()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { reply() }
+        return .terminateLater
+    }
+
+    /// 切到别的 App 时，把攒着的改动也发出去（这样手机上更快看到）
+    func applicationDidResignActive(_ notification: Notification) {
+        Task { @MainActor in
+            guard SyncQueue.shared.isBusy else { return }
+            _ = await SyncQueue.shared.flushNow()
+        }
+    }
+
     /// 点 Dock 图标：窗口都关着就重新打开主窗口
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !hasMainWindow { MainWindow.show() }

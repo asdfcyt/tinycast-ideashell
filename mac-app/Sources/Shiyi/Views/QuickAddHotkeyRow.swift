@@ -31,7 +31,7 @@ struct QuickAddHotkeyRow: View {
                                 .font(.system(size: 12, design: .monospaced).weight(.medium))
                         }
                         .buttonStyle(.bordered).controlSize(.small)
-                        .tint(recording ? Brand.orange : nil)
+                        .tint(recording ? Color.accentColor : nil)
                     }
                     SPick(selection: $choice, options: QuickAddHotkey.allCases.map { ($0, $0.label) })
                 }

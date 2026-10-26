@@ -97,23 +97,23 @@ struct SettingsRoot: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: Binding<SettingsTab?>(get: { nav.tab }, set: { if let v = $0 { nav.tab = v } })) {
-                ForEach(SettingsTab.sections, id: \.title) { sec in
-                    let items = sec.tabs.filter(matches)
-                    if !items.isEmpty {
-                        Section(sec.title) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(SettingsTab.sections, id: \.title) { sec in
+                        let items = sec.tabs.filter(matches)
+                        if !items.isEmpty {
+                            Text(sec.title)
+                                .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+                                .padding(.leading, 10).padding(.top, 10).padding(.bottom, 2)
                             ForEach(items) { t in
-                                Label {
-                                    Text(t.title)
-                                } icon: {
-                                    SideIcon(symbol: t.icon, selected: nav.tab == t)
+                                SidebarRow(title: t.title, selected: nav.tab == t, tint: Color.accentColor, action: { nav.tab = t }) { on in
+                                    SideIcon(symbol: t.icon, selected: on)
                                 }
-                                .font(.system(size: 13))
-                                .tag(t)
                             }
                         }
                     }
                 }
+                .padding(.horizontal, 10).padding(.bottom, 10)
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 190, max: 210)
             .searchable(text: $query, placement: .sidebar, prompt: "搜索设置")
@@ -133,7 +133,7 @@ struct SettingsRoot: View {
                 .font(.system(size: 9.5, weight: .medium))
                 .foregroundStyle(selected ? Color.white : Color.accentColor)
                 .frame(width: 17, height: 17)
-                .background(selected ? Color.white.opacity(0.22) : Color.accentColor.opacity(0.14),
+                .background(selected ? Color.white.opacity(0.25) : Color.accentColor.opacity(0.14),
                             in: RoundedRectangle(cornerRadius: 4.5, style: .continuous))
         }
     }
@@ -582,14 +582,14 @@ private struct WidgetPane: View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
         return Button { displayMode = m } label: {
             VStack(spacing: 4) {
-                Image(systemName: m.icon).font(.system(size: 18)).foregroundStyle(on ? Brand.orange : Color.secondary)
+                Image(systemName: m.icon).font(.system(size: 18)).foregroundStyle(on ? Color.accentColor : Color.secondary)
                 Text(m.title).font(.system(size: 12.5, weight: .semibold))
                 Text(m.subtitle).font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12).padding(.horizontal, 8)
-            .background(on ? Brand.orange.opacity(0.12) : Color.primary.opacity(0.05), in: shape)
-            .overlay(shape.stroke(on ? Brand.orange : Color.primary.opacity(0.07), lineWidth: on ? 1.5 : 0.5))
+            .background(on ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05), in: shape)
+            .overlay(shape.stroke(on ? Color.accentColor : Color.primary.opacity(0.07), lineWidth: on ? 1.5 : 0.5))
             .contentShape(shape)
         }
         .buttonStyle(.plain)

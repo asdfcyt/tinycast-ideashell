@@ -70,7 +70,7 @@ struct HourGridView: View {
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(isToday ? Color.white : Color.primary)
                         .frame(minWidth: 30, minHeight: 30)
-                        .background(isToday ? Color.red : (selected ? Color.accentColor.opacity(0.18) : .clear), in: Circle())
+                        .background(isToday ? Color.red : (selected ? Brand.orange.opacity(0.18) : .clear), in: Circle())
                     Text(info.label).font(.system(size: 10))
                         .foregroundStyle(info.highlight ? Brand.orangeDeep : Color.secondary)
                         .lineLimit(1)
@@ -127,7 +127,7 @@ struct HourGridView: View {
                 }
                 .padding(.horizontal, 2).padding(.vertical, 4)
                 .frame(maxWidth: .infinity, minHeight: 30, alignment: .topLeading)
-                .background(d == model.calendarDay && days.count > 1 ? Color.accentColor.opacity(0.06) : .clear)
+                .background(d == model.calendarDay && days.count > 1 ? Brand.orange.opacity(0.06) : .clear)
             }
         }
     }
@@ -193,7 +193,7 @@ struct HourGridView: View {
         return GeometryReader { geo in
             let laneW = geo.size.width / CGFloat(layout.lanes)
             ZStack(alignment: .topLeading) {
-                Rectangle().fill(dropTarget == d ? Brand.orange.opacity(0.2) : (selected ? Color.accentColor.opacity(0.06) : .clear))
+                Rectangle().fill(dropTarget == d ? Brand.orange.opacity(0.2) : (selected ? Brand.orange.opacity(0.06) : .clear))
                 // 接收点击的底层：双击新建待办，单击选中这一天（点空白处也会收起右侧的详情）
                 Color.clear
                     .contentShape(Rectangle())
@@ -369,7 +369,7 @@ private struct MiniMonth: View {
                 .frame(maxWidth: .infinity, minHeight: 24)
                 .background {
                     if isToday { Circle().fill(Color.red).frame(width: 22, height: 22) }
-                    else if selected { Circle().stroke(Color.accentColor, lineWidth: 1.5).frame(width: 22, height: 22) }
+                    else if selected { Circle().stroke(Brand.orange, lineWidth: 1.5).frame(width: 22, height: 22) }
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { model.selectCalendarDay(d, mode: .day) }

@@ -191,7 +191,7 @@ private struct TimelineRow<Content: View>: View {
 
     @State private var hovering = false
 
-    private var accent: Color { kind == .todoOverdue ? .red : Color.accentColor }
+    private var accent: Color { kind == .todoOverdue ? .red : Brand.orange }
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {

@@ -39,7 +39,7 @@ struct ShiyiApp: App {
             get: { displayMode == .menuBar },
             set: { _ in }
         )) {
-            MenuBarView().environmentObject(model)
+            MenuBarView().environmentObject(model).tint(Brand.orange)
         } label: {
             MenuBarLabel().environmentObject(model)
         }
@@ -53,6 +53,7 @@ private struct MainWindowHost: View {
 
     var body: some View {
         RootView()
+            .tint(Brand.orange)
             .onAppear {
                 MainWindow.opener = { openWindow(id: "main") }
                 SettingsWindow.opener = { openWindow(id: "settings") }

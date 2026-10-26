@@ -418,7 +418,7 @@ private struct DayCell: View {
         .overlay(Rectangle().strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5).allowsHitTesting(false))
         .overlay {
             if selected {
-                Rectangle().strokeBorder(Color.accentColor, lineWidth: 1.5).allowsHitTesting(false)
+                Rectangle().strokeBorder(Brand.orange, lineWidth: 1.5).allowsHitTesting(false)
             }
         }
         .clipped()
@@ -433,7 +433,7 @@ private struct DayCell: View {
 
     private var cellFill: Color {
         if dropping { return Brand.orange.opacity(0.28) }
-        if selected { return Color.accentColor.opacity(0.10) }
+        if selected { return Brand.orange.opacity(0.10) }
         if weekend { return Color.primary.opacity(inMonth ? 0.045 : 0.025) }
         return Color.clear
     }

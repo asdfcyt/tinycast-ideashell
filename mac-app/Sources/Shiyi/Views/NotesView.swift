@@ -71,7 +71,7 @@ struct NoteDetailView: View {
         if let keyword = model.projectOfHome(noteId) {
             Button { model.goToProject(keyword) } label: {
                 HStack {
-                    Image(systemName: "house").foregroundStyle(Color.accentColor)
+                    Image(systemName: "house").foregroundStyle(Brand.orange)
                     Text("「\(keyword)」的项目主页").font(.callout)
                     Spacer()
                     Text("查看项目").font(.callout).foregroundStyle(.secondary)
