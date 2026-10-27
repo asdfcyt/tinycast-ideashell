@@ -45,6 +45,8 @@ cp "$OUT/Shiyi" "$APP/Contents/MacOS/Shiyi"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # 环境音（真实录音，CC0）
 [ -d Resources/Ambient ] && cp -R Resources/Ambient "$APP/Contents/Resources/Ambient"
+# 猛犸麦克风界面用到的发射器图片
+[ -d Resources/Mic ] && cp -R Resources/Mic "$APP/Contents/Resources/Mic"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

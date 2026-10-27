@@ -143,6 +143,10 @@ struct QuickAddView: View {
             text = Self.joined(text, new)
             focusTick += 1
         }
+        // 猛犸麦克风三击:提交输入框里的内容
+        .onReceive(NotificationCenter.default.publisher(for: .micQuickAddSubmit)) { _ in
+            if record == nil, !text.trimmed.isEmpty { submitFromKeyboard() }
+        }
         .onChange(of: text) { _, new in
             if let record, record.recordDraft != new { record.recordDraft = new }
             onDraftChange?(ComposerImage.stripMarker(new))

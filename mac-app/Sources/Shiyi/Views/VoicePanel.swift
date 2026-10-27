@@ -509,11 +509,13 @@ private struct InfoBlock: View {
 
 private struct VoiceListeningView: View {
     @ObservedObject var c: VoiceController
+    @ObservedObject private var mic = MicEngine.shared
     @State private var started = Date()
     @State private var pulse = false
 
     private var liveShown: String {
         if c.liveText.isEmpty, c.refining { return "说出修改指令：改正式一些 / 翻译成英文 / 第二条改到明天…" }
+        if c.liveText.isEmpty, mic.connected, mic.heart.anyOnline, mic.settings.cfg.backend == .shiyi { return "请说话…（双击发射器按键结束）" }
         if c.liveText.isEmpty { return VoiceSettings.mode == .hold ? "请说话…（松开快捷键结束）" : "请说话…（再按一次快捷键结束）" }
         return c.liveText.count > 70 ? "…" + c.liveText.suffix(70) : c.liveText
     }
@@ -537,6 +539,7 @@ private struct VoiceListeningView: View {
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 Text(c.engineLabel).font(.system(size: 9.5)).foregroundStyle(.tertiary).lineLimit(1)
+                if mic.connected, mic.heart.anyOnline { MicMiniTX(height: 20).frame(width: 26, height: 22) }
                 HStack(spacing: 2) {
                     ForEach(bars.indices, id: \.self) { i in
                         Capsule().fill(Brand.orange.opacity(0.4 + 0.55 * Double(min(1, bars[i]))))

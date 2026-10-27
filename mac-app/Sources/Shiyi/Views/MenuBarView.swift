@@ -42,7 +42,7 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            if let ov = model.overview, model.hasDida { stats(ov) }
+            MicStrip()
             Divider()
             MenuFocus(focus: model.focus)
             if adding {
@@ -189,6 +189,7 @@ struct MenuBarView: View {
             if model.todosLoading { ProgressView().controlSize(.small) }
             iconButton(adding ? "xmark" : "plus", adding ? "收起" : "快速记录") { adding.toggle() }
             iconButton("arrow.clockwise", "刷新") { Task { await model.loadOverview() } }
+            iconButton("dot.radiowaves.left.and.right", "猛犸麦克风按键") { MicWindow.show() }
             iconButton("macwindow", "打开拾忆") { MainWindow.show() }
             iconButton("power", "退出") { NSApp.terminate(nil) }
         }
@@ -202,21 +203,19 @@ struct MenuBarView: View {
         let total = ov.todayTasks().count + done
         let notes = model.timeline.filter { $0.day == today }.count
         let focusMin = model.focus.summary?.todayMin
-        return HStack(spacing: 8) {
+        return HStack(spacing: 10) {
             stat("checkmark.circle", "\(done)/\(total)", "已完成", .green)
-            Spacer(minLength: 0)
             stat("timer", focusMin.map(Self.compactMinutes) ?? "–", "专注", Brand.orange)
-            Spacer(minLength: 0)
             stat("note.text", "\(notes)", "笔记", .blue)
         }
-        .padding(.horizontal, 12).padding(.bottom, 8)
+        .padding(.trailing, 12)
     }
 
     private func stat(_ icon: String, _ value: String, _ label: String, _ tint: Color) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 12)).foregroundStyle(tint)
-            Text(value).font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1)
-            Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        HStack(spacing: 4) {
+            Image(systemName: icon).font(.system(size: 10)).foregroundStyle(tint)
+            Text(value).font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1)
+            Text(label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
         }
         .fixedSize()
     }
@@ -235,7 +234,11 @@ struct MenuBarView: View {
         let inbox = showInbox ? ov.undated : []
         return VStack(alignment: .leading, spacing: 0) {
             if let e = model.todosError { Text(e).font(.caption).foregroundStyle(.orange).padding(.horizontal, 12).padding(.vertical, 6) }
-            sectionLabel("今天", today.count, .primary)
+            HStack(spacing: 0) {
+                sectionLabel("今天", today.count, .primary)
+                Spacer(minLength: 8)
+                stats(ov).padding(.top, 8)
+            }
             if today.isEmpty {
                 Text("今天没有待办").font(.callout).foregroundStyle(.tertiary).padding(.horizontal, 12).padding(.vertical, 4)
             }

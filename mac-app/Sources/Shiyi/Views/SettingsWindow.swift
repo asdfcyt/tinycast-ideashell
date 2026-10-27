@@ -5,14 +5,14 @@ import SwiftUI
 
 /// 设置的分类：左侧导航，一类一页
 enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
-    case general, account, ai, data, voice, lexicon, widget, focus, notify
+    case general, account, ai, data, voice, mic, lexicon, widget, focus, notify
 
     var id: String { rawValue }
 
     /// 侧边栏的分组
     static let sections: [(title: String, tabs: [SettingsTab])] = [
         ("通用", [.general, .account, .ai, .data]),
-        ("功能", [.voice, .lexicon, .widget, .focus, .notify]),
+        ("功能", [.voice, .mic, .lexicon, .widget, .focus, .notify]),
     ]
 
     var title: String {
@@ -22,6 +22,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .ai: return "AI 模型"
         case .data: return "数据与备份"
         case .voice: return "语音输入"
+        case .mic: return "猛犸麦克风"
         case .lexicon: return "词库"
         case .widget: return "小组件"
         case .focus: return "专注"
@@ -36,6 +37,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .ai: return "sparkles"
         case .data: return "externaldrive.fill"
         case .voice: return "mic.fill"
+        case .mic: return "dot.radiowaves.left.and.right"
         case .lexicon: return "text.book.closed.fill"
         case .widget: return "capsule.portrait.fill"
         case .focus: return "timer"
@@ -51,6 +53,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .ai: return "ai 模型 大模型 接口 openai 通义 deepseek key 测试连接"
         case .data: return "备份 手机 本机 数据 目录 finder"
         case .voice: return "语音 快捷键 识别 引擎 腾讯云 option 录音 听写 麦克风 权限 历史"
+        case .mic: return "猛犸 hollyland lark a2 无线麦克风 发射器 接收器 按键 单击 双击 三击 静音 降噪 电量"
         case .lexicon: return "词库 热词 替换 纠错 同音字 专有名词 人名"
         case .widget: return "灵动岛 菜单栏 小组件 悬停 截图 暂存架 刘海 ocr 状态提醒"
         case .focus: return "专注 番茄 目标 小票 打印 提示音"
@@ -145,6 +148,7 @@ struct SettingsRoot: View {
         case .ai: AIPane()
         case .data: DataPane()
         case .voice: VoiceSettingsPane()
+        case .mic: MicSettingsPane()
         case .lexicon: LexiconPane()
         case .widget: WidgetPane()
         case .focus: FocusPane()

@@ -63,6 +63,7 @@ struct AppCommands: Commands {
                 SettingsWindow.show(.voice)
             }
             Button("语音输入设置…") { SettingsWindow.show(.voice) }
+            Button("猛犸麦克风按键…") { MicWindow.show() }
         }
 
         // 窗口

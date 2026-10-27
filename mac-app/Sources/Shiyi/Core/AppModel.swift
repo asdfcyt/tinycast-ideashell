@@ -338,6 +338,7 @@ final class AppModel: ObservableObject {
         SjzSyncQueue.shared.resume(model: self)
         VoiceController.shared.start(model: self)
         VoicePanelHost.shared.start()
+        MicEngine.shared.start()
         restoreHistoryCaches()
         loadAIInsights()
         Task { await refreshAll(startup: true) }
