@@ -85,7 +85,7 @@ struct IslandDropPane: View {
         let pin = model.sjzPin
         guard !pin.project.isEmpty else { return "未选择项目" }
         switch zone {
-        case .evidence: return pin.noteLabel.isEmpty ? "新证据文件" : "追加 · " + pin.noteLabel
+        case .evidence: return !pin.evidencePath.isEmpty ? "追加 · " + pin.evidenceLabel : pin.noteLabel.isEmpty ? "新证据文件" : "追加 · " + pin.noteLabel
         case .regulation: return pin.regulation.isEmpty ? "自动取名并新建" : "追加 · " + pin.regulation
         case .clue: return pin.clueId.isEmpty ? "新线索" : "追加 · " + pin.clueLabel
         case .data: return "原始材料 · 文件"

@@ -20,7 +20,7 @@ extension AppModel {
 
     /// 万能输入的提交：按类型分流（待办 → 滴答；Daily Note → 追加到今天；笔记 → 新建，可带标签 / 文件夹）。返回给用户看的结果文案。
     /// `priority`：只对待办有效；`defaultDate`：待办没写日期时用（日历里点「添加待办」带进来）。
-    func submitCapture(_ a: CaptureAnalysis, kind: CaptureKind, priority: Int = 0, defaultDate: String? = nil, defaultTime: String? = nil, images: [ComposerImage] = []) async throws -> String {
+    func submitCapture(_ a: CaptureAnalysis, kind: CaptureKind, priority: Int = 0, defaultDate: String? = nil, defaultTime: String? = nil, images: [ComposerImage] = [], newNote: String? = nil) async throws -> String {
         switch kind {
         case .todo:
             let title = a.todo.content.trimmed
@@ -61,7 +61,7 @@ extension AppModel {
             // 结审：不经过闪念贝壳 / 滴答，直接存进钉住的审计项目；文字和图片按顺序混排
             guard hasSjz else { throw McpError.tool("先到「设置」开启并连接结审") }
             guard !a.text.trimmed.isEmpty || !images.isEmpty else { throw McpError.tool("内容为空") }
-            return try await submitSjzCompose(text: a.text, tags: a.tags, images: images, kind: kind)
+            return try await submitSjzCompose(text: a.text, tags: a.tags, images: images, kind: kind, newNote: newNote)
 
         case .note:
             guard hasIdeashell else { throw McpError.noCredential }

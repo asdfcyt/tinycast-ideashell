@@ -57,7 +57,7 @@ enum VoiceIntents {
     }()
 
     /// 系统提示：当前时间 + 未来三周日历（模型算星期几容易错，直接给表）+ 输出格式
-    static func systemPrompt(now: Date = Date(), vocabulary: [String] = [], todos: [String] = []) -> String {
+    static func systemPrompt(now: Date = Date(), vocabulary: [String] = [], todos: [String] = [], sjz: Bool = false) -> String {
         let cal = Calendar.current
         let today = cal.startOfDay(for: now)
         let calendar = (0 ... 20).map { i -> String in
@@ -71,7 +71,7 @@ enum VoiceIntents {
         let todoCtx = todos.isEmpty ? "" :
             "\n用户目前未完成的待办（每行「任务名｜日期 时间」，供你判断「改 / 完成 / 删除 / 推迟 / 查询」指的是哪一条，并据此推算「推迟一小时」「往后挪两天」这类相对说法；新建待办不要照抄它们；转写里读音相近的人名、项目名可以参考它们修正）：\n"
             + todos.prefix(40).map { "· \($0)" }.joined(separator: "\n") + "\n"
-        return #"""
+        let base = #"""
 你是语音记事助手。用户用语音说了一句话，下面会给出语音转写文字（可能有同音错字、口语、重复）。请判断用户的意图、整理，并只输出一个 JSON 对象，不要输出任何别的文字。
 
 现在是 \#(Day.string(today)) \#(weekdayFull.string(from: now)) \#(hm)（时区 \#(TimeZone.current.identifier)，按中国日历）。
@@ -148,7 +148,34 @@ enum VoiceIntents {
 输入：明天上午九点开周会，然后下午三点去取快递，还有每周五要交周报
 输出：{"items":[{"type":"todo","content":"开周会","date":"2026-10-19","time":"09:00","repeat":null,"tags":[],"priority":0},{"type":"todo","content":"去取快递","date":"2026-10-19","time":"15:00","repeat":null,"tags":[],"priority":0},{"type":"todo","content":"交周报","date":"2026-10-23","time":null,"repeat":"每周五","tags":[],"priority":0}]}
 """#
+        return base + (sjz ? sjzSection : "")
     }
+
+    /// 连接了结审时追加：几个口令类型，让审计工作里的话直接记进结审（取证单 / 线索 / 项目日志）
+    private static let sjzSection = #"""
+
+
+【结审口令（连接了结审才有）】
+用户在做审计工作，口述时可以用口令把内容记进「结审」。type 除上面四种外，还可以是下面四种，**只有用户明确说了口令才用，不能自己根据内容猜**：
+- "evidence"（证据）：口令「证据 / 记为证据 / 存为证据 / 保存为证据 / 记个证据」。
+- "regulation"（法规）：口令「法规 / 记为法规 / 存为法规 / 保存为法规 / 条文」。
+- "clue"（线索）：口令「线索 / 记个线索 / 记为线索 / 发现一条线索 / 疑点线索」。
+- "idea"（想法）：口令「想法 / 记个想法 / 审计想法 / 记到工作日志 / 阅读笔记」。
+规则：
+- 口令本身（含它后面的冒号、逗号）不要写进 content；content 只是口令之后的正文，只去语气词、改同音错字、加标点，不要改写、不要总结、不要扩写，数字、金额、单位名、人名、文号照原样保留。
+- 这四种类型的 date、time 一律 null，priority 填 0，repeat 填 null；标签只有明确说了「标签 xxx」才填。
+- 一句话里「待办」和结审口令可以并存（「证据，xxx。另外明天提醒我交周报」→ 一条 evidence + 一条 todo）；口令后面一整段都属于同一条，不要拆。
+- 没有这四个口令时，仍然按上面的规则判断（默认 daily），绝对不要出现这四种类型。
+示例：
+输入：证据，大湖镇公益性公墓目前共有三百二十个墓穴，已使用一百八十个
+输出：{"items":[{"type":"evidence","content":"大湖镇公益性公墓目前共有三百二十个墓穴，已使用一百八十个。","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
+输入：记个线索，陆河县没有编写十四五规划，原因是资金不足
+输出：{"items":[{"type":"clue","content":"陆河县没有编写十四五规划，原因是资金不足。","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
+输入：想法，可以对比一下省里十四五规划里的殡葬设施指标
+输出：{"items":[{"type":"idea","content":"可以对比一下省里十四五规划里的殡葬设施指标。","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
+输入：法规，第十三条，政府投资项目应当按照规定履行审批程序
+输出：{"items":[{"type":"regulation","content":"第十三条，政府投资项目应当按照规定履行审批程序。","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
+"""#
 
     /// 用户消息：就是转写原文
     static func userPrompt(_ raw: String) -> String { "语音转写：" + raw }
@@ -202,6 +229,11 @@ enum VoiceIntents {
         case "todo": type = .todo
         case "daily", "ask": type = .daily
         case "note": type = .note
+        // 结审口令（模型只有在连接了结审、用户明确说了口令时才会给；没连接结审的由调用方退回日记）
+        case "evidence": type = .evidence
+        case "regulation": type = .regulation
+        case "clue": type = .clue
+        case "idea": type = .idea
         default: return nil
         }
         let todo = type == .todo

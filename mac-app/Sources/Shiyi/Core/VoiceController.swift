@@ -193,6 +193,10 @@ final class VoiceController: ObservableObject {
     private var heardSpeech = false
     private var lastVoice = Date()
 
+    /// 听写模式：识别出来的文字不走 AI 整理 / 预览 / 入库，直接交给万能输入的输入框（再由用户选类型、取证单后保存）
+    @Published private(set) var dictating = false
+    private var dictation: ((String) -> Void)?
+
     private var session = UUID()
     private var starting = false
     private var pendingStop = false
@@ -276,10 +280,45 @@ final class VoiceController: ObservableObject {
         applyHotkey()
     }
 
+    // MARK: 听写进万能输入
+
+    /// 万能输入窗开着时，说出来的话直接进输入框（而不是走待办 / 日记的整理）；窗没开就是普通语音输入
+    private func armDictationIfQuickAddOpen() {
+        guard phase == .idle else { return }
+        if QuickAddPanelController.shared.isVisible {
+            dictation = { [weak self] text in self?.model?.quickAddInsert = text }
+            dictating = true
+        } else {
+            endDictation()
+        }
+    }
+
+    private func endDictation() {
+        dictation = nil
+        dictating = false
+    }
+
+    /// 万能输入窗里的麦克风按钮：待机时开始听写，录音中结束
+    func dictate(_ handler: @escaping (String) -> Void) {
+        switch phase {
+        case .idle:
+            dictation = handler
+            dictating = true
+            holdStart = nil
+            begin()
+            if phase == .idle { endDictation() }
+        case .listening:
+            finish()
+        default:
+            break
+        }
+    }
+
     private func hotkeyDown() {
         switch phase {
         case .idle:
             holdStart = VoiceSettings.mode == .hold ? Date() : nil
+            armDictationIfQuickAddOpen()
             begin()
         case .listening:
             holdStart = nil
@@ -307,6 +346,7 @@ final class VoiceController: ObservableObject {
         guard phase == .idle || phase == .preview else { return }
         modifierHolding = true
         holdStart = nil
+        armDictationIfQuickAddOpen()
         begin(refine: phase == .preview)
     }
 
@@ -340,7 +380,7 @@ final class VoiceController: ObservableObject {
     /// 菜单栏「语音」菜单：待机时开始录音，录音中结束
     func toggleFromMenu() {
         switch phase {
-        case .idle: holdStart = nil; begin()
+        case .idle: holdStart = nil; armDictationIfQuickAddOpen(); begin()
         case .listening: finish()
         case .preview: confirm()
         case .info, .failed: dismiss()
@@ -448,6 +488,19 @@ final class VoiceController: ObservableObject {
     /// 取消 / 关闭，不保存任何东西
     func cancel() {
         guard phase != .idle else { return }
+        if dictation != nil {
+            // 听写被取消：输入窗还开着就把焦点还给它，已经说的不保存
+            endDictation()
+            defer { QuickAddPanelController.shared.refocusAfterVoice() }
+            recorder.cancel()
+            VoiceDucker.end()
+            session = UUID()
+            starting = false
+            stopTimer()
+            phase = .idle
+            resetState()
+            return
+        }
         // 说修改指令时按 Esc：回到原来的预览，不是整个关掉
         if refining, phase == .listening || phase == .organizing {
             recorder.cancel()
@@ -528,6 +581,17 @@ final class VoiceController: ObservableObject {
         }
         raw = raw.trimmed
         guard !raw.isEmpty else { fail("没听清，再说一次"); return }
+        if let handler = dictation {
+            // 听写：只做词库替换和语气词清洗，原样交给输入框，不走 AI 整理 / 预览 / 入库
+            let text = SpeechCleaner.clean(VoiceLexicon.shared.apply(raw))
+            endDictation()
+            session = UUID()
+            phase = .idle
+            resetState()
+            handler(text)
+            QuickAddPanelController.shared.refocusAfterVoice()
+            return
+        }
         if refining {
             await applyRefine(VoiceLexicon.shared.apply(raw), id: id)
             return
@@ -542,11 +606,11 @@ final class VoiceController: ObservableObject {
         if VoiceSettings.polish, model.hasLlm {
             do {
                 let reply = try await model.llm.chatJSON(
-                    system: VoiceIntents.systemPrompt(vocabulary: VoiceLexicon.shared.hotwords(), todos: openTaskLines(model)),
+                    system: VoiceIntents.systemPrompt(vocabulary: VoiceLexicon.shared.hotwords(), todos: openTaskLines(model), sjz: model.hasSjz),
                     user: VoiceIntents.userPrompt(text), timeout: 15
                 )
                 guard session == id else { return }
-                intents = VoiceIntents.parse(reply)
+                intents = Self.demoteSjz(VoiceIntents.parse(reply), sjz: model.hasSjz)
                 polished = !intents.isEmpty
                 if intents.isEmpty { notice = "AI 没有整理出结果，已按原文处理" }
             } catch {
@@ -612,8 +676,19 @@ final class VoiceController: ObservableObject {
 - 只改指令涉及的内容；没涉及的条目、字段原样保留（content、type、date、time、repeat、tags、priority 都照抄）。没有指明哪一条时，语气 / 风格 / 翻译类指令作用于所有条目的 content。
 - 改写或翻译时，todo 的 content 仍然是简短的任务名；日期、时间字段不要因为翻译而变。
 - 删除某一条就不要输出它；全部删光输出 {"items":[]}。
-- 输出里只用 todo / daily / note 三种新建项，不要出现 ask、edit、append，也不要输出别的文字。
+- 输出里只用 todo / daily / note 三种新建项（连接了结审时还可以保留 evidence / regulation / clue / idea，类型原样保留，除非指令要求改类型），不要出现 ask、edit、append，也不要输出别的文字。
 """
+
+    /// 没连接结审时，模型即使给了结审类型也退回日记，免得保存时报「先开启结审」
+    private static func demoteSjz(_ list: [VoiceIntent], sjz: Bool) -> [VoiceIntent] {
+        guard !sjz else { return list }
+        return list.map { i in
+            guard i.type.isSjz else { return i }
+            var n = i
+            n.type = .daily
+            return n
+        }
+    }
 
     private func refineJSON(_ list: [VoiceDraft]) -> String {
         let items: [[String: Any]] = list.filter { $0.action == .create }.map { d in
@@ -621,6 +696,10 @@ final class VoiceController: ObservableObject {
             switch d.kind {
             case .todo: type = "todo"
             case .note: type = "note"
+            case .evidence: type = "evidence"
+            case .regulation: type = "regulation"
+            case .clue: type = "clue"
+            case .idea: type = "idea"
             default: type = "daily"
             }
             return [
@@ -646,11 +725,11 @@ final class VoiceController: ObservableObject {
         }
         do {
             let reply = try await model.llm.chatJSON(
-                system: VoiceIntents.systemPrompt(vocabulary: VoiceLexicon.shared.hotwords(), todos: openTaskLines(model)) + Self.refineSuffix,
+                system: VoiceIntents.systemPrompt(vocabulary: VoiceLexicon.shared.hotwords(), todos: openTaskLines(model), sjz: model.hasSjz) + Self.refineSuffix,
                 user: "当前记录：\n" + refineJSON(base) + "\n\n修改指令：" + instruction, timeout: 20
             )
             guard session == id else { return }
-            var intents = VoiceIntents.parse(reply).filter { !$0.ask && !$0.edit && !$0.append }
+            var intents = Self.demoteSjz(VoiceIntents.parse(reply), sjz: model.hasSjz).filter { !$0.ask && !$0.edit && !$0.append }
             intents = VoiceIntents.fixRelativeTime(instruction, intents)
             guard !intents.isEmpty else {
                 restorePreview("AI 没有理解这条修改指令（「\(instruction.prefix(20))」），原内容没变")

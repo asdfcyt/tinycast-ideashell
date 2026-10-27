@@ -438,8 +438,28 @@ private struct DraftRow: View {
                 if let r = d.repeatText { chip("repeat", r) }
                 ForEach(d.tags, id: \.self) { chip("number", $0) }
             }
+        } else if d.action == .create, d.kind.isSjz {
+            // 结审：写清楚会存到哪（钉住的取证单 / 线索 / 法规，没钉住就新建），免得说完不知道去了哪
+            HStack(spacing: 6) {
+                chip(d.kind.icon, sjzDestination)
+                ForEach(d.tags, id: \.self) { chip("number", $0) }
+            }
         } else if !d.tags.isEmpty {
             HStack(spacing: 6) { ForEach(d.tags, id: \.self) { chip("number", $0) } }
+        }
+    }
+
+    private var sjzDestination: String {
+        let m = AppModel.current
+        let pin = m?.sjzPin ?? SjzPin()
+        let project = (m?.sjzTargetTitle.isEmpty == false) ? m!.sjzTargetTitle : "未选择项目"
+        switch d.kind {
+        case .evidence:
+            if !pin.evidencePath.isEmpty { return "追加到证据「\(pin.evidenceLabel)」" }
+            return pin.noteLabel.isEmpty ? "\(project) · 单独证据文件" : "追加到取证单 \(pin.noteLabel)"
+        case .regulation: return pin.regulation.isEmpty ? "\(project) · 自动取名新建法规" : "追加到《\(pin.regulation)》"
+        case .clue: return pin.clueId.isEmpty ? "\(project) · 新线索" : "追加到线索 \(pin.clueLabel)"
+        default: return "\(project) · 当天工作日志"
         }
     }
 

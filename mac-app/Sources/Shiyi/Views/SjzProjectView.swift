@@ -14,6 +14,8 @@ struct SjzProjectDetailView: View {
     @State private var capQuery = ""
     @State private var capDays = 0
     @State private var editing: SjzCapture?
+    /// 等用户确认删除的那一项
+    @State private var deleting: SjzCapture?
     @State private var newTitle = ""
     @State private var newDue = ""
     @State private var newStart = ""
@@ -54,6 +56,17 @@ struct SjzProjectDetailView: View {
         .sheet(item: $editing) { c in
             SjzCaptureEditor(project: name, capture: c) { await loadCaptures() }
                 .environmentObject(model)
+        }
+        .alert("删除\(deleting?.kindLabel ?? "")？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button("删除", role: .destructive) {
+                if let c = deleting { Task { await runCapture { try await model.sjz.deleteCapture(project: name, id: c.id) } } }
+                deleting = nil
+            }
+            Button("取消", role: .cancel) { deleting = nil }
+        } message: {
+            if let c = deleting {
+                Text("「\(c.title.isEmpty ? c.summary : c.title)」会同时从结审项目里删除，不能恢复。")
+            }
         }
     }
 
@@ -392,6 +405,7 @@ extension SjzProjectDetailView {
                         }
                         if !c.editedAt.isEmpty { TagChip(text: "已编辑", tint: .blue) }
                         if !c.taskId.isEmpty { TagChip(text: "任务 \(c.taskId)", tint: .teal) }
+                        if !c.toClue.isEmpty { TagChip(text: "→ 线索 \(c.toClue)", tint: .purple) }
                         if !c.noteNo.isEmpty { TagChip(text: c.noteNo, tint: .blue) }
                     }
                     // 摘要和「类型 · 来源」放在同一行：摘要太长时先被截断，类型 · 来源始终完整
@@ -419,6 +433,13 @@ extension SjzProjectDetailView {
             }
             if c.kind == "clue" || c.kind == "idea" {
                 Divider()
+                if c.kind == "idea" {
+                    if c.toClue.isEmpty {
+                        Button("转为线索") { Task { await runCapture { try await model.sjz.ideaToClue(project: name, id: c.id) } } }
+                    } else {
+                        Button("已转为线索 \(c.toClue)") {}.disabled(true)
+                    }
+                }
                 if c.kind == "clue" {
                     if c.status == "converted" {
                         Button("撤回为线索（删除取证单草稿）") { Task { await runCapture { try await model.sjz.clueRevert(project: name, id: c.id) } } }
@@ -432,6 +453,8 @@ extension SjzProjectDetailView {
                     Button("已转为任务 \(c.taskId)") {}.disabled(true)
                 }
             }
+            Divider()
+            Button("删除…", role: .destructive) { deleting = c }
         }
     }
 

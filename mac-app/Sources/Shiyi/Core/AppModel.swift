@@ -113,6 +113,12 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var sjzPin = SjzPin()
+    /// 万能输入里「新建取证单」选好但还没落盘的标题：保存证据时才在结审里建，并把这次的内容存进去
+    @Published var sjzPendingNote = ""
+    /// 钉住 / 新建 / 搜索结审对象失败的原因：悬浮输入窗里没有主窗口的提示条，要显示在输入窗自己里面
+    @Published var sjzError: String?
+    /// 语音听写出来的文字：万能输入监听它，追加到输入框里
+    @Published var quickAddInsert = ""
     /// 结审任务概览：只缓存在本机，不写入滴答清单 / 闪念贝壳
     @Changed var sjzOverview: SjzOverview? = AppModel.readCache("sjz-overview.json")
     @Published var sjzProjects: [SjzApi.Project] = []

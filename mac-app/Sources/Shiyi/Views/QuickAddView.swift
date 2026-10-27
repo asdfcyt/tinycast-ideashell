@@ -7,6 +7,8 @@ import SwiftUI
 /// 主窗口里以弹层出现，菜单栏里以紧凑形态内嵌。
 struct QuickAddView: View {
     @EnvironmentObject var model: AppModel
+    /// 听写按钮的状态（录音中变红）
+    @ObservedObject private var voice = VoiceController.shared
     var compact = false
     /// 专注中的「记录」：同一个输入窗口，但内容写进专注绑定的任务（没绑定就记到今天的 Daily Note），底栏显示任务名而不是类型
     var record: FocusStore?
@@ -122,6 +124,7 @@ struct QuickAddView: View {
                     if k.isSjz { sjzChip(k) }
                 }
                 Spacer(minLength: 8)
+                if record == nil { dictateButton }
                 if let onDone {
                     Button("取消", action: onDone)
                         .buttonStyle(.plain).foregroundStyle(.secondary).font(.callout)
@@ -133,6 +136,13 @@ struct QuickAddView: View {
         }
         .frame(width: compact ? nil : 480)
         .onChange(of: override) { _, new in onKindChange?(new) }
+        // 语音听写（麦克风按钮，或输入窗开着时按语音快捷键）：说的话追加到输入框，可以直接说「证据，…」「想法，…」带类型口令
+        .onChange(of: model.quickAddInsert) { _, new in
+            guard !new.isEmpty, record == nil else { return }
+            model.quickAddInsert = ""
+            text = Self.joined(text, new)
+            focusTick += 1
+        }
         .onChange(of: text) { _, new in
             if let record, record.recordDraft != new { record.recordDraft = new }
             onDraftChange?(ComposerImage.stripMarker(new))
@@ -144,6 +154,8 @@ struct QuickAddView: View {
             override = model.quickAddKind
             if override == nil, record == nil, model.hasSjz,
                let raw = UserDefaults.standard.string(forKey: Self.stickyKey), let k = CaptureKind(rawValue: raw), k.isSjz { sticky = k }
+            model.quickAddInsert = ""
+            model.sjzError = nil
             defaultDate = model.quickAddDate
             defaultTime = model.quickAddTime
             model.quickAddTime = nil
@@ -189,7 +201,7 @@ struct QuickAddView: View {
             switch k {
             case .evidence:
                 VStack(alignment: .leading, spacing: 6) {
-                    SjzPinStrip(kinds: [.note, .clue], padded: false, associates: true)
+                    SjzPinStrip(kinds: [.note, .clue], padded: false, associates: true, deferNew: true)
                 }
             case .regulation:
                 VStack(alignment: .leading, spacing: 6) {
@@ -239,6 +251,31 @@ struct QuickAddView: View {
         .foregroundStyle(Brand.orangeDeep)
         .frame(maxWidth: 260, alignment: .leading)
         .help(task ? "记到任务「\(name)」" : "记到今天的 Daily Note")
+    }
+
+    /// 听写追加：已有内容就接在后面（英文 / 数字结尾补一个空格，中文直接接）
+    private static func joined(_ old: String, _ add: String) -> String {
+        guard let last = old.last else { return add }
+        if last.isWhitespace || last.isNewline { return old + add }
+        let ascii = last.isASCII && (last.isLetter || last.isNumber)
+        return old + (ascii ? " " : "") + add
+    }
+
+    /// 麦克风：开始 / 结束听写，识别结果追加到输入框（不走 AI 整理，仍由你选类型、取证单后保存）
+    private var dictateButton: some View {
+        let on = voice.dictating
+        return Button {
+            voice.dictate { model.quickAddInsert = $0 }
+            focusTick += 1
+        } label: {
+            Image(systemName: on ? "stop.circle.fill" : "mic.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(on ? Color.red : Color.secondary)
+                .frame(width: 26, height: 26)
+                .background((on ? Color.red : Color.primary).opacity(on ? 0.12 : 0.06), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .help(on ? "结束听写" : "语音输入：说的话进输入框，可以先说「证据 / 想法 / 线索 / 法规」再说内容")
     }
 
     /// 输入框里按回车：和点提交按钮一样
@@ -438,7 +475,10 @@ struct QuickAddView: View {
         // 先记到本机发件箱（立刻返回），写进滴答 / 闪念贝壳在后台做；失败会自动重试，真失败了再提示
         _ = CaptureOutbox.shared.takeSubmitted()   // 清掉之前遗留的，撤销只针对这一次
         do {
-            let msg = try CaptureOutbox.shared.submit(a, kind: k, priority: priority, defaultDate: defaultDate, defaultTime: defaultTime, images: images, model: model)
+            // 选了「新建取证单」：保存证据时一并创建（见 SjzPinStrip.deferNew），提交后清掉
+            let pendingNote = k == .evidence ? model.sjzPendingNote.trimmed : ""
+            let msg = try CaptureOutbox.shared.submit(a, kind: k, priority: priority, defaultDate: defaultDate, defaultTime: defaultTime, images: images, newNote: pendingNote.isEmpty ? nil : pendingNote, model: model)
+            if !pendingNote.isEmpty { model.sjzPendingNote = "" }
             // 记住这次的结审类型，下次打开还是它（非结审类型就回到自动识别）
             if model.hasSjz {
                 if k.isSjz { UserDefaults.standard.set(k.rawValue, forKey: Self.stickyKey); sticky = k } else { clearSticky() }

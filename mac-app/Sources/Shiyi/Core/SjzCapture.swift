@@ -45,9 +45,12 @@ extension AppModel {
 
     /// 动作失败时在岛 / 窗口上提示，然后重读钉住状态
     private func sjzAct(_ work: () async throws -> String?) async {
+        sjzError = nil
         do {
             if let msg = try await work() { showNotice(msg) }
         } catch {
+            // 万能输入是悬浮窗，看不到主窗口的提示条：错误同时记到 sjzError，由输入窗自己显示
+            sjzError = error.localizedDescription
             showNotice(error.localizedDescription)
         }
         await refreshSjzTarget()
@@ -55,13 +58,15 @@ extension AppModel {
 
     func sjzSetProject(_ name: String) async {
         let changed = name != sjzPin.project
+        if changed { sjzPendingNote = "" }
         await sjzAct { try await sjz.setPin(project: name, regulation: changed ? NSNull() : nil); return nil }
         await refreshSjzOverview(force: true)
     }
 
     func sjzPin(note hit: SjzNoteHit) async {
+        sjzPendingNote = ""
         await sjzAct {
-            try await sjz.setPin(note: ["path": hit.path, "no": hit.no, "title": hit.title] as JSON)
+            try await sjz.setPin(note: ["path": hit.path, "no": hit.no, "title": hit.title] as JSON, evidence: NSNull())
             return nil
         }
     }
@@ -70,7 +75,20 @@ extension AppModel {
         await sjzAct { try await sjz.setPin(regulation: ["name": name] as JSON); return nil }
     }
 
-    func sjzUnpinNote() async { await sjzAct { try await sjz.setPin(note: NSNull()); return nil } }
+    /// 钉住一份已有证据：之后保存的证据追加到它里面（和钉住取证单二选一）
+    func sjzPin(evidence hit: SjzCapture) async {
+        sjzPendingNote = ""
+        await sjzAct {
+            try await sjz.setPin(note: NSNull(), evidence: ["path": hit.path, "title": hit.title] as JSON)
+            return nil
+        }
+    }
+
+    /// 取消「证据」行的钉住（钉住的取证单 / 已有证据都清掉）
+    func sjzUnpinNote() async {
+        sjzPendingNote = ""
+        await sjzAct { try await sjz.setPin(note: NSNull(), evidence: NSNull()); return nil }
+    }
     func sjzUnpinRegulation() async { await sjzAct { try await sjz.setPin(regulation: NSNull()); return nil } }
 
     /// 钉住一条已有线索：之后记的线索追加到它
@@ -81,7 +99,22 @@ extension AppModel {
     func sjzUnpinClue() async { await sjzAct { try await sjz.setPin(clue: NSNull()); return nil } }
 
     func sjzCreateNote(_ title: String) async {
+        sjzPendingNote = ""
         await sjzAct { try await sjz.createNote(title: title) }
+    }
+
+    /// 保存证据前确保取证单存在并已钉住：结审里已经有同标题（或同编号）的就直接钉住它，没有才新建。
+    /// 这样发件箱因为网络问题重试时，不会重复建出好几份同名取证单。
+    func sjzEnsureNote(_ title: String) async throws {
+        let t = title.trimmed
+        guard !t.isEmpty else { return }
+        let hits = (try? await sjz.searchNotes(t)) ?? []
+        if let n = hits.first(where: { $0.title == t || $0.no == t }) {
+            try await sjz.setPin(note: ["path": n.path, "no": n.no, "title": n.title] as JSON, evidence: NSNull())
+        } else {
+            _ = try await sjz.createNote(title: t)
+        }
+        await refreshSjzTarget()
     }
 
     // MARK: 结审任务（合并进待办，只存本机）
@@ -305,13 +338,22 @@ extension AppModel {
     /// 灵动岛投放 / 截图提示 → 结审（证据 / 法规 / 线索）
     func submitSjz(_ input: RawDrop, to target: SjzTarget) async throws -> String {
         guard hasSjz else { throw McpError.noCredential }
-        let raw = await input.receivingPromises(into: FileManager.default.temporaryDirectory.appendingPathComponent("shiyi-drop", isDirectory: true))
+        var raw = await input.receivingPromises(into: FileManager.default.temporaryDirectory.appendingPathComponent("shiyi-drop", isDirectory: true))
+        // 文件地址读不到（常见于微信容器目录）：改用文件承诺接收一份副本
+        let unreadableURL = raw.fileURLs.contains { u in
+            guard let h = try? FileHandle(forReadingFrom: u) else { return true }
+            try? h.close()
+            return false
+        }
+        if unreadableURL, !raw.altPromises.isEmpty {
+            raw = await raw.receivingAlt(into: FileManager.default.temporaryDirectory.appendingPathComponent("shiyi-drop", isDirectory: true))
+        }
         if target == .data {
             await refreshSjzTarget()
             return try await submitSjzData(raw)
         }
-        let prepared = await Task.detached(priority: .userInitiated) { DropImages.prepare(raw) }.value
-
+        let current = raw
+        let prepared = await Task.detached(priority: .userInitiated) { DropImages.prepare(current) }.value
         var texts: [String] = []
         if !raw.text.trimmed.isEmpty { texts.append(raw.text.trimmed) }
         texts.append(contentsOf: prepared.texts.map(\.trimmed).filter { !$0.isEmpty })
@@ -325,15 +367,24 @@ extension AppModel {
             // 线索是独立的 Markdown，可以带图片；钉住了线索就追加到它
             var clueItems: [JSON] = prepared.images.map { ["type": "image", "name": $0.name, "data": $0.data.base64EncodedString()] }
             if !body.isEmpty { clueItems.append(["type": "text", "text": body]) }
-            guard !clueItems.isEmpty else { throw McpError.tool("没有读到可以记录的内容") }
+            guard !clueItems.isEmpty else {
+                if !prepared.files.isEmpty { throw McpError.tool("线索只收文字和图片，PDF / Word 请拖到「证据」或「法规」格") }
+                throw McpError.tool(DropImages.failure(prepared, types: raw.types))
+            }
             let msg = try await sjz.addClue(project: project, items: clueItems)
             return msg + place
         }
-        guard !body.isEmpty || !prepared.images.isEmpty else {
-            throw McpError.tool(prepared.skipped > 0 ? "暂不支持这类文件（支持图片和文本文件）" : "没有读到可以保存的内容")
+        guard !body.isEmpty || !prepared.images.isEmpty || !prepared.files.isEmpty else {
+            throw McpError.tool(DropImages.failure(prepared, types: raw.types))
         }
 
         var items: [JSON] = prepared.images.map { ["type": "image", "name": $0.name, "data": $0.data.base64EncodedString()] }
+        // PDF / Word 等原件：结审存原件，并解析出文字（可在结审里选取摘录）
+        items.append(contentsOf: prepared.files.map { f -> JSON in
+            var d: JSON = ["type": "file", "name": f.name]
+            if let data = f.data { d["data"] = data.base64EncodedString() } else if let path = f.path { d["path"] = path }
+            return d
+        })
         // 单独一个网址：存成「网址」并抓取网页快照；其余文字原样保存
         let link = Self.singleLink(body)
         if !body.isEmpty { items.append(["type": "text", "text": body, "url": link ?? ""]) }
@@ -365,8 +416,12 @@ extension AppModel {
 
     /// 万能输入 → 结审（线索 / 想法 / 证据 / 法规）。文字和图片按输入框里的先后顺序混排保存。
     /// `text` 里每个 U+FFFC 对应 `images` 里的一张图。线索 / 证据 / 法规钉住了对象就追加到它，想法写进当天工作日志。
-    func submitSjzCompose(text: String, tags: [String], images: [ComposerImage], kind: CaptureKind) async throws -> String {
+    func submitSjzCompose(text: String, tags: [String], images: [ComposerImage], kind: CaptureKind, newNote: String? = nil) async throws -> String {
         guard hasSjz else { throw McpError.tool("先到「设置」开启并连接结审") }
+        // 证据 + 选了「新建取证单」：先建（或找到同名的）并钉住，下面的保存就会追加到它里面
+        if kind == .evidence, let title = newNote?.trimmed, !title.isEmpty {
+            try await sjzEnsureNote(title)
+        }
         await refreshSjzTarget()
         let place = sjzTargetTitle.isEmpty ? "" : "（\(sjzTargetTitle)）"
         let fitted = await Task.detached(priority: .userInitiated) {
@@ -431,7 +486,9 @@ extension AppModel {
             guard let d = try? Data(contentsOf: u), !d.isEmpty else { continue }
             files.append((u.lastPathComponent, d))
         }
-        guard !files.isEmpty else { throw McpError.tool("数据区只接收文件（Excel / CSV / PDF 等）") }
+        guard !files.isEmpty else {
+            throw McpError.tool(raw.fileURLs.isEmpty ? "数据区只接收文件（Excel / CSV / PDF 等）" : "读不到拖入的文件（没有权限或已被移走）。请到 系统设置 → 隐私与安全性 → 完全磁盘访问 允许拾忆，或先把文件拖到桌面再拖入")
+        }
         let msg = try await sjz.saveData(project: nil, files: files)
         return msg + (sjzTargetTitle.isEmpty ? "" : "（\(sjzTargetTitle)）")
     }

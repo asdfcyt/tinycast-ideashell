@@ -45,6 +45,10 @@ struct SjzApi {
             pin.noteNo = (n["no"] as? String) ?? ""
             pin.noteTitle = (n["title"] as? String) ?? ""
         }
+        if let e = r["evidence"] as? JSON {
+            pin.evidencePath = (e["path"] as? String) ?? ""
+            pin.evidenceTitle = (e["title"] as? String) ?? ""
+        }
         if let c = r["clue"] as? JSON {
             pin.clueId = (c["id"] as? String) ?? ""
             pin.clueTitle = (c["title"] as? String) ?? ""
@@ -54,10 +58,11 @@ struct SjzApi {
     }
 
     /// 钉住项目 / 取证单 / 法规 / 线索；note、regulation、clue 传 NSNull 表示取消钉住
-    func setPin(project: String? = nil, note: Any? = nil, regulation: Any? = nil, clue: Any? = nil) async throws {
+    func setPin(project: String? = nil, note: Any? = nil, evidence: Any? = nil, regulation: Any? = nil, clue: Any? = nil) async throws {
         var a: JSON = [:]
         if let project { a["project"] = project }
         if let note { a["note"] = note }
+        if let evidence { a["evidence"] = evidence }
         if let regulation { a["regulation"] = regulation }
         if let clue { a["clue"] = clue }
         _ = try await call("set_capture_pin", a)
@@ -221,7 +226,8 @@ struct SjzApi {
                               noteNo: (c["noteNo"] as? String) ?? "", notePath: (c["notePath"] as? String) ?? "",
                               status: (c["status"] as? String) ?? "", taskId: (c["taskId"] as? String) ?? "",
                               at: (c["at"] as? String) ?? "", editedAt: (c["editedAt"] as? String) ?? "",
-                              clueIds: (c["clueIds"] as? [String]) ?? [], logRel: (c["logRel"] as? String) ?? "")
+                              clueIds: (c["clueIds"] as? [String]) ?? [], logRel: (c["logRel"] as? String) ?? "",
+                              toClue: (c["toClue"] as? String) ?? "")
         }
     }
 
@@ -249,6 +255,16 @@ struct SjzApi {
     /// 撤回线索的转换：线索恢复待核实，取证单草稿删除
     func clueRevert(project: String, id: String) async throws -> String {
         ((try await call("clue_revert", ["project": project, "id": id]))["message"] as? String) ?? "已撤回"
+    }
+
+    /// 删除台账里的一项（想法 / 证据 / 法规 / 数据 / 线索），不可恢复
+    func deleteCapture(project: String, id: String) async throws -> String {
+        ((try await call("delete_capture", ["project": project, "id": id]))["message"] as? String) ?? "已删除"
+    }
+
+    /// 想法转为线索：想法保留，生成一条新的待核实线索
+    func ideaToClue(project: String, id: String) async throws -> String {
+        ((try await call("idea_to_clue", ["project": project, "id": id]))["message"] as? String) ?? "已转为线索"
     }
 
     func clueToTask(project: String, id: String) async throws -> String {
@@ -309,12 +325,20 @@ struct SjzPin: Equatable {
     var notePath = ""
     var noteNo = ""
     var noteTitle = ""
+    /// 钉住的已有证据（项目内 evidence/ 下的文件）：新证据追加到它
+    var evidencePath = ""
+    var evidenceTitle = ""
     var regulation = ""
     var clueId = ""
     var clueTitle = ""
     var snapshot = true
 
     var noteLabel: String { [noteNo, noteTitle].filter { !$0.isEmpty }.joined(separator: " ") }
+    /// 证据行显示的内容：钉住了已有证据显示它，否则显示钉住的取证单
+    var evidenceLabel: String {
+        if !evidencePath.isEmpty { return evidenceTitle.isEmpty ? (evidencePath as NSString).lastPathComponent : evidenceTitle }
+        return noteLabel
+    }
     var clueLabel: String { [clueId, clueTitle].filter { !$0.isEmpty }.joined(separator: " ") }
 }
 
@@ -384,6 +408,8 @@ struct SjzCapture: Identifiable, Hashable {
     var clueIds: [String] = []
     /// 想法所在的工作日志文件（项目内相对路径）
     var logRel: String = ""
+    /// 想法已转成的线索（台账编号），空表示还没转
+    var toClue: String = ""
 
     var kindLabel: String { ["evidence": "证据", "regulation": "法规", "clue": "线索", "idea": "想法", "data": "数据"][kind] ?? kind }
     var icon: String { ["evidence": "doc.text.image", "regulation": "book.closed", "clue": "lightbulb", "idea": "text.bubble", "data": "tablecells"][kind] ?? "doc" }

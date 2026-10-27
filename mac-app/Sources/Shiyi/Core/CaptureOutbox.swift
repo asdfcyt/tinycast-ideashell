@@ -31,6 +31,8 @@ final class CaptureOutbox {
         /// 混排的图片（落在本机 outbox-images/，重试和重启后也不丢）；旧版本的任务没有这两项
         var imageFiles: [String]?
         var imageNames: [String]?
+        /// 证据：保存前先新建（或找到同名的）这份取证单；旧版本的任务没有这一项
+        var newNote: String?
     }
 
     private var jobs: [Job] = []
@@ -77,7 +79,7 @@ final class CaptureOutbox {
     }
 
     /// 提交一条：同步检查 + 落本机，立刻返回给用户看的文案；真正写入在后台。检查不过会抛错。
-    func submit(_ a: CaptureAnalysis, kind: CaptureKind, priority: Int, defaultDate: String?, defaultTime: String?, images: [ComposerImage] = [], model: AppModel) throws -> String {
+    func submit(_ a: CaptureAnalysis, kind: CaptureKind, priority: Int, defaultDate: String?, defaultTime: String?, images: [ComposerImage] = [], newNote: String? = nil, model: AppModel) throws -> String {
         loadIfNeeded()
         self.model = model
         let message: String
@@ -105,7 +107,10 @@ final class CaptureOutbox {
             switch kind {
             case .clue: message = pin.clueId.isEmpty ? "已记入线索" : "已追加到线索 \(pin.clueId)"
             case .idea: message = "已记入工作日志"
-            case .evidence: message = pin.noteLabel.isEmpty ? "已保存为证据" : "已追加到取证单 \(pin.noteNo.isEmpty ? pin.noteTitle : pin.noteNo)"
+            case .evidence:
+                if let t = newNote?.trimmed, !t.isEmpty { message = "已新建取证单「\(t)」并保存为证据" }
+                else if !pin.evidencePath.isEmpty { message = "已追加到证据「\(pin.evidenceLabel)」" }
+                else { message = pin.noteLabel.isEmpty ? "已保存为证据" : "已追加到取证单 \(pin.noteNo.isEmpty ? pin.noteTitle : pin.noteNo)" }
             default: message = pin.regulation.isEmpty ? "已保存为法规" : "已追加到《\(pin.regulation)》"
             }
         }
@@ -114,6 +119,7 @@ final class CaptureOutbox {
             todoContent: a.todo.content, todoDate: a.todo.date, todoTime: a.todo.time,
             priority: priority, defaultDate: defaultDate, defaultTime: defaultTime
         )
+        if kind == .evidence, let t = newNote?.trimmed, !t.isEmpty { job.newNote = t }
         if !images.isEmpty {
             let dir = Self.imageDir
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -176,7 +182,7 @@ final class CaptureOutbox {
                 do {
                     model.lastCreated = nil
                     inflight = job.id
-                    _ = try await model.submitCapture(analysis, kind: kind, priority: job.priority, defaultDate: job.defaultDate, defaultTime: job.defaultTime, images: loadImages(job))
+                    _ = try await model.submitCapture(analysis, kind: kind, priority: job.priority, defaultDate: job.defaultDate, defaultTime: job.defaultTime, images: loadImages(job), newNote: job.newNote)
                     inflight = nil
                     jobs.removeAll { $0.id == job.id }
                     dropImages(job)

@@ -164,6 +164,18 @@ final class QuickAddPanelController: ObservableObject {
         if let p = panel, p.isVisible { hide() } else { show() }
     }
 
+    /// 输入窗现在是否开着（语音输入据此决定：开着就把说的话听写进输入框）
+    var isVisible: Bool { panel?.isVisible ?? false }
+
+    /// 语音卡片收起后，把键盘焦点还给输入窗和输入框（语音卡片弹出时会抢走 key）
+    func refocusAfterVoice() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            guard let self, let p = self.panel, p.isVisible else { return }
+            p.makeKey()
+            self.focusEditor()
+        }
+    }
+
     func show() {
         guard let model else { return }
         closeWork?.cancel()
@@ -316,6 +328,8 @@ final class QuickAddPanelController: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self, let p = self.panel, p.isVisible else { return }
             if p.isKeyWindow || NSMouseInRect(NSEvent.mouseLocation, p.frame, false) { return }
+            // 语音听写：语音卡片弹出会抢走 key，说完还要回到输入框，这时不能关
+            if VoiceController.shared.phase != .idle || VoiceController.shared.dictating { return }
             // 刚弹出的半秒内失去 key 多半是应用刚被系统激活 / 主窗口抢了一下焦点，不是用户点了别处：抢回来
             if Date().timeIntervalSince(self.shownAt) < 0.8 {
                 p.makeKey()
