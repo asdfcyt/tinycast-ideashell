@@ -10,6 +10,7 @@ enum VoiceSettings {
     static let modeKey = "voice.mode"
     static let engineKey = "voice.engine"
     static let polishKey = "voice.polish"
+    static let dictPolishKey = "voice.dictpolish"
     static let directKey = "voice.direct"
     static let countdownKey = "voice.countdown"
     static let pasteKey = "voice.paste"
@@ -20,6 +21,8 @@ enum VoiceSettings {
     static var mode: VoiceMode { VoiceMode(rawValue: UserDefaults.standard.string(forKey: modeKey) ?? "") ?? .toggle }
     static var engine: VoiceEngine { VoiceEngine(rawValue: UserDefaults.standard.string(forKey: engineKey) ?? "") ?? .apple }
     static var polish: Bool { UserDefaults.standard.object(forKey: polishKey) as? Bool ?? true }
+    /// 听写进万能输入框时，也让 AI 把口语润色成通顺的文字（只改文字，不拆待办 / 不入库）
+    static var dictPolish: Bool { UserDefaults.standard.object(forKey: dictPolishKey) as? Bool ?? true }
     /// 说完直接入库（不预览）
     static var direct: Bool { UserDefaults.standard.object(forKey: directKey) as? Bool ?? false }
     /// 预览后倒计时自动入库
@@ -160,7 +163,11 @@ enum VoicePhase: Equatable { case idle, listening, organizing, preview, info, fa
 final class VoiceController: ObservableObject {
     static let shared = VoiceController()
 
-    @Published private(set) var phase: VoicePhase = .idle
+    @Published private(set) var phase: VoicePhase = .idle {
+        didSet { if phase == .listening, oldValue != .listening { listeningSince = Date() } }
+    }
+    /// 这一段录音开始的时间（卡片换形态 / 重新出现时计时不重置）
+    private(set) var listeningSince = Date()
     @Published private(set) var liveText = ""
     @Published private(set) var levels: [Float] = Array(repeating: 0, count: 30)
     @Published private(set) var rawText = ""
@@ -296,6 +303,39 @@ final class VoiceController: ObservableObject {
     private func endDictation() {
         dictation = nil
         dictating = false
+    }
+
+    /// 录音中切换去向：正在听写进万能输入框 → 改成纯语音（走 AI 整理 / 预览）；
+    /// 纯语音 → 打开万能输入框，之后说的话进输入框。录音不中断。
+    func toggleDictationRoute() {
+        guard phase == .listening, !refining else { return }
+        if dictation != nil {
+            endDictation()
+            // 回到纯语音：语音卡片重新出现后，胶囊从输入框飞回它那里；输入框同时收起（里面写了一半的内容保留，下次打开还在）
+            let from = QuickAddPanelController.shared.cardFrame
+            QuickAddPanelController.shared.hide()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                VoiceFlight.fly(from: from, to: VoicePanelHost.shared.cardFrame)
+            }
+        } else {
+            let wasOpen = QuickAddPanelController.shared.isVisible
+            if !wasOpen {
+                QuickAddPanelController.shared.holdReveal = true
+                QuickAddPanelController.shared.show()
+            }
+            // 先记下语音卡片的位置（切成听写后这张卡片会收起）
+            let from = VoicePanelHost.shared.cardFrame
+            dictation = { [weak self] text in self?.model?.quickAddInsert = text }
+            dictating = true
+            // 改走万能输入框：语音卡片收成胶囊飞向输入框，落下后输入框展开淡入
+            VoiceFlight.fly(from: from, to: QuickAddPanelController.shared.cardFrame) {
+                QuickAddPanelController.shared.releaseReveal()
+            }
+            // 兜底：无论如何别让输入框一直藏着
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                if QuickAddPanelController.shared.holdReveal { QuickAddPanelController.shared.releaseReveal() }
+            }
+        }
     }
 
     /// 万能输入窗里的麦克风按钮：待机时开始听写，录音中结束
@@ -562,6 +602,22 @@ final class VoiceController: ObservableObject {
 
     // MARK: 识别 + 整理
 
+    /// 听写润色：只把口语整理成通顺的书面文字，保留原意，不增删信息；失败 / 空结果返回 nil（用原文）
+    private func polishDictation(_ text: String, model: AppModel) async -> String? {
+        let system = """
+        你是语音输入的文字润色助手。把用户口述的文字整理成通顺、简洁的书面文字：去掉口头禅和重复、修正明显的识别错误、补上标点；\
+        多个并列事项可以分行。必须保留原意与所有关键信息（人名、数字、日期、专有名词），不要添加内容，不要回答问题，不要解释。
+        只输出 JSON：{"text": "润色后的文字"}
+        """
+        do {
+            let reply = try await model.llm.chatJSON(system: system, user: text, timeout: 12)
+            let out = (LlmClient.extractJSON(reply)?["text"] as? String)?.trimmed ?? ""
+            return out.isEmpty ? nil : out
+        } catch {
+            return nil
+        }
+    }
+
     private func process(_ out: VoiceRecorder.Output, id: UUID) async {
         guard let model else { return }
         let engine = VoiceSettings.engine
@@ -582,8 +638,13 @@ final class VoiceController: ObservableObject {
         raw = raw.trimmed
         guard !raw.isEmpty else { fail("没听清，再说一次"); return }
         if let handler = dictation {
-            // 听写：只做词库替换和语气词清洗，原样交给输入框，不走 AI 整理 / 预览 / 入库
-            let text = SpeechCleaner.clean(VoiceLexicon.shared.apply(raw))
+            // 听写：词库替换和语气词清洗，（开着的话）再让 AI 润色一遍，交给输入框，不走待办整理 / 预览 / 入库
+            var text = SpeechCleaner.clean(VoiceLexicon.shared.apply(raw))
+            if VoiceSettings.dictPolish, model.hasLlm, let better = await polishDictation(text, model: model) {
+                guard session == id else { return }
+                text = better
+            }
+            guard session == id else { return }
             endDictation()
             session = UUID()
             phase = .idle

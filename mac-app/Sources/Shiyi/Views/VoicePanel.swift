@@ -52,9 +52,17 @@ final class VoicePanelHost {
         guard bag.isEmpty else { return }
         let c = VoiceController.shared
         controller = c
-        c.$phase.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] phase in
+        // 听写进万能输入框、正在录音时：输入框自己有录音状态和停止按钮，底下这张语音卡片收起，免得两处同时出现
+        Publishers.CombineLatest(c.$phase, c.$dictating).removeDuplicates { $0 == $1 }
+            .receive(on: RunLoop.main).sink { [weak self] phase, dictating in
             guard let self else { return }
-            if phase == .idle { self.hide(); self.removeEscMonitor() } else { self.show(); self.installEscMonitor() }
+            if phase == .idle {
+                self.hide(); self.removeEscMonitor()
+            } else if dictating, phase == .listening || phase == .organizing {
+                self.hide(animated: true); self.installEscMonitor()
+            } else {
+                self.show(); self.installEscMonitor()
+            }
         }.store(in: &bag)
     }
 
@@ -77,6 +85,12 @@ final class VoicePanelHost {
         escMonitor = nil
     }
 
+    /// 语音卡片在屏幕上的位置（去掉窗口多出来的阴影边）；没显示时是 nil。给「飞向万能输入框」的动画用
+    var cardFrame: NSRect? {
+        guard let p = panel, p.isVisible else { return nil }
+        return p.frame.insetBy(dx: inset, dy: inset)
+    }
+
     /// 鼠标是否在卡片上（预览倒计时据此暂停）
     var mouseInside: Bool {
         guard let p = panel, p.isVisible else { return false }
@@ -86,6 +100,8 @@ final class VoicePanelHost {
     private func show() {
         guard let c = controller else { return }
         if let p = panel, p.isVisible {
+            fadeToken += 1          // 正在淡出的话取消，恢复显示
+            p.alphaValue = 1
             p.makeKey()
             return
         }
@@ -101,10 +117,31 @@ final class VoicePanelHost {
         p.makeKey()
     }
 
-    private func hide() {
+    private var fadeToken = 0
+
+    /// animated：先淡出再收起（改走万能输入框时，卡片一边淡出一边变成飞走的圆点）
+    private func hide(animated: Bool = false) {
+        fadeToken += 1
         guard let p = panel, p.isVisible else { return }
-        p.orderOut(nil)
-        p.contentView = nil
+        guard animated else {
+            p.orderOut(nil)
+            p.contentView = nil
+            p.alphaValue = 1
+            return
+        }
+        let token = fadeToken
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.2
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            p.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, token == self.fadeToken else { return }
+                p.orderOut(nil)
+                p.contentView = nil
+                p.alphaValue = 1
+            }
+        })
     }
 
     private func heightChanged(_ h: CGFloat) {
@@ -510,7 +547,6 @@ private struct InfoBlock: View {
 private struct VoiceListeningView: View {
     @ObservedObject var c: VoiceController
     @ObservedObject private var mic = MicEngine.shared
-    @State private var started = Date()
     @State private var pulse = false
 
     private var liveShown: String {
@@ -534,7 +570,7 @@ private struct VoiceListeningView: View {
                         .background(Brand.orange.opacity(0.14), in: Capsule())
                 }
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                    let t = max(0, Int(ctx.date.timeIntervalSince(started)))
+                    let t = max(0, Int(ctx.date.timeIntervalSince(c.listeningSince)))
                     Text(String(format: "%d:%02d", t / 60, t % 60))
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
@@ -571,7 +607,6 @@ private struct VoiceListeningView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .onAppear {
-            started = Date()
             pulse = true
         }
     }

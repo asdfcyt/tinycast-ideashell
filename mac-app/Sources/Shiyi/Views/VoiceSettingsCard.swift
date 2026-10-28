@@ -12,6 +12,7 @@ struct VoiceSettingsPane: View {
     @AppStorage(VoiceSettings.modeKey) private var mode: VoiceMode = .toggle
     @AppStorage(VoiceSettings.engineKey) private var engine: VoiceEngine = .apple
     @AppStorage(VoiceSettings.polishKey) private var polish = true
+    @AppStorage(VoiceSettings.dictPolishKey) private var dictPolish = true
     @AppStorage(VoiceSettings.directKey) private var direct = false
     @AppStorage(VoiceSettings.countdownKey) private var countdown = true
     @AppStorage(VoiceSettings.pasteKey) private var paste = false
@@ -68,6 +69,10 @@ struct VoiceSettingsPane: View {
                 SToggle("用 AI 整理",
                         model.hasLlm ? "拆成多条、识别日期时间、改 / 完成 / 删待办、问答" : "还没配置 AI 模型，目前只会用本地规则整理",
                         $polish)
+                    .disabled(!model.hasLlm)
+                SToggle("听写进万能输入框时 AI 润色",
+                        model.hasLlm ? "在万能输入框里说话（含麦克风按钮、发射器）：只润色成通顺文字填进输入框，不拆待办、不入库" : "还没配置 AI 模型，听写只做词库替换和去语气词",
+                        $dictPolish)
                     .disabled(!model.hasLlm)
                 SToggle("说完直接入库", "不再预览；改 / 完成 / 删除类操作仍会先确认", $direct)
                 SToggle("预览后 5 秒自动入库", "鼠标放在卡片上或修改内容就暂停", $countdown)

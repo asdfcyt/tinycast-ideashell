@@ -386,7 +386,7 @@ struct MicConfigPane: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("按键映射")
+                Text(settings.cfg.backend == .shiyi ? "按键映射 · 拾忆" : "按键映射 · 外部输入法")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                 Text(engine.statusLine)
                     .font(.system(size: 13))
@@ -397,10 +397,13 @@ struct MicConfigPane: View {
     }
 
     private var gestures: some View {
-        VStack(spacing: 8) {
+        let acts = MicButtonAction.available(for: settings.cfg.backend)
+        return VStack(spacing: 8) {
             MicGestureCard(index: 0, gesture: .single, symbol: "waveform",
                         factory: "出厂:切换降噪",
-                        note: "静音状态下单击无效(固件不上报);" + (settings.cfg.noiseLock == .off ? "未静音时生效" : "未静音时生效,且不会再改变降噪"),
+                        note: (settings.cfg.singleAction == .route ? "录音中=纯语音↔万能输入框,预览中=说话修改;" : "")
+                            + "静音状态下单击无效(固件不上报)" + (settings.cfg.noiseLock == .off ? "" : ",且不会再改变降噪"),
+                        actions: acts,
                         action: settings.bind(\.singleAction), customKey: settings.bind(\.singleCustomKey))
             MicGestureCard(index: 1, gesture: .double, symbol: "speaker.slash",
                         factory: "出厂:开关静音",
@@ -409,10 +412,12 @@ struct MicConfigPane: View {
                                ? "静音即录音开关:解除静音=开始说话(预览中=说话修改),静音=结束"
                                : "静音即录音开关:未静音=说话中,静音=已停止")
                             : "硬件行为,无法改写;静音状态下无法收音",
+                        actions: acts,
                         action: settings.bind(\.doubleAction), customKey: settings.bind(\.doubleCustomKey))
             MicGestureCard(index: 2, gesture: .triple, symbol: "camera",
                         factory: "出厂:启停拍摄(音量+)",
                         note: settings.cfg.backend == .shiyi ? "预览中=确认保存,录音中=结束" : "已独占该按键,不会影响系统音量",
+                        actions: acts,
                         action: settings.bind(\.tripleAction), customKey: settings.bind(\.tripleCustomKey))
         }
     }
@@ -445,6 +450,7 @@ struct MicGestureCard: View {
     let symbol: String
     let factory: String
     let note: String?
+    var actions: [MicButtonAction] = MicButtonAction.allCases
     @Binding var action: MicButtonAction
     @Binding var customKey: String
     @EnvironmentObject var model: MicUIModel
@@ -482,7 +488,7 @@ struct MicGestureCard: View {
                 Spacer(minLength: 8)
 
                 Menu {
-                    ForEach(MicButtonAction.allCases) { a in
+                    ForEach(actions) { a in
                         Button { action = a } label: { Label(a.title, systemImage: a.symbol) }
                     }
                 } label: {

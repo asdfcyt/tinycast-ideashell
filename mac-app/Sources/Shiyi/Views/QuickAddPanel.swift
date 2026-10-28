@@ -164,6 +164,12 @@ final class QuickAddPanelController: ObservableObject {
         if let p = panel, p.isVisible { hide() } else { show() }
     }
 
+    /// 输入窗卡片在屏幕上的位置（去掉阴影边）；没开时是 nil
+    var cardFrame: NSRect? {
+        guard let p = panel, p.isVisible else { return nil }
+        return p.frame.insetBy(dx: Self.shadowInset, dy: Self.shadowInset)
+    }
+
     /// 输入窗现在是否开着（语音输入据此决定：开着就把说的话听写进输入框）
     var isVisible: Bool { panel?.isVisible ?? false }
 
@@ -287,8 +293,24 @@ final class QuickAddPanelController: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + (undo != nil ? 4.5 : (ok ? 1.3 : 3.5)), execute: w)
     }
 
-    private func reveal() {
+    /// 飞行动画期间先别显示：圆点落下后由 releaseReveal() 淡入（输入框像灵动岛一样从圆点里「展开」出来）
+    var holdReveal = false
+
+    func releaseReveal() {
+        holdReveal = false
         guard revealPending, let p = panel, p.isVisible else { return }
+        revealPending = false
+        p.alphaValue = 0
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.28
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            p.animator().alphaValue = 1
+        })
+        focusEditor()
+    }
+
+    private func reveal() {
+        guard !holdReveal, revealPending, let p = panel, p.isVisible else { return }
         revealPending = false
         p.alphaValue = 1
         focusEditor()

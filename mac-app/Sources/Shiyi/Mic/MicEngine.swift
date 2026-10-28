@@ -530,7 +530,7 @@ final class MicEngine: ObservableObject {
             toast("已清除", .info)
         case .quickAdd:
             QuickAddPanelController.shared.toggle()
-        case .refine:
+        case .refine, .route:
             // 外部输入法没有「说话修改」:当作「停止并清除」
             await stopIfRecording()
             await clearText()
@@ -568,6 +568,14 @@ final class MicEngine: ObservableObject {
             }
         case .quickAdd:
             QuickAddPanelController.shared.toggle()
+        case .route:
+            switch v.phase {
+            case .preview: v.refineByVoice()
+            case .listening: v.toggleDictationRoute()   // 说话中:纯语音 ↔ 万能输入框
+            case .organizing: break
+            case .info, .failed: v.dismiss()
+            case .idle: QuickAddPanelController.shared.toggle()
+            }
         case .refine:
             switch v.phase {
             case .preview: v.refineByVoice()

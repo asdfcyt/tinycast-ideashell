@@ -106,6 +106,8 @@ private struct IslandCollapsedView: View {
     @ObservedObject var focus: FocusStore
     @ObservedObject var state: IslandState
     @ObservedObject private var session = BreakSession.shared
+    @ObservedObject private var mic = MicEngine.shared
+    @ObservedObject private var micSettings = MicSettingsStore.shared
 
     var body: some View {
         HStack(spacing: 0) {
@@ -138,7 +140,16 @@ private struct IslandCollapsedView: View {
             .onTapGesture { focus.pauseOrResume() }
             .help(r.paused ? "继续" : "暂停")
         } else {
-            Image(systemName: "checklist").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+            if mic.connected {
+                // 麦克风连着：这里显示它现在驱动的语音输出对象（拾忆 / 外部输入法），录音时变红
+                let toShiyi = micSettings.cfg.backend == .shiyi
+                Image(systemName: toShiyi ? "waveform" : "keyboard")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(mic.state == .recording ? Color.red : Color.white.opacity(0.85))
+                    .help(toShiyi ? "猛犸麦克风 → 拾忆" : "猛犸麦克风 → 外部输入法")
+            } else {
+                Image(systemName: "checklist").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+            }
         }
     }
 
