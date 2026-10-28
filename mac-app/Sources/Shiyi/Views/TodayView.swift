@@ -106,8 +106,8 @@ private struct TodayContent: View {
                 }
             }
             Spacer(minLength: 8)
-            if model.hasDida {
-                HStack(spacing: 8) {
+            HStack(spacing: 8) {
+                if model.hasDida {
                     Button { showPlan = true } label: {
                         Label("重新规划", systemImage: "calendar.badge.clock")
                     }
@@ -119,9 +119,10 @@ private struct TodayContent: View {
                     .disabled(model.overview == nil)
                     .help("让 AI 梳理今天的待办、最近的笔记和 Daily Note，无压力地开始")
                 }
-                .controlSize(.regular)
-                .padding(.bottom, 4)
+                FocusStartButton(focus: focus)
             }
+            .controlSize(.regular)
+            .padding(.bottom, 4)
         }
         .padding(.horizontal, 4)
     }
@@ -315,7 +316,7 @@ private struct TodayContent: View {
 
     @ViewBuilder private var railTop: some View {
         DashboardCard(focus: focus, loaded: loaded, remaining: remaining, todoDone: todayDone.count, todoTotal: todoTotal)
-        QuickActions(focus: focus)
+        if model.hasSjz { AuditProjectCard() }
     }
 
     @ViewBuilder private func railBottom(weeks: Int) -> some View {
@@ -804,40 +805,267 @@ private struct DashboardCard: View {
     }
 }
 
-// MARK: - 侧栏：快捷操作
+// MARK: - 侧栏：当前审计项目
 
-private struct QuickActions: View {
+/// 正在做的审计项目（结审里「当前项目」，没钉住就取第一个）：阶段进度，以及已发出、还没收回的取证单——到了回复期限没收回的标红
+private struct AuditProjectCard: View {
+    @EnvironmentObject var model: AppModel
+    @State private var docs: SjzDocs?
+    @State private var items: [SjzOutstanding] = []
+    @State private var caps: [SjzCapture] = []
+    @State private var loadedItems = false
+    /// 取证单发出后多少天内应当收回；超过就算逾期（结审里没有单独的期限字段，先统一按这个天数算）
+    @AppStorage("sjz.replyDays") private var replyDays = 5
+
+    private static var docCache: [String: SjzDocs] = [:]
+    private static var itemCache: [String: [SjzOutstanding]] = [:]
+    private static var capCache: [String: [SjzCapture]] = [:]
+
+    private var name: String { model.sjzPin.project.isEmpty ? (model.sjzOverview?.projects.first?.name ?? "") : model.sjzPin.project }
+    private var title: String {
+        if let t = model.sjzOverview?.projects.first(where: { $0.name == name })?.title, !t.isEmpty { return t }
+        return model.sjzPin.projectTitle.isEmpty ? name : model.sjzPin.projectTitle
+    }
+
+    private var stat: SjzProjectStat? { model.sjzOverview?.projects.first { $0.name == name } }
+    private var todayCount: Int { caps.filter { c in c.date.map { Calendar.current.isDateInToday($0) } ?? false }.count }
+    private var pendingClues: Int { caps.filter { $0.kind == "clue" && $0.status == "pending" }.count }
+
+    /// 一行待收回的东西：已发出没收回的取证单，或带 #资料清单 标签、有计划日期和截止日期的任务
+    private struct Row: Identifiable {
+        let id: String
+        let isList: Bool
+        let title: String
+        let matter: String
+        let range: String?
+        /// 距离到期还有几天（负数 = 已逾期）；没有日期为 nil
+        let left: Int?
+        /// 还没到计划开始日（资料清单）
+        let notStarted: Bool
+        let open: () -> Void
+    }
+
+    private static let rangeFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "M/d"
+        return f
+    }()
+
+    private var rows: [Row] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        func days(_ to: Date) -> Int { cal.dateComponents([.day], from: today, to: cal.startOfDay(for: to)).day ?? 0 }
+        let f = Self.rangeFmt
+        let n = name
+        var out: [Row] = items.map { it in
+            let d = it.sentDate
+            let due = d.flatMap { cal.date(byAdding: .day, value: replyDays, to: cal.startOfDay(for: $0)) }
+            return Row(id: "note:" + it.path, isList: false,
+                       title: [it.no, it.unit.isEmpty ? it.title : it.unit].filter { !$0.isEmpty }.joined(separator: " "),
+                       matter: it.matter.isEmpty ? (it.unit.isEmpty ? "" : it.title) : it.matter,
+                       range: d.flatMap { s in due.map { "\(f.string(from: s)) 发出 → \(f.string(from: $0)) 到期" } },
+                       left: due.map(days), notStarted: false,
+                       open: { model.openSjzApp(project: n, to: "/documents?open=" + AppModel.urlEnc(it.path)) })
+        }
+        for t in model.sjzOverview?.next ?? [] where t.project == n && Self.isList(t) {
+            let sd = Day.parse(String((t.startDate ?? "").prefix(10)))
+            let dd = Day.parse(String(t.dueDate.prefix(10)))
+            guard let sd, let dd else { continue }
+            out.append(Row(id: "task:" + t.id, isList: true,
+                           title: Self.cleanTitle(t.subject), matter: "",
+                           range: "\(f.string(from: sd)) → \(f.string(from: dd))",
+                           left: days(dd), notStarted: days(sd) > 0,
+                           open: { model.openSjzApp(project: n, to: "/tasks?task=" + AppModel.urlEnc(t.id)) }))
+        }
+        return out.sorted { ($0.left ?? 9999) < ($1.left ?? 9999) }
+    }
+
+    /// 任务里带「#资料清单」标签，并且同时有计划日期和截止日期
+    private static func isList(_ t: SjzTaskLite) -> Bool {
+        guard (t.subject + " " + t.detail).contains("#资料清单") else { return false }
+        return !(t.startDate ?? "").isEmpty && !t.dueDate.isEmpty
+    }
+
+    private static func cleanTitle(_ s: String) -> String {
+        let t = s.replacingOccurrences(of: "#资料清单", with: "").trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? "资料清单" : t
+    }
+
+    var body: some View {
+        if !name.isEmpty {
+            let rs = rows
+            let late = rs.filter { ($0.left ?? 0) < 0 }.count
+            Panel(radius: 18) {
+                VStack(alignment: .leading, spacing: 11) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.shield").font(.system(size: 14, weight: .semibold)).foregroundStyle(Brand.orange)
+                            .frame(width: 30, height: 30)
+                            .background(Brand.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("正在做的审计项目").font(.caption).foregroundStyle(.secondary)
+                            Text(title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.section = .focus; model.selectedProject = SjzTasks.prefix + name }
+                    if let d = docs, !d.phases.isEmpty { phaseBar(d) }
+                    HStack(alignment: .top, spacing: 0) {
+                        mini("未完成", "\(stat?.open ?? 0)", .primary.opacity(0.85))
+                        mini("逾期", "\(stat?.overdue ?? 0)", (stat?.overdue ?? 0) > 0 ? .red : .primary.opacity(0.85))
+                        mini("待核实线索", "\(pendingClues)", pendingClues > 0 ? .pink : .primary.opacity(0.85))
+                        mini("今天新增", "\(todayCount)", todayCount > 0 ? Brand.orange : .primary.opacity(0.85))
+                    }
+                    if !rs.isEmpty {
+                        Divider().opacity(0.6)
+                        HStack(spacing: 6) {
+                            Text("待收回").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            Text("\(rs.count)").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                            if late > 0 { TagChip(text: "\(late) 条已逾期", tint: .red) }
+                            Spacer(minLength: 4)
+                            if rs.contains(where: { !$0.isList }) {
+                                Text("取证单期限 \(replyDays) 天").font(.caption2).foregroundStyle(.tertiary).help("取证单发出后 \(replyDays) 天内应收回，右键卡片可以改；资料清单按任务的计划日期和截止日期算")
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 7) {
+                            ForEach(rs.prefix(3)) { r in row(r) }
+                            if rs.count > 3 { Text("还有 \(rs.count - 3) 条，在结审里查看").font(.caption2).foregroundStyle(.tertiary) }
+                        }
+                    }
+                    if let c = caps.first {
+                        Divider().opacity(0.6)
+                        HStack(spacing: 6) {
+                            Image(systemName: c.icon).font(.system(size: 11)).foregroundStyle(SjzProjectDetailView.kindTint(c.kind))
+                            Text("最近 · \(c.kindLabel) · \(c.title.isEmpty ? c.summary : c.title)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Spacer(minLength: 4)
+                            if let d = c.date { Text(Self.timeLabel(d)).font(.caption2).foregroundStyle(.tertiary) }
+                        }
+                    }
+                }
+                .padding(14)
+            }
+            .contextMenu {
+                Menu("取证单回复期限") {
+                    ForEach([3, 5, 7, 10, 15, 30], id: \.self) { d in
+                        Button { replyDays = d } label: { if replyDays == d { Label("\(d) 天", systemImage: "checkmark") } else { Text("\(d) 天") } }
+                    }
+                }
+                Divider()
+                Button("在拾忆里打开项目") { model.section = .focus; model.selectedProject = SjzTasks.prefix + name }
+                Button("在结审里打开取证单") { model.openSjzApp(project: name, to: "/evidence?tab=note") }
+            }
+            .task(id: name) { await load() }
+            .onReceive(NotificationCenter.default.publisher(for: .sjzCapturesChanged)) { _ in Task { await load() } }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await load() } }
+        } else {
+            Color.clear.frame(height: 0)
+                .task { await model.refreshSjzTarget(); await model.refreshSjzOverview() }
+        }
+    }
+
+    private func row(_ r: Row) -> some View {
+        let (badge, tint) = Self.badge(r.left, notStarted: r.notStarted)
+        return Button(action: r.open) {
+            HStack(alignment: .center, spacing: 8) {
+                Text(badge).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(tint)
+                    .frame(width: 52).padding(.vertical, 3)
+                    .background(tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(r.title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(r.isList ? "资料清单" : "取证单").font(.system(size: 10, weight: .medium)).foregroundStyle(r.isList ? Color.indigo : Brand.orange)
+                        if let range = r.range {
+                            Text(range).font(.system(size: 10.5, weight: .medium)).monospacedDigit().foregroundStyle((r.left ?? 0) < 0 ? Color.red : Color.secondary)
+                        }
+                        if !r.matter.isEmpty { Text(r.matter).font(.caption2).foregroundStyle(.tertiary).lineLimit(1) }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(r.isList ? "在结审里打开这个任务" : "在结审里打开这份取证单")
+    }
+
+    private static func badge(_ left: Int?, notStarted: Bool) -> (String, Color) {
+        guard let left else { return ("未记日期", .secondary) }
+        if notStarted, left >= 0 { return ("未开始", .secondary) }
+        if left < 0 { return ("逾期 \(-left) 天", .red) }
+        if left == 0 { return ("今天到期", .orange) }
+        if left <= 2 { return ("还剩 \(left) 天", .orange) }
+        return ("还剩 \(left) 天", .secondary)
+    }
+
+    private func mini(_ label: String, _ value: String, _ color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value).font(.system(size: 18, weight: .bold)).monospacedDigit().foregroundStyle(color)
+            Text(label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private static func timeLabel(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = Calendar.current.isDateInToday(d) ? "HH:mm" : "M/d HH:mm"
+        return f.string(from: d)
+    }
+
+    private func phaseBar(_ d: SjzDocs) -> some View {
+        let cur = d.phases.firstIndex(where: { $0.current }) ?? d.phases.firstIndex(where: { $0.key == d.phase }) ?? 0
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 3) {
+                ForEach(Array(d.phases.enumerated()), id: \.offset) { i, _ in
+                    Capsule().fill(i < cur ? Brand.orange.opacity(0.45) : i == cur ? Brand.orange : Color.primary.opacity(0.1)).frame(height: 4)
+                }
+            }
+            HStack {
+                Text(d.phases[cur].label).font(.caption.weight(.semibold))
+                Spacer()
+                Text("第 \(cur + 1) / \(d.phases.count) 阶段").font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    /// 先用上次的结果画出来，再在后台刷新；钉住的项目或概览还没读到时先读
+    private func load() async {
+        if model.sjzPin.project.isEmpty { await model.refreshSjzTarget() }
+        if model.sjzOverview == nil { await model.refreshSjzOverview() }
+        let n = name
+        guard !n.isEmpty else { return }
+        if docs == nil, let c = Self.docCache[n] { docs = c }
+        if items.isEmpty, let c = Self.itemCache[n] { items = c; loadedItems = true }
+        if caps.isEmpty, let c = Self.capCache[n] { caps = c }
+        if let c = try? await model.sjz.captures(project: n, limit: 300) { caps = c; Self.capCache[n] = c }
+        if let c = try? await model.sjz.outstanding(project: n) { items = c; loadedItems = true; Self.itemCache[n] = c }
+        if let d = try? await model.sjz.documents(project: n) { docs = d; Self.docCache[n] = d }
+    }
+}
+
+// MARK: - 标题栏：开始专注
+
+/// 「快速启动」右边的开始专注：点一下按上次的时长开始，右边小箭头选 15 / 25 / 45 / 60 / 90 分钟；
+/// 刚完成一个番茄、该休息时，主按钮是「休息 N 分」，菜单里可以跳过休息直接专注
+private struct FocusStartButton: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var focus: FocusStore
 
     private var running: Bool { focus.run != nil && !(focus.run?.kind.isBreak ?? true) }
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-            focusButton
-            QuickButton(icon: "square.and.pencil", tint: Color(red: 0.96, green: 0.71, blue: 0.25), title: "记笔记") {
-                model.openQuickAdd(kind: .note)
-            }
-            QuickButton(icon: "plus", tint: .blue, title: "记待办") { model.openQuickAdd(kind: .todo) }
-            QuickButton(icon: "text.append", tint: .green, title: "Daily Note") { model.openQuickAdd(kind: .daily) }
-        }
-    }
-
-    /// 点一下就按上次的时长开始；右边的小箭头选 15 / 25 / 45 / 60 / 90 分钟。
-    /// 刚完成一个番茄、该休息时，主按钮是「休息 N 分」，菜单里可以跳过休息直接专注
-    private var focusButton: some View {
         let breakKind = focus.pendingBreak
-        return QuickButton(
-            icon: running ? "timer" : (breakKind != nil ? "cup.and.saucer.fill" : "play.fill"),
-            tint: breakKind != nil && !running ? Color(red: 0.30, green: 0.69, blue: 0.47) : Brand.orange,
-            title: running ? "专注中" : (breakKind != nil ? "休息 \(focus.minutes) 分" : "专注 \(focus.minutes) 分")
-        ) {
+        let title = running ? "专注中" : (breakKind != nil ? "休息 \(focus.minutes) 分" : "专注 \(focus.minutes) 分")
+        let icon = running ? "timer" : (breakKind != nil ? "cup.and.saucer.fill" : "play.fill")
+        let primary = {
             if running { model.selectedProject = nil; model.section = .focus }
             else if breakKind != nil { focus.start() }
             else { focus.quickFocus(focus.minutes) }
         }
-        .overlay(alignment: .trailing) {
-            if !running {
+        Group {
+            if running {
+                Button(action: primary) { Label(title, systemImage: icon) }
+            } else {
                 Menu {
                     if let b = breakKind {
                         Button("开始\(b.label) \(focus.minutes) 分钟") { focus.start() }
@@ -849,12 +1077,13 @@ private struct QuickActions: View {
                     Divider()
                     Button("打开专注页") { model.selectedProject = nil; model.section = .focus }
                 } label: {
-                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).frame(width: 22, height: 22)
-                }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .padding(.trailing, 6)
+                    Label(title, systemImage: icon)
+                } primaryAction: { primary() }
+                .menuStyle(.borderedButton)
+                .fixedSize()
             }
         }
+        .help(running ? "专注进行中，点击打开专注页" : "按上次的时长开始专注，右边的箭头可以选时间")
     }
 }
 

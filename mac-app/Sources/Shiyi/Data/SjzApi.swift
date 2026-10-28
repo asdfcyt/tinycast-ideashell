@@ -317,6 +317,17 @@ struct SjzApi {
         return d
     }
 
+    /// 已发出还没收回的取证单（按发出时间从早到晚）
+    func outstanding(project: String) async throws -> [SjzOutstanding] {
+        let r = try await call("list_outstanding", ["project": project])
+        return ((r["items"] as? [JSON]) ?? []).compactMap { i in
+            guard let path = i["path"] as? String else { return nil }
+            return SjzOutstanding(path: path, no: (i["no"] as? String) ?? "", title: (i["title"] as? String) ?? "",
+                                  unit: (i["unit"] as? String) ?? "", matter: (i["matter"] as? String) ?? "",
+                                  sentAt: (i["sentAt"] as? String) ?? "", sentLabel: (i["sentLabel"] as? String) ?? "")
+        }
+    }
+
     /// 保存为证据 / 法规；items 里每项是 `{type: text, text}` 或 `{type: image, name, data(base64)}`
     func save(regulation: Bool, project: String?, items: [JSON], title: String, source: String, url: String?, snapshot: Bool) async throws -> String {
         var a: JSON = ["items": items, "title": title, "source": source, "snapshot": snapshot]
@@ -396,6 +407,20 @@ struct SjzProjectStat: Equatable, Hashable, Codable, Identifiable {
     var dueToday = 0
     var pendingReviews = 0
     var id: String { name }
+}
+
+/// 已发出但还没收回的取证单
+struct SjzOutstanding: Identifiable, Hashable {
+    let path: String
+    let no: String
+    let title: String
+    let unit: String
+    let matter: String
+    /// yyyy-MM-dd，没有记录发出日期时为空
+    let sentAt: String
+    let sentLabel: String
+    var id: String { path }
+    var sentDate: Date? { Day.parse(sentAt) }
 }
 
 /// 一条记录名下的原件（pdf / word / excel / 图片…），abs 是本机上的绝对路径，可直接用系统预览
