@@ -224,6 +224,10 @@ final class AppModel: ObservableObject {
     @Published var quickAddText = ""
     @Published var quickAddKind: CaptureKind?
     @Changed var notice: String?
+    /// 空格快速预览的审计记录（盖在整个窗口上）；回车 / 点「编辑」时放进 sjzEdit，由项目页接手打开编辑窗口
+    @Published var sjzQuick: SjzQuickItem?
+    @Published var sjzEdit: SjzQuickItem?
+    func closeSjzQuick() { withAnimation(.easeOut(duration: 0.08)) { sjzQuick = nil } }
     @Published var quickAddDate: String?
     /// 日历时间轴上点出来的时间（HH:mm），万能输入里没写时间的待办用它
     @Published var quickAddTime: String?

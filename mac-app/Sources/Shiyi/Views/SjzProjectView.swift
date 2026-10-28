@@ -14,6 +14,9 @@ struct SjzProjectDetailView: View {
     @State private var capQuery = ""
     @State private var capDays = 0
     @State private var editing: SjzCapture?
+    /// 空格快速预览的那一项；鼠标停在哪一条上，空格就预览哪一条
+    @State private var hoverCap: SjzCapture?
+    @State private var keyMonitor: Any?
     /// 等用户确认删除的那一项
     @State private var deleting: SjzCapture?
     @State private var newTitle = ""
@@ -49,13 +52,41 @@ struct SjzProjectDetailView: View {
         .task(id: name) {
             docs = nil
             selPhase = ""
-            await model.refreshSjzOverview()
+            // 先用上次的数据把列表画出来，再并行刷新；文书统计最慢，放在最后，不挡着「来自拾忆」
+            if captures.isEmpty, let cached = Self.capCache[name] {
+                let cleared = clearedIds
+                captures = cached.filter { !cleared.contains($0.id) }
+                capsLoaded = true
+            }
+            async let caps: Void = loadCaptures()
+            async let ov: Void = model.refreshSjzOverview()
+            _ = await (caps, ov)
             docs = try? await model.sjz.documents(project: name)
-            await loadCaptures()
+        }
+        // 停留在这个页面时每几秒静默重读一次；切回拾忆窗口、结审有写入时立刻重读
+        .task(id: "poll-" + name) {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                if NSApp.isActive { await loadCaptures() }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await loadCaptures() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sjzCapturesChanged)) { _ in
+            Task { await loadCaptures() }
         }
         .sheet(item: $editing) { c in
             SjzCaptureEditor(project: name, capture: c) { await loadCaptures() }
                 .environmentObject(model)
+        }
+        .onChange(of: model.sjzEdit) { _, item in
+            if let item, item.project == name { editing = item.capture; model.sjzEdit = nil }
+        }
+        .onAppear(perform: installKeys)
+        .onDisappear {
+            if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
+            model.sjzQuick = nil
         }
         .alert("删除\(deleting?.kindLabel ?? "")？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("删除", role: .destructive) {
@@ -67,6 +98,35 @@ struct SjzProjectDetailView: View {
             if let c = deleting {
                 Text("「\(c.title.isEmpty ? c.summary : c.title)」会同时从结审项目里删除，不能恢复。")
             }
+        }
+    }
+
+    /// 空格：预览鼠标所在的那一条（再按一次或 Esc 关闭，回车转到编辑）。在输入框里打字时不拦截
+    private func installKeys() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
+            guard editing == nil, let w = NSApp.keyWindow, ev.window === w, !(w.firstResponder is NSText),
+                  ev.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return ev }
+            if let q = model.sjzQuick {
+                switch ev.keyCode {
+                case 49, 53: if !ev.isARepeat { model.closeSjzQuick() }; return nil
+                case 36, 76: model.sjzQuick = nil; editing = q.capture; return nil
+                default: return ev
+                }
+            }
+            if ev.keyCode == 49, let c = hoverCap {
+                if !ev.isARepeat { withAnimation(.easeOut(duration: 0.08)) { model.sjzQuick = SjzQuickItem(project: name, capture: c) } }
+                return nil
+            }
+            return ev
+        }
+    }
+
+    private func prefetch(_ c: SjzCapture) {
+        Task {
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard hoverCap?.id == c.id else { return }
+            await SjzDetailStore.load(api: model.sjz, project: name, id: c.id)
         }
     }
 
@@ -301,10 +361,14 @@ extension SjzProjectDetailView {
         .help("在结审里打开")
     }
 
+    private static var capCache: [String: [SjzCapture]] = [:]
+
     private func loadCaptures() async {
-        let all = (try? await model.sjz.captures(project: name)) ?? captures
+        guard let all = try? await model.sjz.captures(project: name) else { capsLoaded = true; return }
+        Self.capCache[name] = all
         let cleared = clearedIds
-        captures = all.filter { !cleared.contains($0.id) }
+        let next = all.filter { !cleared.contains($0.id) }
+        if next != captures { captures = next }
         capsLoaded = true
     }
 
@@ -384,46 +448,91 @@ extension SjzProjectDetailView {
                     if list.isEmpty {
                         Text("没有符合条件的记录").font(.callout).foregroundStyle(.tertiary).padding(.vertical, 4)
                     }
-                    ForEach(list.prefix(40)) { c in captureRow(c) }
-                    if list.count > 40 { Text("还有 \(list.count - 40) 条，用上面的筛选缩小范围").font(.caption).foregroundStyle(.tertiary) }
+                    let groups = Self.captureGroups(list)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(groups.prefix(50)) { g in
+                            VStack(alignment: .leading, spacing: 0) {
+                                captureRow(g.top, kids: g.kids.count)
+                                if !g.kids.isEmpty {
+                                    HStack(alignment: .top, spacing: 0) {
+                                        // 追加记录挂在证据下面：左侧竖线从证据图标正下方连下来
+                                        Rectangle().fill(Color.blue.opacity(0.22)).frame(width: 2)
+                                            .padding(.leading, 20).padding(.trailing, 10).padding(.vertical, 1)
+                                        VStack(alignment: .leading, spacing: 0) {
+                                            ForEach(g.kids) { k in captureRow(k, child: true) }
+                                        }
+                                    }
+                                    .padding(.bottom, 2)
+                                }
+                            }
+                        }
+                    }
+                    if groups.count > 50 { Text("还有 \(groups.count - 50) 项，用上面的筛选缩小范围").font(.caption).foregroundStyle(.tertiary) }
                 }
             }
         }
     }
 
-    private func captureRow(_ c: SjzCapture) -> some View {
-        Button { editing = c } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: c.icon).font(.system(size: 13)).foregroundStyle(Brand.orange)
-                    .frame(width: 26, height: 26)
-                    .background(Brand.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 5) {
-                        Text(c.title.isEmpty ? c.summary : c.title).font(.callout.weight(.medium)).lineLimit(1)
-                        if !c.statusLabel.isEmpty {
-                            TagChip(text: c.statusLabel, tint: c.status == "verified" ? .green : c.status == "excluded" ? .gray : Brand.orange)
-                        }
-                        if !c.editedAt.isEmpty { TagChip(text: "已编辑", tint: .blue) }
-                        if !c.taskId.isEmpty { TagChip(text: "任务 \(c.taskId)", tint: .teal) }
-                        if !c.toClue.isEmpty { TagChip(text: "→ 线索 \(c.toClue)", tint: .purple) }
-                        if !c.noteNo.isEmpty { TagChip(text: c.noteNo, tint: .blue) }
-                    }
-                    // 摘要和「类型 · 来源」放在同一行：摘要太长时先被截断，类型 · 来源始终完整
-                    HStack(spacing: 8) {
-                        if !c.summary.isEmpty && c.summary != c.title {
-                            Text(c.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Text("\(c.kindLabel) · \(c.source)").font(.caption).foregroundStyle(.tertiary).lineLimit(1)
-                            .layoutPriority(1)
-                    }
-                }
-                Spacer(minLength: 6)
-                Text(Self.timeLabel(c.date)).font(.caption2).foregroundStyle(.tertiary)
-            }
-            .contentShape(Rectangle())
+    fileprivate struct CapGroup: Identifiable {
+        let top: SjzCapture
+        let kids: [SjzCapture]
+        let dayLabel: String
+        let showDay: Bool
+        let isFirst: Bool
+        var id: String { top.id }
+    }
+
+    /// 追加记录归到它的证据下面；证据按最近一次动静排序，并按天分段（今天 / 昨天 / 日期）
+    fileprivate static func captureGroups(_ list: [SjzCapture]) -> [CapGroup] {
+        let ids = Set(list.map(\.id))
+        var kids: [String: [SjzCapture]] = [:]
+        var tops: [SjzCapture] = []
+        for c in list {
+            if !c.parentId.isEmpty, ids.contains(c.parentId) { kids[c.parentId, default: []].append(c) } else { tops.append(c) }
         }
-        .buttonStyle(.plain)
+        func latest(_ c: SjzCapture) -> Date {
+            ([c.date] + (kids[c.id] ?? []).map(\.date)).compactMap { $0 }.max() ?? .distantPast
+        }
+        let order = Dictionary(uniqueKeysWithValues: tops.enumerated().map { ($1.id, $0) })
+        tops.sort { let a = latest($0), b = latest($1); return a != b ? a > b : order[$0.id]! < order[$1.id]! }
+        var out: [CapGroup] = []
+        var lastDay = ""
+        for t in tops {
+            let ks = (kids[t.id] ?? []).sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) }
+            let day = dayLabel(latest(t))
+            out.append(CapGroup(top: t, kids: ks, dayLabel: day, showDay: day != lastDay, isFirst: out.isEmpty))
+            lastDay = day
+        }
+        return out
+    }
+
+    fileprivate static func dayLabel(_ d: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "今天" }
+        if cal.isDateInYesterday(d) { return "昨天" }
+        let f = DateFormatter()
+        f.dateFormat = cal.isDate(d, equalTo: Date(), toGranularity: .year) ? "M 月 d 日" : "yyyy 年 M 月 d 日"
+        return f.string(from: d)
+    }
+
+    static func kindTint(_ k: String) -> Color {
+        switch k {
+        case "regulation": return .indigo
+        case "clue": return .pink
+        case "idea": return .purple
+        case "data": return .teal
+        default: return Brand.orange
+        }
+    }
+
+    private func captureRow(_ c: SjzCapture, child: Bool = false, kids: Int = 0) -> some View {
+        CaptureRowView(c: c, child: child, kids: kids) { editing = c }
+        .onHover { inside in
+            if inside { hoverCap = c; prefetch(c) } else if hoverCap?.id == c.id { hoverCap = nil }
+        }
         .contextMenu {
+            Button("快速预览（空格）") { model.sjzQuick = SjzQuickItem(project: name, capture: c) }
+            Divider()
             Button("编辑并写回结审") { editing = c }
             if c.kind == "clue", c.status != "converted" {
                 Divider()
@@ -503,7 +612,12 @@ struct SjzCaptureEditor: View {
     @State private var images: [String: NSImage] = [:]
 
     @State private var segs: [Seg] = []
-    @State private var preview = true
+    enum PMode: Hashable { case original, text, edit }
+    @State private var mode: PMode = .text
+    @State private var files: [SjzFile] = []
+    @State private var fileSel = ""
+    @State private var jumpPage: Int?
+    @State private var stale = false
 
     /// 正文拆成「文字段 / 图片段」混排编辑：图片整行引用 `![说明][imgN]` 单独成块
     struct Seg: Identifiable, Equatable {
@@ -513,19 +627,25 @@ struct SjzCaptureEditor: View {
         var text = ""
         var key = ""
         var alt = ""
+        /// 汇总里一次摘录的标识（`<!-- excerpt:ID -->`）：每次摘录是一张卡片，编辑时可以单独改 / 删
+        var marker = ""
     }
 
     static func parse(_ md: String) -> [Seg] {
         let re = RX("^!\\[([^\\]]*)\\]\\[(img\\d+)\\]\\s*$")
+        let mk = RX("^<!--\\s*excerpt:([\\w-]+)\\s*-->\\s*$")
         var out: [Seg] = []
         var buf: [String] = []
+        var marker = ""
         func flush() {
             let t = buf.joined(separator: "\n").trimmed
-            if !t.isEmpty { out.append(Seg(kind: .text, text: t)) }
+            if !t.isEmpty { out.append(Seg(kind: .text, text: t, marker: marker)); marker = "" }
             buf = []
         }
         for line in md.components(separatedBy: "\n") {
-            if let m = re.first(in: line) { flush(); out.append(Seg(kind: .image, key: m.group(2), alt: m.group(1))) } else { buf.append(line) }
+            if let m = mk.first(in: line.trimmingCharacters(in: .whitespaces)) { flush(); marker = m.group(1); continue }
+            if let m = re.first(in: line) { flush(); out.append(Seg(kind: .image, key: m.group(2), alt: m.group(1), marker: marker)); marker = ""; continue }
+            buf.append(line)
         }
         flush()
         return out.isEmpty ? [Seg(kind: .text)] : out
@@ -533,10 +653,13 @@ struct SjzCaptureEditor: View {
 
     static func join(_ segs: [Seg]) -> String {
         segs.compactMap { s -> String? in
+            var body: String
             switch s.kind {
-            case .text: return s.text.trimmed.isEmpty ? nil : s.text.trimmed
-            case .image: return "![\(s.alt)][\(s.key)]"
+            case .text: body = s.text.trimmed
+            case .image: body = "![\(s.alt)][\(s.key)]"
             }
+            if body.isEmpty && s.marker.isEmpty { return nil }
+            return s.marker.isEmpty ? body : "<!-- excerpt:\(s.marker) -->\n\(body)"
         }.joined(separator: "\n\n")
     }
 
@@ -589,12 +712,13 @@ struct SjzCaptureEditor: View {
                 HStack {
                     Text(capture.kind == "data" ? "文件" : "正文").font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    if capture.kind != "data", loaded, editable {
-                        Picker("", selection: $preview) {
-                            Text("预览").tag(true)
-                            Text("编辑").tag(false)
+                    if capture.kind != "data", loaded, editable || !files.isEmpty {
+                        Picker("", selection: $mode) {
+                            if !files.isEmpty { Text(files.contains(where: { $0.role == "original" }) ? "原件" : "出处原件").tag(PMode.original) }
+                            Text(textLabel).tag(PMode.text)
+                            if editable { Text("编辑").tag(PMode.edit) }
                         }
-                        .pickerStyle(.segmented).labelsHidden().frame(width: 120)
+                        .pickerStyle(.segmented).labelsHidden().frame(width: files.isEmpty ? 120 : 200)
                     }
                 }
                 if capture.kind == "data" {
@@ -602,19 +726,23 @@ struct SjzCaptureEditor: View {
                     Text("数据文件不能在这里编辑，可以改标题和来源；文件在结审的「原始材料」里。").font(.caption).foregroundStyle(.tertiary)
                 } else if !loaded {
                     ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 160)
-                } else if !editable {
-                    Text(content.isEmpty ? "这一项的正文不能在线编辑" : content).font(.callout).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
+                } else if mode == .original, let f = currentFile {
+                    originalPane(f)
+                } else if mode == .edit, editable {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) { editBlocks }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(minHeight: 260, maxHeight: 460)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 } else {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 10) {
-                            if preview { previewBlocks } else { editBlocks }
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        SjzMarkdownView(content: content, images: images, files: files) { f, page in fileSel = f.id; jumpPage = page; mode = .original }
+                            .padding(12)
                     }
-                    .frame(minHeight: 220, maxHeight: 430)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .frame(minHeight: 260, maxHeight: 460)
+                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
             }
             if canLink {
@@ -665,26 +793,41 @@ struct SjzCaptureEditor: View {
                 Spacer()
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("保存并写回") { Task { await save() } }
-                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(busy || !dirty)
+                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(busy || !dirty || stale)
             }
         }
         .padding(20)
-        .frame(width: 640)
+        .frame(width: 700)
         .task {
             title = capture.title
             source = capture.source
             status = capture.status
+            clueIds = capture.clueIds
             if capture.kind != "data" {
-                if let d = try? await model.sjz.captureDetail(project: project, id: capture.id) {
-                    segs = Self.parse(d.content); original = Self.join(segs); editable = d.editable
-                    images = d.images.compactMapValues { NSImage(data: $0) }
+                // 先用悬停时预取的缓存立刻画出来，再在后台读一次最新的；已经开始改了就不覆盖，只提示
+                if let c = SjzDetailStore.cached(project: project, id: capture.id) { apply(c, first: true); loaded = true }
+                if let d = await SjzDetailStore.load(api: model.sjz, project: project, id: capture.id) {
+                    if !loaded { apply(d, first: true) }
+                    else if d.content != original || d.files != files {
+                        if content == original { apply(d, first: false) } else { stale = true; message = "结审里这一项刚有更新，请取消后重新打开再改，以免覆盖" }
+                    }
                 }
             }
-            notes = (try? await model.sjz.searchNotes("")) ?? []
-            clueIds = capture.clueIds
-            if canClueLink { clueList = (try? await model.sjz.captures(project: project, kind: "clue", limit: 100)) ?? [] }
             loaded = true
+            // 取证单 / 线索列表只有点菜单才用到，放在后面读，不挡着正文
+            notes = (try? await model.sjz.searchNotes("")) ?? []
+            if canClueLink { clueList = (try? await model.sjz.captures(project: project, kind: "clue", limit: 100)) ?? [] }
         }
+    }
+
+    private func apply(_ d: SjzDetailStore.Detail, first: Bool) {
+        segs = Self.parse(d.content); original = Self.join(segs); editable = d.editable
+        images = d.images
+        files = d.files
+        if first {
+            fileSel = d.files.first?.id ?? ""
+            mode = Self.defaultMode(content: d.content, files: d.files)
+        } else if !d.files.contains(where: { $0.id == fileSel }) { fileSel = d.files.first?.id ?? "" }
     }
 
     private var dirty: Bool {
@@ -692,27 +835,113 @@ struct SjzCaptureEditor: View {
             || (isClue && status != capture.status) || linkNote != nil || (canClueLink && clueIds != capture.clueIds))
     }
 
-    @ViewBuilder private var previewBlocks: some View {
-        ForEach(segs) { seg in
-            switch seg.kind {
-            case .image: imageView(seg)
-            case .text: markdownText(seg.text)
-            }
+    private var currentFile: SjzFile? { files.first(where: { $0.id == fileSel }) ?? files.first }
+    private var textLabel: String {
+        if files.isEmpty { return "预览" }
+        if !files.contains(where: { $0.role == "original" }) { return "摘录" }
+        return content.contains("<!-- excerpt:") ? "汇总" : "文字层"
+    }
+
+    /// 有原件时默认直接看原件；只有「汇总里既有原件又有自己摘录的文字」才先看汇总
+    static func defaultMode(content: String, files: [SjzFile]) -> PMode {
+        if !files.contains(where: { $0.role == "original" }) { return .text }
+        if !content.contains("<!-- excerpt:") { return .original }
+        let own = content.components(separatedBy: "\n").contains { raw in
+            let t = raw.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty || t.hasPrefix("<!--") || t.hasPrefix("#") || t.hasPrefix("原文件：") || t.hasPrefix("文字层：") { return false }
+            if t.hasPrefix(">") { let q = t.drop(while: { $0 == ">" || $0 == " " }); return !(q.hasPrefix("摘录于") || q.hasPrefix("来源：") || q.hasPrefix("出处：") || q.hasPrefix("备注：")) }
+            return true
         }
+        return own ? .text : .original
+    }
+
+    @ViewBuilder private func originalPane(_ f: SjzFile) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if files.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(files) { x in
+                            Button { fileSel = x.id; jumpPage = nil } label: {
+                                Label(x.name, systemImage: x.icon).font(.caption).lineLimit(1)
+                                    .padding(.horizontal, 9).padding(.vertical, 4)
+                                    .background(x.id == f.id ? Brand.orange.opacity(0.18) : Color.primary.opacity(0.06), in: Capsule())
+                                    .foregroundStyle(x.id == f.id ? Brand.orange : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            SjzFilePreview(file: f, page: jumpPage)
+                .frame(maxWidth: .infinity).frame(height: 440)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.primary.opacity(0.1), lineWidth: 0.5))
+            HStack(spacing: 12) {
+                Image(systemName: f.icon).foregroundStyle(Brand.orange)
+                Text(f.name).font(.callout).lineLimit(1).truncationMode(.middle)
+                Text(f.sizeLabel).font(.caption).foregroundStyle(.tertiary)
+                Spacer()
+                Button("用默认应用打开") { NSWorkspace.shared.open(f.url) }
+                Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([f.url]) }
+            }
+            .buttonStyle(.borderless).font(.caption)
+        }
+    }
+
+    /// 这一段属于哪次摘录：往前找到最近的带标识的那一段
+    private func isFileBlock(_ seg: Seg) -> Bool { seg.kind == .text && seg.text.contains("原文件：[[") }
+
+    private func cardTitle(_ seg: Seg, _ n: Int) -> String {
+        for line in seg.text.components(separatedBy: "\n") {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("##") { return String(t.drop(while: { $0 == "#" || $0 == " " })) }
+        }
+        return seg.kind == .image ? "截图" : "摘录 \(n)"
+    }
+
+    /// 删掉一次摘录：从这一段起到下一个带标识的段落之前
+    private func removeCard(_ seg: Seg) {
+        guard let i = segs.firstIndex(where: { $0.id == seg.id }) else { return }
+        var j = i + 1
+        while j < segs.count, segs[j].marker.isEmpty { j += 1 }
+        segs.removeSubrange(i..<j)
+        if segs.isEmpty { segs = [Seg(kind: .text)] }
     }
 
     @ViewBuilder private var editBlocks: some View {
         ForEach($segs) { $seg in
+            if !seg.marker.isEmpty {
+                let n = (segs.filter { !$0.marker.isEmpty }.firstIndex(where: { $0.id == seg.id }) ?? 0) + 1
+                HStack(spacing: 8) {
+                    Image(systemName: isFileBlock(seg) ? "paperclip" : "quote.opening").font(.system(size: 11)).foregroundStyle(Brand.orange)
+                    Text(cardTitle(seg, n)).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    Spacer()
+                    if isFileBlock(seg) {
+                        Text("原件请到结审里删除").font(.caption2).foregroundStyle(.tertiary)
+                    } else {
+                        Button { removeCard(seg) } label: { Label("删除这条摘录", systemImage: "trash") }
+                            .buttonStyle(.borderless).font(.caption).foregroundStyle(.red.opacity(0.85))
+                    }
+                }
+                .padding(.top, 6)
+                Divider()
+            }
             switch seg.kind {
             case .text:
-                TextField("文字", text: $seg.text, axis: .vertical)
-                    .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(1...30)
-                    .padding(8)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                if isFileBlock(seg) {
+                    Text(seg.text).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled)
+                        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                } else {
+                    TextField("文字", text: $seg.text, axis: .vertical)
+                        .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(1...30)
+                        .padding(8)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
             case .image:
                 ZStack(alignment: .topTrailing) {
                     imageView(seg)
-                    Button { segs.removeAll { $0.id == seg.id } } label: {
+                    Button { removeImage(seg) } label: {
                         Image(systemName: "xmark.circle.fill").font(.system(size: 17)).foregroundStyle(.white, .black.opacity(0.55))
                     }
                     .buttonStyle(.plain).padding(6).help("从正文移除这张图片（文件里的图片数据仍保留）")
@@ -723,6 +952,14 @@ struct SjzCaptureEditor: View {
             Button { segs.append(Seg(kind: .text)) } label: { Label("加一段文字", systemImage: "text.append") }
         }
         .buttonStyle(.borderless).font(.caption)
+    }
+
+    /// 删图片：如果它带着摘录标识，标识交给下一段，不然这次摘录的编号会丢
+    private func removeImage(_ seg: Seg) {
+        guard let i = segs.firstIndex(where: { $0.id == seg.id }) else { return }
+        let mk = segs[i].marker
+        segs.remove(at: i)
+        if !mk.isEmpty, i < segs.count, segs[i].marker.isEmpty { segs[i].marker = mk }
     }
 
     @ViewBuilder private func imageView(_ seg: Seg) -> some View {
@@ -737,42 +974,6 @@ struct SjzCaptureEditor: View {
         } else {
             Label("图片 \(seg.key) 不可用", systemImage: "photo").font(.caption).foregroundStyle(.tertiary)
         }
-    }
-
-    /// 简易 Markdown 渲染：标题、引用块、列表和行内格式（粗体 / 链接 / 代码）
-    @ViewBuilder private func markdownText(_ md: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(md.components(separatedBy: "\n").enumerated()), id: \.offset) { _, raw in
-                let line = raw.trimmingCharacters(in: .whitespaces)
-                if line.isEmpty {
-                    Color.clear.frame(height: 2)
-                } else if line.hasPrefix("#") {
-                    let level = line.prefix(while: { $0 == "#" }).count
-                    Text(inline(String(line.dropFirst(level)).trimmed))
-                        .font(.system(size: level <= 1 ? 17 : level == 2 ? 15 : 14, weight: .semibold))
-                } else if line.hasPrefix(">") {
-                    HStack(alignment: .top, spacing: 8) {
-                        RoundedRectangle(cornerRadius: 1.5).fill(Brand.orange.opacity(0.5)).frame(width: 3)
-                        Text(inline(String(line.drop(while: { $0 == ">" || $0 == " " }))))
-                            .font(.system(size: 13)).foregroundStyle(.secondary)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text("•").foregroundStyle(.secondary)
-                        Text(inline(String(line.dropFirst(2)))).font(.system(size: 13))
-                    }
-                } else {
-                    Text(inline(line)).font(.system(size: 13))
-                }
-            }
-        }
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func inline(_ s: String) -> AttributedString {
-        (try? AttributedString(markdown: s, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(s)
     }
 
     private static func tempFile(_ img: NSImage, key: String) -> URL {
@@ -810,7 +1011,11 @@ struct SjzCaptureEditor: View {
         if let linkNote { f["linkNote"] = linkNote.path }
         if canClueLink, clueIds != capture.clueIds { f["clueIds"] = clueIds }
         guard !f.isEmpty else { dismiss(); return }
-        await run { try await model.sjz.updateCapture(project: project, id: capture.id, fields: f) }
+        await run {
+            let m = try await model.sjz.updateCapture(project: project, id: capture.id, fields: f)
+            SjzDetailStore.forget(project: project, id: capture.id)
+            return m
+        }
     }
 }
 
@@ -978,5 +1183,106 @@ private struct DayPickerCalendar: View {
         let wd = Self.cal.component(.weekday, from: Day.parse(today) ?? Date())  // 1 = 周日
         let n = (9 - wd) % 7
         return Day.add(today, days: n == 0 ? 7 : n)
+    }
+}
+
+
+/// 「来自拾忆」里的一行（紧凑两行）：标题 + 标签 + 时间；第二行是摘要（和标题重复时不显示）和来源
+private struct CaptureRowView: View {
+    let c: SjzCapture
+    let child: Bool
+    let kids: Int
+    let tap: () -> Void
+    @State private var hover = false
+
+    private var tint: Color { SjzProjectDetailView.kindTint(c.kind) }
+    private var title: String { c.title.isEmpty ? c.summary : c.title }
+    private var seq: String { c.id.split(separator: ".").last.map(String.init) ?? "" }
+    private var time: String {
+        guard let d = c.date else { return "" }
+        let f = DateFormatter()
+        f.dateFormat = Calendar.current.isDateInToday(d) ? "今天 HH:mm" : "MM-dd HH:mm"
+        return f.string(from: d)
+    }
+    /// 摘要：去掉「追加到 E-xxxx ·」前缀；只是标题的重复或延续时不显示
+    private var summary: String {
+        var s = c.summary
+        if !c.parentId.isEmpty { s = s.replacingOccurrences(of: "追加到 \(c.parentId) · ", with: "") }
+        s = Self.maskFiles(s).trimmed
+        guard !s.isEmpty, !c.title.isEmpty, s != c.title, !s.hasPrefix(c.title), !c.title.hasPrefix(s) else { return "" }
+        return s
+    }
+    /// 文件名换成文件类型（PDF / Word …），不展示具体文件名
+    private static let fileExt = try! NSRegularExpression(pattern: "[^\\s·（）、，,]+\\.(pdf|docx|doc|xlsx|xls|pptx|ppt|png|jpe?g|gif|webp|md|txt|csv)", options: .caseInsensitive)
+    private static func typeName(_ ext: String) -> String {
+        switch ext.lowercased() {
+        case "pdf": return "PDF"
+        case "doc", "docx": return "Word"
+        case "xls", "xlsx", "csv": return "Excel"
+        case "ppt", "pptx": return "PPT"
+        case "png", "jpg", "jpeg", "gif", "webp": return "图片"
+        default: return ext.uppercased()
+        }
+    }
+    private static func maskFiles(_ t: String) -> String {
+        var out = t
+        for m in fileExt.matches(in: t, range: NSRange(t.startIndex..., in: t)).reversed() {
+            guard let r = Range(m.range, in: out), let e = Range(m.range(at: 1), in: t) else { continue }
+            out.replaceSubrange(r, with: typeName(String(t[e])))
+        }
+        return out
+    }
+    /// 来源：自己（拾忆）不用写出来；文件名只显示文件类型，网站、应用名照常显示
+    private var source: String { c.source == "拾忆" ? "" : Self.maskFiles(c.source) }
+
+    private var hasAttrs: Bool { !child || !source.isEmpty || !c.editedAt.isEmpty || !summary.isEmpty }
+
+    var body: some View {
+        Button(action: tap) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: c.icon)
+                    .font(.system(size: child ? (hasAttrs ? 9 : 8) : 11, weight: .semibold)).foregroundStyle(tint)
+                    .frame(width: child ? (hasAttrs ? 18 : 15) : 22, height: child ? (hasAttrs ? 18 : 15) : 22)
+                    .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    // 第一行：标题 + 流转与关系（追加、状态、转成的线索 / 任务 / 取证单）+ 时间
+                    HStack(spacing: 5) {
+                        Text(title).font(.callout.weight(child ? .regular : .semibold)).lineLimit(1)
+                        if child { TagChip(text: "追加 #\(seq)", tint: .blue).fixedSize() }
+                        if kids > 0 { TagChip(text: "含 \(kids) 条追加", tint: .blue).fixedSize() }
+                        if !c.statusLabel.isEmpty {
+                            TagChip(text: c.statusLabel, tint: c.status == "verified" ? .green : c.status == "excluded" ? .gray : Brand.orange).fixedSize()
+                        }
+                        if !c.toClue.isEmpty { TagChip(text: "→ 线索 \(c.toClue)", tint: .purple).fixedSize() }
+                        if !c.clueIds.isEmpty { TagChip(text: "线索 \(c.clueIds.joined(separator: "、"))", tint: .pink).fixedSize() }
+                        if !c.taskId.isEmpty { TagChip(text: "任务 \(c.taskId)", tint: .teal).fixedSize() }
+                        if !c.noteNo.isEmpty { TagChip(text: "取证单 \(c.noteNo)", tint: .indigo).fixedSize() }
+                        Spacer(minLength: 6)
+                        Text(time).font(.caption2).monospacedDigit().foregroundStyle(.tertiary).fixedSize()
+                    }
+                    // 第二行：这一条自己的属性（类型、编号、文件类型 / 来源、是否编辑过）+ 摘要
+                    // 子项（追加记录）不重复写它作为证据的类型和编号；没有属性时整行不显示
+                    if hasAttrs {
+                        HStack(spacing: 5) {
+                            if !child { TagChip(text: c.kindLabel, tint: tint).fixedSize() }
+                            if !child { TagChip(text: c.id, tint: .gray).fixedSize() }
+                            if !source.isEmpty { TagChip(text: source, tint: .gray).lineLimit(1) }
+                            if !c.editedAt.isEmpty { TagChip(text: "已编辑", tint: .blue).fixedSize() }
+                            if !summary.isEmpty {
+                                Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, child ? 2 : 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(hover ? Color.primary.opacity(0.05) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
     }
 }

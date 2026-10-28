@@ -19,6 +19,10 @@ struct SjzApi {
     /// 调用工具，把返回的 JSON 文本解析成字典
     func call(_ tool: String, _ args: JSON = [:]) async throws -> JSON {
         let text = try await mcp.callText(tool, args)
+        // 写入类调用成功后通知界面：拾忆里「来自拾忆」的列表立刻重读，不用等轮询
+        if !tool.hasPrefix("list_") && !tool.hasPrefix("get_") {
+            DispatchQueue.main.async { NotificationCenter.default.post(name: .sjzCapturesChanged, object: nil) }
+        }
         guard let d = text.data(using: .utf8), let obj = try? JSONSerialization.jsonObject(with: d) as? JSON else {
             return ["message": text]
         }
@@ -227,16 +231,20 @@ struct SjzApi {
                               status: (c["status"] as? String) ?? "", taskId: (c["taskId"] as? String) ?? "",
                               at: (c["at"] as? String) ?? "", editedAt: (c["editedAt"] as? String) ?? "",
                               clueIds: (c["clueIds"] as? [String]) ?? [], logRel: (c["logRel"] as? String) ?? "",
-                              toClue: (c["toClue"] as? String) ?? "")
+                              toClue: (c["toClue"] as? String) ?? "", parentId: (c["parentId"] as? String) ?? "")
         }
     }
 
     /// 正文、是否可编辑，以及正文里引用的图片（`imgN` → 图片数据）
-    func captureDetail(project: String, id: String) async throws -> (content: String, editable: Bool, images: [String: Data]) {
+    func captureDetail(project: String, id: String) async throws -> (content: String, editable: Bool, images: [String: Data], files: [SjzFile]) {
         let r = try await call("get_capture", ["project": project, "id": id])
         var imgs: [String: Data] = [:]
         for (k, v) in (r["images"] as? [String: String]) ?? [:] { if let d = Data(base64Encoded: v) { imgs[k] = d } }
-        return ((r["content"] as? String) ?? "", (r["editable"] as? Bool) ?? false, imgs)
+        let files = ((r["files"] as? [JSON]) ?? []).compactMap { f -> SjzFile? in
+            guard let rel = f["rel"] as? String, let abs = f["abs"] as? String else { return nil }
+            return SjzFile(rel: rel, name: (f["name"] as? String) ?? rel, ext: (f["ext"] as? String) ?? "", abs: abs, size: (f["size"] as? Int) ?? 0, role: (f["role"] as? String) ?? "original")
+        }
+        return ((r["content"] as? String) ?? "", (r["editable"] as? Bool) ?? false, imgs, files)
     }
 
     /// 二次编辑写回：title / source / content / status / linkNote
@@ -390,6 +398,31 @@ struct SjzProjectStat: Equatable, Hashable, Codable, Identifiable {
     var id: String { name }
 }
 
+/// 一条记录名下的原件（pdf / word / excel / 图片…），abs 是本机上的绝对路径，可直接用系统预览
+struct SjzFile: Identifiable, Hashable {
+    let rel: String
+    let name: String
+    let ext: String
+    let abs: String
+    let size: Int
+    /// original = 这条记录自己的原件；source = 摘录出处指向的文件
+    var role = "original"
+    var id: String { rel }
+    var url: URL { URL(fileURLWithPath: abs) }
+    var isPDF: Bool { ext == "pdf" }
+    var icon: String {
+        switch ext {
+        case "pdf": return "doc.richtext"
+        case "doc", "docx", "wps", "rtf": return "doc.text"
+        case "xls", "xlsx", "csv", "et": return "tablecells"
+        case "ppt", "pptx": return "rectangle.on.rectangle"
+        case "png", "jpg", "jpeg", "gif", "webp", "heic", "bmp", "tif", "tiff": return "photo"
+        default: return "doc"
+        }
+    }
+    var sizeLabel: String { ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file) }
+}
+
 /// 拾忆写进结审项目的一条记录（证据 / 法规 / 线索 / 数据）
 struct SjzCapture: Identifiable, Hashable {
     let id: String
@@ -410,6 +443,8 @@ struct SjzCapture: Identifiable, Hashable {
     var logRel: String = ""
     /// 想法已转成的线索（台账编号），空表示还没转
     var toClue: String = ""
+    /// 追加记录挂在哪个证据（台账编号）名下，空表示是独立的一项
+    var parentId: String = ""
 
     var kindLabel: String { ["evidence": "证据", "regulation": "法规", "clue": "线索", "idea": "想法", "data": "数据"][kind] ?? kind }
     var icon: String { ["evidence": "doc.text.image", "regulation": "book.closed", "clue": "lightbulb", "idea": "text.bubble", "data": "tablecells"][kind] ?? "doc" }
@@ -491,4 +526,9 @@ struct SjzEvent: Identifiable, Equatable {
         default: return "checkmark.shield.fill"
         }
     }
+}
+
+extension Notification.Name {
+    /// 结审里的拾忆来源台账有变化（刚保存 / 编辑 / 删除了内容）
+    static let sjzCapturesChanged = Notification.Name("sjz.capturesChanged")
 }
