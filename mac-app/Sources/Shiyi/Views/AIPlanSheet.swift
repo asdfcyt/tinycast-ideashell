@@ -89,7 +89,7 @@ struct AIPlanSheet: View {
                 Text(error ?? "出错了").font(.callout).fixedSize(horizontal: false, vertical: true)
             }
             if !model.hasLlm {
-                Button("去设置 AI 模型") { dismiss(); SettingsWindow.show(.ai) }.buttonStyle(.borderedProminent).tint(Brand.orange)
+                Button("去设置 AI 模型") { dismiss(); SettingsWindow.show(.account) }.buttonStyle(.borderedProminent).tint(Brand.orange)
             }
         }
         .padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

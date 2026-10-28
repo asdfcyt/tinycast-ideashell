@@ -1,29 +1,36 @@
 import AppKit
 import SwiftUI
 
-/// 设置页「快捷键」里的一行：全局万能输入的快捷键。几个预设 + 自定义录制。
-struct QuickAddHotkeyRow: View {
-    @AppStorage(QuickAddHotkey.key) private var choice: QuickAddHotkey = .ctrlOptN
-    // 录制后写进 UserDefaults 的值：监听它们只是为了让自定义组合的文字跟着刷新
-    @AppStorage(QuickAddHotkey.customCodeKey) private var customCode = -1
-    @AppStorage(QuickAddHotkey.customModsKey) private var customMods = 0
-    @AppStorage(QuickAddHotkey.customNameKey) private var customName = ""
-    @ObservedObject private var panel = QuickAddPanelController.shared
+/// 设置页「全局快捷键」里的一行：几个预设 + 自定义录制。万能输入 / 灵动岛 / 语音输入共用。
+struct GlobalHotkeyRow<Choice: Hashable>: View {
+    let title: String
+    var hint: String?
+    @Binding var choice: Choice
+    let options: [(Choice, String)]
+    let customChoice: Choice
+    let owner: HotkeyOwner
+    let saved: () -> HotkeyCombo?
+    let save: (HotkeyCombo) -> Void
+    let suspend: () -> Void
+    let resume: () -> Void
+    var registerError: String?
 
     @State private var recording = false
     @State private var monitor: Any?
-    @State private var hint: String?
+    @State private var hint2: String?
+    /// 录制后写进 UserDefaults：收到变化通知就刷新自定义组合的文字
+    @State private var tick = 0
 
     private var customLabel: String {
-        _ = (customCode, customMods, customName)
-        return QuickAddHotkey.savedCustom?.label ?? "点击录制"
+        _ = tick
+        return saved()?.label ?? "点击录制"
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SRow("全局万能输入", hint: "在任何 App 里按下，弹出悬浮输入框；回车保存后自动消失，Esc 关闭") {
+            SRow(title, hint: hint) {
                 HStack(spacing: 10) {
-                    if choice == .custom {
+                    if choice == customChoice {
                         Button {
                             if recording { stopRecording() } else { startRecording() }
                         } label: {
@@ -33,24 +40,25 @@ struct QuickAddHotkeyRow: View {
                         .buttonStyle(.bordered).controlSize(.small)
                         .tint(recording ? Color.accentColor : nil)
                     }
-                    SPick(selection: $choice, options: QuickAddHotkey.allCases.map { ($0, $0.label) })
+                    SPick(selection: $choice, options: options)
                 }
             }
 
-            if let msg = hint ?? panel.registerError {
+            if let msg = hint2 ?? registerError {
                 Label(msg, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 11.5)).foregroundStyle(Color.orange)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .onChange(of: choice) { _, new in
-            hint = nil
-            if new == .custom {
-                if QuickAddHotkey.savedCustom == nil { startRecording() }
+            hint2 = nil
+            if new == customChoice {
+                if saved() == nil { startRecording() }
             } else {
                 stopRecording()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in tick += 1 }
         .onDisappear { stopRecording() }
     }
 
@@ -58,9 +66,9 @@ struct QuickAddHotkeyRow: View {
 
     private func startRecording() {
         stopRecording()
-        hint = nil
+        hint2 = nil
         recording = true
-        panel.suspendHotkey()
+        suspend()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
             handle(e)
             return nil
@@ -71,7 +79,7 @@ struct QuickAddHotkeyRow: View {
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
         if recording {
             recording = false
-            panel.resumeHotkey()
+            resume()
         }
     }
 
@@ -88,12 +96,42 @@ struct QuickAddHotkeyRow: View {
             name: HotkeyCombo.keyName(code: e.keyCode, chars: e.charactersIgnoringModifiers)
         )
         // 不能用的组合：提示原因，继续等下一次按键
-        if let why = combo.problem {
-            hint = why
+        if let why = combo.problem(for: owner) {
+            hint2 = why
             return
         }
-        QuickAddHotkey.saveCustom(combo)
-        hint = nil
+        save(combo)
+        hint2 = nil
         stopRecording()
+    }
+}
+
+/// 全局万能输入
+struct QuickAddHotkeyRow: View {
+    @AppStorage(QuickAddHotkey.key) private var choice: QuickAddHotkey = .ctrlOptN
+    @ObservedObject private var panel = QuickAddPanelController.shared
+
+    var body: some View {
+        GlobalHotkeyRow(
+            title: "万能输入", choice: $choice,
+            options: QuickAddHotkey.allCases.map { ($0, $0.label) }, customChoice: .custom, owner: .quickAdd,
+            saved: { QuickAddHotkey.savedCustom }, save: QuickAddHotkey.saveCustom,
+            suspend: { panel.suspendHotkey() }, resume: { panel.resumeHotkey() },
+            registerError: panel.registerError
+        )
+    }
+}
+
+/// 灵动岛展开
+struct IslandHotkeyRow: View {
+    @AppStorage(DisplayMode.hotkeyKey) private var choice: IslandHotkey = .optSpace
+
+    var body: some View {
+        GlobalHotkeyRow(
+            title: "灵动岛", choice: $choice,
+            options: IslandHotkey.allCases.map { ($0, $0.label) }, customChoice: .custom, owner: .island,
+            saved: { IslandHotkey.savedCustom }, save: IslandHotkey.saveCustom,
+            suspend: { IslandController.shared.suspendHotkey() }, resume: { IslandController.shared.resumeHotkey() }
+        )
     }
 }

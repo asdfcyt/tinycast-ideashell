@@ -32,7 +32,8 @@ struct ShiyiApp: App {
         Window("设置", id: "settings") {
             SettingsRoot().environmentObject(model)
         }
-        .defaultSize(width: 880, height: 620)
+        .defaultSize(width: SettingsRoot.fixedWidth, height: 620)
+        .windowResizability(.contentSize)
 
         // 灵动岛模式下不插入菜单栏图标；灵动岛由 IslandController 在 model.start() 里按设置启停
         // set 故意留空：MenuBarExtra 会把状态项的可见性回写进来，写回 AppStorage 会和 body 重算形成死循环

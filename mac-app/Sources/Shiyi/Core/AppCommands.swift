@@ -5,6 +5,7 @@ import SwiftUI
 struct AppCommands: Commands {
     @ObservedObject var model: AppModel
     @ObservedObject private var voice = VoiceController.shared
+    @ObservedObject private var keys = AppShortcutStore.shared
 
     private var sections: [AppSection] { AppSection.allCases.filter { $0 != .settings } }
 
@@ -12,7 +13,7 @@ struct AppCommands: Commands {
         // 拾忆菜单：设置…
         CommandGroup(replacing: .appSettings) {
             Button("设置…") { SettingsWindow.show() }
-                .keyboardShortcut(",", modifiers: .command)
+                .appShortcut(keys.shortcut(.settings))
         }
 
         // 文件：新建 / 刷新
@@ -21,30 +22,30 @@ struct AppCommands: Commands {
                 MainWindow.show()
                 model.openQuickAddHere()
             }
-            .keyboardShortcut("n", modifiers: .command)
+            .appShortcut(keys.shortcut(.quickAdd))
             Divider()
             Button("记笔记…") { MainWindow.show(); model.openQuickAdd(kind: .note) }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .appShortcut(keys.shortcut(.note))
             Button("记待办…") { MainWindow.show(); model.openQuickAdd(kind: .todo) }
-                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .appShortcut(keys.shortcut(.todo))
             Button("记日记…") { MainWindow.show(); model.openQuickAdd(kind: .daily) }
-                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .appShortcut(keys.shortcut(.daily))
             Divider()
             Button("语音输入") { voice.toggleFromMenu() }
                 .disabled(voice.phase == .organizing)
             Divider()
             Button("刷新") { Task { await model.refreshAll() } }
-                .keyboardShortcut("r", modifiers: .command)
+                .appShortcut(keys.shortcut(.refresh))
         }
 
         // 显示：切换页面
         CommandGroup(before: .sidebar) {
-            ForEach(Array(sections.enumerated()), id: \.element) { i, s in
+            ForEach(sections) { s in
                 Button(s.title) {
                     MainWindow.show()
                     model.section = s
                 }
-                .keyboardShortcut(KeyEquivalent(Character(String(i + 1))), modifiers: .command)
+                .appShortcut(AppShortcutID.page(s).map { keys.shortcut($0) } ?? AppShortcut(key: "", mods: 0))
             }
             Divider()
         }
@@ -69,7 +70,7 @@ struct AppCommands: Commands {
         // 窗口
         CommandGroup(after: .windowArrangement) {
             Button("拾忆") { MainWindow.show() }
-                .keyboardShortcut("0", modifiers: .command)
+                .appShortcut(keys.shortcut(.mainWindow))
             Button("设置") { SettingsWindow.show() }
         }
 

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// 本机小文件存储：凭证（0600 权限）与备份缓存，都在 ~/Library/Application Support/Shiyi/ 下
 enum LocalStore {
@@ -24,7 +25,39 @@ enum LocalStore {
     }
 }
 
-/// 两个服务的凭证；只存本机，永远不上传
+/// 系统钥匙串里的一条通用密码（整份凭证存成一条 JSON，只会触发一次授权）。失败时调用方回退到本机文件。
+enum Keychain {
+    private static let service = "com.carpe.shiyi.mac.credentials"
+    private static let account = "credentials"
+
+    private static var base: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: account]
+    }
+
+    static func read() -> Data? {
+        var q = base
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess else { return nil }
+        return out as? Data
+    }
+
+    @discardableResult
+    static func write(_ data: Data) -> Bool {
+        let status = SecItemUpdate(base as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
+        var add = base
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+}
+
+/// 两个服务的凭证；只存本机（优先系统钥匙串，不可用时退回 0600 权限的本机文件），永远不上传
 final class CredentialStore: @unchecked Sendable {
     private let lock = NSLock()
     private var _ideashell: String
@@ -46,9 +79,11 @@ final class CredentialStore: @unchecked Sendable {
     }
 
     init() {
-        let disk = LocalStore.read("credentials.json")
+        let fileDisk = LocalStore.read("credentials.json")
             .flatMap { $0.data(using: .utf8) }
-            .flatMap { try? JSONDecoder().decode(Disk.self, from: $0) } ?? Disk()
+            .flatMap { try? JSONDecoder().decode(Disk.self, from: $0) }
+        let keyDisk = Keychain.read().flatMap { try? JSONDecoder().decode(Disk.self, from: $0) }
+        let disk = keyDisk ?? fileDisk ?? Disk()
         _ideashell = disk.ideashellKey
         _dida = disk.didaToken
         _backupNoteId = disk.backupNoteId
@@ -56,6 +91,8 @@ final class CredentialStore: @unchecked Sendable {
         _sjzKey = disk.sjzKey ?? ""
         _tencentId = disk.tencentId ?? ""
         _tencentKey = disk.tencentKey ?? ""
+        // 第一次从文件迁到钥匙串：写成功后，文件里只留不敏感的字段
+        if keyDisk == nil, fileDisk != nil { persist() }
     }
 
     var ideashellKey: String { lock.withLock { _ideashell } }
@@ -107,7 +144,14 @@ final class CredentialStore: @unchecked Sendable {
     /// 调用方已持有锁
     private func persist() {
         let disk = Disk(ideashellKey: _ideashell, didaToken: _dida, backupNoteId: _backupNoteId, llmKey: _llmKey.isEmpty ? nil : _llmKey, sjzKey: _sjzKey.isEmpty ? nil : _sjzKey, tencentId: _tencentId.isEmpty ? nil : _tencentId, tencentKey: _tencentKey.isEmpty ? nil : _tencentKey)
-        if let d = try? JSONEncoder().encode(disk), let s = String(data: d, encoding: .utf8) {
+        guard let d = try? JSONEncoder().encode(disk) else { return }
+        if Keychain.write(d) {
+            // 密钥已进钥匙串：文件里只留不敏感的字段
+            let plain = Disk(ideashellKey: "", didaToken: "", backupNoteId: _backupNoteId)
+            if let pd = try? JSONEncoder().encode(plain), let ps = String(data: pd, encoding: .utf8) {
+                LocalStore.write("credentials.json", ps, secret: true)
+            }
+        } else if let s = String(data: d, encoding: .utf8) {
             LocalStore.write("credentials.json", s, secret: true)
         }
     }

@@ -115,7 +115,6 @@ private struct TodayContent: View {
                     Button { showQuickStart = true } label: {
                         Label("快速启动", systemImage: "bolt.fill")
                     }
-                    .buttonStyle(.borderedProminent).tint(Brand.orange)
                     .disabled(model.overview == nil)
                     .help("让 AI 梳理今天的待办、最近的笔记和 Daily Note，无压力地开始")
                 }

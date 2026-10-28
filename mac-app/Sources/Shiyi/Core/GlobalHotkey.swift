@@ -23,12 +23,6 @@ final class GlobalHotkey {
         Self.instances[id] = self
     }
 
-    /// 灵动岛的预设键
-    func register(_ hk: IslandHotkey) {
-        guard let code = hk.keyCode else { unregister(); return }
-        register(keyCode: code, modifiers: hk.modifiers)
-    }
-
     /// 注册一个组合键；已被系统或其他 App 占用时返回 false
     @discardableResult
     func register(keyCode: UInt32, modifiers: UInt32) -> Bool {

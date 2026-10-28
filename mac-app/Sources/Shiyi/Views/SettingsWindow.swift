@@ -1,29 +1,28 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - 设置窗口
 
 /// 设置的分类：左侧导航，一类一页
 enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
-    case general, account, ai, data, voice, mic, lexicon, widget, focus, notify
+    case general, account, data, voice, mic, widget, focus, notify
 
     var id: String { rawValue }
 
     /// 侧边栏的分组
     static let sections: [(title: String, tabs: [SettingsTab])] = [
-        ("通用", [.general, .account, .ai, .data]),
-        ("功能", [.voice, .mic, .lexicon, .widget, .focus, .notify]),
+        ("通用", [.general, .account, .data]),
+        ("功能", [.voice, .mic, .widget, .focus, .notify]),
     ]
 
     var title: String {
         switch self {
         case .general: return "通用"
         case .account: return "账号"
-        case .ai: return "AI 模型"
         case .data: return "数据与备份"
         case .voice: return "语音输入"
         case .mic: return "猛犸麦克风"
-        case .lexicon: return "词库"
         case .widget: return "小组件"
         case .focus: return "专注"
         case .notify: return "通知"
@@ -34,27 +33,37 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .general: return "gearshape.fill"
         case .account: return "person.crop.circle.fill"
-        case .ai: return "sparkles"
         case .data: return "externaldrive.fill"
         case .voice: return "mic.fill"
         case .mic: return "dot.radiowaves.left.and.right"
-        case .lexicon: return "text.book.closed.fill"
         case .widget: return "capsule.portrait.fill"
         case .focus: return "timer"
         case .notify: return "bell.badge.fill"
         }
     }
 
+    /// 侧边栏图标底色（每一类一个颜色，和系统设置一样好认）
+    var color: Color {
+        switch self {
+        case .general: return .gray
+        case .account: return .blue
+        case .data: return .teal
+        case .voice: return .pink
+        case .mic: return .indigo
+        case .widget: return .cyan
+        case .focus: return .orange
+        case .notify: return .red
+        }
+    }
+
     /// 搜索用的关键词
     var keywords: String {
         switch self {
-        case .general: return "外观 主题 暗黑 明亮 dock 后台 快捷键 万能输入"
-        case .account: return "闪念贝壳 滴答清单 结审 腾讯云 secretid secretkey api key 口令 连接 账号 凭证"
-        case .ai: return "ai 模型 大模型 接口 openai 通义 deepseek key 测试连接"
+        case .general: return "外观 主题 暗黑 明亮 dock 后台 快捷键 热键 全局 万能输入 灵动岛 语音输入 菜单 自定义"
+        case .account: return "闪念贝壳 滴答清单 结审 腾讯云 secretid secretkey api key 口令 连接 账号 凭证 ai 模型 大模型 接口 openai 通义 deepseek 测试连接"
         case .data: return "备份 手机 本机 数据 目录 finder"
-        case .voice: return "语音 快捷键 识别 引擎 腾讯云 option 录音 听写 麦克风 权限 历史"
+        case .voice: return "语音 快捷键 识别 引擎 腾讯云 option 录音 听写 麦克风 权限 历史 词库 热词 替换 纠错 同音字 专有名词 人名"
         case .mic: return "猛犸 hollyland lark a2 无线麦克风 发射器 接收器 按键 单击 双击 三击 静音 降噪 电量"
-        case .lexicon: return "词库 热词 替换 纠错 同音字 专有名词 人名"
         case .widget: return "灵动岛 菜单栏 小组件 悬停 截图 暂存架 刘海 ocr 状态提醒"
         case .focus: return "专注 番茄 目标 小票 打印 提示音"
         case .notify: return "通知 提醒 简报 逾期 到点 提前"
@@ -100,44 +109,49 @@ struct SettingsRoot: View {
 
     var body: some View {
         NavigationSplitView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(SettingsTab.sections, id: \.title) { sec in
-                        let items = sec.tabs.filter(matches)
-                        if !items.isEmpty {
-                            Text(sec.title)
-                                .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
-                                .padding(.leading, 10).padding(.top, 10).padding(.bottom, 2)
+            // 系统原生的侧边栏列表：选中态、间距、液态玻璃都交给系统
+            List(selection: Binding(get: { nav.tab }, set: { if let t = $0 { nav.tab = t } })) {
+                // 和系统设置一样：没有分组标题，组与组之间留一段空白
+                ForEach(Array(SettingsTab.sections.enumerated()), id: \.offset) { idx, sec in
+                    let items = sec.tabs.filter(matches)
+                    if !items.isEmpty {
+                        Section {
                             ForEach(items) { t in
-                                SidebarRow(title: t.title, selected: nav.tab == t, tint: Color.accentColor, action: { nav.tab = t }) { on in
-                                    SideIcon(symbol: t.icon, selected: on)
+                                HStack(spacing: 7) {
+                                    SideIcon(symbol: t.icon, color: t.color)
+                                    Text(t.title).font(.system(size: 13))
                                 }
+                                    .tag(t)
                             }
+                        } header: {
+                            if idx > 0 { Color.clear.frame(height: 8) }
                         }
                     }
                 }
-                .padding(.horizontal, 10).padding(.bottom, 10)
             }
-            .navigationSplitViewColumnWidth(min: 180, ideal: 190, max: 210)
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(200)
             .searchable(text: $query, placement: .sidebar, prompt: "搜索设置")
         } detail: {
             pane
                 .navigationTitle(nav.tab.title)
         }
-        .frame(minWidth: 780, minHeight: 540)
+        // 宽度固定（就是原来的最小宽度），只允许上下拉伸
+        .frame(minWidth: Self.fixedWidth, maxWidth: Self.fixedWidth, minHeight: 540)
     }
 
-    /// 侧边栏图标：淡蓝底 + 蓝色符号，选中时变成白色
+    static let fixedWidth: CGFloat = 780
+
+    /// 侧边栏图标：和系统设置一样，彩色圆角方块 + 白色符号
     private struct SideIcon: View {
         let symbol: String
-        let selected: Bool
+        let color: Color
         var body: some View {
             Image(systemName: symbol)
-                .font(.system(size: 9.5, weight: .medium))
-                .foregroundStyle(selected ? Color.white : Color.accentColor)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white)
                 .frame(width: 17, height: 17)
-                .background(selected ? Color.white.opacity(0.25) : Color.accentColor.opacity(0.14),
-                            in: RoundedRectangle(cornerRadius: 4.5, style: .continuous))
+                .background(color.gradient, in: RoundedRectangle(cornerRadius: 4.5, style: .continuous))
         }
     }
 
@@ -145,11 +159,9 @@ struct SettingsRoot: View {
         switch nav.tab {
         case .general: GeneralPane()
         case .account: AccountPane()
-        case .ai: AIPane()
         case .data: DataPane()
         case .voice: VoiceSettingsPane()
         case .mic: MicSettingsPane()
-        case .lexicon: LexiconPane()
         case .widget: WidgetPane()
         case .focus: FocusPane()
         case .notify: NotifyPane()
@@ -159,66 +171,135 @@ struct SettingsRoot: View {
 
 // MARK: - 小零件（统一的页面 / 分组 / 行）
 
-/// 一页：可滚动，内容限宽居中
+/// 一页：系统原生的「分组表单」（和系统设置同一个版式：圆角分组、细分隔线、液态玻璃跟随系统）
 struct SPage<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) { content }
-                .padding(.horizontal, 28).padding(.vertical, 20)
-                .frame(maxWidth: 600, alignment: .leading)
-                .frame(maxWidth: .infinity)
-        }
+        Form { content }
+            .formStyle(.grouped)
     }
 }
 
-/// 一组：小标题 + 圆角底板（行与行之间自动加细分隔线）+ 底部说明
-struct SGroup<Content: View>: View {
+/// 一组：原生 Section（小标题 + 圆角分组）。说明文字能不写就不写，让排版自己说话。
+/// `trailing` 是标题行右侧的图标按钮（测试 / 刷新 / 还原…）；`result` 是操作结果，显示在分组下方。
+struct SGroup<Content: View, Trailing: View>: View {
     var title: String?
     var chip: (String, Color)?
     var footer: String?
+    var result: (ok: Bool, text: String)?
+    var trailing: Trailing
     @ViewBuilder var content: Content
 
-    init(_ title: String? = nil, chip: (String, Color)? = nil, footer: String? = nil, @ViewBuilder content: () -> Content) {
-        self.title = title; self.chip = chip; self.footer = footer; self.content = content()
+    init(_ title: String? = nil, chip: (String, Color)? = nil, footer: String? = nil,
+         result: (ok: Bool, text: String)? = nil,
+         @ViewBuilder trailing: () -> Trailing, @ViewBuilder content: () -> Content) {
+        self.title = title; self.chip = chip; self.footer = footer; self.result = result
+        self.trailing = trailing(); self.content = content()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let title {
+        Section {
+            content
+        } header: {
+            if title != nil || chip != nil {
                 HStack(spacing: 6) {
-                    Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(.secondary)
+                    if let title { Text(title) }
                     if let chip { TagChip(text: chip.0, tint: chip.1) }
+                    Spacer(minLength: 8)
+                    trailing
                 }
-                .padding(.leading, 4)
             }
-            _VariadicView.Tree(SDividedRoot()) { content }
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.primary.opacity(0.07), lineWidth: 0.5))
-            if let footer {
-                Text(footer).font(.system(size: 11.5)).foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 4)
-            }
-        }
-    }
-}
-
-private struct SDividedRoot: _VariadicView_MultiViewRoot {
-    @ViewBuilder func body(children: _VariadicView.Children) -> some View {
-        let last = children.last?.id
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(children) { child in
-                child
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if child.id != last { Divider().opacity(0.6).padding(.leading, 12) }
+        } footer: {
+            if result != nil || footer != nil {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let r = result {
+                        Label(r.text, systemImage: r.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(r.ok ? Color.green : Color.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let footer { Text(footer) }
+                }
             }
         }
     }
 }
 
-/// 一行：左边标题 + 灰色说明，右边放控件
+extension SGroup where Trailing == EmptyView {
+    init(_ title: String? = nil, chip: (String, Color)? = nil, footer: String? = nil,
+         result: (ok: Bool, text: String)? = nil, @ViewBuilder content: () -> Content) {
+        self.init(title, chip: chip, footer: footer, result: result, trailing: { EmptyView() }, content: content)
+    }
+}
+
+/// 可折叠的一组：点标题收起 / 展开，状态记在本机；收起后标题上的状态标签和图标按钮还在
+struct SFoldGroup<Content: View, Trailing: View>: View {
+    let title: String
+    var chip: (String, Color)?
+    var footer: String?
+    var result: (ok: Bool, text: String)?
+    var trailing: Trailing
+    @ViewBuilder var content: Content
+    @AppStorage private var open: Bool
+
+    init(_ title: String, fold key: String, open: Bool = true, chip: (String, Color)? = nil, footer: String? = nil,
+         result: (ok: Bool, text: String)? = nil,
+         @ViewBuilder trailing: () -> Trailing, @ViewBuilder content: () -> Content) {
+        self.title = title; self.chip = chip; self.footer = footer; self.result = result
+        self.trailing = trailing(); self.content = content()
+        self._open = AppStorage(wrappedValue: open, "settings.fold." + key)
+    }
+
+    private func toggle() {
+        withAnimation(.easeOut(duration: 0.15)) { open.toggle() }
+    }
+
+    var body: some View {
+        Section {
+            if open { content }
+        } header: {
+            HStack(spacing: 6) {
+                Button { toggle() } label: {
+                    // 显式指定字体：分组收起后是空的，系统会把空分组的标题换成灰色细体
+                    Text(title).font(.headline).foregroundStyle(.primary).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if let chip { TagChip(text: chip.0, tint: chip.1) }
+                Spacer(minLength: 8)
+                trailing
+                // 展开 / 收起箭头统一放在标题最右侧
+                Button { toggle() } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .bold))
+                        .rotationEffect(.degrees(open ? 90 : 0))
+                        .frame(width: 22, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(open ? "收起" : "展开")
+            }
+        } footer: {
+            if result != nil || (open && footer != nil) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let r = result {
+                        Label(r.text, systemImage: r.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(r.ok ? Color.green : Color.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if open, let footer { Text(footer) }
+                }
+            }
+        }
+    }
+}
+
+extension SFoldGroup where Trailing == EmptyView {
+    init(_ title: String, fold key: String, open: Bool = true, chip: (String, Color)? = nil, footer: String? = nil,
+         result: (ok: Bool, text: String)? = nil, @ViewBuilder content: () -> Content) {
+        self.init(title, fold: key, open: open, chip: chip, footer: footer, result: result, trailing: { EmptyView() }, content: content)
+    }
+}
+
+/// 一行：左边标题（需要时加一行灰色说明），右边放控件（原生 LabeledContent，对齐方式和系统设置一致）
 struct SRow<Trailing: View>: View {
     let title: String
     var hint: String?
@@ -229,15 +310,15 @@ struct SRow<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        LabeledContent {
+            trailing
+        } label: {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13))
+                Text(title)
                 if let hint {
                     Text(hint).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 12)
-            trailing
         }
     }
 }
@@ -254,7 +335,7 @@ struct SToggle: View {
 
     var body: some View {
         SRow(title, hint: hint) {
-            Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            Toggle("", isOn: $isOn).labelsHidden().toggleStyle(.switch)
         }
     }
 }
@@ -278,52 +359,61 @@ struct SPick<V: Hashable>: View {
     }
 }
 
-/// 行内的小按钮（测试 / 打开 / 前往…）：次要样式，不抢眼
-struct SAction: View {
-    let title: String
-    var systemImage: String?
+/// 图标按钮（测试 / 刷新 / 打开 / 授权…）：不写字，悬停显示名称；`busy` 时换成转圈
+struct SIconButton: View {
+    let symbol: String
+    let help: String
+    var busy = false
     var disabled = false
     let action: () -> Void
 
-    init(_ title: String, systemImage: String? = nil, disabled: Bool = false, action: @escaping () -> Void) {
-        self.title = title; self.systemImage = systemImage; self.disabled = disabled; self.action = action
+    init(symbol: String, help: String, busy: Bool = false, disabled: Bool = false, action: @escaping () -> Void) {
+        self.symbol = symbol; self.help = help; self.busy = busy; self.disabled = disabled; self.action = action
+    }
+
+    var body: some View {
+        Group {
+            if busy {
+                ProgressView().controlSize(.small)
+            } else {
+                Button(action: action) {
+                    Image(systemName: symbol).font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+                .disabled(disabled)
+            }
+        }
+        .frame(width: 22, height: 20)
+        .help(help)
+    }
+}
+
+/// 点一下去别处的行（词库、识别历史…）：右边一个小箭头，和系统设置里的跳转行一样
+struct SLinkRow: View {
+    let title: String
+    var hint: String?
+    var symbol = "chevron.right"
+    let action: () -> Void
+
+    init(_ title: String, hint: String? = nil, symbol: String = "chevron.right", action: @escaping () -> Void) {
+        self.title = title; self.hint = hint; self.symbol = symbol; self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            if let systemImage { Label(title, systemImage: systemImage) } else { Text(title) }
-        }
-        .buttonStyle(.bordered).controlSize(.small)
-        .disabled(disabled)
-    }
-}
-
-/// 「一件事 + 右边一个小按钮」的行；结果（成功 / 失败）直接显示在左边说明处
-struct SActionRow: View {
-    let title: String
-    var hint: String?
-    let button: String
-    var busy = false
-    var result: (ok: Bool, text: String)?
-    var disabled = false
-    let action: () -> Void
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13))
-                if let r = result {
-                    Label(r.text, systemImage: r.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .font(.system(size: 11.5)).foregroundStyle(r.ok ? Color.green : Color.orange)
-                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                } else if let hint {
-                    Text(hint).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                    if let hint {
+                        Text(hint).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    }
                 }
+                Spacer(minLength: 8)
+                Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
             }
-            Spacer(minLength: 12)
-            if busy { ProgressView().controlSize(.small) }
-            SAction(button, disabled: disabled || busy, action: action)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 }
 
@@ -338,9 +428,11 @@ struct SecretField: View {
     var body: some View {
         HStack(spacing: 6) {
             Group {
-                if reveal { TextField(placeholder, text: $text) } else { SecureField(placeholder, text: $text) }
+                if reveal { TextField("", text: $text, prompt: Text(placeholder)) } else { SecureField("", text: $text, prompt: Text(placeholder)) }
             }
-            .textFieldStyle(.roundedBorder).font(.system(size: 12.5).monospaced())
+            .labelsHidden()
+            .textFieldStyle(.plain).multilineTextAlignment(.trailing)
+            .font(.system(size: 12.5).monospaced())
             .frame(width: 260)
             .focused($focused)
             .onSubmit { onCommit?() }
@@ -360,8 +452,10 @@ struct SText: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextField(placeholder, text: $text)
-            .textFieldStyle(.roundedBorder).font(.system(size: 12.5).monospaced())
+        TextField("", text: $text, prompt: Text(placeholder))
+            .labelsHidden()
+            .textFieldStyle(.plain).multilineTextAlignment(.trailing)
+            .font(.system(size: 12.5).monospaced())
             .frame(width: width)
             .focused($focused)
             .onSubmit { onCommit?() }
@@ -378,6 +472,8 @@ private struct AccountPane: View {
     @State private var sjzResult: (ok: Bool, text: String)?
     @State private var tencentId = ""
     @State private var tencentKey = ""
+    @State private var llmTesting = false
+    @State private var llmResult: (ok: Bool, text: String)?
 
     private static func isLoopback(_ endpoint: String) -> Bool {
         guard let host = URL(string: endpoint.trimmed)?.host?.lowercased() else { return true }
@@ -388,55 +484,58 @@ private struct AccountPane: View {
 
     var body: some View {
         SPage {
-            SGroup("闪念贝壳",
-                   chip: saving ? ("保存中…", .gray) : (model.hasIdeashell ? ("已连接", .green) : ("未填写", .orange)),
-                   footer: "在闪念贝壳 App 的「设置 → API / MCP」里创建。用于读写笔记、读取手机备份。填完离开输入框即自动保存。") {
+            SFoldGroup("闪念贝壳", fold: "ideashell",
+                   chip: saving ? ("保存中…", .gray) : (model.hasIdeashell ? ("已连接", .green) : ("未填写", .orange))) {
                 SRow("API Key") { SecretField(placeholder: "API Key", text: $model.ideashellKeyInput, onCommit: commitCredentials) }
             }
 
-            SGroup("滴答清单",
-                   chip: saving ? ("保存中…", .gray) : (model.hasDida ? ("已连接", .green) : ("未填写", .orange)),
-                   footer: "在滴答清单「设置 → 账户 → API 口令」里创建。用于读写待办和专注。") {
+            SFoldGroup("滴答清单", fold: "dida",
+                   chip: saving ? ("保存中…", .gray) : (model.hasDida ? ("已连接", .green) : ("未填写", .orange))) {
                 SRow("API 口令") { SecretField(placeholder: "API 口令", text: $model.didaTokenInput, onCommit: commitCredentials) }
             }
 
-            SGroup("腾讯云",
-                   chip: tencentReady ? ("已填写", .green) : ("未填写", .gray),
-                   footer: "语音输入选「腾讯云」识别引擎时使用，在腾讯云控制台「访问管理 → API 密钥」创建。录音会上传到腾讯云。") {
+            SFoldGroup("腾讯云", fold: "tencent", open: false,
+                   chip: tencentReady ? ("已填写", .green) : ("未填写", .gray)) {
                 SRow("SecretId") { SText(placeholder: "AKID…", text: $tencentId, onCommit: commitTencent) }
                 SRow("SecretKey") { SecretField(placeholder: "", text: $tencentKey, onCommit: commitTencent) }
             }
 
-            SGroup("结审（审计工作台）",
+            SFoldGroup("AI 模型", fold: "llm", chip: model.hasLlm ? ("已配置", .green) : ("未填写", .orange),
+                   result: llmResult,
+                   trailing: {
+                       SIconButton(symbol: "bolt.horizontal", help: "测试连接", busy: llmTesting,
+                                   disabled: model.llmKeyInput.trimmed.isEmpty, action: testLlm)
+                   }) {
+                SRow("常用服务") {
+                    Menu {
+                        ForEach(LlmClient.presets, id: \.name) { p in
+                            Button(p.name) { model.llmBaseUrl = p.url; model.llmModel = p.model; commitLlm() }
+                        }
+                    } label: { Text("选择…").font(.system(size: 13)) }
+                        .menuStyle(.borderlessButton).fixedSize()
+                }
+                SRow("接口地址") { SText(placeholder: "https://…/v1", text: $model.llmBaseUrl, onCommit: commitLlm) }
+                SRow("模型名") { SText(placeholder: "qwen-plus", text: $model.llmModel, onCommit: commitLlm) }
+                SRow("API Key") { SecretField(placeholder: "sk-…", text: $model.llmKeyInput, onCommit: commitLlm) }
+            }
+
+            SFoldGroup("结审", fold: "sjz", open: false,
                    chip: model.sjzEnabled ? (model.hasSjz ? "已连接" : "未填写", model.hasSjz ? .green : .orange) : nil,
-                   footer: model.sjzEnabled
-                       ? "Key 在结审「设置 → 外部应用」里生成；保存证据、法规、记线索、回写任务还需在那里开启「允许写入」。结审的任务、专注和记录只存在结审与本机，不会写入滴答清单或闪念贝壳。"
-                       : nil) {
-                SToggle("启用结审",
-                        model.sjzEnabled ? "把截图、文字、链接存为证据 / 法规 / 线索，并在待办里显示结审任务"
-                                         : "已关闭：岛上不显示结审区，待办不合并结审任务，也不弹结审提醒",
-                        $model.sjzEnabled)
+                   footer: "所有密钥只保存在本机（系统钥匙串），不会上传",
+                   result: model.sjzEnabled ? sjzResult : nil,
+                   trailing: {
+                       if model.sjzEnabled {
+                           SIconButton(symbol: "bolt.horizontal", help: "测试连接", busy: sjzTesting,
+                                       disabled: model.sjzKeyInput.trimmed.isEmpty, action: testSjz)
+                       }
+                   }) {
+                SToggle("启用结审", nil, $model.sjzEnabled)
                 if model.sjzEnabled {
                     SRow("API Key") { SecretField(placeholder: "sjz_…", text: $model.sjzKeyInput, onCommit: commitSjz) }
                     SRow("服务地址", hint: Self.isLoopback(model.sjzEndpoint) ? nil : "不是本机地址，审计数据会经网络传输，建议用 127.0.0.1") {
                         SText(placeholder: SjzApi.defaultEndpoint, text: $model.sjzEndpoint, onCommit: commitSjz)
                     }
-                    SActionRow(title: "连接测试", hint: "检查 Key 和服务地址是否可用", button: "测试",
-                               busy: sjzTesting, result: sjzResult, disabled: model.sjzKeyInput.trimmed.isEmpty) {
-                        sjzTesting = true
-                        sjzResult = nil
-                        Task {
-                            await model.saveSjz()
-                            do {
-                                let r = try await model.sjz.listProjects()
-                                sjzResult = (true, "连接正常，\(r.projects.count) 个项目")
-                            } catch {
-                                sjzResult = (false, error.localizedDescription)
-                            }
-                            sjzTesting = false
-                        }
-                    }
-                    SRow("钉住项目", hint: "灵动岛保存的证据、法规、线索都放进这个项目") {
+                    SRow("钉住项目") {
                         Picker("", selection: Binding(
                             get: { model.sjzPin.project },
                             set: { name in Task { await model.sjzSetProject(name) } }
@@ -452,17 +551,48 @@ private struct AccountPane: View {
                     }
                 }
             }
-
-            Label("所有密钥只保存在本机，仅当前用户可读", systemImage: "lock.fill")
-                .font(.system(size: 11.5)).foregroundStyle(.tertiary)
-                .padding(.horizontal, 4)
         }
         .onAppear {
             tencentId = model.credentials.tencentId
             tencentKey = model.credentials.tencentKey
         }
-        .onDisappear { commitCredentials(); commitTencent(); commitSjz() }
+        .onDisappear { commitCredentials(); commitTencent(); commitSjz(); model.saveLlm() }
         .task { if model.hasSjz { await model.refreshSjzTarget(); await model.refreshSjzProjects() } }
+    }
+
+    private func testSjz() {
+        sjzTesting = true
+        sjzResult = nil
+        Task {
+            await model.saveSjz()
+            do {
+                let r = try await model.sjz.listProjects()
+                sjzResult = (true, "连接正常，\(r.projects.count) 个项目")
+            } catch {
+                sjzResult = (false, error.localizedDescription)
+            }
+            sjzTesting = false
+        }
+    }
+
+    private func testLlm() {
+        model.saveLlm()
+        llmTesting = true
+        llmResult = nil
+        Task {
+            do {
+                let r = try await model.llm.chatJSON(system: "只输出 JSON 对象：{\"ok\":true}", user: "ping", timeout: 20)
+                llmResult = (true, "连接正常" + (r.isEmpty ? "" : "（模型 \(model.llmModel)）"))
+            } catch {
+                llmResult = (false, error.localizedDescription)
+            }
+            llmTesting = false
+        }
+    }
+
+    private func commitLlm() {
+        model.saveLlm()
+        llmResult = nil
     }
 
     // 输入框回车 / 离开时自动保存（没改动就不动）
@@ -488,54 +618,6 @@ private struct AccountPane: View {
     }
 }
 
-// MARK: - AI 模型
-
-private struct AIPane: View {
-    @EnvironmentObject var model: AppModel
-    @State private var testing = false
-    @State private var testResult: (ok: Bool, text: String)?
-
-    var body: some View {
-        SPage {
-            SGroup("接口", chip: model.hasLlm ? ("已配置", .green) : ("未填写", .orange),
-                   footer: "支持任何 OpenAI 兼容的接口（通义千问、DeepSeek、OpenAI、智谱等）。用于「重新规划」的 AI 排期和语音输入的整理；填完离开输入框即自动保存，Key 只保存在本机。") {
-                SRow("常用服务", hint: "一键填入接口地址和模型名") {
-                    Menu {
-                        ForEach(LlmClient.presets, id: \.name) { p in
-                            Button(p.name) { model.llmBaseUrl = p.url; model.llmModel = p.model; commit() }
-                        }
-                    } label: { Text("选择…").font(.system(size: 13)) }
-                        .menuStyle(.borderlessButton).fixedSize()
-                }
-                SRow("接口地址") { SText(placeholder: "https://…/v1", text: $model.llmBaseUrl, onCommit: commit) }
-                SRow("模型名") { SText(placeholder: "qwen-plus", text: $model.llmModel, onCommit: commit) }
-                SRow("API Key") { SecretField(placeholder: "sk-…", text: $model.llmKeyInput, onCommit: commit) }
-                SActionRow(title: "连接测试", hint: "发一条请求，检查地址、模型和 Key 是否可用", button: "测试",
-                           busy: testing, result: testResult, disabled: model.llmKeyInput.trimmed.isEmpty) {
-                    model.saveLlm()
-                    testing = true
-                    testResult = nil
-                    Task {
-                        do {
-                            let r = try await model.llm.chatJSON(system: "只输出 JSON 对象：{\"ok\":true}", user: "ping", timeout: 20)
-                            testResult = (true, "连接正常" + (r.isEmpty ? "" : "（模型 \(model.llmModel)）"))
-                        } catch {
-                            testResult = (false, error.localizedDescription)
-                        }
-                        testing = false
-                    }
-                }
-            }
-        }
-        .onDisappear { commit() }
-    }
-
-    private func commit() {
-        model.saveLlm()
-        testResult = nil
-    }
-}
-
 // MARK: - 小组件（灵动岛 / 菜单栏）
 
 private struct WidgetPane: View {
@@ -545,37 +627,27 @@ private struct WidgetPane: View {
     @AppStorage(DisplayMode.captureKey) private var capture = true
     @AppStorage(DisplayMode.activityKey) private var activities = true
     @AppStorage(DisplayMode.shelfKey) private var shelf = true
-    @AppStorage(DisplayMode.hotkeyKey) private var hotkey: IslandHotkey = .optSpace
     @AppStorage(ImageOCR.key) private var ocrOn = true
 
     var body: some View {
         SPage {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("显示方式").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary).padding(.leading, 4)
+            SGroup("显示方式") {
                 HStack(spacing: 10) {
                     ForEach(DisplayMode.allCases) { tile($0) }
                 }
-                Text(displayMode == .island
-                     ? "灵动岛里是和菜单栏弹窗一样的待办、专注小组件，底部可选暂存架；平时在刘海两侧显示「今天 · 逾期」或专注进度。把截图、链接、文字拖到刘海：左半边保存（自动识别），右半边暂存。展开后 ⌘V 粘贴保存、⌘⇧V 粘贴暂存，Esc 或点击别处收起。"
-                     : "菜单栏图标显示「今天 · 逾期」或专注倒计时，点击弹出待办小组件。")
-                    .font(.system(size: 11.5)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 4)
             }
 
             if displayMode == .island {
                 SGroup("展开方式") {
-                    SToggle("悬停展开", "鼠标移到刘海（没有刘海的屏幕是顶部小条）上就展开", $hover)
-                    SToggle("触控板下滑展开", "在刘海上双指下滑展开；展开后在顶部一条上上滑收起", $swipe)
-                    SRow("全局快捷键", hint: "在任何 App 里按下即可展开 / 收起") {
-                        SPick(selection: $hotkey, options: IslandHotkey.allCases.map { ($0, $0.label) })
-                    }
+                    SToggle("悬停展开", nil, $hover)
+                    SToggle("触控板下滑展开", nil, $swipe)
                 }
 
                 SGroup("功能") {
-                    SToggle("截图提示", "刚截了图（或剪贴板里有新图片）时岛自动弹出，一键存为笔记、暂存，或拖走", $capture)
-                    SToggle("识别截图里的文字", "保存截图为笔记时，用系统文字识别（本机完成，图片不外传）把图里的字附在后面，之后能搜到", $ocrOn)
-                    SToggle("暂存架", "展开页底部的暂存区，以及拖放时的「暂存」半边", $shelf)
-                    SToggle("状态提醒", "番茄 / 休息结束、待办到点时岛自动弹出，可直接完成、专注或推迟", $activities)
+                    SToggle("截图提示", nil, $capture)
+                    SToggle("识别截图里的文字", nil, $ocrOn)
+                    SToggle("暂存架", nil, $shelf)
+                    SToggle("状态提醒", nil, $activities)
                 }
             }
         }
@@ -605,37 +677,47 @@ private struct WidgetPane: View {
 private struct GeneralPane: View {
     @AppStorage(AppTheme.key) private var theme: AppTheme = .system
     @AppStorage(BackgroundPrefs.hideDockKey) private var hideDock = false
+    @AppStorage(DisplayMode.key) private var displayMode: DisplayMode = .menuBar
+    @AppStorage(VoiceHotkey.key) private var voiceHotkey: VoiceHotkey = .ctrlOptV
+    @AppStorage(VoiceSettings.modeKey) private var voiceMode: VoiceMode = .toggle
+    @ObservedObject private var shortcuts = AppShortcutStore.shared
 
     var body: some View {
         SPage {
             SGroup("外观") {
-                SRow("主题", hint: "明亮、暗黑，或跟随系统自动切换") {
+                SRow("主题") {
                     SPick(selection: $theme, options: AppTheme.allCases.map { ($0, $0.title) })
                 }
             }
 
-            SGroup("后台运行",
-                   footer: "关掉主窗口后拾忆一直在后台运行：专注计时、提醒、灵动岛 / 菜单栏都照常。要回到窗口，点菜单栏图标或灵动岛上的「打开」。完全退出请按 ⌘Q。") {
+            SGroup("后台运行") {
                 SToggle("关闭窗口后隐藏 Dock 图标", nil, $hideDock)
             }
 
-            SGroup("快捷键") {
-                shortcut("⌘ N", "万能输入：写笔记 / 记待办，自动识别")
-                shortcut("⇧⌘ N / ⇧⌘ T / ⇧⌘ D", "直接记笔记 / 待办 / 日记")
-                shortcut("⌘ R", "刷新当前页")
-                shortcut("⌘ ,", "打开设置")
-                shortcut("⌘ 1 – 6", "切换页面（今天 / 行动 / 待办 / 日历 / 回顾 / 洞察）")
+            // 全局快捷键：在任何 App 里都能用（必须带 ⌃ 或 ⌥）
+            SGroup("全局快捷键") {
                 QuickAddHotkeyRow()
+                if displayMode == .island { IslandHotkeyRow() }
+                VoiceHotkeyRow()
+                if voiceHotkey.modifierKey == nil {
+                    SRow("语音触发方式") {
+                        SPick(selection: $voiceMode, options: VoiceMode.allCases.map { ($0, $0.label) })
+                    }
+                }
             }
-        }
-    }
 
-    private func shortcut(_ keys: String, _ text: String) -> some View {
-        SRow(text) {
-            Text(keys)
-                .font(.system(size: 12, design: .monospaced).weight(.medium))
-                .padding(.horizontal, 7).padding(.vertical, 2)
-                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            // 应用内快捷键：拾忆在前台时用，出现在屏幕顶部的菜单里
+            SGroup("应用内快捷键", trailing: {
+                if shortcuts.hasAnyCustom {
+                    SIconButton(symbol: "arrow.counterclockwise", help: "全部还原为默认") { shortcuts.resetAll() }
+                }
+            }) {
+                ForEach(AppShortcutID.actions) { AppShortcutRow(id: $0) }
+            }
+
+            SGroup("切换页面") {
+                ForEach(AppShortcutID.pages) { AppShortcutRow(id: $0) }
+            }
         }
     }
 }
@@ -654,7 +736,7 @@ private struct FocusPane: View {
 
     var body: some View {
         SPage {
-            SGroup("目标", footer: "「今天」页的专注环以它为满环。") {
+            SGroup("目标") {
                 SRow("每日专注目标") {
                     HStack(spacing: 8) {
                         Text(goalText).font(.system(size: 13).monospacedDigit()).foregroundStyle(.secondary)
@@ -664,11 +746,9 @@ private struct FocusPane: View {
             }
 
             SGroup("成果小票") {
-                SToggle("完成后打印成果小票",
-                        "完成（或提前结束）一个番茄后，从屏幕顶部「打印」出一张小票：时长、任务、期间的记录、今日累计",
-                        $ticketOn)
+                SToggle("完成后打印成果小票", nil, $ticketOn)
                 if ticketOn {
-                    SToggle("出纸提示音", "出纸时轻轻响一声", $ticketSound)
+                    SToggle("出纸提示音", nil, $ticketSound)
                 }
             }
         }
@@ -690,32 +770,31 @@ private struct NotifyPane: View {
 
     var body: some View {
         SPage {
-            SGroup("专注") {
-                SToggle("专注与休息", "番茄完成、休息结束、还剩 5 分钟、暂停太久", $nFocus)
-                SToggle("专注目标达成", "今天的专注时长第一次达到每日目标", $nGoal)
+            SGroup("专注", trailing: {
+                SIconButton(symbol: "bell.badge", help: "发送测试通知") { Notifier.shared.sendTest() }
+            }) {
+                SToggle("专注与休息", nil, $nFocus)
+                SToggle("专注目标达成", nil, $nGoal)
             }
 
             SGroup("待办") {
-                SToggle("待办到点", "有具体时间的待办，到点提醒", $nDue)
+                SToggle("待办到点", nil, $nDue)
                 if nDue {
                     SRow("提前提醒") {
                         SPick(selection: $nLead, options: [(0, "不提前"), (5, "5 分钟"), (10, "10 分钟"), (15, "15 分钟"), (30, "30 分钟")])
                     }
                 }
-                SToggle("早晚简报", "早上 8:30 今天的安排，晚上 9:00 还没完成的几件", $nDigest)
-                SToggle("逾期提醒", "每天 10:00 提醒还有几件逾期", $nOverdue)
+                SToggle("早晚简报", nil, $nDigest)
+                SToggle("逾期提醒", nil, $nOverdue)
             }
 
             if model.hasSjz {
                 SGroup("结审") {
-                    SToggle("结审提醒", "调研完成、任务到期或逾期、待复核、线索久未跟进、取证单缺证据时，灵动岛弹出提醒", $nSjz)
-                    SToggle("每晚工作小结", "21 点后把当天写入的证据 / 法规 / 线索、专注时长和完成任务写进结审项目的工作日志", $nSjzSummary)
+                    SToggle("结审提醒", nil, $nSjz)
+                    SToggle("每晚工作小结", nil, $nSjzSummary)
                 }
             }
 
-            SGroup("测试", footer: "待办提醒在待办刷新后重新安排，退出拾忆后也会按时响。收不到时，请在「系统设置 → 通知」里允许拾忆。") {
-                SActionRow(title: "发送测试通知", hint: "立刻弹一条，确认能收到", button: "发送") { Notifier.shared.sendTest() }
-            }
         }
         .onChange(of: nDue) { _, _ in Notifier.shared.syncTodos(model.overview) }
         .onChange(of: nLead) { _, _ in Notifier.shared.syncTodos(model.overview) }
@@ -728,6 +807,35 @@ private struct NotifyPane: View {
 
 private struct DataPane: View {
     @EnvironmentObject var model: AppModel
+    @State private var transferResult: (ok: Bool, text: String)?
+
+    private func exportSettings() {
+        let panel = NSSavePanel()
+        panel.title = "导出设置"
+        panel.nameFieldStringValue = "拾忆设置.plist"
+        panel.allowedContentTypes = [.propertyList]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let n = try SettingsTransfer.export(to: url)
+            transferResult = (true, "已导出 \(n) 项设置（不含密钥）")
+        } catch {
+            transferResult = (false, "导出失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func importSettings() {
+        let panel = NSOpenPanel()
+        panel.title = "导入设置"
+        panel.allowedContentTypes = [.propertyList]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let n = try SettingsTransfer.import(from: url)
+            transferResult = (true, "已导入 \(n) 项设置，部分设置重启拾忆后生效")
+        } catch {
+            transferResult = (false, "导入失败：\(error.localizedDescription)")
+        }
+    }
 
     /// 只在本机、还没进手机备份的任务笔记数
     private var localOnlyCount: Int {
@@ -737,8 +845,10 @@ private struct DataPane: View {
 
     var body: some View {
         SPage {
-            SGroup("手机备份",
-                   footer: "项目、任务笔记的对应关系来自手机在闪念贝壳里的「拾忆备份（请勿删除）」笔记，Mac 端只读取；在 Mac 上新建的任务笔记会记在本机，并把链接写回滴答任务。") {
+            SGroup("手机备份", trailing: {
+                SIconButton(symbol: "arrow.clockwise", help: "重新读取备份", busy: model.backupLoading,
+                            disabled: !model.hasIdeashell) { Task { await model.loadBackup() } }
+            }) {
                 if let b = model.backup {
                     stat("项目", "\(b.workspace.projects.count)")
                     stat("任务笔记", "\(b.workspace.taskNotes.count + localOnlyCount)")
@@ -750,18 +860,22 @@ private struct DataPane: View {
                     Label("还没有读到备份", systemImage: "tray").font(.system(size: 13)).foregroundStyle(.secondary)
                 }
                 if let e = model.backupError { ErrorBanner(text: e) }
-                SActionRow(title: "重新读取", hint: "从闪念贝壳读取手机最新的备份", button: "读取",
-                           busy: model.backupLoading, disabled: !model.hasIdeashell) { Task { await model.loadBackup() } }
             }
 
-            SGroup("本机数据",
-                   footer: "凭证、备份缓存、本机新建的任务笔记都存在这里；笔记和待办本身保存在闪念贝壳和滴答清单，不会存在这里。") {
+            SGroup("设置迁移", result: transferResult) {
+                SLinkRow("导出设置…", symbol: "square.and.arrow.up") { exportSettings() }
+                SLinkRow("导入设置…", symbol: "square.and.arrow.down") { importSettings() }
+            }
+
+            SGroup("本机数据") {
                 SRow("位置") {
-                    Text(LocalStore.dir.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
-                        .font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                    HStack(spacing: 8) {
+                        Text(LocalStore.dir.path.replacingOccurrences(of: NSHomeDirectory(), with: "~"))
+                            .font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                        SIconButton(symbol: "folder", help: "在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([LocalStore.dir]) }
+                    }
                 }
-                SActionRow(title: "在 Finder 中显示", button: "显示") { NSWorkspace.shared.activateFileViewerSelecting([LocalStore.dir]) }
             }
         }
     }

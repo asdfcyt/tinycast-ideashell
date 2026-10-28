@@ -60,9 +60,13 @@ enum DisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
-/// 灵动岛的全局快捷键预设（Carbon 热键，不需要辅助功能权限）
+/// 灵动岛的全局快捷键：几个预设 + 自定义录制（Carbon 热键，不需要辅助功能权限）
 enum IslandHotkey: String, CaseIterable, Identifiable {
-    case off, optSpace, ctrlOptSpace, optShiftSpace
+    case off, optSpace, ctrlOptSpace, optShiftSpace, custom
+
+    static let customCodeKey = "ui.islandHotkey.code"
+    static let customModsKey = "ui.islandHotkey.mods"
+    static let customNameKey = "ui.islandHotkey.name"
 
     var id: String { rawValue }
 
@@ -72,18 +76,36 @@ enum IslandHotkey: String, CaseIterable, Identifiable {
         case .optSpace: return "⌥ Space"
         case .ctrlOptSpace: return "⌃⌥ Space"
         case .optShiftSpace: return "⌥⇧ Space"
+        case .custom: return "自定义…"
         }
     }
 
-    var keyCode: UInt32? { self == .off ? nil : 49 }
-
-    /// Carbon 修饰键：cmd 256 / shift 512 / option 2048 / control 4096
-    var modifiers: UInt32 {
+    /// 实际要注册的组合；关闭、或选了自定义但还没录制时为 nil
+    var combo: HotkeyCombo? {
+        let o = HotkeyCombo.Mod.option
         switch self {
-        case .off: return 0
-        case .optSpace: return 2048
-        case .ctrlOptSpace: return 4096 | 2048
-        case .optShiftSpace: return 2048 | 512
+        case .off: return nil
+        case .optSpace: return HotkeyCombo(code: HotkeyCombo.spaceCode, mods: o, name: "Space")
+        case .ctrlOptSpace: return HotkeyCombo(code: HotkeyCombo.spaceCode, mods: HotkeyCombo.Mod.control | o, name: "Space")
+        case .optShiftSpace: return HotkeyCombo(code: HotkeyCombo.spaceCode, mods: o | HotkeyCombo.Mod.shift, name: "Space")
+        case .custom: return Self.savedCustom
         }
+    }
+
+    static var savedCustom: HotkeyCombo? {
+        let d = UserDefaults.standard
+        guard d.object(forKey: customCodeKey) != nil else { return nil }
+        return HotkeyCombo(
+            code: UInt32(max(d.integer(forKey: customCodeKey), 0)),
+            mods: UInt32(max(d.integer(forKey: customModsKey), 0)),
+            name: d.string(forKey: customNameKey) ?? "?"
+        )
+    }
+
+    static func saveCustom(_ c: HotkeyCombo) {
+        let d = UserDefaults.standard
+        d.set(Int(c.code), forKey: customCodeKey)
+        d.set(Int(c.mods), forKey: customModsKey)
+        d.set(c.name, forKey: customNameKey)
     }
 }

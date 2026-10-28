@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// 设置窗口「词库」一页：热词（标签）+ 替换规则（听错 → 正确），改动即存
-struct LexiconPane: View {
+/// 语音输入页里的「热词」「替换规则」两组：热词（标签）+ 替换规则（听错 → 正确），改动即存
+struct LexiconGroups: View {
     @ObservedObject private var lexicon = VoiceLexicon.shared
 
     @State private var newHot = ""
@@ -13,12 +13,12 @@ struct LexiconPane: View {
     private var data: LexiconData { lexicon.data }
 
     var body: some View {
-        SPage {
+        Group {
             SGroup("热词",
-                   chip: ("\(data.hotwords.count) / \(VoiceLexicon.maxHotwords)", .gray),
-                   footer: "人名、项目名、专业词。识别时优先听这些词，AI 整理时也会按它们修正同音字。需 2–10 个字，只能是文字或数字，不符合的会标成橙色、不会发给识别引擎。") {
+                   chip: ("\(data.hotwords.count) / \(VoiceLexicon.maxHotwords)", .gray)) {
                 HStack(spacing: 8) {
-                    TextField("添加热词，回车确认（可用顿号一次加多个）", text: $newHot)
+                    TextField("", text: $newHot, prompt: Text("添加热词，回车确认（可用顿号一次加多个）"))
+                        .labelsHidden()
                         .textFieldStyle(.plain).font(.system(size: 13))
                         .focused($focus, equals: .hot)
                         .onSubmit(addHot)
@@ -36,15 +36,16 @@ struct LexiconPane: View {
             }
 
             SGroup("替换规则",
-                   chip: ("\(data.replacements.count) 条", .gray),
-                   footer: "识别后无条件把「听错的词」换成「正确写法」。在预览里手改同音错字，也会自动记在这里。") {
+                   chip: ("\(data.replacements.count) 条", .gray)) {
                 HStack(spacing: 8) {
-                    TextField("听错的词", text: $newFrom)
+                    TextField("", text: $newFrom, prompt: Text("听错的词"))
+                        .labelsHidden()
                         .textFieldStyle(.plain).font(.system(size: 13))
                         .focused($focus, equals: .from)
                         .onSubmit { focus = .to }
                     Image(systemName: "arrow.right").font(.system(size: 11)).foregroundStyle(.tertiary)
-                    TextField("正确写法", text: $newTo)
+                    TextField("", text: $newTo, prompt: Text("正确写法"))
+                        .labelsHidden()
                         .textFieldStyle(.plain).font(.system(size: 13))
                         .focused($focus, equals: .to)
                         .onSubmit(addRule)

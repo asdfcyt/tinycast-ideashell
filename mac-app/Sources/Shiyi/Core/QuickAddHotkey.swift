@@ -71,17 +71,44 @@ struct HotkeyCombo: Equatable {
         }
     }
 
+    /// 键位相同（不比较显示名）
+    func sameKeys(_ o: HotkeyCombo) -> Bool { code == o.code && mods == o.mods }
+
     /// nil = 可以用；否则是不能用的原因。
     /// 全局热键会吞掉这个组合：只有 ⌘ / ⇧ 的组合会把各个 App 自己的快捷键（⌘Q、⌘W、⇧⌘N…）抢走，所以必须带 ⌃ 或 ⌥，
-    /// 带一个 ⌃ 或 ⌥ 加字母就可以（如 ⌥ V）。
-    var problem: String? {
+    /// 带一个 ⌃ 或 ⌥ 加字母就可以（如 ⌥ V）。`owner` 是正在设置的那一个，用来和其他全局快捷键、应用内快捷键比对。
+    func problem(for owner: HotkeyOwner) -> String? {
         let hasCtrlOrOpt = mods & (Mod.control | Mod.option) != 0
         if !hasCtrlOrOpt { return "要包含 ⌃ 或 ⌥：只有 ⌘ / ⇧ 的组合会抢走各个 App 自己的快捷键" }
-        if DisplayMode.current == .island, let ik = DisplayMode.hotkey.keyCode,
-           ik == code, DisplayMode.hotkey.modifiers == mods {
-            return "和灵动岛的快捷键相同，请换一个"
+        for o in HotkeyOwner.allCases where o != owner {
+            if let c = o.currentCombo, sameKeys(c) { return "和「\(o.title)」的快捷键相同，请换一个" }
+        }
+        if let id = AppShortcutStore.conflictingID(key: name, mods: mods) {
+            return "和应用内快捷键「\(id.title)」相同，请换一个"
         }
         return nil
+    }
+}
+
+/// 三个全局快捷键的归属：互相不能撞键
+enum HotkeyOwner: CaseIterable {
+    case quickAdd, island, voice
+
+    var title: String {
+        switch self {
+        case .quickAdd: return "万能输入"
+        case .island: return "灵动岛"
+        case .voice: return "语音输入"
+        }
+    }
+
+    /// 现在生效的组合（灵动岛没开时不占键）
+    var currentCombo: HotkeyCombo? {
+        switch self {
+        case .quickAdd: return QuickAddHotkey.current.combo
+        case .island: return DisplayMode.current == .island ? DisplayMode.hotkey.combo : nil
+        case .voice: return VoiceHotkey.current.combo
+        }
     }
 }
 

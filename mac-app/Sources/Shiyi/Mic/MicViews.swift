@@ -129,7 +129,7 @@ struct MicHeroPanel: View {
                     RoundedRectangle(cornerRadius: compact ? 24 : 30, style: .continuous)
                         .strokeBorder(Color.white.opacity(scheme == .dark ? 0.08 : 0.7), lineWidth: 1)
                 )
-                .shadow(color: .black.opacity(scheme == .dark ? 0.4 : 0.12), radius: compact ? 16 : 24, y: compact ? 6 : 10)
+                .shadow(color: .black.opacity(compact ? 0 : (scheme == .dark ? 0.4 : 0.12)), radius: 24, y: 10)
 
             if compact {
                 HStack(spacing: 14) {
@@ -366,143 +366,78 @@ struct MicConfigPane: View {
     @EnvironmentObject var settings: MicSettingsStore
     @EnvironmentObject var model: MicUIModel
 
+    /// 直接放在设置页的分组表单里：返回若干个 Section
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            header
+        Group {
             gestures
-            tabs
-            Group {
-                switch model.tab {
-                case .voice: MicVoiceTab()
-                case .behavior: MicBehaviorTab()
-                case .system: MicSystemTab()
-                }
-            }
-            .transition(.opacity.combined(with: .move(edge: .bottom)))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var header: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(settings.cfg.backend == .shiyi ? "按键映射 · 拾忆" : "按键映射 · 外部输入法")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                Text(engine.statusLine)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
+            MicVoiceTab()
+            MicBehaviorTab()
+            MicSystemTab()
         }
     }
 
     private var gestures: some View {
         let acts = MicButtonAction.available(for: settings.cfg.backend)
-        return VStack(spacing: 8) {
-            MicGestureCard(index: 0, gesture: .single, symbol: "waveform",
-                        factory: "出厂:切换降噪",
-                        note: (settings.cfg.singleAction == .route ? "录音中=纯语音↔万能输入框,预览中=说话修改;" : "")
-                            + "静音状态下单击无效(固件不上报)" + (settings.cfg.noiseLock == .off ? "" : ",且不会再改变降噪"),
-                        actions: acts,
-                        action: settings.bind(\.singleAction), customKey: settings.bind(\.singleCustomKey))
-            MicGestureCard(index: 1, gesture: .double, symbol: "speaker.slash",
-                        factory: "出厂:开关静音",
-                        note: settings.cfg.doubleAction == .voiceToggle
-                            ? (settings.cfg.backend == .shiyi
-                               ? "静音即录音开关:解除静音=开始说话(预览中=说话修改),静音=结束"
-                               : "静音即录音开关:未静音=说话中,静音=已停止")
-                            : "硬件行为,无法改写;静音状态下无法收音",
-                        actions: acts,
-                        action: settings.bind(\.doubleAction), customKey: settings.bind(\.doubleCustomKey))
-            MicGestureCard(index: 2, gesture: .triple, symbol: "camera",
-                        factory: "出厂:启停拍摄(音量+)",
-                        note: settings.cfg.backend == .shiyi ? "预览中=确认保存,录音中=结束" : "已独占该按键,不会影响系统音量",
-                        actions: acts,
-                        action: settings.bind(\.tripleAction), customKey: settings.bind(\.tripleCustomKey))
-        }
-    }
-
-    private var tabs: some View {
-        HStack(spacing: 6) {
-            ForEach(MicUIModel.Tab.allCases) { tab in
-                let selected = model.tab == tab
-                Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { model.tab = tab }
-                } label: {
-                    Label(tab.rawValue, systemImage: tab.symbol)
-                        .font(.system(size: 13, weight: selected ? .semibold : .regular))
-                        .padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(Capsule().fill(selected ? MicTheme.accent : Color.primary.opacity(0.06)))
-                        .foregroundStyle(selected ? Color.white : Color.primary)
-                }
-                .buttonStyle(.plain)
+        return Section {
+            MicGestureCard(gesture: .single, symbol: "waveform", actions: acts,
+                           action: settings.bind(\.singleAction), customKey: settings.bind(\.singleCustomKey))
+            MicGestureCard(gesture: .double, symbol: "speaker.slash", actions: acts,
+                           action: settings.bind(\.doubleAction), customKey: settings.bind(\.doubleCustomKey))
+            MicGestureCard(gesture: .triple, symbol: "camera", actions: acts,
+                           action: settings.bind(\.tripleAction), customKey: settings.bind(\.tripleCustomKey))
+        } header: {
+            // 发射器展示卡放在分组标题里:标题没有分组底色,卡片周围不会出现灰底
+            VStack(alignment: .leading, spacing: 16) {
+                MicHeroPanel(compact: true)
+                    .frame(height: 250)
+                    .frame(maxWidth: .infinity)
+                Text(settings.cfg.backend == .shiyi ? "按键映射 · 拾忆" : "按键映射 · 外部输入法")
+                    .font(.headline)
             }
-            Spacer()
+            .foregroundStyle(.primary)
+            .textCase(nil)
+        } footer: {
+            Text(engine.statusLine)
         }
     }
 }
 
-// MARK: - 手势卡片
+// MARK: - 手势行
 
+/// 按键映射里的一行：图标 + 手势名 + 右侧选择动作（按发射器时图标会亮一下）
 struct MicGestureCard: View {
-    let index: Int
     let gesture: MicGesture
     let symbol: String
-    let factory: String
-    let note: String?
     var actions: [MicButtonAction] = MicButtonAction.allCases
     @Binding var action: MicButtonAction
     @Binding var customKey: String
     @EnvironmentObject var model: MicUIModel
 
-    private var hovered: Bool { model.hovered == gesture }
     private var flashing: Bool { model.flashing == gesture }
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(MicTheme.accent.opacity(flashing ? 0.95 : 0.12))
-                    Image(systemName: symbol)
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(flashing ? Color.white : MicTheme.accent)
-                        .scaleEffect(flashing ? 1.15 : 1)
-                }
-                .frame(width: 40, height: 40)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(gesture.title)
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                        Text(factory)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    if let note {
-                        Text(note)
-                            .font(.system(size: 10))
-                            .foregroundStyle(Color.orange)
-                    }
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(flashing ? Color.white : MicTheme.accent)
+                    .frame(width: 26, height: 26)
+                    .background(MicTheme.accent.opacity(flashing ? 0.95 : 0.14), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .scaleEffect(flashing ? 1.12 : 1)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: flashing)
+                Text(gesture.title)
                 Spacer(minLength: 8)
-
                 Menu {
                     ForEach(actions) { a in
                         Button { action = a } label: { Label(a.title, systemImage: a.symbol) }
                     }
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: action.symbol).font(.system(size: 11.5, weight: .semibold))
-                        Text(action.shortTitle).font(.system(size: 12, weight: .semibold))
-                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .bold)).opacity(0.6)
+                    HStack(spacing: 6) {
+                        Image(systemName: action.symbol).font(.system(size: 11.5, weight: .medium))
+                        Text(action.shortTitle)
                     }
-                    .padding(.horizontal, 11).padding(.vertical, 6)
-                    .background(Capsule().fill(MicTheme.accent.opacity(0.12)))
-                    .foregroundStyle(MicTheme.accent)
                 }
                 .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
                 .fixedSize()
             }
             if action == .customKey {
@@ -510,52 +445,43 @@ struct MicGestureCard: View {
                     Image(systemName: "keyboard").foregroundStyle(.secondary)
                     MicKeyField(id: "custom-\(gesture.rawValue)", placeholder: "组合键,如 alt+space", text: $customKey, width: 220)
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 11)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-                .shadow(color: .black.opacity(hovered ? 0.16 : 0.06), radius: hovered ? 16 : 8, y: hovered ? 8 : 3)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(MicTheme.accent.opacity(flashing ? 0.9 : 0), lineWidth: 2)
-        )
-        .overlay(alignment: .topTrailing) {
-            if flashing {
-                Text("已触发")
-                    .font(.system(size: 10, weight: .bold))
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(MicTheme.accent))
-                    .foregroundStyle(.white)
-                    .padding(8)
-                    .transition(.scale.combined(with: .opacity))
-            }
-        }
-        .scaleEffect(flashing ? 1.015 : (hovered ? 1.008 : 1))
-        .onHover { inside in
-            withAnimation(.easeOut(duration: 0.18)) { model.hovered = inside ? gesture : (model.hovered == gesture ? nil : model.hovered) }
-        }
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: action)
-        .opacity(model.appeared ? 1 : 0)
-        .offset(y: model.appeared ? 0 : 26)
-        .animation(.spring(response: 0.6, dampingFraction: 0.82).delay(Double(index) * 0.08), value: model.appeared)
     }
 }
 
 // MARK: - 设置面板组件
 
-struct MicPanel<Content: View>: View {
+/// 一组设置：原生分组（Section），要放在表单里
+struct MicPanel<Content: View, Trailing: View>: View {
+    var title: String?
+    @ViewBuilder var trailing: () -> Trailing
     @ViewBuilder var content: () -> Content
+
     var body: some View {
-        VStack(spacing: 0) { content() }
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Color.primary.opacity(0.05)))
+        if let title {
+            Section { content() } header: {
+                HStack {
+                    Text(title)
+                    Spacer()
+                    trailing()
+                }
+            }
+        } else {
+            Section { content() }
+        }
     }
 }
 
+extension MicPanel where Trailing == EmptyView {
+    init(title: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.trailing = { EmptyView() }
+        self.content = content
+    }
+}
+
+/// 一行：左边标题（需要时加一行灰色说明），右边放控件。`divider` 已不再使用（分隔线由表单自动画），只为兼容旧调用。
 struct MicRow<Control: View>: View {
     let title: String
     var subtitle: String?
@@ -563,19 +489,30 @@ struct MicRow<Control: View>: View {
     @ViewBuilder var control: () -> Control
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 13.5, weight: .medium))
-                    if let subtitle {
-                        Text(subtitle).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }
+        LabeledContent {
+            control()
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                if let subtitle {
+                    Text(subtitle).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 12)
-                control().layoutPriority(1)
             }
-            .padding(.horizontal, 18).padding(.vertical, 12)
-            if divider { Divider().padding(.leading, 18) }
+        }
+    }
+}
+
+/// 数值 + 步进器（值写在左边，步进箭头在右边）
+struct MicStepper: View {
+    let text: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let step: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(text).monospacedDigit().foregroundStyle(.secondary)
+            Stepper("", value: $value, in: range, step: step).labelsHidden()
         }
     }
 }
@@ -593,8 +530,10 @@ struct MicKeyField: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.roundedBorder)
+            TextField("", text: $text, prompt: Text(placeholder))
+                .labelsHidden()
+                .textFieldStyle(.plain).multilineTextAlignment(.trailing)
+                .font(.system(size: 12.5).monospaced())
                 .frame(width: width)
                 .disabled(recording)
             Button {
@@ -610,18 +549,13 @@ struct MicKeyField: View {
                     }
                 }
             } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: recording ? "record.circle" : "keyboard.badge.ellipsis")
-                    Text(recording ? "请按键…" : (append ? "追加" : "录制")).lineLimit(1)
-                }
-                .fixedSize()
-                .font(.system(size: 12, weight: .semibold))
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(Capsule().fill(recording ? Color.red.opacity(0.18) : MicTheme.accent.opacity(0.12)))
-                .foregroundStyle(recording ? Color.red : MicTheme.accent)
+                Image(systemName: recording ? "record.circle" : "keyboard.badge.ellipsis")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(recording ? Color.red : Color.accentColor)
+                    .frame(width: 22, height: 20)
             }
-            .buttonStyle(.plain)
-            .help(recording ? "按 Esc 取消录制" : (append ? "追加一个按键到序列末尾" : "点一下,然后直接按下想要的按键"))
+            .buttonStyle(.borderless)
+            .help(recording ? "按 Esc 取消录制" : (append ? "录制：追加一个按键到序列末尾" : "录制：点一下，然后直接按下想要的按键"))
         }
     }
 }
@@ -636,14 +570,16 @@ struct MicPresetField: View {
     var body: some View {
         HStack(spacing: 8) {
             MicKeyField(id: id, placeholder: placeholder, text: $text, append: append)
-            Menu("预设") {
+            Menu {
                 ForEach(presets, id: \.1) { p in
                     Button(p.0) { text = p.1 }
                 }
+            } label: {
+                Image(systemName: "list.bullet")
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .lineLimit(1)
+            .help("预设")
         }
     }
 }
@@ -654,14 +590,19 @@ struct MicVoiceTab: View {
     @EnvironmentObject var engine: MicEngine
     @EnvironmentObject var settings: MicSettingsStore
 
+    /// 手动测试:标题行右侧的三个图标按钮(悬停显示名称)
+    private var testButtons: some View {
+        HStack(spacing: 4) {
+            MicTestButton(title: engine.state == .recording ? "停止" : "开始说话", symbol: engine.state == .recording ? "stop.fill" : "mic.fill") { engine.trigger(.voiceToggle) }
+            MicTestButton(title: settings.cfg.backend == .shiyi ? "保存" : "发送", symbol: "paperplane.fill") { engine.trigger(.send) }
+            MicTestButton(title: settings.cfg.backend == .shiyi ? "取消" : "清除", symbol: "trash") { engine.trigger(.clear) }
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            MicPanel {
-                MicRow(title: "语音输入对象",
-                       subtitle: settings.cfg.backend == .shiyi
-                           ? "按键直接驱动拾忆的语音输入:录音 → 识别 → AI 整理 → 预览 → 入库,状态与拾忆完全同步"
-                           : "按键通过模拟按键唤起豆包、Typeless、闪电说等输入法,文字直接上屏到当前输入框",
-                       divider: settings.cfg.backend == .external) {
+        Group {
+            MicPanel(title: "语音输入", trailing: { testButtons }) {
+                MicRow(title: "语音输入对象") {
                     Picker("", selection: settings.bind(\.backend)) {
                         Text("拾忆").tag(MicBackend.shiyi)
                         Text("外部输入法").tag(MicBackend.external)
@@ -671,14 +612,13 @@ struct MicVoiceTab: View {
                     .frame(width: 190)
                 }
                 if settings.cfg.backend == .external {
-                    MicRow(title: "语音输入法快捷键",
-                        subtitle: "豆包、Typeless、闪电说等:填它们设置里的语音快捷键。修饰键 cmd/shift/alt/ctrl/fn,右侧加 r 前缀") {
+                    MicRow(title: "语音输入法快捷键") {
                         MicPresetField(id: "voiceKey", placeholder: "如 fn", text: settings.bind(\.voiceKey), presets: [
                             ("Fn", "fn"), ("右 Option", "ralt"), ("右 Command", "rcmd"), ("右 Control", "rctrl"),
                             ("Option + 空格", "alt+space"), ("Control + 空格", "ctrl+space"),
                         ])
                     }
-                    MicRow(title: "触发方式", subtitle: "按住说话:单击开始时按下、停止时松开。免按:每次只轻按一下") {
+                    MicRow(title: "触发方式") {
                         Picker("", selection: settings.bind(\.voiceMode)) {
                             Text("按住说话").tag(MicVoiceMode.hold)
                             Text("免按").tag(MicVoiceMode.tap)
@@ -687,38 +627,17 @@ struct MicVoiceTab: View {
                         .labelsHidden()
                         .frame(width: 170)
                     }
-                    MicRow(title: "发送键", subtitle: "发送手势执行时按下的键") {
+                    MicRow(title: "发送键") {
                         MicPresetField(id: "sendKey", placeholder: "如 enter", text: settings.bind(\.sendKey), presets: [
                             ("回车", "enter"), ("⌘ + 回车", "cmd+enter"), ("⇧ + 回车", "shift+enter"), ("⌃ + 回车", "ctrl+enter"),
                         ])
                     }
-                    MicRow(title: "清除文字", subtitle: "按键序列用逗号分隔", divider: false) {
+                    MicRow(title: "清除文字") {
                         MicPresetField(id: "clearKeys", placeholder: "如 cmd+a, backspace", text: settings.bind(\.clearKeys), append: true, presets: [
                             ("全选后删除(输入框)", "cmd+a, backspace"),
                             ("终端:Ctrl+U", "ctrl+u"),
                             ("终端:Ctrl+A, Ctrl+K", "ctrl+a, ctrl+k"),
                         ])
-                    }
-                }
-            }
-
-            if settings.cfg.backend == .shiyi {
-                MicPanel {
-                    MicRow(title: "识别引擎、整理方式、倒计时等",
-                           subtitle: "这些仍然在拾忆的「设置 → 语音输入」里设置,按键和界面入口共用同一套",
-                           divider: false) {
-                        Button("打开语音输入设置") { SettingsWindow.show(.voice) }
-                            .controlSize(.small)
-                    }
-                }
-            }
-
-            MicPanel {
-                MicRow(title: "手动测试", subtitle: "不用按发射器,直接验证上面的设置", divider: false) {
-                    HStack(spacing: 8) {
-                        MicTestButton(title: engine.state == .recording ? "停止" : "开始说话", symbol: "mic.fill") { engine.trigger(.voiceToggle) }
-                        MicTestButton(title: settings.cfg.backend == .shiyi ? "保存" : "发送", symbol: "paperplane.fill") { engine.trigger(.send) }
-                        MicTestButton(title: settings.cfg.backend == .shiyi ? "取消" : "清除", symbol: "trash") { engine.trigger(.clear) }
                     }
                 }
             }
@@ -732,12 +651,12 @@ struct MicTestButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(.system(size: 12.5, weight: .semibold))
-                .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(Capsule().fill(Color.primary.opacity(0.07)))
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 22, height: 20)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
+        .help(title)
     }
 }
 
@@ -748,63 +667,65 @@ struct MicBehaviorTab: View {
     @StateObject private var loginItem = MicLoginItem()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            MicPanel {
-                MicRow(title: "单击时的降噪", subtitle: "固件会在单击时切换降噪,这里可以让它保持不变") {
+        Group {
+            MicPanel(title: "行为") {
+                MicRow(title: "单击时的降噪") {
                     Picker("", selection: settings.bind(\.noiseLock)) {
                         ForEach(MicNoiseLock.allCases) { Text($0.title).tag($0) }
                     }
+                    .pickerStyle(.menu)
                     .labelsHidden()
-                    .frame(width: 250)
+                    .fixedSize()
                 }
                 if settings.cfg.backend == .external {
-                    MicRow(title: "解除静音的双击不触发动作", subtitle: "避免双击仅为解除静音时误执行映射动作") {
+                    MicRow(title: "解除静音的双击不触发动作") {
                         Toggle("", isOn: settings.bind(\.unmuteDoubleSkipsAction)).labelsHidden().toggleStyle(.switch)
                     }
-                    MicRow(title: "同步系统录音状态", subtitle: "以系统的「麦克风使用中」为准:输入法自己停止时界面同步,并等它真正开始收音再提示可以说话") {
+                    MicRow(title: "同步系统录音状态") {
                         Toggle("", isOn: settings.bind(\.syncWithMic)).labelsHidden().toggleStyle(.switch)
                     }
                 }
-                MicRow(title: "屏幕顶部状态提示", subtitle: "全程无声,只在屏幕顶部显示") {
+                MicRow(title: "屏幕顶部状态提示") {
                     Toggle("", isOn: settings.bind(\.showHUD)).labelsHidden().toggleStyle(.switch)
                 }
-                MicRow(title: "拾忆开机自动启动", subtitle: "麦克风按键只有在拾忆运行时才有效", divider: false) {
+                MicRow(title: "拾忆开机自动启动") {
                     Toggle("", isOn: Binding(get: { loginItem.enabled }, set: { loginItem.set($0) }))
                         .labelsHidden().toggleStyle(.switch)
                 }
             }
 
-            MicPanel {
-                MicRow(title: "双击判定窗口", subtitle: "两次点击间隔小于该值才算双击") {
-                    Stepper("\(settings.cfg.clickDebounceMs) ms", value: settings.bind(\.clickDebounceMs), in: 60...400, step: 20)
+            Section {
+                MicRow(title: "双击判定窗口") {
+                    MicStepper(text: "\(settings.cfg.clickDebounceMs) ms", value: settings.bind(\.clickDebounceMs), range: 60...400, step: 20)
                 }
                 if settings.cfg.backend == .external {
-                    MicRow(title: "发送前等待识别提交", subtitle: "停止说话后,等输入法把文字写入输入框") {
-                        Stepper("\(settings.cfg.sendDelayMs) ms", value: settings.bind(\.sendDelayMs), in: 200...3000, step: 100)
+                    MicRow(title: "发送前等待识别提交") {
+                        MicStepper(text: "\(settings.cfg.sendDelayMs) ms", value: settings.bind(\.sendDelayMs), range: 200...3000, step: 100)
                     }
-                    MicRow(title: "轻按语音键的时长", subtitle: "免按模式下按键按下到松开的时间,识别不触发时可调大") {
-                        Stepper("\(settings.cfg.tapHoldMs) ms", value: settings.bind(\.tapHoldMs), in: 30...300, step: 10)
+                    MicRow(title: "轻按语音键的时长") {
+                        MicStepper(text: "\(settings.cfg.tapHoldMs) ms", value: settings.bind(\.tapHoldMs), range: 30...300, step: 10)
                     }
                     MicRow(title: "最长录音") {
-                        Stepper("\(settings.cfg.maxRecordSeconds) 秒", value: settings.bind(\.maxRecordSeconds), in: 10...600, step: 10)
+                        MicStepper(text: "\(settings.cfg.maxRecordSeconds) 秒", value: settings.bind(\.maxRecordSeconds), range: 10...600, step: 10)
                     }
                     MicRow(title: "待确认超时复位") {
-                        Stepper("\(settings.cfg.reviewTimeoutSeconds) 秒", value: settings.bind(\.reviewTimeoutSeconds), in: 10...600, step: 10)
+                        MicStepper(text: "\(settings.cfg.reviewTimeoutSeconds) 秒", value: settings.bind(\.reviewTimeoutSeconds), range: 10...600, step: 10)
                     }
                 }
-                MicRow(title: "按键轮询间隔", divider: false) {
-                    Stepper("\(settings.cfg.pollMs) ms", value: settings.bind(\.pollMs), in: 20...200, step: 10)
+                MicRow(title: "按键轮询间隔") {
+                    MicStepper(text: "\(settings.cfg.pollMs) ms", value: settings.bind(\.pollMs), range: 20...200, step: 10)
+                }
+            } header: {
+                HStack {
+                    Text("时序")
+                    Spacer()
+                    Button { settings.reset() } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("恢复默认设置")
                 }
             }
-
-            Button(role: .destructive) { settings.reset() } label: {
-                Label("恢复默认设置", systemImage: "arrow.uturn.backward")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(Capsule().fill(Color.red.opacity(0.12)))
-                    .foregroundStyle(Color.red)
-            }
-            .buttonStyle(.plain)
         }
     }
 }
@@ -815,39 +736,38 @@ struct MicSystemTab: View {
     @EnvironmentObject var engine: MicEngine
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            MicPanel {
-                MicPermissionRow(title: "输入监控", subtitle: "读取麦克风按键", ok: engine.inputMonitoringOK) {
+        Group {
+            MicPanel(title: "权限") {
+                MicPermissionRow(title: "输入监控", subtitle: "", ok: engine.inputMonitoringOK) {
                     engine.requestInputMonitoring()
                 }
-                MicPermissionRow(title: "辅助功能", subtitle: "外部输入法模式(模拟按键)与录制按键需要", ok: engine.accessibilityOK, divider: false) {
+                MicPermissionRow(title: "辅助功能", subtitle: "", ok: engine.accessibilityOK) {
                     engine.requestAccessibility()
                 }
             }
 
-            MicPanel {
-                MicRow(title: "接收器", subtitle: "USB 3547:0411") {
+            MicPanel(title: "诊断") {
+                MicRow(title: "接收器") {
                     Text(engine.connected ? "已连接 · 固件 \(engine.firmware.isEmpty ? "—" : engine.firmware)" : "未连接")
                         .font(.system(size: 12.5)).foregroundStyle(.secondary)
                 }
                 MicRow(title: "接收器 ID") { mono(engine.rxID.isEmpty ? "—" : engine.rxID) }
                 MicRow(title: "TX1 序列号") { mono(engine.txSerial.isEmpty ? "—" : engine.txSerial) }
-                MicRow(title: "系统录音状态", subtitle: "默认输入设备是否在收音(拾忆或输入法录音时为开)") {
+                MicRow(title: "系统录音状态") {
                     HStack(spacing: 6) {
                         Circle().fill(engine.micActive ? Color.red : Color.gray.opacity(0.4)).frame(width: 9, height: 9)
                         Text(engine.micActive ? "收音中" : "空闲").font(.system(size: 12.5)).foregroundStyle(.secondary)
                     }
                 }
-                MicRow(title: "三击通道", subtitle: engine.consumerSeized ? "已独占:三击不会同时调高系统音量" : "共享模式:三击可能会同时调高系统音量") {
+                MicRow(title: "三击通道", subtitle: engine.consumerSeized ? nil : "共享模式:三击可能会同时调高系统音量") {
                     Image(systemName: engine.consumerSeized ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
                         .foregroundStyle(engine.consumerSeized ? Color.green : Color.orange)
                 }
-                MicRow(title: "心跳原始数据", divider: false) { mono(engine.heart.rawHex.isEmpty ? "—" : engine.heart.rawHex) }
+                MicRow(title: "心跳原始数据") { mono(engine.heart.rawHex.isEmpty ? "—" : engine.heart.rawHex) }
             }
 
-            MicPanel {
+            MicPanel(title: "最近事件") {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("最近事件").font(.system(size: 13.5, weight: .medium))
                     if engine.eventLog.isEmpty {
                         Text("暂无").font(.system(size: 12)).foregroundStyle(.secondary)
                     }
@@ -860,7 +780,6 @@ struct MicSystemTab: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(18)
             }
         }
     }
@@ -885,19 +804,18 @@ struct MicPermissionRow: View {
     let request: () -> Void
 
     var body: some View {
-        MicRow(title: title, subtitle: subtitle, divider: divider) {
+        MicRow(title: title, subtitle: subtitle.isEmpty ? nil : subtitle, divider: divider) {
             HStack(spacing: 10) {
                 Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
                     .foregroundStyle(ok ? Color.green : Color.red)
                     .font(.system(size: 17))
                 if !ok {
-                    Button("授权", action: request).buttonStyle(.borderedProminent).controlSize(.small)
-                    Button("系统设置") {
+                    SIconButton(symbol: "lock.open", help: "授权", action: request)
+                    SIconButton(symbol: "gearshape", help: "打开系统设置") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") {
                             NSWorkspace.shared.open(url)
                         }
                     }
-                    .controlSize(.small)
                 }
             }
         }

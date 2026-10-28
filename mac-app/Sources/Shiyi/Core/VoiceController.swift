@@ -260,14 +260,9 @@ final class VoiceController: ObservableObject {
             registerError = nil
             return
         }
-        if let why = c.problem {
+        if let why = c.problem(for: .voice) {
             GlobalHotkey.voice.unregister()
             registerError = why
-            return
-        }
-        if let q = QuickAddHotkey.current.combo, q.code == c.code, q.mods == c.mods {
-            GlobalHotkey.voice.unregister()
-            registerError = "和全局万能输入的快捷键相同，请换一个"
             return
         }
         let ok = GlobalHotkey.voice.register(keyCode: c.code, modifiers: c.mods)

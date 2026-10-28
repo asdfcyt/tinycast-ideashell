@@ -434,7 +434,8 @@ final class IslandController {
 
     private let captureWatcher = CaptureWatcher()
     private var capturing = false
-    private var hotkeyInstalled: IslandHotkey?
+    private var hotkeyInstalled: HotkeyCombo?
+    private var hotkeySuspended = false
     private var dueTimer: Timer?
     private var firedDue = Set<String>()
 
@@ -501,11 +502,25 @@ final class IslandController {
             capturing = wantCapture
             if wantCapture { captureWatcher.start() } else { captureWatcher.stop() }
         }
-        let hk = DisplayMode.hotkey
-        if hk != hotkeyInstalled {
-            hotkeyInstalled = hk
-            GlobalHotkey.shared.register(hk)
+        guard !hotkeySuspended else { return }
+        var wantKey = DisplayMode.hotkey.combo
+        if let c = wantKey, c.problem(for: .island) != nil { wantKey = nil }
+        if wantKey != hotkeyInstalled {
+            hotkeyInstalled = wantKey
+            if let c = wantKey { GlobalHotkey.shared.register(keyCode: c.code, modifiers: c.mods) } else { GlobalHotkey.shared.unregister() }
         }
+    }
+
+    /// 设置页录制新组合时先把热键停掉
+    func suspendHotkey() {
+        hotkeySuspended = true
+        hotkeyInstalled = nil
+        GlobalHotkey.shared.unregister()
+    }
+
+    func resumeHotkey() {
+        hotkeySuspended = false
+        apply()
     }
 
     // MARK: 显示 / 隐藏

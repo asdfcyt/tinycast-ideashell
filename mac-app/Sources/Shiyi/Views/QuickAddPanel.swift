@@ -22,6 +22,94 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+/// 输入窗的内容视图：在没有被输入框 / 按钮接走的空白处按住拖动，就能移动整个窗口
+/// （窗口自带的「拖背景移动」在 SwiftUI 内容上不生效，所以自己处理）。拖动时由控制器负责吸附和辅助线。
+final class QuickAddHostingView<Content: View>: NSHostingView<Content> {
+    var onDragMove: ((NSRect) -> NSRect)?
+    var onDragEnd: (() -> Void)?
+    private var mouseStart: NSPoint?
+    private var frameStart: NSRect = .zero
+    private var dragging = false
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        mouseStart = NSEvent.mouseLocation
+        frameStart = window?.frame ?? .zero
+        dragging = false
+        super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let w = window, let start = mouseStart else { super.mouseDragged(with: event); return }
+        let now = NSEvent.mouseLocation
+        let dx = now.x - start.x, dy = now.y - start.y
+        if !dragging {
+            guard hypot(dx, dy) > 3 else { super.mouseDragged(with: event); return }
+            dragging = true
+        }
+        var f = frameStart
+        f.origin.x += dx
+        f.origin.y += dy
+        let snapped = onDragMove?(f) ?? f
+        w.setFrame(snapped, display: true)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let was = dragging
+        dragging = false
+        mouseStart = nil
+        if was { onDragEnd?() } else { super.mouseUp(with: event) }
+    }
+}
+
+/// 拖动输入窗时的辅助线：铺满当前屏幕的透明窗口，画出输入窗四条边的虚线；吸附到水平居中 / 默认高度时那条线变成实线高亮
+private final class GuideView: NSView {
+    struct Lines {
+        var card = NSRect.zero          // 输入窗卡片（屏幕坐标）
+        var snapX = false               // 吸附在水平居中
+        var snapY = false               // 吸附在默认高度
+        var centerX: CGFloat = 0
+        var topY: CGFloat = 0
+    }
+    var lines = Lines() { didSet { needsDisplay = true } }
+
+    override var isFlipped: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let w = window else { return }
+        let o = w.frame.origin
+        let c = lines.card.offsetBy(dx: -o.x, dy: -o.y)
+        let b = bounds
+
+        func stroke(_ a: NSPoint, _ z: NSPoint, solid: Bool) {
+            func line(_ width: CGFloat) -> NSBezierPath {
+                let path = NSBezierPath()
+                path.move(to: a); path.line(to: z)
+                path.lineWidth = width
+                if !solid { path.setLineDash([5, 4], count: 2, phase: 0) }
+                return path
+            }
+            // 先描一层更粗的深色淡线垫底，浅色 / 深色壁纸上都看得清
+            NSColor.black.withAlphaComponent(0.18).setStroke()
+            line(3).stroke()
+            (solid ? NSColor.controlAccentColor : NSColor.white.withAlphaComponent(0.8)).setStroke()
+            line(1).stroke()
+        }
+
+        for x in [c.minX, c.maxX] { stroke(NSPoint(x: x, y: b.minY), NSPoint(x: x, y: b.maxY), solid: false) }
+        for y in [c.minY, c.maxY] { stroke(NSPoint(x: b.minX, y: y), NSPoint(x: b.maxX, y: y), solid: false) }
+        if lines.snapX {
+            let x = lines.centerX - o.x
+            stroke(NSPoint(x: x, y: b.minY), NSPoint(x: x, y: b.maxY), solid: true)
+        }
+        if lines.snapY {
+            let y = lines.topY - o.y
+            stroke(NSPoint(x: b.minX, y: y), NSPoint(x: b.maxX, y: y), solid: true)
+        }
+    }
+}
+
 private final class HUDPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
@@ -137,7 +225,7 @@ final class QuickAddPanelController: ObservableObject {
             registerError = nil
             return
         }
-        if let why = c.problem {
+        if let why = c.problem(for: .quickAdd) {
             GlobalHotkey.quickAdd.unregister()
             registerError = why
             return
@@ -217,8 +305,10 @@ final class QuickAddPanelController: ObservableObject {
             },
             onHeight: { [weak self] h in self?.heightChanged(h) }
         )
-        let host = NSHostingView(rootView: root.environmentObject(model))
+        let host = QuickAddHostingView(rootView: root.environmentObject(model))
         host.sizingOptions = []
+        host.onDragMove = { [weak self] f in self?.dragMoved(f) ?? f }
+        host.onDragEnd = { [weak self] in self?.dragEnded() }
 
         contentHeight = 130
         p.setFrame(frame(forHeight: contentHeight), display: false)
@@ -238,6 +328,7 @@ final class QuickAddPanelController: ObservableObject {
         closeWork = nil
         guard let p = panel, p.isVisible else { return }
         hiddenAt = Date()
+        hideGuides()
         p.orderOut(nil)
         p.contentView = nil
     }
@@ -377,20 +468,99 @@ final class QuickAddPanelController: ObservableObject {
         p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         p.hidesOnDeactivate = false
         p.isReleasedWhenClosed = false
-        p.isMovableByWindowBackground = true
+        p.isMovableByWindowBackground = false
         p.animationBehavior = .utilityWindow
         p.onResign = { [weak self] in self?.panelResigned() }
         p.onCancel = { [weak self] in self?.hide() }
         return p
     }
 
-    /// 鼠标所在屏幕的水平居中、顶边在可用区域上方 28% 处
+    /// 默认位置：鼠标所在屏幕的水平居中、卡片顶边在可用区域上方 28% 处；用户拖过就用他放的位置（相对屏幕记住）
     private func frame(forHeight h: CGFloat) -> NSRect {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
         let v = screen.visibleFrame
         let inset = Self.shadowInset
-        let top = v.maxY - v.height * 0.28 + inset   // 卡片顶边在 28% 处，窗口比卡片高出一圈阴影
-        return NSRect(x: v.midX - width / 2 - inset, y: top - h - inset * 2, width: width + inset * 2, height: h + inset * 2)
+        let ud = UserDefaults.standard
+        let dx = ud.object(forKey: Self.dxKey) as? Double ?? 0
+        let topFrac = ud.object(forKey: Self.topKey) as? Double ?? Self.defaultTopFraction
+        var cardX = v.midX - width / 2 + CGFloat(dx)
+        cardX = min(max(cardX, v.minX), v.maxX - width)
+        let cardTop = min(max(v.maxY - v.height * CGFloat(topFrac), v.minY + h), v.maxY)
+        return NSRect(x: cardX - inset, y: cardTop - h - inset * 2 + inset, width: width + inset * 2, height: h + inset * 2)
+    }
+
+    // MARK: 拖动与辅助线
+
+    private static let dxKey = "quickadd.dx"
+    private static let topKey = "quickadd.top"
+    private static let defaultTopFraction = 0.28
+    private static let snapDistance: CGFloat = 8
+
+    private var guideWindow: NSPanel?
+    private var guideView: GuideView?
+
+    private func screenForPanel(_ f: NSRect) -> NSScreen {
+        let mouse = NSEvent.mouseLocation
+        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+            ?? NSScreen.screens.first { $0.frame.intersects(f) } ?? NSScreen.main ?? NSScreen.screens[0]
+    }
+
+    /// 拖动中：把窗口位置吸附到「水平居中」和「默认高度」，同时刷新辅助线；返回吸附后的窗口位置
+    private func dragMoved(_ proposed: NSRect) -> NSRect {
+        let inset = Self.shadowInset
+        let screen = screenForPanel(proposed)
+        let v = screen.visibleFrame
+        var f = proposed
+        var card = f.insetBy(dx: inset, dy: inset)
+        let defaultTop = v.maxY - v.height * CGFloat(Self.defaultTopFraction)
+
+        var snapX = false, snapY = false
+        if abs(card.midX - v.midX) < Self.snapDistance { f.origin.x += v.midX - card.midX; snapX = true }
+        if abs(card.maxY - defaultTop) < Self.snapDistance { f.origin.y += defaultTop - card.maxY; snapY = true }
+        card = f.insetBy(dx: inset, dy: inset)
+
+        showGuides(on: screen, lines: GuideView.Lines(card: card, snapX: snapX, snapY: snapY, centerX: v.midX, topY: defaultTop))
+        return f
+    }
+
+    private func dragEnded() {
+        hideGuides()
+        guard let p = panel else { return }
+        let card = p.frame.insetBy(dx: Self.shadowInset, dy: Self.shadowInset)
+        let v = screenForPanel(p.frame).visibleFrame
+        let ud = UserDefaults.standard
+        ud.set(Double(card.midX - v.midX), forKey: Self.dxKey)
+        ud.set(Double((v.maxY - card.maxY) / v.height), forKey: Self.topKey)
+        // 拖动后窗口还要保持 key，输入框继续能打字
+        p.makeKey()
+        focusEditor()
+    }
+
+    private func showGuides(on screen: NSScreen, lines: GuideView.Lines) {
+        let gw: NSPanel
+        if let w = guideWindow { gw = w } else {
+            gw = NSPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            gw.isOpaque = false
+            gw.backgroundColor = .clear
+            gw.hasShadow = false
+            gw.ignoresMouseEvents = true
+            gw.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 2)   // 在输入窗下面一层
+            gw.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+            gw.isReleasedWhenClosed = false
+            gw.animationBehavior = .none
+            let gv = GuideView(frame: NSRect(origin: .zero, size: screen.frame.size))
+            gv.autoresizingMask = [.width, .height]
+            gw.contentView = gv
+            guideView = gv
+            guideWindow = gw
+        }
+        if gw.frame != screen.frame { gw.setFrame(screen.frame, display: false) }
+        guideView?.lines = lines
+        if !gw.isVisible { gw.orderFrontRegardless() }
+    }
+
+    private func hideGuides() {
+        guideWindow?.orderOut(nil)
     }
 }

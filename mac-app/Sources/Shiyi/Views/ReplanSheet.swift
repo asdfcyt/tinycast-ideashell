@@ -24,6 +24,8 @@ struct ReplanSheet: View {
     @State private var occupied: [DidaTask] = []
     @State private var leftover = 0
     @State private var ready = false
+    /// 用户已经手动动过方案（改了安排 / 点了智能排期）：网络数据回来后不再自动重排，免得盖掉他的修改
+    @State private var touched = false
     @State private var applying = false
     // AI 排期
     @State private var aiBusy = false
@@ -97,12 +99,14 @@ struct ReplanSheet: View {
 
     private func assign(_ id: String, to day: String) {
         guard day >= today, items.contains(where: { $0.id == id }) else { return }
+        touched = true
         draft[id] = day
         focusDay = day
         selected = nextUnassigned(after: id)
     }
 
     private func unassign(_ id: String) {
+        touched = true
         draft.removeValue(forKey: id)
         selected = id
     }
@@ -137,6 +141,7 @@ struct ReplanSheet: View {
 
     /// 智能排期：配置了 AI 模型就用 AI 排，没配置（或 AI 没排成）就按规则排
     private func smartOrAI() {
+        touched = true
         // 没有逾期 / 无日期的任务时，排期什么也不会发生：明确告诉用户，而不是没反应
         guard items.contains(where: { rank($0) < 2 }) else {
             withAnimation(.easeOut(duration: 0.2)) { emptyHint = true }
@@ -190,6 +195,7 @@ struct ReplanSheet: View {
     }
 
     private func allOverdueToToday() {
+        touched = true
         aiResult = nil; aiReasons = [:]; aiBackup = nil
         for t in items where rank(t) == 0 { draft[t.id] = today }
         focusDay = today
@@ -249,12 +255,16 @@ struct ReplanSheet: View {
             .dismissOnOutsideClick()
         }
         .task {
-            if model.hasDida {
-                occupied = (try? await model.dida.tasksInRange(today, Day.add(today, days: 90))) ?? []
-            }
+            // 先用手头的数据立刻排出方案、弹窗马上可用；网络回来补全「已占用」的日程后，用户还没动手再重排一次
             if !ready {
                 ready = true
                 smart()
+            }
+            if model.hasDida {
+                let loaded = (try? await model.dida.tasksInRange(today, Day.add(today, days: 90))) ?? []
+                guard !Task.isCancelled else { return }
+                occupied = loaded
+                if !touched, !loaded.isEmpty { smart() }
             }
         }
     }
@@ -281,7 +291,7 @@ struct ReplanSheet: View {
                 .help(model.hasLlm ? "已配置 AI 模型：由 AI 按优先级、逾期时间、每天的负载和任务先后顺序来排" : "按优先级和每天的上限自动排；配置 AI 模型后会改用 AI 排")
             Menu {
                 Button("逾期的全部放到今天") { allOverdueToToday() }
-                Button("清空所有安排") { draft = [:]; aiResult = nil; aiReasons = [:]; selected = items.first?.id }
+                Button("清空所有安排") { touched = true; draft = [:]; aiResult = nil; aiReasons = [:]; selected = items.first?.id }
             } label: {
                 Image(systemName: "ellipsis.circle").font(.title3)
             }
@@ -336,7 +346,7 @@ struct ReplanSheet: View {
                     Spacer(minLength: 0)
                 }
                 HStack(spacing: 12) {
-                    if !model.hasLlm { Button("去设置") { dismiss(); SettingsWindow.show(.ai) }.buttonStyle(.link) }
+                    if !model.hasLlm { Button("去设置") { dismiss(); SettingsWindow.show(.account) }.buttonStyle(.link) }
                     Button("知道了") { aiError = nil }.buttonStyle(.link)
                 }
                 .font(.callout)
@@ -526,37 +536,19 @@ struct ReplanSheet: View {
         .padding(.horizontal, 16)
     }
 
+    /// 日历格子：只有自己的数据变了才重算内容（选任务、点别的格子时，42 个格子里只有一两个会重画）；
+    /// 点击 / 拖放挂在外面，始终拿到最新的状态
     private func dayCell(_ d: String, load: [String: (fixed: Int, planned: Int)]) -> some View {
         let l = load[d] ?? (0, 0)
-        let total = l.fixed + l.planned
-        let inMonth = Day.cal.isDate(Day.parse(d) ?? Date(), equalTo: month, toGranularity: .month)
         let past = d < today
-        let over = total > perDay
-        let number = String(Int(d.suffix(2)) ?? 0)
-        let fill: Color = over ? Color.red.opacity(0.16) : (l.planned > 0 ? Brand.orange.opacity(0.16) : Color.primary.opacity(0.045))
-        return VStack(spacing: 2) {
-            Text(number)
-                .font(.system(size: 13, weight: d == today ? .bold : .medium))
-                .foregroundStyle(d == today ? Brand.orange : Color.primary)
-            Group {
-                if total == 0 {
-                    Text(" ")
-                } else if l.planned > 0 {
-                    Text("\(total)").foregroundStyle(over ? Color.red : Brand.orangeDeep).fontWeight(.bold)
-                } else {
-                    Text("\(total)").foregroundStyle(.secondary)
-                }
-            }
-            .font(.system(size: 10))
-        }
-        .frame(maxWidth: .infinity).frame(height: 42)
-        .background(fill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(d == focusDay ? Brand.orange : Color.clear, lineWidth: 1.6)
-        }
-        .opacity(past ? 0.28 : (inMonth ? 1 : 0.5))
-        .contentShape(Rectangle())
+        let inMonth = Self.monthKey(Day.parse(d)) == Self.monthKey(month)
+        return ReplanDayCell(
+            day: d, fixed: l.fixed, planned: l.planned, perDay: perDay,
+            isToday: d == today, isFocus: d == focusDay,
+            opacity: past ? 0.28 : (inMonth ? 1 : 0.5),
+            helpText: { past ? "不能排到过去" : "\(dayText(d)) · 原有 \(l.fixed) 件，新排 \(l.planned) 件" }
+        )
+        .equatable()
         .onTapGesture {
             guard !past else { return }
             if let s = selected { assign(s, to: d) } else { focusDay = d }
@@ -566,7 +558,12 @@ struct ReplanSheet: View {
             assign(id, to: d)
             return true
         }
-        .help(past ? "不能排到过去" : "\(dayText(d)) · 原有 \(l.fixed) 件，新排 \(l.planned) 件")
+    }
+
+    private static func monthKey(_ d: Date?) -> Int {
+        guard let d else { return -1 }
+        let c = Day.cal.dateComponents([.year, .month], from: d)
+        return (c.year ?? 0) * 100 + (c.month ?? 0)
     }
 
     private func dayDetail(_ all: [DidaTask], fixed: [DidaTask]) -> some View {
@@ -636,5 +633,54 @@ struct ReplanSheet: View {
             .disabled(draft.isEmpty || applying)
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
+    }
+}
+
+/// 重新规划日历里的一个日期格（Equatable：数据没变就不重算）
+private struct ReplanDayCell: View, Equatable {
+    let day: String
+    let fixed: Int
+    let planned: Int
+    let perDay: Int
+    let isToday: Bool
+    let isFocus: Bool
+    let opacity: Double
+    /// 悬停提示的文字，只在格子真的重算时才生成；不参与比较
+    let helpText: () -> String
+
+    static func == (a: ReplanDayCell, b: ReplanDayCell) -> Bool {
+        a.day == b.day && a.fixed == b.fixed && a.planned == b.planned && a.perDay == b.perDay
+            && a.isToday == b.isToday && a.isFocus == b.isFocus && a.opacity == b.opacity
+    }
+
+    var body: some View {
+        let total = fixed + planned
+        let over = total > perDay
+        let number = String(Int(day.suffix(2)) ?? 0)
+        let fill: Color = over ? Color.red.opacity(0.16) : (planned > 0 ? Brand.orange.opacity(0.16) : Color.primary.opacity(0.045))
+        VStack(spacing: 2) {
+            Text(number)
+                .font(.system(size: 13, weight: isToday ? .bold : .medium))
+                .foregroundStyle(isToday ? Brand.orange : Color.primary)
+            Group {
+                if total == 0 {
+                    Text(" ")
+                } else if planned > 0 {
+                    Text("\(total)").foregroundStyle(over ? Color.red : Brand.orangeDeep).fontWeight(.bold)
+                } else {
+                    Text("\(total)").foregroundStyle(.secondary)
+                }
+            }
+            .font(.system(size: 10))
+        }
+        .frame(maxWidth: .infinity).frame(height: 42)
+        .background(fill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(isFocus ? Brand.orange : Color.clear, lineWidth: 1.6)
+        }
+        .opacity(opacity)
+        .contentShape(Rectangle())
+        .help(helpText())
     }
 }
