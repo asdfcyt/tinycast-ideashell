@@ -9,7 +9,7 @@ enum SettingsTransfer {
 
     /// 只搬用户主动设置过的项；窗口位置、运行状态、缓存都不带
     private static let prefixes = ["ui.", "voice.", "notify.", "llm.", "mic.config", "capture.", "app.", "quickadd."]
-    private static let exact: Set<String> = ["focus.goalMin", "sjz.endpoint", "sjz.summary"]
+    private static let exact: Set<String> = ["focus.goalMin", "sjz.endpoint", "sjz.summary", "sjz.summaryMin", "ticket.keepDays"]
     private static let excluded: Set<String> = ["voice.duck.saved"]
 
     private static func allowed(_ key: String) -> Bool {

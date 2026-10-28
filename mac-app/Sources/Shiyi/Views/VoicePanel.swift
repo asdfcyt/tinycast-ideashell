@@ -288,11 +288,17 @@ private struct VoiceCardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach($c.drafts) { $d in
-                DraftRow(d: $d, c: c)
+                DraftRow(d: $d, c: c, showsTag: c.drafts.count > 1)
             }
             ForEach(c.infos) { InfoBlock(info: $0, c: c) }
 
             HStack(spacing: 8) {
+                // 只有一条时，类型标签（结审想法 / 追加笔记 / 改待办……）放在左下角；多条时各自留在每条左侧
+                if c.drafts.count == 1 {
+                    ForEach($c.drafts) { $d in
+                        DraftTag(d: $d, c: c).fixedSize()
+                    }
+                }
                 Spacer()
                 Button { c.refineByVoice() } label: {
                     HStack(spacing: 3) {
@@ -352,35 +358,13 @@ private struct VoiceCardView: View {
     }
 }
 
-// MARK: - 预览里的一条
+// MARK: - 预览里每一条的类型标签（放在卡片左下角）
 
-private struct DraftRow: View {
+private struct DraftTag: View {
     @Binding var d: VoiceDraft
     @ObservedObject var c: VoiceController
-    @State private var editing = false
-    @FocusState private var focused: Bool
 
-    var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            // 左侧类型标签：宽度跟文字走，整列垂直居中
-            lead.fixedSize()
-            VStack(alignment: .leading, spacing: 4) {
-                body1
-                if let p = d.problem {
-                    Label(p, systemImage: "xmark.octagon.fill").font(.caption).foregroundStyle(Color.red)
-                } else {
-                    meta
-                }
-            }
-            Button { c.removeDraft(d.id) } label: {
-                Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
-            }.buttonStyle(.plain).help("去掉这一条")
-        }
-        .padding(6)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-
-    @ViewBuilder private var lead: some View {
+    @ViewBuilder var body: some View {
         switch d.action {
         case .create:
             Menu {
@@ -418,6 +402,36 @@ private struct DraftRow: View {
         .font(.caption.weight(.medium))
         .padding(.horizontal, 8).padding(.vertical, 3)
             .background(color.opacity(0.14), in: Capsule()).foregroundStyle(color)
+    }
+}
+
+// MARK: - 预览里的一条
+
+private struct DraftRow: View {
+    @Binding var d: VoiceDraft
+    @ObservedObject var c: VoiceController
+    /// 多条时类型标签留在每条左侧；只有一条时标签放到卡片左下角
+    var showsTag = true
+    @State private var editing = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            if showsTag { DraftTag(d: $d, c: c).fixedSize() }
+            VStack(alignment: .leading, spacing: 4) {
+                body1
+                if let p = d.problem {
+                    Label(p, systemImage: "xmark.octagon.fill").font(.caption).foregroundStyle(Color.red)
+                } else {
+                    meta
+                }
+            }
+            Button { c.removeDraft(d.id) } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
+            }.buttonStyle(.plain).help("去掉这一条")
+        }
+        .padding(6)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     @ViewBuilder private var body1: some View {
@@ -560,12 +574,14 @@ private struct VoiceListeningView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // 第一行：状态（录音点 / 修改标记 / 计时 / 引擎）靠左，发射器和波形靠右；每一项都不换行、不被挤扁
             HStack(spacing: 8) {
                 Circle().fill(Color.red).frame(width: 8, height: 8)
                     .opacity(pulse ? 0.35 : 1)
                     .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
                 if c.refining {
                     Text("修改").font(.system(size: 10, weight: .semibold)).foregroundStyle(Brand.orangeDeep)
+                        .lineLimit(1).fixedSize()
                         .padding(.horizontal, 6).padding(.vertical, 1)
                         .background(Brand.orange.opacity(0.14), in: Capsule())
                 }
@@ -573,8 +589,10 @@ private struct VoiceListeningView: View {
                     let t = max(0, Int(ctx.date.timeIntervalSince(c.listeningSince)))
                     Text(String(format: "%d:%02d", t / 60, t % 60))
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        .lineLimit(1).fixedSize()
                 }
-                Text(c.engineLabel).font(.system(size: 9.5)).foregroundStyle(.tertiary).lineLimit(1)
+                Text(c.engineLabel).font(.system(size: 9.5)).foregroundStyle(.tertiary).lineLimit(1).fixedSize()
+                Spacer(minLength: 8)
                 if mic.connected, mic.heart.anyOnline { MicMiniTX(height: 20).frame(width: 26, height: 22) }
                 HStack(spacing: 2) {
                     ForEach(bars.indices, id: \.self) { i in
@@ -584,17 +602,6 @@ private struct VoiceListeningView: View {
                 }
                 .frame(height: 16)
                 .animation(.easeOut(duration: 0.08), value: c.levels)
-                Spacer(minLength: 8)
-                Button("取消") { c.cancel() }.buttonStyle(.plain).foregroundStyle(.secondary).font(.caption)
-                Button { c.finish() } label: {
-                    HStack(spacing: 4) {
-                        Text("说完了").font(.caption.weight(.semibold))
-                        Text("↩").font(.system(size: 9)).opacity(0.7)
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10).padding(.vertical, 3)
-                    .background(Brand.orange, in: Capsule())
-                }.buttonStyle(.plain)
             }
 
             // 实时文字是主体：不用滚动容器（会把顶部一行裁掉一截），只显示最后 70 个字、最多三行，前面的用「…」省略
@@ -605,6 +612,24 @@ private struct VoiceListeningView: View {
                 .lineLimit(3)
                 .frame(maxWidth: .infinity, minHeight: 16, alignment: .topLeading)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // 第二行动作：和整理结果卡片的底部一致（取消 + 主按钮靠右）
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button("取消") { c.cancel() }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).font(.system(size: 11.5))
+                    .lineLimit(1).fixedSize()
+                Button { c.finish() } label: {
+                    HStack(spacing: 6) {
+                        Text("说完了").font(.system(size: 11.5, weight: .semibold))
+                        Text("↩").font(.caption2).opacity(0.7)
+                    }
+                    .lineLimit(1).fixedSize()
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10).padding(.vertical, 3)
+                    .background(Brand.orange, in: Capsule())
+                }.buttonStyle(.plain)
+            }
         }
         .onAppear {
             pulse = true

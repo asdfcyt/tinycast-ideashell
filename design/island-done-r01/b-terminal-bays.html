@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>B 终端分仓</title>
+<style>
+:root{--led:#FFB14A;--paper1:#FCF9F1;--paper2:#F6F1E4;--ink:#1F1610;--mute:#6A5E53;--line:#DDD2C0;--deep:#B2441B;--green:#1F6A40;--num:#B8650A;--metal:#2A2420;--metal2:#14100d;--edge:#3a3028;--tg:#6FDC9A;--tm:#A39382}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1000px;height:560px;overflow:hidden;font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased}
+body{background:linear-gradient(180deg,#cfd3da,#b9bfc9);position:relative}
+.win{position:absolute;left:60px;right:60px;top:0;bottom:0;background:#f4f4f6;border-radius:0 0 12px 12px;padding:120px 40px 0;color:#222}
+.win h3{font-size:22px;margin-bottom:10px}.win p{font-size:14px;line-height:1.9;color:#555;max-width:560px}
+.isl{position:absolute;left:50%;top:0;width:780px;transform:translateX(-50%);background:#000;border-radius:0 0 30px 30px;box-shadow:0 22px 50px -10px rgba(0,0,0,.55);color:#fff;padding:0 14px 14px}
+.isl::before,.isl::after{content:"";position:absolute;top:0;width:12px;height:12px;background:radial-gradient(circle at 0 100%,transparent 11.5px,#000 12px)}
+.isl::before{left:-12px}.isl::after{right:-12px;transform:scaleX(-1)}
+.head{height:38px;display:flex;align-items:center;justify-content:center;font:600 10.5px ui-monospace,Menlo,monospace;color:var(--tm);letter-spacing:.14em}
+.head span{display:flex;align-items:center;gap:14px}.head hr{width:150px;border:0;border-top:1px solid #2c241d}
+.chassis{display:grid;grid-template-columns:1fr 6px 1fr;background:linear-gradient(180deg,#1F1915,#0E0B09);border:1px solid #2c241d;border-radius:24px;overflow:hidden}
+.divider{background:linear-gradient(90deg,#0b0908,#3a3028 50%,#0b0908);position:relative}
+.divider i{position:absolute;left:50%;width:7px;height:7px;margin-left:-3.5px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#6a5a4a,#1c1612);box-shadow:0 0 0 1px #000}
+/* 左仓 */
+.bayL{padding:12px 16px 14px;display:flex;flex-direction:column;align-items:center}
+.status{width:100%;display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--tg);margin-bottom:10px}.status i{width:6px;height:6px;border-radius:3px;background:var(--tg)}.status em{margin-left:auto;color:var(--tm);font:600 10.5px ui-monospace,Menlo,monospace;font-style:normal}
+.slot{width:210px;height:7px;border-radius:4px;background:#030202;border:.5px solid var(--edge);position:relative;z-index:2;box-shadow:0 2px 6px #000}
+.ticket{margin-top:-4px;width:310px;padding:20px 20px 16px;background:linear-gradient(180deg,var(--paper1),var(--paper2));color:var(--ink);border-radius:0 0 12px 12px;position:relative;
+ -webkit-mask:radial-gradient(circle 4.5px at 0 7px,#0000 98%,#000) left/51% 14px repeat-y,radial-gradient(circle 4.5px at 100% 7px,#0000 98%,#000) right/51% 14px repeat-y;box-shadow:0 6px 14px rgba(0,0,0,.4)}
+.th{display:flex;justify-content:space-between}.th b{font:700 13px ui-monospace,Menlo,monospace}.th span{font-size:12px;font-weight:700;color:var(--green)}.th span i{display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--green);margin-right:5px}
+.main{display:flex;gap:14px;margin-top:10px}.num{text-align:center}.num strong{display:block;font:800 46px/1 ui-rounded,sans-serif;color:var(--num)}.num small{font-size:11px;color:var(--mute)}
+.main h4{font-size:15px;margin:5px 0}.main p{font-size:10.5px;font-weight:600;color:var(--mute);line-height:1.5}
+.dash{border-top:1.2px dashed var(--line);margin:9px 0}.cheer{font-size:11.5px;color:var(--mute);line-height:1.6;padding-right:64px}
+.foot{margin-top:10px;padding-right:60px}.bc{height:24px;width:140px;display:block;margin-bottom:4px}.foot small{font:700 8px ui-monospace,Menlo,monospace;color:var(--mute);white-space:nowrap}
+.stamp{position:absolute;right:14px;bottom:12px;width:48px;height:48px;border:2.5px solid var(--deep);border-radius:50%;display:grid;place-items:center;transform:rotate(-12deg);color:var(--deep);font-weight:700;font-size:11.5px;text-align:center;line-height:1.1}
+.stamp::after{content:"";position:absolute;inset:3px;border:1px dashed var(--deep);border-radius:50%}.stamp em{font-style:normal;font-size:8.5px;display:block}
+.keys{display:flex;gap:8px;margin-top:14px;width:100%;justify-content:center}
+.key{height:28px;padding:0 13px;border-radius:8px;background:linear-gradient(180deg,#3a322b,#241e19);border:1px solid #4a4037;border-bottom-width:3px;border-bottom-color:#0c0a08;font-size:11.5px;font-weight:600;color:#e8dfd3;display:inline-flex;align-items:center;gap:5px}
+.key.q{color:var(--tm)}
+/* 右仓 */
+.bayR{padding:12px 18px 16px;display:flex;flex-direction:column}
+.hd{display:flex;justify-content:space-between;font:600 10.5px ui-monospace,Menlo,monospace;color:var(--tm);margin-bottom:10px}
+.screen{background:#0a0807;border:1px solid #2c241d;border-radius:14px;padding:12px 14px;box-shadow:inset 0 0 22px rgba(255,177,74,.07)}
+.big{font:900 54px/1 ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:.04em;color:var(--led);text-shadow:0 0 14px rgba(255,177,74,.55);text-align:center}
+.cap{display:flex;justify-content:space-between;font:600 10.5px ui-monospace,Menlo,monospace;color:#C79A55;margin-top:8px}
+.mv{display:flex;gap:10px;align-items:center;margin-top:14px}.mv svg{flex:none}.mv h5{font-size:17px;font-weight:700}.mv .tg{font:600 10.5px ui-monospace,Menlo,monospace;color:var(--tm);margin-top:3px}
+.steps{margin-top:12px;display:grid;gap:7px;font:12px/1.5 ui-monospace,"SF Mono",Menlo,"PingFang SC",monospace;color:#dcd3c6}
+.steps div{display:flex;gap:8px}.steps b{color:var(--led);font-weight:700;flex:none}
+.cta{margin-top:auto;padding-top:14px;display:flex;gap:8px}
+.start{flex:1;height:40px;border-radius:10px;background:linear-gradient(180deg,#ffbe62,#e8903a);border:1px solid #ffd08a;border-bottom:3px solid #8a4a14;color:#3A1D0C;font-weight:800;font-size:14px;display:flex;align-items:center;justify-content:center;gap:8px}
+.oth{height:40px;padding:0 14px;border-radius:10px;background:linear-gradient(180deg,#3a322b,#241e19);border:1px solid #4a4037;border-bottom:3px solid #0c0a08;font-size:12.5px;font-weight:600;color:#e8dfd3;display:flex;align-items:center}
+</style></head><body>
+<div class="win"><h3>Mac 语音输入与入库方案</h3><p>签名：需要稳定的开发者证书，否则每次更新都要在本机 Accessibility 里重新授权。转写文字后直接入库，没填写的项目走收集箱。离线识别准确率：专有名词一般，P1 实测后决定是否把腾讯云提前。</p></div>
+<div class="isl">
+  <div class="head"><span><hr>拾忆 × 专注终端<hr></span></div>
+  <div class="chassis">
+    <div class="bayL">
+      <div class="status"><i></i>番茄完成 · 5 分钟<em>PRINT 01</em></div>
+      <div class="slot"></div>
+      <div class="ticket">
+        <div class="th"><b>拾忆 · 专注小票</b><span><i></i>已完成</span></div>
+        <div class="main"><div class="num"><strong>5</strong><small>分钟</small></div><div><h4>自由专注</h4><p>第 1 个番茄 &nbsp; 记录 0 条 &nbsp; 今日累计 2 时 30 分</p></div></div>
+        <div class="dash"></div><div class="cheer">先休息一会儿，回来继续发光。</div>
+        <div class="foot"><canvas class="bc" id="bc" width="280" height="48"></canvas><small>◆ 已完成番茄 · 10-28 20:41 · 729F48 ◆</small></div>
+        <div class="stamp"><div>已完成<em>10·28</em></div></div>
+      </div>
+      <div class="keys"><span class="key">⤓ 保存图片</span><span class="key">⧉ 复制</span><span class="key q">✕ 收起</span></div>
+    </div>
+    <div class="divider"><i style="top:14px"></i><i style="bottom:14px"></i></div>
+    <div class="bayR">
+      <div class="hd"><span>BREAK · 短休息</span><span>MOVE 1/3</span></div>
+      <div class="screen"><div class="big">01:00</div><div class="cap"><span>跟练倒计时</span><span>待机</span></div></div>
+      <div class="mv"><svg viewBox="0 0 48 48" width="34" height="34" fill="none" stroke="#FFB14A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="26" cy="10" r="4.5"/><path d="M24 17v13M24 22c-5 0-9 3-11 7M24 22c5 0 9-3 11-7M24 30l-6 12M24 30l7 12"/></svg><div><h5>颈部侧拉</h5><div class="tg">颈肩 · 60 秒</div></div></div>
+      <div class="steps"><div><b>01</b>坐直，左手放在身侧，右手轻扶左耳上方</div><div><b>02</b>头慢慢向右肩倾，保持 15 秒</div><div><b>03</b>换边再来一次，全程不要耸肩</div></div>
+      <div class="cta"><div class="start">▶ 开始跟练</div><div class="oth">换一个</div><div class="oth">开始休息 5′</div></div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){var c=document.getElementById('bc'),x=c.getContext('2d');x.fillStyle='#1F1610';var s=729,r=function(){s=(s*9301+49297)%233280;return s/233280},p=0;while(p<280){var k=(1+Math.floor(r()*3))*2,g=(1+Math.floor(r()*2.4))*2;x.fillRect(p,0,k,48);p+=k+g}})();
+</script></body></html>

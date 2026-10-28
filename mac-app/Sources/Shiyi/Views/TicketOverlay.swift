@@ -33,7 +33,8 @@ struct TicketOverlay: View {
                     .shadow(color: .black.opacity(0.32), radius: 12, y: 7)
                     .background(GeometryReader { g in Color.clear.onAppear { ticketH = g.size.height } })
                     .onTapGesture { onClose() }
-                actions.opacity(printed ? 1 : 0).animation(.easeOut(duration: 0.3).delay(0.9), value: printed)
+                // 保存 / 复制 / 收起跟小票连在一起，一起从出纸口滑出来（以前要等小票停稳再淡入，看起来像后补的）
+                actions
             }
             .padding(.horizontal, Self.sidePad).padding(.top, 2).padding(.bottom, 22)
             .offset(y: printed ? 0 : -(ticketH + 40))
@@ -87,8 +88,8 @@ private final class TicketPanel: NSPanel {
 }
 
 /// 番茄完成后的小票浮层。
-/// - 灵动岛模式：岛已经弹成「终端」，小票从岛的下沿打印出来（岛收起，小票也跟着收）
-/// - 其它情况：自带一个终端，出现在屏幕右上角（灵动岛模式没弹岛时在顶部中间）
+/// - 灵动岛模式：岛左右拉宽成「专注终端」，小票在岛里面打印（见 IslandFocusDone.swift），不走这里
+/// - 其它情况（提前结束、岛被占用、没开灵动岛）：自带一个终端，出现在屏幕右上角（灵动岛模式没弹岛时在顶部中间）
 @MainActor
 final class TicketController {
     static let shared = TicketController()
@@ -111,8 +112,6 @@ final class TicketController {
     private var hovering = false
     private var hideTimer: Timer?
     private var shownAt = Date()
-    /// 挂在灵动岛下面时，岛的实时位置（岛的弹簧动画还在走时，位置要等它停稳再取）
-    private var anchor: (() -> NSRect?)?
     private var current: Celebration?
 
     var frame: NSRect? { panel?.frame }
@@ -124,7 +123,9 @@ final class TicketController {
 
     func present(_ c: Celebration) {
         guard Self.enabled else { return }
-        show(c, anchor: IslandController.shared.takeTicketAnchor())
+        // 走完的番茄：岛自己把小票打印在岛里；岛让不出来（正在用小组件 / 投放）才退回独立浮层
+        if c.completed, IslandController.shared.presentFocusDone(c) { return }
+        show(c)
     }
 
     func playPrintSound() {
@@ -132,15 +133,13 @@ final class TicketController {
         NSSound(named: "Glass")?.play()
     }
 
-    private func show(_ c: Celebration, anchor: (() -> NSRect?)?) {
-        hide(notifyIsland: false)
-        self.anchor = anchor
+    private func show(_ c: Celebration) {
+        hide()
         current = c
         hovering = false
         shownAt = Date()
-        let showTerminal = anchor == nil
 
-        let view = TicketOverlay(c: c, showTerminal: showTerminal, onClose: { [weak self] in self?.hide(notifyIsland: true) },
+        let view = TicketOverlay(c: c, showTerminal: true, onClose: { [weak self] in self?.hide() },
                                  onHover: { [weak self] in self?.hovering = $0 })
         let host = NSHostingView(rootView: view)
         host.frame = NSRect(x: 0, y: 0, width: TicketOverlay.width, height: 600)
@@ -162,21 +161,12 @@ final class TicketController {
         host.frame = NSRect(origin: .zero, size: size)
         panel = p
 
-        // 灵动岛：等它弹开、停稳（和安卓端一样先亮屏、停一下再出纸）
-        let delay: TimeInterval = anchor == nil ? 0 : 0.5
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak p] in
-            guard let self, let p, self.panel === p else { return }
-            p.setFrame(self.placement(size: size), display: false)
-            p.orderFrontRegardless()
-        }
+        p.setFrame(placement(size: size), display: false)
+        p.orderFrontRegardless()
         startTimer(life: Self.life)
     }
 
     private func placement(size: NSSize) -> NSRect {
-        if let a = anchor?() {
-            // 上沿叠在岛里 6pt：小票是从岛里出来的
-            return NSRect(x: a.midX - size.width / 2, y: a.minY + 6 - size.height, width: size.width, height: size.height)
-        }
         let s = NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main ?? NSScreen.screens[0]
         let vf = s.visibleFrame
         let centered = DisplayMode.current == .island
@@ -190,18 +180,15 @@ final class TicketController {
             Task { @MainActor in
                 guard let self else { return }
                 if self.hovering { self.shownAt = max(self.shownAt, Date().addingTimeInterval(-life + 30)); return }
-                if Date().timeIntervalSince(self.shownAt) > life { self.hide(notifyIsland: true) }
+                if Date().timeIntervalSince(self.shownAt) > life { self.hide() }
             }
         }
         RunLoop.main.add(t, forMode: .common)
         hideTimer = t
     }
 
-    /// 收起：灵动岛挂着的话，岛也一起收
-    func hide(notifyIsland: Bool) {
+    func hide() {
         hideTimer?.invalidate(); hideTimer = nil
-        let wasAnchored = anchor != nil
-        anchor = nil
         current = nil
         if let p = panel {
             panel = nil
@@ -210,13 +197,6 @@ final class TicketController {
                 p.animator().alphaValue = 0
             }, completionHandler: { p.orderOut(nil); p.contentView = nil })
         }
-        if notifyIsland && wasAnchored { IslandController.shared.ticketDismissed() }
-    }
-
-    /// 灵动岛收起时调用：只收小票，不回头再收岛
-    func islandCollapsed() {
-        guard panel != nil else { return }
-        hide(notifyIsland: false)
     }
 }
 

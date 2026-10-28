@@ -179,11 +179,14 @@ extension AppModel {
         Task { try? await Task.sleep(nanoseconds: 4_000_000_000); await pollSjzEvents() }
     }
 
-    /// 每晚小结：21 点后，把当天从拾忆写进结审的内容、专注和完成任务汇总写进项目工作日志（每天每个项目一次）
+    /// 每天小结：到了设置的时刻（默认 21:00）后，把当天从拾忆写进结审的内容、专注和完成任务汇总写进项目工作日志（每天每个项目一次）
     func sjzDailySummaryIfDue() async {
         let ud = UserDefaults.standard
+        let at = ud.object(forKey: "sjz.summaryMin") as? Int ?? 21 * 60
+        let cal = Calendar.current
+        let nowMin = cal.component(.hour, from: Date()) * 60 + cal.component(.minute, from: Date())
         guard ud.object(forKey: "sjz.summary") as? Bool ?? true,
-              Calendar.current.component(.hour, from: Date()) >= 21,
+              nowMin >= at,
               let projects = sjzOverview?.projects else { return }
         let day = Day.today()
         guard ud.string(forKey: "sjz.summary.day") != day else { return }
@@ -516,7 +519,7 @@ extension AppModel {
     }
 }
 
-/// 当天从拾忆做的事的本机计数（专注分钟、完成任务数），供每晚小结使用
+/// 当天从拾忆做的事的本机计数（专注分钟、完成任务数），供每天工作小结使用
 enum SjzDaily {
     private static func key(_ project: String, _ kind: String) -> String { "sjz.day.\(Day.today()).\(project).\(kind)" }
     static func add(_ project: String, _ kind: String, _ n: Int) {

@@ -53,6 +53,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import java.time.LocalDate
 
 /** 一块异步数据的状态：加载中仍可显示旧数据（先显示后刷新） */
@@ -383,6 +385,11 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun ensureLoaded() {
         if (!connected.value) return
+        // 预设范围（最近 7 天 / 今天 / 本周……）是按「当时的今天」算的；跨天后要重算，否则最新的一天永远加载不出来
+        if (syncPresetRange()) {
+            loadTimeline(clear = true)
+            return
+        }
         val st = _timeline.value
         if (st.loading) return
         if (st.data == null) {
@@ -392,7 +399,20 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun refresh() = loadTimeline()
+    fun refresh() {
+        // 下拉刷新也要重算预设范围：App 进程跨过午夜后，旧范围的终点还停在昨天
+        syncPresetRange()
+        loadTimeline()
+    }
+
+    /** 预设范围按今天重新计算；范围变了返回 true。自定义范围不动 */
+    private fun syncPresetRange(): Boolean {
+        val p = preset ?: return false
+        val fresh = p.range()
+        if (fresh.start == range.start && fresh.endExclusive == range.endExclusive) return false
+        range = fresh
+        return true
+    }
 
     fun selectPreset(p: RangePreset) {
         preset = p
@@ -436,11 +456,14 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
         timelineJob = viewModelScope.launch {
             try {
                 // 拉取之外的解析 / 拼装也不占主线程
-                val data = withContext(Dispatchers.Default) { repo.timeline(target) }
+                // 加个总时限：请求卡住时不能让下拉刷新一直转圈
+                val data = withTimeout(LOAD_TIMEOUT_MS) { withContext(Dispatchers.Default) { repo.timeline(target) } }
                 snap.data = data
                 snap.at = System.currentTimeMillis()
                 _timeline.value = Async(data = data)
                 if (!quiet) loadFlow(data, snap)
+            } catch (e: TimeoutCancellationException) {
+                _timeline.update { it.copy(loading = false, error = "加载超时，请下拉重试") }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -529,6 +552,9 @@ class ReviewViewModel(private val container: AppContainer) : ViewModel() {
     companion object {
         /** 看过的范围再次进入：这么久之内不重新请求 */
         private const val FRESH_MS = 60_000L
+
+        /** 一次读取回顾数据的总时限 */
+        private const val LOAD_TIMEOUT_MS = 60_000L
 
         /** 再次进入页面时，数据超过这么久就在后台悄悄刷新 */
         private const val STALE_MS = 3 * 60_000L

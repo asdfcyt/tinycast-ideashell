@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import com.carpe.ideashell.ui.glass.glassChip
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -802,18 +803,26 @@ private fun AiActions(overdueCount: Int, onReplan: () -> Unit, onQuickStart: () 
                 Icon(painterResource(R.drawable.ic_calendar), null, tint = Brand.OrangeDeep, modifier = Modifier.size(17.dp))
             }
             if (overdueCount > 0) {
-                Text(
-                    if (overdueCount > 99) "99+" else overdueCount.toString(),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color.White,
-                    modifier = Modifier
+                // 一位 / 两位数是正圆；到「99+」才拉宽成药丸
+                val badge = if (overdueCount > 99) "99+" else overdueCount.toString()
+                Box(
+                    Modifier
                         .align(Alignment.TopEnd)
                         .padding(top = 12.dp, end = 12.dp)
+                        .defaultMinSize(minWidth = 24.dp, minHeight = 24.dp)
                         .clip(CircleShape)
                         .background(scheme.error)
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                )
+                        .padding(horizontal = if (badge.length > 2) 6.dp else 0.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        badge,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White,
+                        maxLines = 1,
+                    )
+                }
             }
             Column(Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 12.dp, end = 10.dp)) {
                 Text("重新规划", fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = scheme.onSurface, maxLines = 1)

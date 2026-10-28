@@ -1,0 +1,20 @@
+[
+  {
+    "file": "page-@2x.png",
+    "state": null,
+    "size": "1000x560",
+    "zoom": 2,
+    "animationWaitMs": 0,
+    "issues": [],
+    "lint": [
+      {
+        "rule": "nestedCards",
+        "label": "卡片里套卡片",
+        "count": 1,
+        "examples": [
+          "div.screen「01:00 跟练倒计时 待机」（外层 div.chassis）"
+        ]
+      }
+    ]
+  }
+]

@@ -74,13 +74,26 @@ final class IslandState: ObservableObject {
     /// 刘海两侧各留一块放小图标 / 数字
     var wing: CGFloat { 36 }
     var collapsedWidth: CGFloat { notchWidth + wing * 2 }
-    let expandedWidth: CGFloat = 400
+    /// 展开后的宽度：普通 400；番茄完成的「专注终端」左右拉宽到 780（左边小票、右边休息跟练卡）
+    var expandedWidth: CGFloat { isTerminal ? Self.terminalWidth : 400 }
+    static let terminalWidth: CGFloat = 780
+    /// 终端里打印的小票高度（弹出前量好）
+    var ticketH: CGFloat = 230
+    /// 已经打印过动画的小票：从收起状态点回来（跟练中）时不再重新打印
+    var printedTicketId: UUID?
+    var isTerminal: Bool {
+        guard mode == .activity, case let .focusDone(_, _, t)? = activity else { return false }
+        return t != nil
+    }
+    /// 终端两个仓的高度：左仓放得下小票，右仓至少放得下跟练内容
+    var terminalBodyHeight: CGFloat { max(ticketH + 36, 236) }
     /// 展开后内容要避开刘海
     var topInset: CGFloat { hasNotch ? notchHeight : barHeight }
     var shownContentHeight: CGFloat { min(contentHeight, maxContentHeight) }
     var widgetHeight: CGFloat { topInset + shownContentHeight + 14 }
     var dropHeight: CGFloat { topInset + (sjzOn && drop.showsZones ? 160 : 100) }
     var activityHeight: CGFloat {
+        if isTerminal { return topInset + terminalBodyHeight + 14 }
         if sjzOn, case .capture? = activity { return topInset + 118 }
         return topInset + 76
     }
@@ -123,6 +136,30 @@ private struct IslandCollapsedView: View {
     }
 
     @ViewBuilder private var leading: some View {
+        if let end = session.practiceEnd {
+            // 跟练中：左边是动作图标，右边是跟练倒计时（走完就退回平时的样子）
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                if end.timeIntervalSince(ctx.date) > 0 {
+                    Image(systemName: session.move(for: focus).icon)
+                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.green)
+                } else { baseLeading }
+            }
+        } else { baseLeading }
+    }
+
+    @ViewBuilder private var trailing: some View {
+        if let end = session.practiceEnd {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                let left = Int(end.timeIntervalSince(ctx.date).rounded(.up))
+                if left > 0 {
+                    Text(String(format: "%d:%02d", left / 60, left % 60))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit().foregroundStyle(Color.green)
+                } else { baseTrailing }
+            }
+        } else { baseTrailing }
+    }
+
+    @ViewBuilder private var baseLeading: some View {
         if let r = focus.run {
             ZStack {
                 Circle().stroke(Color.white.opacity(0.2), lineWidth: 2)
@@ -153,7 +190,7 @@ private struct IslandCollapsedView: View {
         }
     }
 
-    @ViewBuilder private var trailing: some View {
+    @ViewBuilder private var baseTrailing: some View {
         if let r = focus.run {
             FocusTick(clock: focus.clock) { now in
                 let left = max(Int(r.remainingMs(now) / 1000), 0)
@@ -183,7 +220,7 @@ private struct IslandExpandedView: View {
         ZStack(alignment: .top) {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 0) {
-                    MenuBarView(showInbox: false)
+                    MenuBarView(showInbox: false, autoRefresh: false)
                     if model.hasSjz {
                         Divider().padding(.horizontal, 12)
                         SjzPinStrip()
@@ -214,10 +251,16 @@ private struct IslandExpandedView: View {
                 .allowsHitTesting(false)
 
             if let a = state.activity {
-                IslandActivityView(state: state, activity: a)
-                    .padding(.top, state.topInset)
-                    .opacity(state.mode == .activity ? 1 : 0)
-                    .allowsHitTesting(state.mode == .activity)
+                Group {
+                    if case let .focusDone(_, _, t?) = a {
+                        // 专注终端自己带着顶部的刘海留白（标题放在刘海两侧）
+                        IslandFocusDoneView(state: state, focus: model.focus, ticket: t, activity: a).id(t.id)
+                    } else {
+                        IslandActivityView(state: state, activity: a).padding(.top, state.topInset)
+                    }
+                }
+                .opacity(state.mode == .activity ? 1 : 0)
+                .allowsHitTesting(state.mode == .activity)
             }
         }
         .animation(.easeOut(duration: 0.18), value: state.mode)
@@ -446,8 +489,14 @@ final class IslandController {
     private var finishWork: DispatchWorkItem?
     private var activityWork: DispatchWorkItem?
     private var activityHover = false
-    /// 刚弹出的「番茄完成」是否有小票要从岛下面出来
-    private var ticketHost = false
+    /// 最近一次「专注终端」：跟练进行中岛被收起后，再点一下岛可以回到这里
+    private var lastFocusDone: IslandActivity?
+    private let breakSession = BreakSession.shared
+    /// 正在跟练（走完后再宽限 8 秒让人看到「做完了」）：这期间岛不会自动收起
+    private var practicing: Bool {
+        guard let end = breakSession.practiceEnd else { return false }
+        return Date() < end.addingTimeInterval(8)
+    }
     private var suppressUntil = Date.distantPast
     /// 鼠标按下时拖拽剪贴板的版本号；之后变了，说明开始了一次新的拖拽
     private var dragBaseline = 0
@@ -476,10 +525,11 @@ final class IslandController {
             guard let self else { return }
             if kind.isBreak {
                 self.present(.breakDone(kind))
-            } else {
-                // 岛弹成了「终端」：紧接着的小票就从岛的下沿打印出来
-                self.ticketHost = self.present(.focusDone(minutes: minutes, nextBreak: model.focus.pendingBreak))
+            } else if !TicketController.enabled {
+                // 关掉了小票：只弹一条小提示
+                self.present(.focusDone(minutes: minutes, nextBreak: model.focus.pendingBreak, ticket: nil))
             }
+            // 开着小票：紧接着 onTicket 会带着小票来，由 presentFocusDone 一起弹成「专注终端」
         }
 
         let nc = NotificationCenter.default
@@ -614,23 +664,26 @@ final class IslandController {
         NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main ?? NSScreen.screens.first
     }
 
-    private func refreshGeometry() {
+    /// `syncSjz`：展开时传 false —— 结审目标是网络请求，结果回来会让整个小组件重算，别压在展开动画上（动画停稳后再同步）
+    private func refreshGeometry(syncSjz doSync: Bool = true) {
         guard let s = screen else { return }
         let top = s.safeAreaInsets.top
+        // @Published 即使值没变也会通知：每次展开都写一遍，会让收起层和展开层（含整个待办小组件）在动画第一帧白白重算，只在真的变了时才写
+        var nw: CGFloat = 0, nh: CGFloat = 0
         if top > 0 {
             let l = s.auxiliaryTopLeftArea?.width ?? 0
             let r = s.auxiliaryTopRightArea?.width ?? 0
             let w = s.frame.width - l - r
-            state.notchWidth = (l > 0 && r > 0 && w > 0) ? w : 185
-            state.notchHeight = top
-        } else {
-            state.notchWidth = 0
-            state.notchHeight = 0
+            nw = (l > 0 && r > 0 && w > 0) ? w : 185
+            nh = top
         }
-        state.maxContentHeight = max(220, s.visibleFrame.height - state.topInset - 40)
+        if state.notchWidth != nw { state.notchWidth = nw }
+        if state.notchHeight != nh { state.notchHeight = nh }
+        let mh = max(220, s.visibleFrame.height - state.topInset - 40)
+        if state.maxContentHeight != mh { state.maxContentHeight = mh }
         // 比悬停区（+2）和拖拽投放区（+120 × +14）都大一圈：鼠标不在这块里时，全局的鼠标事件一律不处理
         hoverRect = hoverZone(on: s, extraWidth: 130, extraHeight: 24)
-        syncSjz()
+        if doSync { syncSjz() }
     }
 
     /// 收起时，只有鼠标在这块（刘海周围）里才需要处理鼠标 / 滚动 / 拖拽事件
@@ -675,24 +728,46 @@ final class IslandController {
     private func animateFrame(to frame: NSRect, params: SpringDriver.Params) {
         guard let panel, let c = container else { return }
         spring.minSize = collapsedFrame().size
+        // 窗口阴影要由 WindowServer 按当前形状（带圆角和耳朵）逐帧重算，是展开动画里最贵的一项：动画期间先关掉，停稳后再开
+        if panel.hasShadow { panel.hasShadow = false }
         spring.animate(from: panel.frame.size, to: frame.size, params: params, view: c)
     }
 
     private func applySpringFrame(_ size: CGSize) {
         guard let panel else { return }
-        panel.setFrame(frame(width: size.width, height: size.height), display: true)
-        if panel.hasShadow { panel.invalidateShadow() }
+        // display: false —— 不在每一帧里同步重画整个窗口，交给显示器刷新时的正常绘制
+        panel.setFrame(frame(width: size.width, height: size.height), display: false)
     }
 
     private func springSettled() {
         guard let panel else { return }
-        panel.invalidateShadow()
-        guard !state.expanded else { return }
-        // 收起动画跑完：内容切回小组件，关掉阴影
+        if state.expanded {
+            // 展开 / 变高动画停稳：阴影只算一次
+            panel.hasShadow = true
+            panel.invalidateShadow()
+            // 展开时没做的网络同步（结审目标、待办 / 专注刷新）放到这里，不压在动画上
+            syncSjz()
+            refreshWidgetData()
+            return
+        }
+        // 收起动画跑完：内容切回小组件
         state.mode = .widget
         state.activity = nil
         if let c = container { updateSizes(in: c) }
-        panel.hasShadow = false
+    }
+
+    private var lastWidgetRefresh = Date.distantPast
+
+    /// 小组件里的待办 / 专注数据：展开动画停稳后（至多每 5 秒一次）再刷新。
+    /// 以前是每次窗口变成 key（点一下「开始专注」就会触发）就立刻刷新，网络结果回来时整个待办列表重算，正好压在高度动画上，所以卡。
+    private func refreshWidgetData() {
+        guard state.mode == .widget, let model, model.hasDida,
+              Date().timeIntervalSince(lastWidgetRefresh) > 5 else { return }
+        lastWidgetRefresh = Date()
+        Task {
+            await model.loadOverview(silent: true)
+            await model.focus.refresh()
+        }
     }
 
     private func setInteractive(expanded: Bool) {
@@ -718,11 +793,18 @@ final class IslandController {
     func expand(mode: IslandMode = .widget) {
         guard panel != nil, !state.expanded else { return }
         collapseWork?.cancel(); collapseWork = nil
+        var mode = mode
+        // 跟练还在进行：点岛 / 悬停回到跟练的状态，而不是待办小组件
+        if mode == .widget, practicing, let a = lastFocusDone {
+            state.activity = a
+            mode = .activity
+            activityHover = false
+            scheduleActivityDismiss(after: a.duration)
+        }
         state.mode = mode
-        refreshGeometry()
+        refreshGeometry(syncSjz: false)
         if let c = container { updateSizes(in: c) }
         state.expanded = true
-        panel?.hasShadow = true
         setInteractive(expanded: true)
         animateFrame(to: expandedFrame(), params: SpringDriver.expand)
         startCheckTimer()
@@ -735,8 +817,8 @@ final class IslandController {
         activityWork?.cancel(); activityWork = nil
         activityHover = false
         suppressUntil = Date().addingTimeInterval(0.5)
-        ticketHost = false
-        TicketController.shared.islandCollapsed()
+        // 跟练没结束就留着，之后再点岛还能回来；否则忘掉
+        if !practicing { lastFocusDone = nil }
         state.expanded = false
         if state.drop != .working { state.drop = .idle }
         stopCheckTimer()
@@ -866,11 +948,33 @@ final class IslandController {
         }
     }
 
-    private func dragEntered(_ info: NSDraggingInfo) -> NSDragOperation {
+    /// 一次拖拽里「剪贴板能不能收」只判断一次：draggingUpdated 每秒几十上百次，
+    /// 每次都去读拖拽剪贴板的类型列表会拖慢拖拽（展开状态下尤其明显）
+    private var dragSeq = -1
+    private var dragAccepted = false
+
+    private func acceptsDrag(_ info: NSDraggingInfo) -> Bool {
         // 从岛里拖出去的东西（暂存架、截图缩略图）再拖回来，不当作投放
-        guard info.draggingSource == nil, DropReader.accepts(info.draggingPasteboard) else { return [] }
-        if let c = container { state.zone = zone(at: c.convert(info.draggingLocation, from: nil), in: c) }
-        if state.mode != .drop || !state.expanded { enterDropMode() }
+        guard info.draggingSource == nil else { return false }
+        if info.draggingSequenceNumber != dragSeq {
+            dragSeq = info.draggingSequenceNumber
+            dragAccepted = DropReader.accepts(info.draggingPasteboard)
+        }
+        return dragAccepted
+    }
+
+    private func dragEntered(_ info: NSDraggingInfo) -> NSDragOperation {
+        guard acceptsDrag(info) else { return [] }
+        // @Published 即使值没变也会通知，整个展开层（含待办小组件）都会跟着重算：只在真的换了格子时才写
+        if let c = container {
+            let z = zone(at: c.convert(info.draggingLocation, from: nil), in: c)
+            if z != state.zone { state.zone = z }
+        }
+        if state.mode != .drop || !state.expanded {
+            enterDropMode()
+        } else if state.drop == .idle {
+            state.drop = .hover
+        }
         return .copy
     }
 
@@ -917,25 +1021,34 @@ final class IslandController {
         syncSjz()
         state.activity = a
         activityHover = false
-        if state.expanded { switchMode(.activity) } else { expand(mode: .activity) }
+        if state.expanded {
+            // 已经在活动页（比如截图提示换成专注终端）：宽 / 高变了，也要重新量一次
+            if state.mode == .activity { resizeExpanded() } else { switchMode(.activity) }
+        } else {
+            expand(mode: .activity)
+        }
         scheduleActivityDismiss(after: a.duration)
         return true
     }
 
-    // MARK: 小票挂靠
+    // MARK: 专注终端
 
-    /// 番茄完成、岛弹成了终端：小票由岛下沿打印出来。返回岛的实时位置（只能取一次）
-    func takeTicketAnchor() -> (() -> NSRect?)? {
-        guard ticketHost, panel != nil else { return nil }
-        ticketHost = false
-        // 小票要留给人慢慢看：岛也跟着多留一会儿
-        scheduleActivityDismiss(after: TicketController.life)
-        return { [weak self] in self?.panel?.frame }
+    /// 番茄走完：岛左右拉宽成「专注终端」，左边在岛里打印小票，右边是休息一下的跟练卡。
+    /// 返回 false = 岛让不出来（正在用小组件 / 投放），由调用方退回独立的小票浮层
+    func presentFocusDone(_ c: Celebration) -> Bool {
+        guard panel != nil, let model else { return false }
+        state.ticketH = Self.measureTicket(c)
+        let a = IslandActivity.focusDone(minutes: c.minutes, nextBreak: model.focus.pendingBreak, ticket: c)
+        guard present(a) else { return false }
+        lastFocusDone = a
+        return true
     }
 
-    /// 用户把小票收起了：岛的提示也一起收
-    func ticketDismissed() {
-        if state.expanded, state.mode == .activity { collapse() }
+    /// 小票的实际高度：先在屏幕外排版一次
+    private static func measureTicket(_ c: Celebration) -> CGFloat {
+        let host = NSHostingView(rootView: ResultTicketView(c: c, width: IslandFocusDoneView.ticketWidth, maxRecords: IslandFocusDoneView.ticketRecords, compact: true))
+        host.frame = NSRect(x: 0, y: 0, width: IslandFocusDoneView.ticketWidth, height: 600)
+        return ceil(max(host.fittingSize.height, 150))
     }
 
     private func scheduleActivityDismiss(after delay: TimeInterval) {
@@ -943,7 +1056,10 @@ final class IslandController {
         let w = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.activityWork = nil
-            if self.state.mode == .activity { self.collapse() }
+            guard self.state.mode == .activity else { return }
+            // 跟练中不收：过一会儿再看
+            if self.practicing { self.scheduleActivityDismiss(after: 5); return }
+            self.collapse()
         }
         activityWork = w
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: w)
@@ -959,9 +1075,14 @@ final class IslandController {
             case .regulation: submit(o.raw, to: .regulation)
             default: submit(o.raw, toShelf: action == .secondary)
             }
-        case let .focusDone(_, nextBreak):
+        case .focusDone:
             if action == .primary {
-                if nextBreak != nil { model.focus.start() } else { model.focus.quickFocus(model.focus.focusMinutes) }
+                // 看现在的状态：还没休息就开始休息；已经在休息了什么都不做；没有休息可开就再来一个专注
+                if model.focus.run == nil {
+                    if model.focus.pendingBreak != nil { model.focus.start() } else { model.focus.quickFocus(model.focus.focusMinutes) }
+                }
+                // 跟练还在进行：岛留着，让人继续跟着练
+                if practicing { return }
             } else {
                 model.focus.skipBreak()
                 model.focus.quickFocus(model.focus.focusMinutes)
@@ -1033,6 +1154,7 @@ final class IslandController {
     /// 正在输入、保存中、拖着东西出去、或有弹出菜单时，不因为鼠标移开而收起
     private func shouldKeepOpen(checkMouseButton: Bool = true) -> Bool {
         if state.drop == .working { return true }
+        if practicing { return true }
         if case .done = state.drop { return true }
         if let p = panel, p.isKeyWindow, p.firstResponder is NSText { return true }
         // 按着鼠标键：多半是正在把暂存架 / 缩略图拖出去，别把拖拽源收掉
@@ -1084,8 +1206,8 @@ final class IslandController {
         monitors.removeAll()
     }
 
-    /// 小票还挂在岛下面：点别处、鼠标移开都不收，让人从容看完
-    private var ticketUp: Bool { state.mode == .activity && TicketController.shared.isShowing }
+    /// 专注终端 / 独立小票还摆着：点别处、鼠标移开都不收，让人从容看完
+    private var ticketUp: Bool { state.mode == .activity && (state.isTerminal || TicketController.shared.isShowing) }
 
     private func clickedElsewhere() {
         guard state.expanded, !ticketUp, !mouseInsidePanel(margin: 0), !shouldKeepOpen(checkMouseButton: false) else { return }
@@ -1094,6 +1216,9 @@ final class IslandController {
 
     /// 鼠标事件的入口：收起时鼠标不在刘海附近就什么都不做
     private func mouseMoved(drag: Bool = false) {
+        // 已经展开时，拖拽的进出由面板自己的 NSDraggingDestination 处理；
+        // 全局拖拽事件（每秒上百次）在这里直接放掉，别再逐个去取屏幕 / 扫窗口
+        if drag, state.expanded { return }
         if !state.expanded, !hoverRect.contains(NSEvent.mouseLocation) { return }
         evaluate(drag: drag)
     }

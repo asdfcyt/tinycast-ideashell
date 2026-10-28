@@ -685,6 +685,9 @@ struct MicBehaviorTab: View {
                         Toggle("", isOn: settings.bind(\.syncWithMic)).labelsHidden().toggleStyle(.switch)
                     }
                 }
+                MicRow(title: "独占接收器") {
+                    Toggle("", isOn: settings.bind(\.exclusiveHID)).labelsHidden().toggleStyle(.switch)
+                }
                 MicRow(title: "屏幕顶部状态提示") {
                     Toggle("", isOn: settings.bind(\.showHUD)).labelsHidden().toggleStyle(.switch)
                 }

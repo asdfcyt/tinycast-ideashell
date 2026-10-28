@@ -263,9 +263,15 @@ final class FocusStore: ObservableObject {
         else { defaults.removeObject(forKey: "focus.session") }
         clock.set(Date())
         updateTicker()
-        Self.cancelScheduled()
-        if let r { if r.paused { Self.scheduleNag(r) } else { Self.schedule(r) } }
+        // 系统通知的排队 / 取消要和通知中心的进程通信：放到后台串行队列，别卡在点「开始专注」那一下（正好是岛变高的动画）
+        let planned = r
+        Self.notifyQueue.async {
+            Self.cancelScheduled()
+            if let r = planned { if r.paused { Self.scheduleNag(r) } else { Self.schedule(r) } }
+        }
     }
+
+    nonisolated private static let notifyQueue = DispatchQueue(label: "shiyi.focus.notify", qos: .utility)
 
     /// 按顺序补传；碰到一条失败就停（多半是断网，别连着失败）
     private func flush() async {
@@ -312,12 +318,12 @@ final class FocusStore: ObservableObject {
 
     // MARK: - 系统通知（到点提醒；应用退出后也会响）
 
-    private static let notifyId = "shiyi.focus.end"
-    private static let warnId = "shiyi.focus.warn"
-    private static let nagId = "shiyi.focus.paused"
+    nonisolated private static let notifyId = "shiyi.focus.end"
+    nonisolated private static let warnId = "shiyi.focus.warn"
+    nonisolated private static let nagId = "shiyi.focus.paused"
 
     /// 到点提醒 + 「还剩 5 分钟」（专注 ≥ 15 分钟时）；应用退出后也会响
-    private static func schedule(_ r: FocusRun) {
+    nonisolated private static func schedule(_ r: FocusRun) {
         guard NotifyPrefs.on("notify.focus") else { return }
         let left = Double(r.endAtMs) / 1000 - Date().timeIntervalSince1970
         Notifier.schedule(
@@ -332,7 +338,7 @@ final class FocusStore: ObservableObject {
     }
 
     /// 暂停超过 5 分钟还没继续，提醒一下
-    private static func scheduleNag(_ r: FocusRun) {
+    nonisolated private static func scheduleNag(_ r: FocusRun) {
         guard NotifyPrefs.on("notify.focus") else { return }
         Notifier.schedule(
             id: nagId,
@@ -342,7 +348,7 @@ final class FocusStore: ObservableObject {
         )
     }
 
-    private static func cancelScheduled() {
+    nonisolated private static func cancelScheduled() {
         Notifier.cancel([notifyId, warnId, nagId])
     }
 

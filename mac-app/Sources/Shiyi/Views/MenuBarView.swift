@@ -37,6 +37,8 @@ struct MenuBarView: View {
     @EnvironmentObject var model: AppModel
     /// 灵动岛里不显示收集箱（没有日期的待办），只显示定在今天的
     var showInbox = true
+    /// 出现 / 窗口变成 key 时自动刷新。灵动岛里关掉：点一下按钮窗口就变成 key，刷新结果会压在高度动画上，由岛在展开动画停稳后统一刷新
+    var autoRefresh = true
     @State private var adding = false
 
     var body: some View {
@@ -65,7 +67,7 @@ struct MenuBarView: View {
     @State private var lastRefresh = Date.distantPast
 
     private func refreshIfNeeded() {
-        guard model.hasDida, Date().timeIntervalSince(lastRefresh) > 3 else { return }
+        guard autoRefresh, model.hasDida, Date().timeIntervalSince(lastRefresh) > 3 else { return }
         lastRefresh = Date()
         Task {
             await model.loadOverview(silent: true)

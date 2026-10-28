@@ -8,7 +8,8 @@ import IOKit.hid
 ///  - 私有集合 0xFF90 (Report 0x55):配置/心跳(双击=静音位、单击=降噪位都通过这里观察)
 ///  - Consumer 0x000C (Report 0x06):三击会发送「音量+」(0x00E9,手机拍照快门键)
 /// 所以只需要打开这一个设备:input report 回调解析心跳,input value 回调监听三击。
-/// 优先以独占方式打开(三击不会同时把系统音量调大);被别的软件占用时退回共享方式。
+/// 默认以共享方式打开(不占住整个接口,插在拓展坞上也不会和别的设备抢);
+/// [exclusive] 打开时才尝试独占(三击不会同时把系统音量调大),被别的软件占用时退回共享方式。
 final class MicHIDLink {
     var onConnect: (() -> Void)?
     var onDisconnect: (() -> Void)?
@@ -19,6 +20,10 @@ final class MicHIDLink {
     private(set) var openStatus: IOReturn = kIOReturnSuccess
     private(set) var isAttached = false
     private(set) var consumerSeized = false
+    /// 是否优先独占打开;改了之后要 stop() + start() 才生效
+    var exclusive = false
+    /// HID 管理器是否已成功打开(没打开就要重试,否则永远收不到设备)
+    var isOpen: Bool { manager != nil }
     private var manager: IOHIDManager?
     private var device: IOHIDDevice?
     private let inputBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 512)
@@ -44,16 +49,33 @@ final class MicHIDLink {
         }, ctx)
         IOHIDManagerScheduleWithRunLoop(mgr, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
 
-        // 先尝试独占;失败(被其它程序占用)再退回共享
-        var status = IOHIDManagerOpen(mgr, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
-        if status == kIOReturnSuccess {
-            consumerSeized = true
+        var status: IOReturn
+        consumerSeized = false
+        if exclusive {
+            // 独占失败(被其它程序占用)再退回共享
+            status = IOHIDManagerOpen(mgr, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
+            if status == kIOReturnSuccess {
+                consumerSeized = true
+            } else {
+                status = IOHIDManagerOpen(mgr, IOOptionBits(kIOHIDOptionsTypeNone))
+            }
         } else {
-            consumerSeized = false
             status = IOHIDManagerOpen(mgr, IOOptionBits(kIOHIDOptionsTypeNone))
         }
         openStatus = status
+        guard status == kIOReturnSuccess else {
+            // 没打开成功:不留半开的管理器,让上层定时重试
+            IOHIDManagerUnscheduleFromRunLoop(mgr, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+            return
+        }
         manager = mgr
+    }
+
+    /// 回调漏掉时的兜底:管理器已打开、系统里也有这个设备,但没收到「设备到位」回调(拓展坞枚举慢时会这样)
+    func rescan() {
+        guard let mgr = manager, device == nil,
+              let found = IOHIDManagerCopyDevices(mgr) as? Set<IOHIDDevice>, let dev = found.first else { return }
+        attached(dev)
     }
 
     func stop() {

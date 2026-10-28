@@ -58,6 +58,9 @@ enum Cheer {
 final class TicketStore {
     static let shared = TicketStore()
     private static let maxCount = 100
+    /// 小票保留多少天（0 = 一直保留，最多 100 张）；超过这个时间的小票会被清除
+    static let keepDaysKey = "ticket.keepDays"
+    static var keepDays: Int { UserDefaults.standard.integer(forKey: keepDaysKey) }
 
     private(set) var items: [Celebration]
 
@@ -67,10 +70,30 @@ final class TicketStore {
         items = LocalStore.read("tickets.json")
             .flatMap { $0.data(using: .utf8) }
             .flatMap { try? dec.decode([Celebration].self, from: $0) } ?? []
+        prune()
     }
 
     func add(_ c: Celebration) {
         items = Array((items + [c]).suffix(Self.maxCount))
+        save()
+        prune()
+    }
+
+    /// 清掉超过保留时间的小票（按自然日算：保留 3 天 = 今天、昨天、前天）。返回是否有小票被清掉
+    @discardableResult
+    func prune() -> Bool {
+        let days = Self.keepDays
+        guard days > 0 else { return false }
+        let cal = Calendar.current
+        guard let cutoff = cal.date(byAdding: .day, value: -(days - 1), to: cal.startOfDay(for: Date())) else { return false }
+        let kept = items.filter { $0.postedAt >= cutoff }
+        guard kept.count != items.count else { return false }
+        items = kept
+        save()
+        return true
+    }
+
+    private func save() {
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .millisecondsSince1970
         if let d = try? enc.encode(items), let s = String(data: d, encoding: .utf8) { LocalStore.write("tickets.json", s) }

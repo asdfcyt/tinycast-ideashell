@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "project": "拾忆 · 灵动岛专注完成态",
+  "brief": "番茄完成后岛左右拉宽：左边成果小票，右边「休息一下」可跟练卡片；保存 / 复制 / 收起随小票一起出现",
+  "round": "01",
+  "nativeViewport": "1000x560",
+  "candidates": [
+    {
+      "id": "a-twin-black",
+      "name": "双联黑岛",
+      "concept": "岛始终是黑的，奶白小票是唯一亮色主角，跟练卡安静地待在旁边",
+      "typography": "苹方 + SF Mono 点阵屏；小票标题 13 粗、主数字 50 Heavy Rounded",
+      "palette": ["#000000", "#1C1815", "#FCF9F1", "#E8743B"],
+      "traits": ["纯黑岛体", "深灰跟练卡", "琥珀大按钮", "操作胶囊在小票下"],
+      "source": "a-twin-black.html"
+    },
+    {
+      "id": "b-terminal-bays",
+      "name": "终端分仓",
+      "concept": "整座岛是一台复古专注终端：左仓出纸，右仓是点阵屏和实体键帽",
+      "typography": "苹方 + 等宽点阵 54 Black；步骤按机器读数排版",
+      "palette": ["#0E0B09", "#1F1915", "#FFB14A", "#6FDC9A"],
+      "traits": ["金属分隔线 + 螺丝", "LED 跟练倒计时", "键帽按钮", "终端标题条"],
+      "source": "b-terminal-bays.html"
+    },
+    {
+      "id": "c-stub-coupon",
+      "name": "票根与休息券",
+      "concept": "一张连体纸：左边是成果小票，右边是可撕的休息券，中间一排虚线",
+      "typography": "苹方 + SF Mono 编号；休息券动作名 21 Heavy",
+      "palette": ["#000000", "#FCF9F1", "#E8743B", "#B2441B"],
+      "traits": ["整张连体纸", "中缝打孔与缺口", "橙色圆章插画", "盖章式开练按钮"],
+      "source": "c-stub-coupon.html"
+    }
+  ]
+}

@@ -111,8 +111,8 @@ struct SettingsRoot: View {
         NavigationSplitView {
             // 系统原生的侧边栏列表：选中态、间距、液态玻璃都交给系统
             List(selection: Binding(get: { nav.tab }, set: { if let t = $0 { nav.tab = t } })) {
-                // 和系统设置一样：没有分组标题，组与组之间留一段空白
-                ForEach(Array(SettingsTab.sections.enumerated()), id: \.offset) { idx, sec in
+                // 和系统设置一样：没有分组标题，组与组之间用系统默认的间隔
+                ForEach(Array(SettingsTab.sections.enumerated()), id: \.offset) { _, sec in
                     let items = sec.tabs.filter(matches)
                     if !items.isEmpty {
                         Section {
@@ -123,8 +123,6 @@ struct SettingsRoot: View {
                                 }
                                     .tag(t)
                             }
-                        } header: {
-                            if idx > 0 { Color.clear.frame(height: 8) }
                         }
                     }
                 }
@@ -728,6 +726,7 @@ private struct FocusPane: View {
     @EnvironmentObject var model: AppModel
     @AppStorage(TicketController.enabledKey) private var ticketOn = true
     @AppStorage(TicketController.soundKey) private var ticketSound = true
+    @AppStorage(TicketStore.keepDaysKey) private var keepDays = 0
 
     private var goalText: String {
         let m = model.focusGoalMin
@@ -749,6 +748,9 @@ private struct FocusPane: View {
                 SToggle("完成后打印成果小票", nil, $ticketOn)
                 if ticketOn {
                     SToggle("出纸提示音", nil, $ticketSound)
+                }
+                SRow("小票保留时间") {
+                    SPick(selection: $keepDays, options: [(0, "一直保留"), (1, "1 天"), (3, "3 天"), (7, "7 天"), (14, "14 天"), (30, "30 天")])
                 }
             }
         }
@@ -791,7 +793,7 @@ private struct NotifyPane: View {
             if model.hasSjz {
                 SGroup("结审") {
                     SToggle("结审提醒", nil, $nSjz)
-                    SToggle("每晚工作小结", nil, $nSjzSummary)
+                    SToggle("自动写入记录到工作日志中", nil, $nSjzSummary)
                 }
             }
 

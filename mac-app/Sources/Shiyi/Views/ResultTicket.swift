@@ -142,10 +142,14 @@ private struct TicketShape: Shape {
 struct ResultTicketView: View {
     let c: Celebration
     var width: CGFloat = 300
+    /// 最多显示几条期间记录（灵动岛里地方小，只放 2 条）
+    var maxRecords = 3
+    /// 紧凑版（灵动岛终端里用）：数字小一号、间距收紧
+    var compact = false
 
     private typealias P = TicketPalette
 
-    private var records: [Celebration.Entry] { Array(c.records.suffix(3)) }
+    private var records: [Celebration.Entry] { Array(c.records.suffix(maxRecords)) }
     private var firstIndex: Int { c.records.count - records.count }
 
     private var meta: String {
@@ -161,16 +165,16 @@ struct ResultTicketView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            mainBlock.padding(.top, 12)
-            DashedLine().padding(.top, 10)
-            if !records.isEmpty { recordsBlock.padding(.top, 10) }
+            mainBlock.padding(.top, compact ? 8 : 12)
+            DashedLine().padding(.top, compact ? 8 : 10)
+            if !records.isEmpty { recordsBlock.padding(.top, compact ? 8 : 10) }
             Text(c.cheer)
                 .font(.system(size: 11.5)).foregroundStyle(P.mute).lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 10).padding(.trailing, 70)
-            footer.padding(.top, 12)
+                .padding(.top, compact ? 8 : 10).padding(.trailing, 70)
+            footer.padding(.top, compact ? 10 : 12)
         }
-        .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 16)
+        .padding(.horizontal, 20).padding(.top, compact ? 14 : 18).padding(.bottom, compact ? 12 : 16)
         .frame(width: width, alignment: .leading)
         .background(TicketShape().fill(LinearGradient(colors: [P.paper1, P.paper2], startPoint: .top, endPoint: .bottom)))
         .overlay(alignment: .bottomTrailing) { stamp.padding(.trailing, 16).padding(.bottom, 14) }
@@ -192,7 +196,7 @@ struct ResultTicketView: View {
         HStack(alignment: .top, spacing: 16) {
             VStack(spacing: 0) {
                 Text(c.minutes > 0 ? "\(c.minutes)" : "—")
-                    .font(.system(size: 50, weight: .heavy, design: .rounded)).monospacedDigit()
+                    .font(.system(size: compact ? 42 : 50, weight: .heavy, design: .rounded)).monospacedDigit()
                     .foregroundStyle(P.num).minimumScaleFactor(0.6).lineLimit(1)
                 Text("分钟").font(.system(size: 11)).foregroundStyle(P.mute)
             }

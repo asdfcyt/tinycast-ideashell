@@ -144,10 +144,6 @@ struct IslandActivityView: View {
         .background(shape.fill(Color.white.opacity(0.08)))
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
-        .overlay(alignment: .bottom) {
-            // 出纸口：小票从这里往下打印
-            if case .focusDone = activity { PaperSlot().frame(width: 150).padding(.bottom, 3) }
-        }
     }
 
     private var closeButton: some View {
@@ -220,8 +216,8 @@ struct IslandActivityView: View {
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5))
             .onDrag { Self.provider(for: o) }
             .help("按住拖到别的 App 里直接使用")
-        case let .focusDone(m, _):
-            // 专注终端的点阵屏：下面的小票从岛的出纸口打印出来
+        case let .focusDone(m, _, _):
+            // 关掉小票时的小提示：只有一块点阵屏
             DotMatrixText(text: DotMatrixText.clock(m), size: 21)
                 .frame(width: 92, height: 42)
                 .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.black.opacity(0.7)))
@@ -242,7 +238,7 @@ struct IslandActivityView: View {
     private var title: String {
         switch activity {
         case let .capture(o): return o.title
-        case let .focusDone(m, _): return "番茄完成 · \(m) 分钟"
+        case let .focusDone(m, _, _): return "番茄完成 · \(m) 分钟"
         case let .breakDone(k): return "\(k.label)结束"
         case let .todoDue(t, _): return t.cleanTitle
         case let .audit(e): return e.title
@@ -252,7 +248,7 @@ struct IslandActivityView: View {
     private var subtitle: String {
         switch activity {
         case .capture: return "存为笔记、暂存，或按住缩略图拖走"
-        case let .focusDone(_, b): return b.map { "休息一下：\($0.label) \($0.defaultMin) 分钟" } ?? "继续保持"
+        case let .focusDone(_, b, _): return b.map { "休息一下：\($0.label) \($0.defaultMin) 分钟" } ?? "继续保持"
         case .breakDone: return "准备好开始下一个专注了吗？"
         case let .todoDue(t, lead):
             let time = t.time ?? ""
@@ -266,7 +262,7 @@ struct IslandActivityView: View {
         case .capture:
             return [Btn(label: "存为笔记", help: "保存为笔记", prominent: true, action: .primary)]
                 + (shelfOn ? [Btn(label: "暂存", help: "放进暂存架", action: .secondary)] : [])
-        case let .focusDone(_, b):
+        case let .focusDone(_, b, _):
             return b != nil
                 ? [Btn(label: "开始休息", help: "开始\(b!.label)", prominent: true, action: .primary),
                    Btn(icon: "forward.fill", help: "跳过休息，继续专注", action: .secondary)]

@@ -65,6 +65,9 @@ final class MicEngine: ObservableObject {
     private var permTimer: Timer?
     private var haveHeart = false
     private var lastReopenAt = Date.distantPast
+    private var lastRescanAt = Date.distantPast
+    /// 重开 HID 通道的间隔：失败一次翻一倍（拓展坞枚举慢时别反复拆装），连上后复原
+    private var reopenBackoff: TimeInterval = 6
     private var sendFailures = 0
     private var lastSendAt = Date.distantPast
     private var lastHeartAt = Date()
@@ -98,7 +101,18 @@ final class MicEngine: ObservableObject {
         link.onDisconnect = { [weak self] in self?.deviceDisconnected() }
         link.onPacket = { [weak self] cmd, dev, payload in self?.handlePacket(cmd, dev, payload) }
         link.onConsumerKey = { [weak self] usage, down in self?.handleConsumerKey(usage, down) }
+        link.exclusive = cfg.exclusiveHID
         link.start()
+        // 切换「独占」开关:重开一次 HID 通道让它生效
+        settings.$cfg.map(\.exclusiveHID).removeDuplicates().dropFirst().sink { [weak self] on in
+            Task { @MainActor in
+                guard let self else { return }
+                self.link.exclusive = on
+                self.link.stop()
+                self.link.start()
+                self.consumerSeized = self.link.consumerSeized
+            }
+        }.store(in: &cancellables)
 
         audio.onChange = { [weak self] running in
             Task { @MainActor in self?.micChanged(running) }
@@ -224,7 +238,10 @@ final class MicEngine: ObservableObject {
     }
 
     private func tick() {
-        guard link.isAttached else { return }
+        guard link.isAttached else {
+            retryAttach()
+            return
+        }
         // 连续写入失败(设备通道卡住)时不要每 40ms 去敲它:降到每 2 秒试一次,给它恢复的机会
         if sendFailures >= 5, Date().timeIntervalSince(lastSendAt) < 2 {
             flushPending(Date())
@@ -246,12 +263,29 @@ final class MicEngine: ObservableObject {
             haveHeart = false
             abortAll(quiet: false)
         }
-        // 已枚举但一直没有回应:每 6 秒重新打开一次 HID 通道(处理占用被释放、通道卡住等情况)
-        if !connected, silent > 3, Date().timeIntervalSince(lastReopenAt) > 6 {
+        // 已枚举但一直没有回应:隔一阵重新打开一次 HID 通道(处理占用被释放、通道卡住等情况)。
+        // 刚枚举时先多给几秒(拓展坞上设备就绪慢），之后间隔逐次翻倍，不要反复拆装通道
+        if !connected, silent > 5, Date().timeIntervalSince(lastReopenAt) > reopenBackoff {
             lastReopenAt = Date()
-            micDebug("reopen HID (silent \(Int(silent))s)")
+            reopenBackoff = min(reopenBackoff * 2, 30)
+            micDebug("reopen HID (silent \(Int(silent))s, next in \(Int(reopenBackoff))s)")
             link.stop()
             link.start()
+        }
+    }
+
+    /// 还没枚举到接收器时:通道没打开成功就重试;打开了但没收到「到位」回调就主动扫一遍。
+    /// 以前这里直接 return,一次打开失败 / 回调漏掉后会永远识别不到。
+    private func retryAttach() {
+        let now = Date()
+        if !link.isOpen {
+            guard now.timeIntervalSince(lastReopenAt) > 3 else { return }
+            lastReopenAt = now
+            micDebug("HID not open (status 0x\(String(UInt32(bitPattern: link.openStatus), radix: 16))), retrying")
+            link.start()
+        } else if now.timeIntervalSince(lastRescanAt) > 2 {
+            lastRescanAt = now
+            link.rescan()
         }
     }
 
@@ -270,7 +304,7 @@ final class MicEngine: ObservableObject {
             if dev == 0x80 { rxID = text } else if dev == 0x81 { txSerial = text }
         case MicProto.cmdHeart:
             lastHeartAt = Date()
-            if !connected { micDebug("heartbeat resumed"); connected = true }
+            if !connected { micDebug("heartbeat resumed"); connected = true; reopenBackoff = 6 }
             processHeart(MicHeart(payload: payload))
         case MicProto.cmdVersion:
             if payload.count >= 6 {

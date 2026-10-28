@@ -11,6 +11,7 @@ struct TicketWall: View {
     private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
 
     private var cards: [Celebration] {
+        TicketStore.shared.prune()
         var items = TicketStore.shared.items
         if let r = focus.receipt, !items.contains(where: { $0.id == r.id }) { items.append(r) }
         return items.reversed()
@@ -32,6 +33,11 @@ struct TicketWall: View {
             map[d, default: []].append(c)
         }
         return order.map { DayGroup(day: $0, items: map[$0] ?? []) }
+    }
+
+    /// 紧凑的时长：2时40分 / 45分（不带空格，窄栏里也放得下）
+    private static func compact(_ m: Int) -> String {
+        m >= 60 ? (m % 60 == 0 ? "\(m / 60)时" : "\(m / 60)时\(m % 60)分") : "\(m)分"
     }
 
     private func label(_ day: String) -> String {
@@ -85,11 +91,13 @@ struct TicketWall: View {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(gs) { g in
                             VStack(alignment: .leading, spacing: 6) {
-                                HStack(spacing: 6) {
-                                    Text(label(g.day)).font(.system(size: 11, weight: .semibold))
-                                    Text("\(g.items.count) 张 · \(FocusParser.formatMinutes(g.minutes))")
-                                        .font(.system(size: 10.5)).foregroundStyle(.tertiary)
-                                    Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5)
+                                // 标题和统计各占一行不换行；右边的细线只填剩下的空位（以前线条抢宽度，统计被挤成两行）
+                                HStack(spacing: 8) {
+                                    Text(label(g.day)).font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
+                                    Text("\(g.items.count) 张 · \(Self.compact(g.minutes))")
+                                        .font(.system(size: 10.5)).monospacedDigit().foregroundStyle(.tertiary)
+                                        .lineLimit(1).fixedSize()
+                                    Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5).layoutPriority(-1)
                                 }
                                 LazyVGrid(columns: columns, spacing: 8) {
                                     ForEach(g.items) { c in

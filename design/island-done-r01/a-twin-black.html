@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>A 双联黑岛</title>
+<style>
+:root{--amber:#FFB14A;--orange:#E8743B;--brown:#3A1D0C;--paper1:#FCF9F1;--paper2:#F6F1E4;--ink:#1F1610;--mute:#6A5E53;--line:#DDD2C0;--deep:#B2441B;--green:#1F6A40;--num:#B8650A;--card:#1C1815;--cardline:#2E2822;--txt:#F3EDE4;--txt2:#A39382}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1000px;height:560px;overflow:hidden;font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased}
+body{background:linear-gradient(180deg,#d9dde4,#c4cad4);position:relative}
+.win{position:absolute;left:60px;right:60px;top:0;bottom:0;background:#f4f4f6;border-radius:0 0 12px 12px;padding:120px 40px 0;color:#222}
+.win h3{font-size:22px;margin-bottom:10px}.win p{font-size:14px;line-height:1.9;color:#555;max-width:560px}
+.island{position:absolute;left:50%;top:0;width:780px;transform:translateX(-50%);background:#000;border-radius:0 0 30px 30px;padding:0 20px 20px;box-shadow:0 22px 50px -10px rgba(0,0,0,.55),0 8px 18px rgba(0,0,0,.25);color:#fff}
+.island::before,.island::after{content:"";position:absolute;top:0;width:12px;height:12px;background:radial-gradient(circle at 0 100%,transparent 11.5px,#000 12px)}
+.island::before{left:-12px}.island::after{right:-12px;transform:scaleX(-1)}
+/* 顶部一条：刘海高度 */
+.bar{height:74px;display:flex;align-items:flex-end;gap:14px;padding-bottom:10px}
+.led{width:104px;height:44px;border-radius:11px;background:#0a0807;border:1px solid #2c241d;display:grid;place-items:center;font:900 22px/1 ui-monospace,"SF Mono",Menlo,monospace;letter-spacing:1.5px;color:var(--amber);text-shadow:0 0 8px rgba(255,177,74,.55)}
+.bar .t{flex:1;min-width:0}.bar .t b{display:block;font-size:14px;font-weight:600}.bar .t span{font-size:12px;color:rgba(255,255,255,.55)}
+.btn{height:28px;padding:0 14px;border-radius:14px;border:0;font:600 12.5px/28px inherit;font-family:inherit;color:#fff;background:rgba(255,255,255,.14);display:inline-flex;align-items:center;gap:6px}
+.btn.p{background:var(--orange);color:var(--brown)}
+.ib{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.14);display:grid;place-items:center;font-size:11px}
+.x{color:rgba(255,255,255,.45);font-size:12px;width:22px;text-align:center}
+.body{display:grid;grid-template-columns:350px 1fr;gap:20px;align-items:start}
+/* 左：小票 */
+.left{display:flex;flex-direction:column;align-items:center;gap:12px}
+.slot{width:150px;height:6px;border-radius:3px;background:#030202;border:.5px solid #3a3028;margin-bottom:-12px;position:relative;z-index:2}
+.ticket{width:350px;padding:18px 20px 16px;background:linear-gradient(180deg,var(--paper1),var(--paper2));color:var(--ink);border-radius:12px;position:relative;
+ -webkit-mask:radial-gradient(circle 4.5px at 0 7px,#0000 98%,#000) left/51% 14px repeat-y,radial-gradient(circle 4.5px at 100% 7px,#0000 98%,#000) right/51% 14px repeat-y}
+.th{display:flex;justify-content:space-between;align-items:center}.th b{font:700 13px ui-monospace,Menlo,monospace}.th span{font-size:12px;font-weight:700;color:var(--green)}.th span i{display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--green);margin-right:5px}
+.main{display:flex;gap:16px;margin-top:12px}.num{text-align:center}.num strong{display:block;font:800 50px/1 ui-rounded,"SF Pro Rounded",sans-serif;color:var(--num)}.num small{font-size:11px;color:var(--mute)}
+.main h4{font-size:15px;margin:6px 0}.main p{font-size:10.5px;font-weight:600;color:var(--mute);line-height:1.5}
+.dash{border-top:1.2px dashed var(--line);margin:10px 0}
+.cheer{font-size:11.5px;color:var(--mute);line-height:1.6;padding-right:70px}
+.foot{margin-top:12px;padding-right:64px}.bar2{height:26px;width:150px;margin-bottom:5px}.foot small{font:700 8.5px ui-monospace,Menlo,monospace;color:var(--mute);white-space:nowrap}
+.stamp{position:absolute;right:16px;bottom:14px;width:50px;height:50px;border:2.5px solid var(--deep);border-radius:50%;display:grid;place-items:center;transform:rotate(-12deg);color:var(--deep);font-weight:700;font-size:12px;text-align:center;line-height:1.1;opacity:.92}
+.stamp::after{content:"";position:absolute;inset:3px;border:1px dashed var(--deep);border-radius:50%}.stamp em{font-style:normal;font-size:9px;display:block}
+.pills{display:flex;gap:8px}.pill{height:26px;padding:0 12px;border-radius:13px;background:rgba(255,255,255,.1);border:.5px solid rgba(255,255,255,.14);font-size:11.5px;font-weight:600;display:inline-flex;align-items:center;gap:5px;color:rgba(255,255,255,.92)}.pill.q{color:rgba(255,255,255,.6)}
+/* 右：跟练卡 */
+.card{background:var(--card);border:1px solid var(--cardline);border-radius:22px;padding:18px 18px 16px;height:100%;display:flex;flex-direction:column}
+.card .k{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--txt2)}.card .k b{color:var(--txt);font-size:12.5px}
+.mv{display:flex;gap:14px;align-items:center;margin-top:14px}.mv .ic{width:64px;height:64px;border-radius:18px;background:rgba(255,177,74,.14);display:grid;place-items:center;font-size:32px}
+.mv h5{font-size:20px;font-weight:700;color:var(--txt)}.mv .tags{margin-top:6px;display:flex;gap:6px}.tag{font-size:11px;padding:2px 9px;border-radius:10px;background:rgba(255,255,255,.08);color:var(--txt2)}
+ol{list-style:none;margin-top:14px;display:grid;gap:9px}ol li{display:flex;gap:10px;font-size:12.5px;line-height:1.5;color:var(--txt)}ol li i{flex:none;width:18px;height:18px;border-radius:9px;background:rgba(255,177,74,.18);color:var(--amber);font:700 10.5px/18px ui-monospace,Menlo,monospace;text-align:center;font-style:normal;margin-top:1px}
+.cta{margin-top:auto;display:flex;gap:8px;align-items:center;padding-top:14px}.go{flex:1;height:38px;border-radius:19px;background:var(--orange);color:var(--brown);font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;gap:8px}
+.sm{height:38px;padding:0 14px;border-radius:19px;background:rgba(255,255,255,.09);display:flex;align-items:center;font-size:12.5px;color:var(--txt);font-weight:600}
+</style></head><body>
+<div class="win"><h3>Mac 语音输入与入库方案</h3><p>签名：需要稳定的开发者证书，否则每次更新都要在本机 Accessibility 里重新授权。转写文字后直接入库，没填写的项目走收集箱。离线识别准确率：专有名词一般，P1 实测后决定是否把腾讯云提前。</p></div>
+<div class="island">
+  <div class="bar">
+    <div class="led">05:00</div>
+    <div class="t"><b>番茄完成 · 5 分钟</b><span>休息一下：短休息 5 分钟</span></div>
+    <span class="btn p">开始休息</span><span class="ib">»</span><span class="x">✕</span>
+  </div>
+  <div class="body">
+    <div class="left">
+      <div class="ticket">
+        <div class="th"><b>拾忆 · 专注小票</b><span><i></i>已完成</span></div>
+        <div class="main"><div class="num"><strong>5</strong><small>分钟</small></div><div><h4>自由专注</h4><p>第 1 个番茄 &nbsp; 记录 0 条 &nbsp; 今日累计 2 时 30 分</p></div></div>
+        <div class="dash"></div>
+        <div class="cheer">先休息一会儿，回来继续发光。</div>
+        <div class="foot"><canvas class="bar2" id="bc" width="300" height="52"></canvas><br><small>◆ 已完成番茄 · 10-28 20:41 · 729F48 ◆</small></div>
+        <div class="stamp"><div>已完成<em>10·28</em></div></div>
+      </div>
+      <div class="pills"><span class="pill">⤓ 保存图片</span><span class="pill">⧉ 复制</span><span class="pill q">✕ 收起</span></div>
+    </div>
+    <div class="card">
+      <div class="k"><b>休息一下 · 跟着练</b><span>短休息 · 1/3</span></div>
+      <div class="mv"><div class="ic"><svg viewBox="0 0 48 48" width="36" height="36" fill="none" stroke="#FFB14A" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="26" cy="10" r="4.5"/><path d="M24 17v13M24 22c-5 0-9 3-11 7M24 22c5 0 9-3 11-7M24 30l-6 12M24 30l7 12"/></svg></div><div><h5>颈部侧拉</h5><div class="tags"><span class="tag">颈肩</span><span class="tag">60 秒</span></div></div></div>
+      <ol><li><i>1</i>坐直，左手放在身侧，右手轻扶左耳上方</li><li><i>2</i>头慢慢向右肩倾，感觉左侧脖子拉开，保持 15 秒</li><li><i>3</i>换边再来一次，全程不要耸肩</li></ol>
+      <div class="cta"><div class="go">▶ 开始跟练 1:00</div><div class="sm">换一个</div></div>
+    </div>
+  </div>
+</div>
+<script>
+(function(){var c=document.getElementById('bc'),x=c.getContext('2d');x.fillStyle='#1F1610';var s=729,r=function(){s=(s*9301+49297)%233280;return s/233280},p=0;while(p<300){var k=(1+Math.floor(r()*3))*2,g=(1+Math.floor(r()*2.4))*2;x.fillRect(p,0,k,52);p+=k+g}})();
+</script></body></html>

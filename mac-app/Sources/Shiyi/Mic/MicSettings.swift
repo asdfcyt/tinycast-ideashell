@@ -116,6 +116,8 @@ struct MicConfig: Codable, Equatable {
     var showHUD = true
     var syncWithMic = true
     var tapHoldMs = 80
+    /// 独占打开接收器的 HID 接口：三击不会同时调高系统音量，但会占住整个接口（插在拓展坞上容易和别的设备抢）。默认共享
+    var exclusiveHID = false
 
     /// 当前后端对应的那一套映射(下面的 singleAction 等都读写它)
     var map: MicMapping {
@@ -135,7 +137,7 @@ struct MicConfig: Codable, Equatable {
         case backend, shiyiMap, externalMap
         case voiceKey, voiceMode, sendKey, clearKeys
         case clickDebounceMs, sendDelayMs, maxRecordSeconds, reviewTimeoutSeconds, pollMs
-        case noiseLock, unmuteDoubleSkipsAction, showHUD, syncWithMic, tapHoldMs
+        case noiseLock, unmuteDoubleSkipsAction, showHUD, syncWithMic, tapHoldMs, exclusiveHID
         // 旧版(两个后端共用一套)的键,只在读取时用来迁移
         case singleAction, doubleAction, tripleAction, singleCustomKey, doubleCustomKey, tripleCustomKey
     }
@@ -180,6 +182,7 @@ struct MicConfig: Codable, Equatable {
         showHUD = (try? c.decode(Bool.self, forKey: .showHUD)) ?? d.showHUD
         syncWithMic = (try? c.decode(Bool.self, forKey: .syncWithMic)) ?? d.syncWithMic
         tapHoldMs = (try? c.decode(Int.self, forKey: .tapHoldMs)) ?? d.tapHoldMs
+        exclusiveHID = (try? c.decode(Bool.self, forKey: .exclusiveHID)) ?? d.exclusiveHID
     }
 
     func encode(to encoder: Encoder) throws {
@@ -201,6 +204,7 @@ struct MicConfig: Codable, Equatable {
         try c.encode(showHUD, forKey: .showHUD)
         try c.encode(syncWithMic, forKey: .syncWithMic)
         try c.encode(tapHoldMs, forKey: .tapHoldMs)
+        try c.encode(exclusiveHID, forKey: .exclusiveHID)
     }
 }
 
