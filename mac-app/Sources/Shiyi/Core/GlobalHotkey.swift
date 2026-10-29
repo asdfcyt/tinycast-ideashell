@@ -7,6 +7,7 @@ final class GlobalHotkey {
     static let shared = GlobalHotkey(id: 1)
     static let quickAdd = GlobalHotkey(id: 2)
     static let voice = GlobalHotkey(id: 3)
+    static let sticky = GlobalHotkey(id: 4)
 
     var onPress: (() -> Void)?
     /// 松开（只有需要「按住说话」的热键用）

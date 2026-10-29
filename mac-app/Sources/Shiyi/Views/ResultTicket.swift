@@ -153,7 +153,14 @@ struct ResultTicketView: View {
     private var firstIndex: Int { c.records.count - records.count }
 
     private var meta: String {
-        [
+        if compact {
+            // 岛里右边只剩 190pt 左右：一行放得下才不会折行；记录条数下面有「期间记录」
+            return [
+                c.round > 0 ? "第 \(c.round) 个番茄" : nil,
+                c.todayMin > 0 ? "今日 \(Self.fmt(max(c.todayMin, c.minutes)))" : nil,
+            ].compactMap { $0 }.joined(separator: " · ")
+        }
+        return [
             c.round > 0 ? "第 \(c.round) 个番茄" : nil,
             "记录 \(c.records.count) 条",
             c.todayMin > 0 ? "今日累计 \(Self.fmt(max(c.todayMin, c.minutes)))" : nil,
@@ -171,7 +178,7 @@ struct ResultTicketView: View {
             Text(c.cheer)
                 .font(.system(size: 11.5)).foregroundStyle(P.mute).lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, compact ? 8 : 10).padding(.trailing, 70)
+                .padding(.top, compact ? 8 : 10).padding(.trailing, compact ? 64 : 70)
             footer.padding(.top, compact ? 10 : 12)
         }
         .padding(.horizontal, 20).padding(.top, compact ? 14 : 18).padding(.bottom, compact ? 12 : 16)
@@ -193,7 +200,8 @@ struct ResultTicketView: View {
     }
 
     private var mainBlock: some View {
-        HStack(alignment: .top, spacing: 16) {
+        // 末行基线对齐：「分钟」和右边最后一行（第 N 个番茄 · 今日…）在同一条线上
+        HStack(alignment: .lastTextBaseline, spacing: 16) {
             VStack(spacing: 0) {
                 Text(c.minutes > 0 ? "\(c.minutes)" : "—")
                     .font(.system(size: compact ? 42 : 50, weight: .heavy, design: .rounded)).monospacedDigit()
@@ -206,7 +214,7 @@ struct ResultTicketView: View {
                     .font(.system(size: 15, weight: .bold)).foregroundStyle(P.ink)
                     .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 Text(meta).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(P.mute)
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(compact ? 1 : 2).minimumScaleFactor(compact ? 0.85 : 1).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }

@@ -31,6 +31,9 @@ struct AppCommands: Commands {
             Button("记日记…") { MainWindow.show(); model.openQuickAdd(kind: .daily) }
                 .appShortcut(keys.shortcut(.daily))
             Divider()
+            Button("新建便签") { StickyController.shared.create() }
+            Button("显示全部便签") { StickyController.shared.bringAllToFront() }
+            Divider()
             Button("语音输入") { voice.toggleFromMenu() }
                 .disabled(voice.phase == .organizing)
             Divider()

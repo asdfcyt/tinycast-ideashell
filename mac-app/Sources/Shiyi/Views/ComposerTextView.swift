@@ -32,6 +32,8 @@ struct ComposerTextView: NSViewRepresentable {
     /// 内容实际排出来的高度（含图片缩略图）：外面按它定输入框高度，不再估算
     var contentHeight: Binding<CGFloat>?
     var allowsImages = false
+    /// Markdown 边写边预览（便签用）：标题 / 粗体 / 列表等当场上样式，点方框勾选，回车续列表
+    var markdown = false
     var fontSize: CGFloat = 16
     /// 每次值变化就把焦点抢回输入框（点了示例 / 提交完继续写）
     var focusTick = 0
@@ -58,7 +60,8 @@ struct ComposerTextView: NSViewRepresentable {
         tv.drawsBackground = false
         // 开启图文混排才用富文本（附件需要）；粘贴一律按纯文字处理，不会带进字体颜色
         tv.allowsImages = allowsImages
-        tv.isRichText = allowsImages
+        tv.markdownStyle = markdown
+        tv.isRichText = allowsImages || markdown
         tv.importsGraphics = false
         tv.allowsUndo = true
         tv.isAutomaticQuoteSubstitutionEnabled = false
@@ -93,7 +96,7 @@ struct ComposerTextView: NSViewRepresentable {
         guard let tv = sv.documentView as? ComposerNSTextView else { return }
         if tv.allowsImages != allowsImages {
             tv.allowsImages = allowsImages
-            tv.isRichText = allowsImages
+            tv.isRichText = allowsImages || markdown
         }
         if tv.string != text, !tv.hasMarkedText() {
             tv.string = text
@@ -125,11 +128,19 @@ struct ComposerTextView: NSViewRepresentable {
             }
             if selector == #selector(NSResponder.deleteBackward(_:)), let back = parent.onBackspaceEmpty,
                textView.string.isEmpty, !textView.hasMarkedText(), back() { return true }
+            if selector == #selector(NSResponder.insertNewline(_:)), parent.markdown,
+               let tv = textView as? ComposerNSTextView, tv.continueList() { return true }
             guard selector == #selector(NSResponder.insertNewline(_:)), let submit = parent.onSubmit else { return false }
             let flags = NSApp.currentEvent?.modifierFlags ?? []
             if flags.contains(.shift) || flags.contains(.option) { return false }
             submit()
             return true
+        }
+
+        /// 光标挪到别的行：便签里这一行的 Markdown 符号显示出来，原来那行隐藏
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let tv = notification.object as? ComposerNSTextView, tv.markdownStyle else { return }
+            tv.restyle()
         }
 
         func textDidChange(_ notification: Notification) {
@@ -138,6 +149,7 @@ struct ComposerTextView: NSViewRepresentable {
         }
 
         func sync(from tv: NSTextView) {
+            if let c = tv as? ComposerNSTextView, c.markdownStyle { c.restyle() }
             if parent.text != tv.string { parent.text = tv.string }
             if let h = parent.contentHeight {
                 DispatchQueue.main.async { [weak tv] in
@@ -162,6 +174,8 @@ final class ComposerNSTextView: NSTextView {
     /// 文字变了（包括输入法还没上屏的候选文字：这时系统不一定会发 textDidChange，自己补）
     var onTextChange: (() -> Void)?
     var allowsImages = false
+    /// 便签：Markdown 边写边预览（样式见 MarkdownLiveStyle.swift）
+    var markdownStyle = false
     var baseFont: NSFont = .systemFont(ofSize: 16)
 
     static let maxImages = 9
@@ -177,6 +191,23 @@ final class ComposerNSTextView: NSTextView {
         onTextChange?()
     }
 
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok, markdownStyle { restyle() }
+        return ok
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        if ok, markdownStyle { DispatchQueue.main.async { [weak self] in self?.restyle() } }
+        return ok
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if toggleTaskIfClicked(event) { return }
+        super.mouseDown(with: event)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil else { return }
@@ -189,6 +220,7 @@ final class ComposerNSTextView: NSTextView {
 
     /// 整段文字回到基础字体 / 颜色（富文本模式下 `string =` 之后属性会丢）
     func applyBaseStyle() {
+        if markdownStyle { restyle(); return }
         let attrs: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: NSColor.labelColor]
         if let ts = textStorage, ts.length > 0 { ts.addAttributes(attrs, range: NSRange(location: 0, length: ts.length)) }
         typingAttributes = attrs

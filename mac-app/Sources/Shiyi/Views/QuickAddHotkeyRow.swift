@@ -122,6 +122,22 @@ struct QuickAddHotkeyRow: View {
     }
 }
 
+/// 新建便签
+struct StickyHotkeyRow: View {
+    @AppStorage(StickyHotkey.key) private var choice: StickyHotkey = .ctrlOptS
+    @ObservedObject private var sticky = StickyHotkeyState.shared
+
+    var body: some View {
+        GlobalHotkeyRow(
+            title: "新建便签", choice: $choice,
+            options: StickyHotkey.allCases.map { ($0, $0.label) }, customChoice: .custom, owner: .sticky,
+            saved: { StickyHotkey.savedCustom }, save: StickyHotkey.saveCustom,
+            suspend: { StickyController.shared.suspendHotkey() }, resume: { StickyController.shared.resumeHotkey() },
+            registerError: sticky.registerError
+        )
+    }
+}
+
 /// 灵动岛展开
 struct IslandHotkeyRow: View {
     @AppStorage(DisplayMode.hotkeyKey) private var choice: IslandHotkey = .optSpace

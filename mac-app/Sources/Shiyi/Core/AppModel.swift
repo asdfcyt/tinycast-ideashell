@@ -337,6 +337,7 @@ final class AppModel: ObservableObject {
         focus.onTicket = { TicketController.shared.present($0) }
         IslandController.shared.start(model: self)
         QuickAddPanelController.shared.start(model: self)
+        StickyController.shared.start(model: self)
         CaptureOutbox.shared.resume(model: self)
         SyncQueue.shared.resume(model: self)
         SjzSyncQueue.shared.resume(model: self)

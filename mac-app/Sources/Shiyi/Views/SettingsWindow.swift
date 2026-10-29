@@ -695,6 +695,7 @@ private struct GeneralPane: View {
             // 全局快捷键：在任何 App 里都能用（必须带 ⌃ 或 ⌥）
             SGroup("全局快捷键") {
                 QuickAddHotkeyRow()
+                StickyHotkeyRow()
                 if displayMode == .island { IslandHotkeyRow() }
                 VoiceHotkeyRow()
                 if voiceHotkey.modifierKey == nil {

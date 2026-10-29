@@ -76,6 +76,20 @@ struct IslandFocusDoneView: View {
                 Circle().fill(P.termGreen).frame(width: 6, height: 6)
                 Text("番茄完成 · \(ticket.minutes) 分钟").font(.system(size: 12, weight: .bold)).foregroundStyle(P.termGreen)
                 if focus.run == nil, focus.pendingBreak != nil {
+                    // 休息前再多专注几分钟：直接接着再专注选定的分钟数
+                    Menu {
+                        ForEach([5, 10, 15, 25], id: \.self) { m in
+                            Button("再专注 \(m) 分钟") { state.onActivityAction?(activity, .extend(m)) }
+                        }
+                    } label: {
+                        Label("多专注", systemImage: "plus.circle")
+                            .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(P.termMute)
+                            .padding(.horizontal, 8).frame(height: 20)
+                            .background(Color.white.opacity(0.08), in: Capsule())
+                            .contentShape(Capsule())
+                    }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                    .help("先不休息，再多专注几分钟")
                     Button { state.onActivityAction?(activity, .secondary) } label: {
                         Label("跳过休息", systemImage: "forward.fill")
                             .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(P.termMute)
@@ -297,7 +311,11 @@ struct IslandFocusDoneView: View {
                 greenKey(done ? "checkmark" : "stop.fill", done ? "做完了" : "停止跟练") { session.practiceEnd = nil }
             }
         } else {
-            greenKey("play.fill", "开始跟练") { session.practiceEnd = Date().addingTimeInterval(Double(m.seconds)) }
+            greenKey("play.fill", "开始跟练") {
+                session.practiceEnd = Date().addingTimeInterval(Double(m.seconds))
+                // 跟练就是在休息：还没开始休息的话，同时进入休息状态
+                if focus.run == nil, focus.pendingBreak != nil { state.onActivityAction?(activity, .primary) }
+            }
         }
     }
 

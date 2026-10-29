@@ -157,7 +157,8 @@ struct SjzMarkdownView: View {
 
     var body: some View {
         let secs = Self.sections(content)
-        LazyVStack(alignment: .leading, spacing: 10) {
+        // 不能用 LazyVStack：放在 ScrollView 里，内容高度是估出来的（图片、换行文字高度各不相同），滚到底时最后一截会被裁掉
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(secs) { s in
                 if s.card {
                     VStack(alignment: .leading, spacing: 7) { blockViews(s.blocks) }

@@ -190,6 +190,7 @@ struct MenuBarView: View {
             Spacer(minLength: 4)
             if model.todosLoading { ProgressView().controlSize(.small) }
             iconButton(adding ? "xmark" : "plus", adding ? "收起" : "快速记录") { adding.toggle() }
+            iconButton("note.text.badge.plus", "新建便签（可钉在桌面上）") { StickyController.shared.create() }
             iconButton("arrow.clockwise", "刷新") { Task { await model.loadOverview() } }
             iconButton("dot.radiowaves.left.and.right", "猛犸麦克风按键") { MicWindow.show() }
             iconButton("macwindow", "打开拾忆") { MainWindow.show() }

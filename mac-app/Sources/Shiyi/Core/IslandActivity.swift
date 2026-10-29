@@ -47,4 +47,5 @@ enum IslandActivity: Identifiable, Equatable {
     }
 }
 
-enum ActivityAction { case primary, secondary, tertiary, evidence, regulation, dismiss }
+/// `extend(m)`：休息前多专注 m 分钟（跳过休息，直接再开一段 m 分钟的专注）
+enum ActivityAction: Equatable { case primary, secondary, tertiary, evidence, regulation, dismiss, extend(Int) }

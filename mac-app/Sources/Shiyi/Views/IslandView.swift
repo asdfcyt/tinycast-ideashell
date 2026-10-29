@@ -1076,6 +1076,12 @@ final class IslandController {
             default: submit(o.raw, toShelf: action == .secondary)
             }
         case .focusDone:
+            if case let .extend(m) = action {
+                model.focus.skipBreak()
+                model.focus.quickFocus(m)
+                collapse()
+                return
+            }
             if action == .primary {
                 // 看现在的状态：还没休息就开始休息；已经在休息了什么都不做；没有休息可开就再来一个专注
                 if model.focus.run == nil {

@@ -1,5 +1,12 @@
 import SwiftUI
 
+/// 便签里的万能输入：文字由便签持有（要存盘），输入框边写边预览 Markdown
+struct QuickAddNote {
+    var text: Binding<String>
+    /// 现在是不是该接收听写 / 麦克风提交的那一张便签（开了好几张时只有一张响应）
+    var isActive: () -> Bool
+}
+
 /// 万能输入（复刻安卓端）：一个输入框，自动识别是待办 / Daily Note / 笔记。
 /// - 前缀强制：`待办 …`、`日记 …`、`笔记 …`
 /// - `#标签`、`@文件夹`；「明天 15:00 开会」「下周五下午3点半 交周报」这类日期时间会被识别成待办
@@ -20,6 +27,8 @@ struct QuickAddView: View {
     var onKindChange: ((CaptureKind?) -> Void)?
     /// 提交成功（参数是结果文案）。设置后不再调 onDone 关闭，而是在输入框下面显示结果，由调用方决定什么时候关（全局悬浮输入窗用）
     var onSubmitted: ((String) -> Void)?
+    /// 便签形态：输入框占满整张便签，回车换行（⌘↩ 保存），不写草稿，文字同步给便签
+    var note: QuickAddNote?
 
     @State private var text = ""
     /// 输入框里插入的图片（结审类型支持图文混排）：text 里每个 U+FFFC 对应一张
@@ -38,6 +47,10 @@ struct QuickAddView: View {
     @State private var okText: String?
     /// 每加一次就把焦点还给输入框
     @State private var focusTick = 0
+    /// 便签形态下，提示行（识别结果 / 取证单选择）实际排出来的高度
+    @State private var hintH: CGFloat = 0
+    /// 便签形态下，结审的「去向与关联」默认收起（只留一行），点开才显示取证单 / 线索选择
+    @State private var optionsOpen = false
 
     private var analysis: CaptureAnalysis { CaptureParser.analyze(text, sjz: model.hasSjz) }
     /// 自动识别的类型：贴了图片又没写前缀，按「证据」处理（和截图保存一致）
@@ -64,45 +77,37 @@ struct QuickAddView: View {
                         .foregroundStyle(Brand.orange).frame(width: 20, height: 24)
                 }
                 ZStack(alignment: .topLeading) {
-                    ComposerTextView(
-                        text: $text,
-                        images: $images,
-                        contentHeight: $contentH,
-                        allowsImages: model.hasSjz && record == nil,
-                        fontSize: compact ? 14 : 16,
-                        focusTick: focusTick,
-                        onSubmit: { submitFromKeyboard() },
-                        onTab: { reverse in cycleKind(reverse: reverse) },
-                        onBackspaceEmpty: { exitKind() }
-                    )
-                    if text.isEmpty {
-                        Text(record != nil ? "专注时的想法、进展、卡点…" : (compact ? "记点什么…（Tab 切换类型）" : (model.hasSjz ? "记点什么？按 Tab 切换 想法 / 证据 / 法规 / 线索" : "记点什么？待办、想法、日记都可以，Tab 切换类型")))
-                            .font(.system(size: compact ? 14 : 16))
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 2)
-                            .allowsHitTesting(false)
+                    do {
+                        ComposerTextView(
+                            text: $text,
+                            images: $images,
+                            contentHeight: $contentH,
+                            allowsImages: model.hasSjz && record == nil,
+                            markdown: note != nil,
+                            fontSize: note != nil ? 14 : (compact ? 14 : 16),
+                            focusTick: focusTick,
+                            onSubmit: note == nil ? { submitFromKeyboard() } : nil,
+                            onTab: { reverse in cycleKind(reverse: reverse) },
+                            onBackspaceEmpty: { exitKind() }
+                        )
+                        if text.isEmpty {
+                            Text(note != nil ? "写点什么…支持 Markdown" : (record != nil ? "专注时的想法、进展、卡点…" : (compact ? "记点什么…（Tab 切换类型）" : (model.hasSjz ? "记点什么？按 Tab 切换 想法 / 证据 / 法规 / 线索" : "记点什么？待办、想法、日记都可以，Tab 切换类型"))))
+                                .font(.system(size: note != nil ? 14 : (compact ? 14 : 16)))
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 2)
+                                .allowsHitTesting(false)
+                        }
                     }
                 }
-                .frame(height: compact ? max(editorHeight, 70) : editorHeight)
+                .frame(height: note != nil ? nil : (compact ? max(editorHeight, 70) : editorHeight))
+                .frame(maxHeight: note != nil ? .infinity : nil)
             }
+            .frame(maxHeight: note != nil ? .infinity : nil)
             .padding(.horizontal, compact ? 12 : 18).padding(.top, compact ? 8 : 14)
 
             // 提示行：空的时候给几个例子，写了字就显示识别结果
-            Group {
-                if let record {
-                    recordHint(record)
-                } else if k.isSjz {
-                    sjzTarget(a, k)
-                } else if text.trimmed.isEmpty {
-                    examples
-                } else {
-                    recognized(a, k)
-                }
-            }
-            // 搜索已有证据 / 法规 / 线索会把这一行撑高：必须放在 frame 外面固定高度，否则窗口还没长高时这一行会被压回一行，列表溢出去盖住底栏
-            .frame(maxWidth: .infinity, minHeight: 24, alignment: .topLeading)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, compact ? 12 : 18).padding(.top, 6)
+            hintRow(a, k)
+                .padding(.horizontal, compact ? 12 : 18).padding(.top, 6)
 
             if let error {
                 Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
@@ -112,46 +117,46 @@ struct QuickAddView: View {
                     .padding(.horizontal, compact ? 12 : 18).padding(.top, 4)
             }
 
-            if compact { Divider().opacity(0.6).padding(.top, 12) }
+            if compact, note == nil { Divider().opacity(0.6).padding(.top, 12) }
 
             // 底栏：类型 + 优先级 + 提交
-            HStack(spacing: 8) {
-                if let record {
-                    taskChip(record)
-                } else {
-                    kindMenu(a, k)
-                    if k == .todo { priorityMenu }
-                    if k.isSjz { sjzChip(k) }
-                }
-                Spacer(minLength: 8)
-                if record == nil { dictateButton }
-                if let onDone {
-                    Button("取消", action: onDone)
-                        .buttonStyle(.plain).foregroundStyle(.secondary).font(.callout)
-                        .keyboardShortcut(.cancelAction)
-                }
-                if let record { recordSubmitButton(record) } else { submitButton(a, k) }
-            }
-            .padding(.horizontal, compact ? 12 : 14).padding(.top, compact ? 8 : 8).padding(.bottom, compact ? 8 : 12)
+            footer(a, k)
+                .padding(.horizontal, compact ? 12 : 14).padding(.top, compact ? 8 : 8).padding(.bottom, compact ? 8 : 12)
         }
         .frame(width: compact ? nil : 480)
+        .frame(maxHeight: note != nil ? .infinity : nil)
         .onChange(of: override) { _, new in onKindChange?(new) }
         // 语音听写（麦克风按钮，或输入窗开着时按语音快捷键）：说的话追加到输入框，可以直接说「证据，…」「想法，…」带类型口令
         .onChange(of: model.quickAddInsert) { _, new in
             guard !new.isEmpty, record == nil else { return }
+            if let note, !note.isActive() { return }
             model.quickAddInsert = ""
             text = Self.joined(text, new)
             focusTick += 1
         }
         // 猛犸麦克风三击:提交输入框里的内容
         .onReceive(NotificationCenter.default.publisher(for: .micQuickAddSubmit)) { _ in
-            if record == nil, !text.trimmed.isEmpty { submitFromKeyboard() }
+            if record == nil, !text.trimmed.isEmpty, note?.isActive() ?? true { submitFromKeyboard() }
         }
         .onChange(of: text) { _, new in
             if let record, record.recordDraft != new { record.recordDraft = new }
             onDraftChange?(ComposerImage.stripMarker(new))
+            if let note {
+                let plain = ComposerImage.stripMarker(new)
+                if note.text.wrappedValue != plain { note.text.wrappedValue = plain }
+            }
+        }
+        // 便签那边改了文字（比如勾选了清单）：同步回输入框
+        .onChange(of: note?.text.wrappedValue ?? "") { _, new in
+            if note != nil, new != ComposerImage.stripMarker(text) { text = new; images = [] }
         }
         .onAppear {
+            if let note {
+                text = note.text.wrappedValue
+                if text.isEmpty { focusTick += 1 }
+                model.sjzError = nil
+                return
+            }
             focusTick += 1
             if let record { text = record.recordDraft }
             if !model.quickAddText.isEmpty { text = model.quickAddText }
@@ -167,6 +172,104 @@ struct QuickAddView: View {
             model.quickAddKind = nil
             model.quickAddDate = nil
         }
+    }
+
+    // MARK: - 提示行 / 底栏
+
+    @ViewBuilder private func hintRowContent(_ a: CaptureAnalysis, _ k: CaptureKind) -> some View {
+        if let record {
+            recordHint(record)
+        } else if k.isSjz {
+            sjzTarget(a, k)
+        } else if text.trimmed.isEmpty {
+            if note != nil {
+                Text("⇥ 切换类型 · ⌘↩ 保存").font(.caption2).foregroundStyle(.tertiary)
+            } else {
+                examples
+            }
+        } else {
+            recognized(a, k)
+        }
+    }
+
+    @ViewBuilder private func hintRow(_ a: CaptureAnalysis, _ k: CaptureKind) -> some View {
+        if note != nil, k.isSjz {
+            // 结审：去向 / 关联是一大块（取证单、线索搜索），便签里默认收成一行，点开再选，免得压住文字
+            VStack(alignment: .leading, spacing: 6) {
+                Button { withAnimation(.easeOut(duration: 0.15)) { optionsOpen.toggle() } } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.right").font(.system(size: 8.5, weight: .bold))
+                            .rotationEffect(.degrees(optionsOpen ? 90 : 0))
+                        Text("去向与关联").font(.caption.weight(.medium))
+                        Text(model.sjzTargetTitle.isEmpty ? "未选择项目" : model.sjzTargetTitle)
+                            .font(.caption).foregroundStyle(Color.indigo).lineLimit(1).truncationMode(.tail)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if optionsOpen {
+                    ScrollView(.vertical) {
+                        hintRowContent(a, k)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .background(GeometryReader { g in Color.clear.preference(key: HintHeightKey.self, value: g.size.height) })
+                    }
+                    .scrollIndicators(.hidden)
+                    .frame(height: min(max(hintH, 24), 150))
+                    .onPreferenceChange(HintHeightKey.self) { hintH = $0 }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        } else if note != nil {
+            hintRowContent(a, k)
+                .frame(maxWidth: .infinity, minHeight: 20, alignment: .topLeading)
+        } else {
+            // 搜索已有证据 / 法规 / 线索会把这一行撑高：必须放在 frame 外面固定高度，否则窗口还没长高时这一行会被压回一行，列表溢出去盖住底栏
+            hintRowContent(a, k)
+                .frame(maxWidth: .infinity, minHeight: 24, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder private func footer(_ a: CaptureAnalysis, _ k: CaptureKind) -> some View {
+        if note != nil {
+            // 便签窄：一行放不下就分成两行（类型 / 优先级 在上，听写 / 保存 在下）
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    kindControls(a, k, withProject: false)
+                    Spacer(minLength: 8)
+                    dictateButton
+                    submitButton(a, k)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) { kindControls(a, k, withProject: false); Spacer(minLength: 0) }
+                    HStack(spacing: 8) { Spacer(minLength: 0); dictateButton; submitButton(a, k) }
+                }
+            }
+        } else {
+            HStack(spacing: 8) {
+                if let record {
+                    taskChip(record)
+                } else {
+                    kindControls(a, k)
+                }
+                Spacer(minLength: 8)
+                if record == nil { dictateButton }
+                if let onDone {
+                    Button("取消", action: onDone)
+                        .buttonStyle(.plain).foregroundStyle(.secondary).font(.callout)
+                        .keyboardShortcut(.cancelAction)
+                }
+                if let record { recordSubmitButton(record) } else { submitButton(a, k) }
+            }
+        }
+    }
+
+    @ViewBuilder private func kindControls(_ a: CaptureAnalysis, _ k: CaptureKind, withProject: Bool = true) -> some View {
+        kindMenu(a, k)
+        if k == .todo { priorityMenu }
+        if k.isSjz, withProject { sjzChip(k) }
     }
 
     // MARK: - 组件
@@ -373,16 +476,19 @@ struct QuickAddView: View {
             HStack(spacing: 5) {
                 Image(systemName: k.icon).font(.system(size: 12, weight: .semibold))
                 Text(k.rawValue).font(.callout.weight(.medium))
-                if override == nil && sticky != nil && a.forced == nil {
+                if note != nil {
+                    // 便签窄：只在自动识别时用一个小点表示「自动」，省出位置
+                    if override == nil && !text.trimmed.isEmpty { Image(systemName: "sparkle").font(.system(size: 7.5, weight: .bold)).opacity(0.5) }
+                } else if override == nil && sticky != nil && a.forced == nil {
                     Text("上次").font(.caption2).foregroundStyle(.secondary)
                 } else if override == nil && !text.trimmed.isEmpty {
                     Text("自动").font(.caption2).foregroundStyle(.secondary)
                 }
                 Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(Brand.orange.opacity(0.14), in: Capsule())
-            .foregroundStyle(Brand.orangeDeep)
+            .padding(.horizontal, note != nil ? 9 : 10).padding(.vertical, 4)
+            .background(note != nil ? Color.primary.opacity(0.08) : Brand.orange.opacity(0.14), in: Capsule())
+            .foregroundStyle(note != nil ? Color.primary.opacity(0.78) : Brand.orangeDeep)
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
         .help("类型（自动识别；在输入框里按 Tab / Shift+Tab 快速切换）")
@@ -401,7 +507,9 @@ struct QuickAddView: View {
             HStack(spacing: 4) {
                 Image(systemName: priority == 0 ? "flag" : "flag.fill").font(.system(size: 12))
                     .foregroundStyle(priority == 5 ? Color.red : (priority == 3 ? Color.orange : (priority == 1 ? Color.blue : Color.secondary)))
-                Text(priority == 0 ? "优先级" : (priority == 5 ? "高" : (priority == 3 ? "中" : "低"))).font(.callout)
+                if note == nil || priority != 0 {
+                    Text(priority == 0 ? "优先级" : (priority == 5 ? "高" : (priority == 3 ? "中" : "低"))).font(.callout)
+                }
             }
             .padding(.horizontal, 9).padding(.vertical, 4)
             .background(Color.primary.opacity(0.06), in: Capsule())
@@ -417,11 +525,12 @@ struct QuickAddView: View {
         } label: {
             HStack(spacing: 6) {
                 if submitting { ProgressView().controlSize(.small) } else { Text(submitLabel(k)).font(.callout.weight(.semibold)) }
-                Text("↩").font(.caption2).opacity(0.7)
+                if note == nil { Text("↩").font(.caption2).opacity(0.7) }
             }
-            .foregroundStyle(.white)
+            .foregroundStyle(note != nil && disabled ? Color.primary.opacity(0.35) : .white)
             .padding(.horizontal, 12).padding(.vertical, 5)
-            .background(Brand.orange.opacity(disabled ? 0.35 : 1), in: Capsule())
+            // 便签里不用主题橙：深墨色，和纸色一起看着更安静
+            .background(note != nil ? (disabled ? Color.primary.opacity(0.08) : Color.primary.opacity(0.78)) : Brand.orange.opacity(disabled ? 0.35 : 1), in: Capsule())
         }
         .buttonStyle(.plain)
         .keyboardShortcut(.return, modifiers: .command)
@@ -448,10 +557,11 @@ struct QuickAddView: View {
         .font(.caption)
     }
 
-    private func chip(_ icon: String, _ label: String, tint: Color) -> some View {
-        HStack(spacing: 3) {
+    private func chip(_ icon: String, _ label: String, tint rawTint: Color) -> some View {
+        let tint = note != nil ? Color.primary.opacity(0.62) : rawTint
+        return HStack(spacing: 3) {
             Image(systemName: icon).font(.system(size: 10))
-            Text(label)
+            Text(label).lineLimit(1)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 8).padding(.vertical, 3)
@@ -459,6 +569,14 @@ struct QuickAddView: View {
     }
 
     private func submitLabel(_ k: CaptureKind) -> String {
+        if note != nil {
+            switch k {
+            case .daily: return "记入日记"
+            case .evidence: return "存为证据"
+            case .regulation: return "存为法规"
+            default: break
+            }
+        }
         switch k {
         case .todo: return "添加待办"
         case .daily: return "记入 Daily Note"
@@ -504,6 +622,11 @@ struct QuickAddView: View {
             self.error = "提交失败：" + error.localizedDescription
         }
     }
+}
+
+private struct HintHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// 主窗口里的短暂提示条（快速记录成功等）

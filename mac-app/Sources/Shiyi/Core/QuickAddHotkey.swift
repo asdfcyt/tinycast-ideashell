@@ -92,13 +92,14 @@ struct HotkeyCombo: Equatable {
 
 /// 三个全局快捷键的归属：互相不能撞键
 enum HotkeyOwner: CaseIterable {
-    case quickAdd, island, voice
+    case quickAdd, island, voice, sticky
 
     var title: String {
         switch self {
         case .quickAdd: return "万能输入"
         case .island: return "灵动岛"
         case .voice: return "语音输入"
+        case .sticky: return "新建便签"
         }
     }
 
@@ -108,6 +109,7 @@ enum HotkeyOwner: CaseIterable {
         case .quickAdd: return QuickAddHotkey.current.combo
         case .island: return DisplayMode.current == .island ? DisplayMode.hotkey.combo : nil
         case .voice: return VoiceHotkey.current.combo
+        case .sticky: return StickyHotkey.current.combo
         }
     }
 }
@@ -144,6 +146,57 @@ enum QuickAddHotkey: String, CaseIterable, Identifiable {
         case .ctrlOptN: return HotkeyCombo(code: 45, mods: HotkeyCombo.Mod.control | HotkeyCombo.Mod.option, name: "N")
         case .optCmdN: return HotkeyCombo(code: 45, mods: HotkeyCombo.Mod.option | HotkeyCombo.Mod.cmd, name: "N")
         case .ctrlOptSpace: return HotkeyCombo(code: HotkeyCombo.spaceCode, mods: HotkeyCombo.Mod.control | HotkeyCombo.Mod.option, name: "Space")
+        case .custom: return Self.savedCustom
+        }
+    }
+
+    static var savedCustom: HotkeyCombo? {
+        let d = UserDefaults.standard
+        guard d.object(forKey: customCodeKey) != nil else { return nil }
+        return HotkeyCombo(
+            code: UInt32(max(d.integer(forKey: customCodeKey), 0)),
+            mods: UInt32(max(d.integer(forKey: customModsKey), 0)),
+            name: d.string(forKey: customNameKey) ?? "?"
+        )
+    }
+
+    static func saveCustom(_ c: HotkeyCombo) {
+        let d = UserDefaults.standard
+        d.set(Int(c.code), forKey: customCodeKey)
+        d.set(Int(c.mods), forKey: customModsKey)
+        d.set(c.name, forKey: customNameKey)
+    }
+}
+
+/// 全局「新建便签」快捷键：几个预设 + 自定义录制。默认 ⌃⌥ S。
+enum StickyHotkey: String, CaseIterable, Identifiable {
+    case off, ctrlOptS, optCmdS, custom
+
+    static let key = "ui.stickyHotkey"
+    static let customCodeKey = "ui.stickyHotkey.code"
+    static let customModsKey = "ui.stickyHotkey.mods"
+    static let customNameKey = "ui.stickyHotkey.name"
+
+    var id: String { rawValue }
+
+    static var current: StickyHotkey {
+        StickyHotkey(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .ctrlOptS
+    }
+
+    var label: String {
+        switch self {
+        case .off: return "关闭"
+        case .ctrlOptS: return "⌃⌥ S"
+        case .optCmdS: return "⌥⌘ S"
+        case .custom: return "自定义…"
+        }
+    }
+
+    var combo: HotkeyCombo? {
+        switch self {
+        case .off: return nil
+        case .ctrlOptS: return HotkeyCombo(code: 1, mods: HotkeyCombo.Mod.control | HotkeyCombo.Mod.option, name: "S")
+        case .optCmdS: return HotkeyCombo(code: 1, mods: HotkeyCombo.Mod.option | HotkeyCombo.Mod.cmd, name: "S")
         case .custom: return Self.savedCustom
         }
     }
