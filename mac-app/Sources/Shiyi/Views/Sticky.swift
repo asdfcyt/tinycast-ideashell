@@ -9,6 +9,8 @@ import SwiftUI
  * - 内容就是一个完整的万能输入（QuickAddView 的便签形态）：自动识别 待办 / Daily Note / 笔记 / 结审，Tab 切类型，
  *   带优先级、听写、图片，⌘↩ 保存；保存后默认删掉便签
  * - Markdown 边写边预览：标题 / 粗体 / 列表 / 引用 / 代码当场上样式，点 [ ] 方框勾选，列表末尾回车自动续项
+ * - 关闭 = 关闭：新建的便签有内容时先问是否保存；关掉的便签收在「已关闭的便签」里，随时能再打开。删除放在「…」里
+ * - 从笔记 / 结审记录「使用便签打开」的便签带着来源：底部显示来源，能写回的（笔记、想法、线索）有「写回」按钮
  * 窗口都是「不激活应用」的面板：点便签不会把主窗口带到前面。
  */
 
@@ -24,8 +26,50 @@ struct StickyNote: Codable, Identifiable {
     var w: Double = 300
     var h: Double = 290
     var createdAt = Date()
+    /// 从哪条笔记 / 结审记录打开的（没有就是新建的便签）
+    var source: StickySource?
+    /// 打开时的原文：和现在的内容比，就知道有没有改过
+    var original: String?
+    /// 已关闭（不在桌面上，收在「已关闭的便签」里）
+    var closed: Bool?
 
     var rect: NSRect { NSRect(x: x, y: y, width: w, height: h) }
+}
+
+/// 便签的来源：一条笔记，或一条结审记录
+struct StickySource: Codable, Equatable {
+    var kind: String            // "note" | "sjz"
+    var id: String
+    var project = ""
+    var captureKind = ""        // 结审：idea / clue / evidence / regulation
+    var title = ""
+    /// 能写回原处：笔记整篇、结审的想法 / 线索（证据 / 法规带摘录和图片，写回会丢结构，不开放）
+    var writable = false
+    /// 在结审里打开的路径
+    var openTo = ""
+
+    var icon: String {
+        kind == "note" ? "doc.text" : (["evidence": "doc.text.image", "regulation": "book.closed", "clue": "lightbulb", "idea": "text.bubble"][captureKind] ?? "doc")
+    }
+    var label: String {
+        if kind == "note" { return "笔记 · " + (title.isEmpty ? "未命名" : title) }
+        let k = ["evidence": "证据", "regulation": "法规", "clue": "线索", "idea": "想法"][captureKind] ?? "记录"
+        return "\(k) · \(id)"
+    }
+}
+
+/// 已关闭的便签：不在桌面上，但还在，菜单里可以重新打开
+@MainActor
+final class StickyShelf: ObservableObject {
+    static let shared = StickyShelf()
+    @Published var closed: [StickyNote] = []
+
+    /// 菜单里的一行：来源标签或首行文字
+    static func preview(_ n: StickyNote) -> String {
+        let first = n.text.components(separatedBy: "\n").first { !$0.trimmed.isEmpty }?.mdPlain ?? "空白便签"
+        let head = first.count > 22 ? String(first.prefix(22)) + "…" : first
+        return n.source.map { "\($0.label)　\(head)" } ?? head
+    }
 }
 
 enum StickyPalette {
@@ -48,8 +92,20 @@ final class StickyModel: ObservableObject, Identifiable {
     @Published var pinned: Bool { didSet { onEdit?(); onPinChanged?() } }
     var onEdit: (() -> Void)?
     var onPinChanged: (() -> Void)?
+    let source: StickySource?
+    /// 打开时的原文（带来源的便签用来判断有没有改过）
+    @Published var original: String
+    /// 关闭 / 删除前的确认条
+    enum Confirm { case close, delete }
+    @Published var confirm: Confirm?
+    /// 外面（确认条）要求保存：+1 就让万能输入保存一次
+    @Published var submitTick = 0
+
+    var dirty: Bool { text != original }
 
     init(_ n: StickyNote) {
+        source = n.source
+        original = n.original ?? n.text
         id = n.id
         createdAt = n.createdAt
         text = n.text
@@ -125,7 +181,9 @@ final class StickyController {
         guard !started else { return }
         started = true
         self.model = model
-        for n in load() { open(n) }
+        let all = load()
+        StickyShelf.shared.closed = all.filter { $0.closed == true }
+        for n in all where n.closed != true { open(n) }
         GlobalHotkey.sticky.onPress = { [weak self] in self?.create() }
         hotkeyObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.applyHotkey() }
@@ -177,11 +235,13 @@ final class StickyController {
     }
 
     /// 新建一张便签并让光标停在里面
-    func create(text: String = "") {
+    func create(text: String = "", source: StickySource? = nil) {
         guard model != nil else { return }
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
         let v = screen.visibleFrame
         var n = StickyNote(text: text, color: order.count % StickyPalette.papers.count)
+        n.source = source
+        n.original = text
         let step = CGFloat(order.count % 8) * 26
         n.x = Double(v.maxX - CGFloat(n.w) - 28 - step)
         n.y = Double(v.maxY - CGFloat(n.h) - 28 - step)
@@ -195,12 +255,60 @@ final class StickyController {
         }
     }
 
-    func delete(_ id: UUID) {
-        guard let e = entries.removeValue(forKey: id) else { return }
+    /// 把窗口拆掉（不动存盘数据）：返回关掉时的内容快照
+    @discardableResult
+    private func teardown(_ id: UUID) -> StickyNote? {
+        guard let e = entries.removeValue(forKey: id) else { return nil }
+        let f = e.panel.frame
+        let snap = StickyNote(id: id, text: e.model.text, color: e.model.color, pinned: e.model.pinned,
+                              x: f.origin.x, y: f.origin.y, w: f.width, h: f.height, createdAt: e.model.createdAt,
+                              source: e.model.source, original: e.model.original, closed: nil)
         e.tokens.forEach(NotificationCenter.default.removeObserver)
         e.panel.orderOut(nil)
         e.panel.contentView = nil
         order.removeAll { $0 == id }
+        return snap
+    }
+
+    /// 删除：连数据一起删掉
+    func delete(_ id: UUID) {
+        teardown(id)
+        scheduleSave()
+    }
+
+    /// 关闭：窗口收起，便签留在「已关闭的便签」里，随时能重新打开
+    func close(_ id: UUID) {
+        guard var snap = teardown(id) else { return }
+        // 空的新便签没有留着的意义；带来源的即使没改也不留（随时可以再从原处打开）
+        if snap.text.trimmed.isEmpty || (snap.source != nil && snap.text == (snap.original ?? "")) {
+            scheduleSave()
+            return
+        }
+        snap.closed = true
+        let shelf = StickyShelf.shared
+        shelf.closed.removeAll { $0.id == id }
+        shelf.closed.insert(snap, at: 0)
+        if shelf.closed.count > 30 { shelf.closed.removeLast(shelf.closed.count - 30) }
+        scheduleSave()
+    }
+
+    func reopen(_ id: UUID) {
+        let shelf = StickyShelf.shared
+        guard var n = shelf.closed.first(where: { $0.id == id }) else { return }
+        shelf.closed.removeAll { $0.id == id }
+        n.closed = nil
+        open(n)
+        scheduleSave()
+        if let e = entries[id] { e.panel.makeKey(); lastKeyID = id }
+    }
+
+    func deleteClosed(_ id: UUID) {
+        StickyShelf.shared.closed.removeAll { $0.id == id }
+        scheduleSave()
+    }
+
+    func clearClosed() {
+        StickyShelf.shared.closed = []
         scheduleSave()
     }
 
@@ -225,7 +333,7 @@ final class StickyController {
         p.minSize = NSSize(width: 220, height: 190)
         applyLevel(p, pinned: m.pinned)
 
-        let root = StickyView(m: m, onDelete: { [weak self] in self?.delete(n.id) }).environmentObject(model)
+        let root = StickyView(m: m, onDelete: { [weak self] in self?.delete(n.id) }, onClose: { [weak self] in self?.close(n.id) }).environmentObject(model)
         let host = FirstMouseHostingView(rootView: root)
         host.sizingOptions = []
         p.contentView = host
@@ -303,8 +411,9 @@ final class StickyController {
             guard let e = entries[id] else { return nil }
             let f = e.panel.frame
             return StickyNote(id: id, text: e.model.text, color: e.model.color, pinned: e.model.pinned,
-                              x: f.origin.x, y: f.origin.y, w: f.width, h: f.height, createdAt: e.model.createdAt)
-        }
+                              x: f.origin.x, y: f.origin.y, w: f.width, h: f.height, createdAt: e.model.createdAt,
+                              source: e.model.source, original: e.model.original, closed: nil)
+        } + StickyShelf.shared.closed
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .millisecondsSince1970
         if let d = try? enc.encode(notes), let s = String(data: d, encoding: .utf8) { LocalStore.write("stickies.json", s) }
@@ -316,12 +425,12 @@ final class StickyController {
 private struct StickyView: View {
     @ObservedObject var m: StickyModel
     let onDelete: () -> Void
+    let onClose: () -> Void
 
     @EnvironmentObject private var model: AppModel
-    @AppStorage(StickyPalette.keepKey) private var deleteAfter = true
     @State private var hovering = false
-    @State private var confirmDelete = false
     @State private var swatches = false
+    @State private var busy = false
 
     private var paper: Color { StickyPalette.papers[m.color % StickyPalette.papers.count] }
     private var ink: Color { StickyPalette.ink }
@@ -332,20 +441,25 @@ private struct StickyView: View {
         VStack(spacing: 0) {
             header
             if swatches { swatchRow }
-            // 内容就是万能输入（便签形态）：自动识别、Tab 切类型、优先级、听写、图片、⌘↩ 保存
+            // 内容就是万能输入（便签形态）：自动识别、Tab 切类型、优先级、听写、图片、⌘↩ 保存。
+            // 从笔记 / 结审记录打开的便签有来源：底部改成来源条，不再显示「保存到哪里」的识别
             QuickAddView(
                 compact: true,
                 onSubmitted: { msg in saved(msg) },
-                note: QuickAddNote(text: $m.text, isActive: { [id = m.id] in StickyController.shared.isActive(id) })
+                note: QuickAddNote(text: $m.text, isActive: { [id = m.id] in StickyController.shared.isActive(id) },
+                                   bound: m.source != nil, submitTick: m.submitTick)
             )
+            if let s = m.source { sourceBar(s) }
         }
         .background(paper)
+        .overlay(alignment: .bottom) { if let c = m.confirm { confirmBar(c) } }
         .clipShape(shape)
         .overlay(shape.strokeBorder(Color.black.opacity(0.1), lineWidth: 0.5))
         .environment(\.colorScheme, .light)
         .tint(ink)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: 0.12), value: m.confirm)
     }
 
     // 标题行：和纸一个颜色，没有底色块；图标很淡，鼠标移上来才清楚。空白处可以拖动
@@ -361,12 +475,24 @@ private struct StickyView: View {
             }
             .buttonStyle(.plain).help("换颜色")
             Menu {
-                Toggle("保存后删除便签", isOn: $deleteAfter)
+                Menu("Markdown 快捷键") {
+                    Text("⌘B 粗体　⌘I 斜体")
+                    Text("⇧⌘X 删除线　⌘E 行内代码")
+                    Text("⌘K 链接")
+                    Text("⌥⌘1 / 2 / 3 标题")
+                    Text("⇧⌘L 列表　⇧⌘T 清单")
+                    Text("⇧⌘O 有序列表　⇧⌘U 引用")
+                    Text("⌘↩ 保存")
+                }
                 Button("复制全文") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(ComposerImage.stripMarker(m.text), forType: .string)
                 }
                 .disabled(empty)
+                Divider()
+                Button("删除便签…", role: .destructive) {
+                    if empty { onDelete() } else { m.confirm = .delete }
+                }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 11.5, weight: .semibold))
@@ -374,7 +500,7 @@ private struct StickyView: View {
                     .frame(width: 24, height: 22).contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            tool(confirmDelete ? "trash.fill" : "xmark", confirmDelete ? "再点一次删除这张便签" : "删除便签", tint: confirmDelete ? .red : nil) { delete() }
+            tool("xmark", "关闭", action: requestClose)
         }
         .padding(.horizontal, 6)
         .frame(height: 24)
@@ -402,7 +528,7 @@ private struct StickyView: View {
         .transition(.opacity)
     }
 
-    private func tool(_ icon: String, _ help: String, on: Bool = false, tint: Color? = nil, _ action: @escaping () -> Void) -> some View {
+    private func tool(_ icon: String, _ help: String, on: Bool = false, tint: Color? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 11.5, weight: .semibold))
@@ -412,18 +538,128 @@ private struct StickyView: View {
         .buttonStyle(.plain).help(help)
     }
 
-    // MARK: 动作
+    // MARK: 来源条 / 确认条
 
-    private func delete() {
-        // 空的直接删；有内容的要点两次，免得手滑
-        if empty || confirmDelete { onDelete(); return }
-        confirmDelete = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { confirmDelete = false }
+    private func sourceBar(_ s: StickySource) -> some View {
+        HStack(spacing: 8) {
+            Button { openSource(s) } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: s.icon).font(.system(size: 10.5, weight: .semibold))
+                    Text(s.label).font(.system(size: 11.5, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                    Image(systemName: "arrow.up.forward").font(.system(size: 8, weight: .bold)).opacity(0.5)
+                }
+                .padding(.horizontal, 9).padding(.vertical, 4)
+                .background(Color.primary.opacity(0.08), in: Capsule())
+                .foregroundStyle(Color.primary.opacity(0.7))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain).help("打开原文")
+            Spacer(minLength: 4)
+            if s.writable {
+                Button { Task { await writeBack(s) } } label: {
+                    HStack(spacing: 5) {
+                        if busy { ProgressView().controlSize(.mini) }
+                        Text("写回").font(.callout.weight(.semibold))
+                    }
+                    .foregroundStyle(m.dirty && !busy ? Color.white : Color.primary.opacity(0.35))
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(m.dirty && !busy ? Color.primary.opacity(0.78) : Color.primary.opacity(0.08), in: Capsule())
+                }
+                .buttonStyle(.plain).disabled(!m.dirty || busy)
+                .keyboardShortcut(.return, modifiers: .command)
+                .help("把修改写回原处（⌘↩）")
+            }
+        }
+        .padding(.horizontal, 12).padding(.top, 4).padding(.bottom, 10)
     }
 
-    /// 万能输入保存成功：底部弹结果（带撤销），按设置删掉便签
+    private func confirmBar(_ c: StickyModel.Confirm) -> some View {
+        let s = m.source
+        let writeBackClose = c == .close && s?.writable == true
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(c == .delete ? "删除这张便签？" : (writeBackClose ? "有修改还没写回，写回再关闭？" : "这张便签还没保存，保存吗？"))
+                .font(.system(size: 12.5, weight: .semibold))
+            HStack(spacing: 8) {
+                switch c {
+                case .delete:
+                    pill("删除", strong: true) { onDelete() }
+                case .close where writeBackClose:
+                    pill("写回并关闭", strong: true) {
+                        Task { if await writeBack(s!) { onClose() } }
+                    }
+                    pill("放弃修改") { m.text = m.original; onClose() }
+                default:
+                    // 保存：走万能输入的自动识别；保存成功后便签自己关掉
+                    pill("保存", strong: true) { m.confirm = nil; m.submitTick += 1 }
+                    pill("不保存") { onClose() }
+                }
+                pill("取消") { m.confirm = nil }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(paper)
+        .overlay(alignment: .top) { Rectangle().fill(ink.opacity(0.12)).frame(height: 0.5) }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    private func pill(_ title: String, strong: Bool = false, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(strong ? Color.white : Color.primary.opacity(0.7))
+                .padding(.horizontal, 11).padding(.vertical, 4)
+                .background(strong ? Color.primary.opacity(0.78) : Color.primary.opacity(0.08), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: 动作
+
+    /// 关闭：新建的有内容 → 问保存；带来源的改过且能写回 → 问写回；其余直接关
+    private func requestClose() {
+        if empty { onClose(); return }
+        if let s = m.source {
+            if s.writable, m.dirty { m.confirm = .close } else { onClose() }
+        } else {
+            m.confirm = .close
+        }
+    }
+
+    private func openSource(_ s: StickySource) {
+        if s.kind == "note" { model.openNote(s.id, title: s.title); MainWindow.show() }
+        else { model.openSjzApp(project: s.project, to: s.openTo.isEmpty ? "/" : s.openTo) }
+    }
+
+    /// 写回原处：笔记整篇覆盖；结审的想法 / 线索改正文
+    @discardableResult
+    private func writeBack(_ s: StickySource) async -> Bool {
+        guard !busy else { return false }
+        busy = true
+        defer { busy = false }
+        let text = ComposerImage.stripMarker(m.text)
+        do {
+            if s.kind == "note" {
+                try await model.ideashell.updateNoteBody(s.id, body: text)
+                model.noteCache[s.id] = nil
+                model.invalidateHistory()
+                await model.loadTimeline(silent: true)
+            } else {
+                _ = try await model.sjz.updateCapture(project: s.project, id: s.id, fields: ["content": text])
+                SjzDetailStore.forget(project: s.project, id: s.id)
+                await model.refreshSjzOverview(force: true)
+            }
+            m.original = m.text
+            QuickAddPanelController.shared.showResult("已写回原处", ok: true)
+            return true
+        } catch {
+            QuickAddPanelController.shared.showResult("写回失败：" + error.localizedDescription, ok: false)
+            return false
+        }
+    }
+
+    /// 万能输入保存成功：底部弹结果（带撤销），并把这张便签关掉
     private func saved(_ msg: String) {
         QuickAddPanelController.shared.showResult(msg, ok: true, undoIds: CaptureOutbox.shared.takeSubmitted())
-        if deleteAfter { onDelete() }
+        onDelete()
     }
 }

@@ -35,6 +35,8 @@ struct ComposerTextView: NSViewRepresentable {
     /// Markdown 边写边预览（便签用）：标题 / 粗体 / 列表等当场上样式，点方框勾选，回车续列表
     var markdown = false
     var fontSize: CGFloat = 16
+    /// 窗口一出现就抢焦点（一个页面里有好几个输入框时关掉）
+    var autoFocus = true
     /// 每次值变化就把焦点抢回输入框（点了示例 / 提交完继续写）
     var focusTick = 0
     /// 回车提交（Shift / Option + 回车换行）；输入法候选状态下的回车仍是上屏，不会触发
@@ -61,6 +63,7 @@ struct ComposerTextView: NSViewRepresentable {
         // 开启图文混排才用富文本（附件需要）；粘贴一律按纯文字处理，不会带进字体颜色
         tv.allowsImages = allowsImages
         tv.markdownStyle = markdown
+        tv.grabsFocus = autoFocus
         tv.isRichText = allowsImages || markdown
         tv.importsGraphics = false
         tv.allowsUndo = true
@@ -88,6 +91,22 @@ struct ComposerTextView: NSViewRepresentable {
         sv.borderType = .noBorder
         sv.documentView = tv
         context.coordinator.focusTick = focusTick
+        // 一出来、以及宽度变了（换行位置变了）就量一次内容高度：外面按它定框高，不然已有内容的输入框只显示头两行
+        if contentHeight != nil {
+            sv.postsFrameChangedNotifications = true
+            context.coordinator.frameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification, object: sv, queue: .main
+            ) { [weak coordinator = context.coordinator, weak tv] _ in
+                MainActor.assumeIsolated {
+                    guard let coordinator, let tv else { return }
+                    coordinator.sync(from: tv)
+                }
+            }
+            DispatchQueue.main.async { [weak coordinator = context.coordinator, weak tv] in
+                guard let coordinator, let tv else { return }
+                coordinator.sync(from: tv)
+            }
+        }
         return sv
     }
 
@@ -119,6 +138,8 @@ struct ComposerTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
         var focusTick = 0
+        var frameObserver: NSObjectProtocol?
+        deinit { if let o = frameObserver { NotificationCenter.default.removeObserver(o) } }
         init(_ parent: ComposerTextView) { self.parent = parent }
 
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -176,6 +197,7 @@ final class ComposerNSTextView: NSTextView {
     var allowsImages = false
     /// 便签：Markdown 边写边预览（样式见 MarkdownLiveStyle.swift）
     var markdownStyle = false
+    var grabsFocus = true
     var baseFont: NSFont = .systemFont(ofSize: 16)
 
     static let maxImages = 9
@@ -210,7 +232,7 @@ final class ComposerNSTextView: NSTextView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil else { return }
+        guard window != nil, grabsFocus else { return }
         // 窗口刚出现时第一响应者还没定：下一轮再设，设了之后窗口一变成 key 就能直接打字
         DispatchQueue.main.async { [weak self] in
             guard let self, let w = self.window else { return }
@@ -331,6 +353,7 @@ final class ComposerNSTextView: NSTextView {
 
     /// 悬浮输入窗不激活应用，菜单里的 ⌘V 不一定能到这里：自己接一下
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if window?.firstResponder === self, handleMarkdownShortcut(event) { return true }
         if allowsImages, window?.firstResponder === self, event.type == .keyDown,
            event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
            event.charactersIgnoringModifiers == "v" {

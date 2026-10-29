@@ -285,6 +285,9 @@ private struct TodayContent: View {
     /// 今天的笔记 / 日记条目的右键菜单
     @ViewBuilder private func feedMenu(_ it: FeedItem) -> some View {
         Button(it.isDaily ? "打开今天的 Daily Note" : "打开笔记") { model.openNote(it.noteId, title: it.title) }
+        Button("使用便签打开") {
+            if it.isDaily { StickyController.shared.create(text: it.text) } else { model.openNoteAsSticky(it.noteId, title: it.title) }
+        }
         Button("在闪念贝壳中打开") { model.open(noteURL(it.noteId)) }
         Divider()
         Button(it.isDaily ? "复制这条" : "复制标题") { model.copy(it.text) }

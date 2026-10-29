@@ -531,9 +531,16 @@ extension SjzProjectDetailView {
             if inside { hoverCap = c; prefetch(c) } else if hoverCap?.id == c.id { hoverCap = nil }
         }
         .contextMenu {
-            Button("快速预览（空格）") { model.sjzQuick = SjzQuickItem(project: name, capture: c) }
+            Button("快速预览") { model.sjzQuick = SjzQuickItem(project: name, capture: c) }
+            Button("使用便签打开") { model.openSjzAsSticky(project: name, capture: c) }
+            if model.sjzCanPin(c) {
+                // 钉住后，灵动岛和万能输入保存证据 / 法规 / 线索时直接追加到它，不用再去搜索
+                Button(model.sjzIsPinned(c, project: name) ? "取消钉住" : "钉住", systemImage: model.sjzIsPinned(c, project: name) ? "pin.slash" : "pin") {
+                    Task { await model.sjzTogglePin(c, project: name) }
+                }
+            }
             Divider()
-            Button("编辑并写回结审") { editing = c }
+            Button("编辑") { editing = c }
             if c.kind == "clue", c.status != "converted" {
                 Divider()
                 ForEach([("pending", "待核实"), ("verified", "已核实"), ("excluded", "排除")], id: \.0) { st, label in
@@ -933,10 +940,8 @@ struct SjzCaptureEditor: View {
                         .padding(8).frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 } else {
-                    TextField("文字", text: $seg.text, axis: .vertical)
-                        .textFieldStyle(.plain).font(.system(size: 13)).lineLimit(1...30)
-                        .padding(8)
-                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    // 不用 TextField(axis: .vertical)：它的回车是「提交」而不是换行，会把文字全选
+                    SegTextEditor(text: $seg.text)
                 }
             case .image:
                 ZStack(alignment: .topTrailing) {
@@ -1020,6 +1025,19 @@ struct SjzCaptureEditor: View {
 }
 
 
+
+/// 结审记录编辑里的一段文字：真正的多行输入框（回车换行），带 Markdown 边写边预览和格式快捷键
+private struct SegTextEditor: View {
+    @Binding var text: String
+    @State private var h: CGFloat = 0
+
+    var body: some View {
+        ComposerTextView(text: $text, contentHeight: $h, markdown: true, fontSize: 13, autoFocus: false)
+            .frame(height: max(h + 4, 44))
+            .padding(8)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+}
 
 /// 选日期的小按钮：点开是一个小日历，可选任意一天，下面有「今天 / 明天 / 下周一」快捷项。value 为 yyyy-MM-dd，空串 = 没设
 struct DayPickerButton: View {
@@ -1196,7 +1214,7 @@ private struct CaptureRowView: View {
     @State private var hover = false
 
     private var tint: Color { SjzProjectDetailView.kindTint(c.kind) }
-    private var title: String { c.title.isEmpty ? c.summary : c.title }
+    private var title: String { (c.title.isEmpty ? c.summary : c.title).mdPlain }
     private var seq: String { c.id.split(separator: ".").last.map(String.init) ?? "" }
     private var time: String {
         guard let d = c.date else { return "" }
@@ -1208,8 +1226,9 @@ private struct CaptureRowView: View {
     private var summary: String {
         var s = c.summary
         if !c.parentId.isEmpty { s = s.replacingOccurrences(of: "追加到 \(c.parentId) · ", with: "") }
-        s = Self.maskFiles(s).trimmed
-        guard !s.isEmpty, !c.title.isEmpty, s != c.title, !s.hasPrefix(c.title), !c.title.hasPrefix(s) else { return "" }
+        s = Self.maskFiles(s).mdPlain
+        let t = c.title.mdPlain
+        guard !s.isEmpty, !t.isEmpty, s != t, !s.hasPrefix(t), !t.hasPrefix(s) else { return "" }
         return s
     }
     /// 文件名换成文件类型（PDF / Word …），不展示具体文件名

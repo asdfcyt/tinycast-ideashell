@@ -625,8 +625,11 @@ final class BreakSession: ObservableObject {
         AmbientSound.shared.attach(focus)
         focus.$run.combineLatest(focus.$pendingBreak)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] run, pending in
-                let resting = run.map { $0.kind.isBreak } ?? (pending != nil)
+            .sink { [weak self, weak focus] _, _ in
+                // 不用事件带来的值，而是到这里再读一次最终状态：开始休息时 pendingBreak 先变 nil、run 随后才有值，
+                // 中间那一瞬会被当成「休息结束」，把刚点下的跟练倒计时清掉（要点第二次才开始）
+                guard let focus else { return }
+                let resting = focus.run.map { $0.kind.isBreak } ?? (focus.pendingBreak != nil)
                 self?.setResting(resting)
             }
             .store(in: &bag)

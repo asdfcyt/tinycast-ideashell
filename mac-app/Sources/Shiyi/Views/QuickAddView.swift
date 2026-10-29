@@ -5,6 +5,10 @@ struct QuickAddNote {
     var text: Binding<String>
     /// 现在是不是该接收听写 / 麦克风提交的那一张便签（开了好几张时只有一张响应）
     var isActive: () -> Bool
+    /// 从笔记 / 结审记录打开的便签：底部由便签自己画来源条，这里不显示识别结果和保存按钮
+    var bound = false
+    /// 便签的确认条要求保存：值变了就保存一次
+    var submitTick = 0
 }
 
 /// 万能输入（复刻安卓端）：一个输入框，自动识别是待办 / Daily Note / 笔记。
@@ -106,8 +110,10 @@ struct QuickAddView: View {
             .padding(.horizontal, compact ? 12 : 18).padding(.top, compact ? 8 : 14)
 
             // 提示行：空的时候给几个例子，写了字就显示识别结果
-            hintRow(a, k)
-                .padding(.horizontal, compact ? 12 : 18).padding(.top, 6)
+            if note?.bound != true {
+                hintRow(a, k)
+                    .padding(.horizontal, compact ? 12 : 18).padding(.top, 6)
+            }
 
             if let error {
                 Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
@@ -120,8 +126,10 @@ struct QuickAddView: View {
             if compact, note == nil { Divider().opacity(0.6).padding(.top, 12) }
 
             // 底栏：类型 + 优先级 + 提交
-            footer(a, k)
-                .padding(.horizontal, compact ? 12 : 14).padding(.top, compact ? 8 : 8).padding(.bottom, compact ? 8 : 12)
+            if note?.bound != true {
+                footer(a, k)
+                    .padding(.horizontal, compact ? 12 : 14).padding(.top, compact ? 8 : 8).padding(.bottom, compact ? 8 : 12)
+            }
         }
         .frame(width: compact ? nil : 480)
         .frame(maxHeight: note != nil ? .infinity : nil)
@@ -137,6 +145,9 @@ struct QuickAddView: View {
         // 猛犸麦克风三击:提交输入框里的内容
         .onReceive(NotificationCenter.default.publisher(for: .micQuickAddSubmit)) { _ in
             if record == nil, !text.trimmed.isEmpty, note?.isActive() ?? true { submitFromKeyboard() }
+        }
+        .onChange(of: note?.submitTick ?? 0) { _, _ in
+            if note?.bound != true, !text.trimmed.isEmpty { submitFromKeyboard() }
         }
         .onChange(of: text) { _, new in
             if let record, record.recordDraft != new { record.recordDraft = new }

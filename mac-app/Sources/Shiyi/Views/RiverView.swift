@@ -304,6 +304,7 @@ private struct DailyLine: View {
             Button("复制这条") { model.copy(entry.text) }
             Button("新建笔记…") { model.newNoteDraft = NewNoteDraft(title: entry.text) }
                 .disabled(!model.hasIdeashell)
+            Button("使用便签打开") { StickyController.shared.create(text: entry.text) }
             if let id = noteId {
                 Button("在右侧查看") { model.paneNote(id, title: "Daily Note", entry: key) }
                 Button("弹出这天的 Daily Note") { model.openNote(id, title: "Daily Note") }
@@ -338,6 +339,7 @@ private struct NoteLine: View {
         .contextMenu {
             Button("在右侧查看") { model.paneNote(note.id, title: note.title) }
             Button("弹出") { model.openNote(note.id, title: note.title) }
+            Button("使用便签打开") { model.openNoteAsSticky(note.id, title: note.title) }
             Button("在闪念贝壳中打开") { model.open(noteURL(note.id)) }
             Button("复制标题") { model.copy(note.title) }
         }

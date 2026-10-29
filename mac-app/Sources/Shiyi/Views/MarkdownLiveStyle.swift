@@ -7,6 +7,7 @@ import AppKit
  * - 点 `[ ]` / `[x]` 方框直接勾选（改回原文）
  * - 在列表 / 清单 / 有序列表末尾回车会自动续上下一项，空项回车就退出列表
  * - 光标所在的行显示 Markdown 符号（淡色，方便改）；其它行 / 输入框没有焦点时符号隐藏，看到的就是渲染后的样子
+ * - 快捷键（便签里）：⌘B 粗体 · ⌘I 斜体 · ⇧⌘X 删除线 · ⌘E 行内代码 · ⌘K 链接 · ⌥⌘1/2/3 标题 · ⇧⌘L 列表 · ⇧⌘T 清单 · ⇧⌘O 有序列表 · ⇧⌘U 引用
  * 只改字的属性、不改内容；输入法候选（marked text）期间不动，避免打断拼音 / 五笔。
  */
 
@@ -230,6 +231,106 @@ extension ComposerNSTextView {
             insertText("\n" + next, replacementRange: sel)
         }
         return true
+    }
+}
+
+// MARK: 快捷键
+
+extension ComposerNSTextView {
+    /// 便签里的 Markdown 格式快捷键。返回是否处理了这次按键
+    func handleMarkdownShortcut(_ e: NSEvent) -> Bool {
+        guard markdownStyle, !hasMarkedText(), e.type == .keyDown else { return false }
+        let f = e.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
+        guard f.contains(.command), !f.contains(.control) else { return false }
+        let k = (e.charactersIgnoringModifiers ?? "").lowercased()
+        let shift = f.contains(.shift), opt = f.contains(.option)
+        switch (k, shift, opt) {
+        case ("b", false, false): toggleWrap("**")
+        case ("i", false, false): toggleWrap("*")
+        case ("x", true, false): toggleWrap("~~")
+        case ("e", false, false): toggleWrap("`")
+        case ("k", false, false): insertLink()
+        case ("1", false, true): setLinePrefix("# ")
+        case ("2", false, true): setLinePrefix("## ")
+        case ("3", false, true): setLinePrefix("### ")
+        case ("l", true, false): setLinePrefix("- ")
+        case ("t", true, false): setLinePrefix("- [ ] ")
+        case ("o", true, false): setLinePrefix("1. ")
+        case ("u", true, false): setLinePrefix("> ")
+        default: return false
+        }
+        return true
+    }
+
+    private func replace(_ r: NSRange, with s: String, select: NSRange) {
+        insertText(s, replacementRange: r)
+        setSelectedRange(select)
+    }
+
+    /// 选中的文字加 / 去掉成对符号；没选中就插入一对并把光标放在中间
+    private func toggleWrap(_ m: String) {
+        let ns = string as NSString
+        let sel = selectedRange()
+        let ml = (m as NSString).length
+        if sel.length == 0 {
+            replace(sel, with: m + m, select: NSRange(location: sel.location + ml, length: 0))
+            return
+        }
+        let inner = ns.substring(with: sel)
+        if inner.hasPrefix(m), inner.hasSuffix(m), (inner as NSString).length >= ml * 2 {
+            let plain = (inner as NSString).substring(with: NSRange(location: ml, length: (inner as NSString).length - ml * 2))
+            replace(sel, with: plain, select: NSRange(location: sel.location, length: (plain as NSString).length))
+        } else if sel.location >= ml, sel.location + sel.length + ml <= ns.length,
+                  ns.substring(with: NSRange(location: sel.location - ml, length: ml)) == m,
+                  ns.substring(with: NSRange(location: sel.location + sel.length, length: ml)) == m {
+            let outer = NSRange(location: sel.location - ml, length: sel.length + ml * 2)
+            replace(outer, with: inner, select: NSRange(location: outer.location, length: sel.length))
+        } else {
+            replace(sel, with: m + inner + m, select: NSRange(location: sel.location + ml, length: sel.length))
+        }
+    }
+
+    /// `[选中的文字](链接)`：链接占位处选中，直接粘贴 / 输入
+    private func insertLink() {
+        let ns = string as NSString
+        let sel = selectedRange()
+        let text = sel.length > 0 ? ns.substring(with: sel) : ""
+        let head = (text as NSString).length + 3        // [text](
+        replace(sel, with: "[\(text)](链接)", select: NSRange(location: sel.location + head, length: 2))
+        if sel.length == 0 { setSelectedRange(NSRange(location: sel.location + 1, length: 0)) }
+    }
+
+    private static let blockPrefix = re("^([ \\t]*)(#{1,6}[ \\t]+|[-*+][ \\t]+(?:\\[[ xX]\\][ \\t]+)?|\\d{1,3}[.、][ \\t]+|>[ \\t]?)")
+
+    /// 给选中的每一行设置同一种行首符号；已经是这种就去掉，是别的就换掉
+    private func setLinePrefix(_ prefix: String) {
+        let ns = string as NSString
+        let sel = selectedRange()
+        let block = ns.lineRange(for: sel)
+        let body = ns.substring(with: block)
+        let trailingNL = body.hasSuffix("\n")
+        var lines = (trailingNL ? String(body.dropLast()) : body).components(separatedBy: "\n")
+        let probe = prefix.trimmingCharacters(in: .whitespaces)
+        let allHave = lines.allSatisfy { l in
+            let t = l.trimmingCharacters(in: .whitespaces)
+            return prefix.hasPrefix("1.") ? t.range(of: "^\\d{1,3}[.、] ", options: .regularExpression) != nil : t.hasPrefix(probe + " ") || t == probe
+        }
+        var n = 0
+        lines = lines.map { l in
+            let ln = l as NSString
+            var indent = ""
+            var rest = l
+            if let m = Self.blockPrefix.firstMatch(in: l, range: NSRange(location: 0, length: ln.length)) {
+                indent = ln.substring(with: m.range(at: 1))
+                rest = ln.substring(from: m.range.length)
+            }
+            if allHave { return indent + rest }
+            n += 1
+            let p = prefix.hasPrefix("1.") ? "\(n). " : prefix
+            return indent + p + rest
+        }
+        let out = lines.joined(separator: "\n") + (trailingNL ? "\n" : "")
+        replace(block, with: out, select: NSRange(location: block.location, length: (out as NSString).length - (trailingNL ? 1 : 0)))
     }
 }
 

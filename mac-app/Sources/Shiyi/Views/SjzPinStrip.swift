@@ -157,7 +157,7 @@ struct SjzPinStrip: View {
             case .note:
                 if evShown > 0 { sectionHead("已有证据 · 钉住后新内容追加到它") }
                 ForEach(evids.prefix(noteRows)) { c in
-                    resultRow(icon: "doc.text.image", title: c.title.isEmpty ? c.summary : c.title, sub: c.source) {
+                    resultRow(icon: "doc.text.image", title: (c.title.isEmpty ? c.summary : c.title).mdPlain, sub: c.source) {
                         Task { await model.sjzPin(evidence: c); closePicker() }
                     }
                 }
@@ -175,7 +175,7 @@ struct SjzPinStrip: View {
                 }
             case .clue:
                 ForEach(clues.prefix(rowLimit)) { c in
-                    resultRow(icon: "lightbulb", title: "\(c.id) \(c.title.isEmpty ? c.summary : c.title)", sub: c.statusLabel) {
+                    resultRow(icon: "lightbulb", title: "\(c.id) \((c.title.isEmpty ? c.summary : c.title).mdPlain)", sub: c.statusLabel) {
                         Task { await model.sjzPin(clue: c); closePicker() }
                     }
                 }

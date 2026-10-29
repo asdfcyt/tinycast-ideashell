@@ -6,6 +6,7 @@ struct AppCommands: Commands {
     @ObservedObject var model: AppModel
     @ObservedObject private var voice = VoiceController.shared
     @ObservedObject private var keys = AppShortcutStore.shared
+    @ObservedObject private var shelf = StickyShelf.shared
 
     private var sections: [AppSection] { AppSection.allCases.filter { $0 != .settings } }
 
@@ -33,6 +34,14 @@ struct AppCommands: Commands {
             Divider()
             Button("新建便签") { StickyController.shared.create() }
             Button("显示全部便签") { StickyController.shared.bringAllToFront() }
+            Menu("已关闭的便签") {
+                ForEach(shelf.closed.prefix(15)) { n in
+                    Button(StickyShelf.preview(n)) { StickyController.shared.reopen(n.id) }
+                }
+                Divider()
+                Button("清空已关闭的便签") { StickyController.shared.clearClosed() }
+            }
+            .disabled(shelf.closed.isEmpty)
             Divider()
             Button("语音输入") { voice.toggleFromMenu() }
                 .disabled(voice.phase == .organizing)
