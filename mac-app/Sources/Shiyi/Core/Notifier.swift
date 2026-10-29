@@ -164,4 +164,43 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             try? await center.add(r)
         }
     }
+
+    // MARK: - 资料清单到期提醒
+
+    /// 已发出、还没收回的资料清单：到「要求提供日期」前一天、当天、过了一天（还没收回）的 9:00 各提醒一次。
+    /// 收回后它就不在列表里了，重排时自然取消。已经过了 9:00 的当天 / 逾期提醒，补一条 10 秒后的（每条只补一次）
+    func syncDatalists(_ list: [(project: String, title: String, item: SjzOutstanding)]) async {
+        let pending = await center.pendingNotificationRequests()
+        center.removePendingNotificationRequests(withIdentifiers: pending.map(\.identifier).filter { $0.hasPrefix("shiyi.sjzlist.") })
+        guard NotifyPrefs.on("notify.sjz") else { return }
+        let ud = UserDefaults.standard
+        var told = Set(ud.stringArray(forKey: "notify.sjzlist.told") ?? [])
+        let now = Date()
+        let cal = Day.cal
+        var reqs: [(Date, UNNotificationRequest)] = []
+        for (_, ptitle, it) in list where it.kind == "data_request" {
+            guard let due = Day.parse(it.dueAt), let nineDue = cal.date(bySettingHour: 9, minute: 0, second: 0, of: due) else { continue }
+            let name = [it.no, it.matter.isEmpty ? it.title : it.matter].filter { !$0.isEmpty }.joined(separator: " ")
+            let who = it.unit.isEmpty ? "" : "向 \(it.unit) 要的"
+            let plan: [(String, Date, String, String)] = [
+                ("before", cal.date(byAdding: .day, value: -1, to: nineDue) ?? nineDue, "资料清单明天到期", "\(who)\(name)（\(ptitle)）明天要收回"),
+                ("day", nineDue, "资料清单今天到期", "\(who)\(name)（\(ptitle)）今天要收回"),
+                ("late", cal.date(byAdding: .day, value: 1, to: nineDue) ?? nineDue, "资料清单已逾期", "\(who)\(name)（\(ptitle)）过了要求提供日期，还没收回"),
+            ]
+            for (tag, when, title, body) in plan {
+                let id = "shiyi.sjzlist.\(tag).\(it.path)"
+                if when > now {
+                    reqs.append((when, request(id, title, body, when)))
+                } else if cal.isDate(when, inSameDayAs: now) {
+                    let key = "\(tag)|\(it.path)|\(it.dueAt)"
+                    if !told.contains(key) {
+                        told.insert(key)
+                        Self.schedule(id: id, title: title, body: body, after: 10)
+                    }
+                }
+            }
+        }
+        ud.set(Array(told.suffix(200)), forKey: "notify.sjzlist.told")
+        for (_, r) in reqs.sorted(by: { $0.0 < $1.0 }).prefix(12) { try? await center.add(r) }
+    }
 }

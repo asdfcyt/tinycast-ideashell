@@ -45,7 +45,7 @@ struct AIPlanSheet: View {
             Divider()
             footer
         }
-        .frame(width: 600, height: 640)
+        .frame(minWidth: 600, idealWidth: 600, maxWidth: .infinity, minHeight: 640, idealHeight: 640, maxHeight: .infinity)
         .task { await start() }
     }
 

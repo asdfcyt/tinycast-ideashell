@@ -319,6 +319,8 @@ enum SjzDetailStore {
         var editable: Bool
         var images: [String: NSImage]
         var files: [SjzFile]
+        /// 资料清单的 dueAt / sentAt / recalledAt（yyyy-MM-dd）
+        var times: [String: String] = [:]
     }
 
     private static var cache: [String: Detail] = [:]
@@ -336,7 +338,7 @@ enum SjzDetailStore {
         if let t = inflight[k] { return await t.value }
         let t = Task { () -> Detail? in
             guard let d = try? await api.captureDetail(project: project, id: id) else { return nil }
-            return Detail(content: d.content, editable: d.editable, images: d.images.compactMapValues { NSImage(data: $0) }, files: d.files)
+            return Detail(content: d.content, editable: d.editable, images: d.images.compactMapValues { NSImage(data: $0) }, files: d.files, times: d.times)
         }
         inflight[k] = t
         let r = await t.value
@@ -359,6 +361,8 @@ struct SjzQuickLook: View {
     let project: String
     let capture: SjzCapture
     var size = CGSize(width: 700, height: 560)
+    /// 嵌在编辑窗口右侧并排查看：没有卡片外框和快捷键提示，有关闭按钮
+    var embedded = false
     let onClose: () -> Void
     let onEdit: () -> Void
 
@@ -386,6 +390,10 @@ struct SjzQuickLook: View {
                         Text(hasOriginal ? "文字" : "摘录").tag(SjzCaptureEditor.PMode.text)
                     }
                     .pickerStyle(.segmented).labelsHidden().frame(width: 150)
+                }
+                if embedded {
+                    Button(action: onClose) { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                        .buttonStyle(.plain).help("关闭并排查看")
                 }
             }
             Group {
@@ -435,7 +443,7 @@ struct SjzQuickLook: View {
             HStack(spacing: 10) {
                 if !capture.source.isEmpty, capture.source != "拾忆" { Text(capture.source).font(.caption).foregroundStyle(.tertiary).lineLimit(1) }
                 Spacer()
-                Text("空格 / Esc 关闭 · 回车编辑").font(.caption).foregroundStyle(.tertiary)
+                if !embedded { Text("空格 / Esc 关闭 · 回车编辑").font(.caption).foregroundStyle(.tertiary) }
                 Button("编辑并写回") { onEdit() }.buttonStyle(.borderless).font(.caption)
                 if mode == .original, let f = currentFile {
                     Button("用默认应用打开") { NSWorkspace.shared.open(f.url) }.buttonStyle(.borderless).font(.caption)
@@ -443,10 +451,11 @@ struct SjzQuickLook: View {
             }
         }
         .padding(16)
-        .frame(width: size.width, height: size.height)
-        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.18), radius: 22, y: 8)
+        .frame(width: size.width, height: embedded ? nil : size.height)
+        .frame(maxHeight: embedded ? .infinity : nil)
+        .background(embedded ? Color.primary.opacity(0.02) : Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: embedded ? 0 : 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(embedded ? 0 : 0.12), lineWidth: 0.5))
+        .shadow(color: .black.opacity(embedded ? 0 : 0.18), radius: embedded ? 0 : 22, y: embedded ? 0 : 8)
         .task(id: capture.id) {
             if let c = SjzDetailStore.cached(project: project, id: capture.id) { apply(c, first: true) }
             if let d = await SjzDetailStore.load(api: api, project: project, id: capture.id) {

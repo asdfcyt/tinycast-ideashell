@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 /// 拖拽时落在岛的哪一半：左 = 保存（自动识别），右 = 暂存
-enum DropZone { case save, shelf, evidence, regulation, clue, data }
+enum DropZone { case save, shelf, evidence, regulation, clue }
 
 /// 刚截的一张图 / 剪贴板里的新图片：岛上弹出提示，可以一键保存、暂存，或直接拖走
 struct CaptureOffer: Identifiable, Equatable {

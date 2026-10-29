@@ -7,7 +7,27 @@ import SwiftUI
 /// 弹窗里再弹的 popover / 菜单是独立窗口，不受影响；叠了多层 sheet 时只关最上面一层。
 extension View {
     func dismissOnOutsideClick() -> some View {
-        modifier(OutsideClickDismiss())
+        modifier(OutsideClickDismiss()).sheetWindowTweaks()
+    }
+
+    /// 让弹窗（sheet）可以拖动、拉大：SwiftUI 的 sheet 默认两样都不行。内容需要是可伸缩的 frame（min / max），不然拉了也不会变
+    func sheetWindowTweaks() -> some View {
+        background(SheetWindowTweaks())
+    }
+}
+
+private struct SheetWindowTweaks: NSViewRepresentable {
+    func makeNSView(context: Context) -> TweakView { TweakView() }
+    func updateNSView(_ v: TweakView, context: Context) {}
+
+    final class TweakView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let w = window, w.sheetParent != nil else { return }
+            w.styleMask.insert(.resizable)
+            w.isMovable = true
+            w.isMovableByWindowBackground = true
+        }
     }
 }
 

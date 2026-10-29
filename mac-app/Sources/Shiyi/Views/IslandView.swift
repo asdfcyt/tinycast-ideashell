@@ -986,7 +986,7 @@ final class IslandController {
         if fromTop < 80 { return (p.x < c.bounds.midX || !shelfOn) ? .save : .shelf }
         let left = (c.bounds.width - state.expandedWidth) / 2 + 16
         let rel = (p.x - left) / (state.expandedWidth - 32)
-        return rel < 0.25 ? .evidence : (rel < 0.5 ? .regulation : (rel < 0.75 ? .clue : .data))
+        return rel < 1.0 / 3 ? .evidence : (rel < 2.0 / 3 ? .regulation : .clue)
     }
 
     private func dragExited() {
@@ -1002,7 +1002,6 @@ final class IslandController {
         case .evidence: submit(raw, to: .evidence)
         case .regulation: submit(raw, to: .regulation)
         case .clue: submit(raw, to: .clue)
-        case .data: submit(raw, to: .data)
         }
         return true
     }

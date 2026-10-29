@@ -231,12 +231,13 @@ struct SjzApi {
                               status: (c["status"] as? String) ?? "", taskId: (c["taskId"] as? String) ?? "",
                               at: (c["at"] as? String) ?? "", editedAt: (c["editedAt"] as? String) ?? "",
                               clueIds: (c["clueIds"] as? [String]) ?? [], logRel: (c["logRel"] as? String) ?? "",
-                              toClue: (c["toClue"] as? String) ?? "", parentId: (c["parentId"] as? String) ?? "")
+                              toClue: (c["toClue"] as? String) ?? "", parentId: (c["parentId"] as? String) ?? "",
+                              originals: (c["originals"] as? [String]) ?? [], listIds: (c["listIds"] as? [String]) ?? [])
         }
     }
 
     /// 正文、是否可编辑，以及正文里引用的图片（`imgN` → 图片数据）
-    func captureDetail(project: String, id: String) async throws -> (content: String, editable: Bool, images: [String: Data], files: [SjzFile]) {
+    func captureDetail(project: String, id: String) async throws -> (content: String, editable: Bool, images: [String: Data], files: [SjzFile], times: [String: String]) {
         let r = try await call("get_capture", ["project": project, "id": id])
         var imgs: [String: Data] = [:]
         for (k, v) in (r["images"] as? [String: String]) ?? [:] { if let d = Data(base64Encoded: v) { imgs[k] = d } }
@@ -244,7 +245,8 @@ struct SjzApi {
             guard let rel = f["rel"] as? String, let abs = f["abs"] as? String else { return nil }
             return SjzFile(rel: rel, name: (f["name"] as? String) ?? rel, ext: (f["ext"] as? String) ?? "", abs: abs, size: (f["size"] as? Int) ?? 0, role: (f["role"] as? String) ?? "original")
         }
-        return ((r["content"] as? String) ?? "", (r["editable"] as? Bool) ?? false, imgs, files)
+        let times = ((r["times"] as? JSON) ?? [:]).compactMapValues { $0 as? String }
+        return ((r["content"] as? String) ?? "", (r["editable"] as? Bool) ?? false, imgs, files, times)
     }
 
     /// 二次编辑写回：title / source / content / status / linkNote
@@ -268,6 +270,13 @@ struct SjzApi {
     /// 删除台账里的一项（想法 / 证据 / 法规 / 数据 / 线索），不可恢复
     func deleteCapture(project: String, id: String) async throws -> String {
         ((try await call("delete_capture", ["project": project, "id": id]))["message"] as? String) ?? "已删除"
+    }
+
+    /// 新建资料清单：写进结审文书中心的「资料清单」分类，并登记到来自拾忆
+    func addDatalist(project: String, title: String, items: String, dueDate: String) async throws -> String {
+        var a: JSON = ["project": project, "title": title, "items": items]
+        if !dueDate.isEmpty { a["dueDate"] = dueDate }
+        return ((try await call("add_datalist", a))["message"] as? String) ?? "已新建资料清单"
     }
 
     /// 想法转为线索：想法保留，生成一条新的待核实线索
@@ -324,7 +333,8 @@ struct SjzApi {
             guard let path = i["path"] as? String else { return nil }
             return SjzOutstanding(path: path, no: (i["no"] as? String) ?? "", title: (i["title"] as? String) ?? "",
                                   unit: (i["unit"] as? String) ?? "", matter: (i["matter"] as? String) ?? "",
-                                  sentAt: (i["sentAt"] as? String) ?? "", sentLabel: (i["sentLabel"] as? String) ?? "")
+                                  sentAt: (i["sentAt"] as? String) ?? "", sentLabel: (i["sentLabel"] as? String) ?? "",
+                                  kind: (i["kind"] as? String) ?? "evidence_note", dueAt: (i["dueAt"] as? String) ?? "")
         }
     }
 
@@ -419,6 +429,10 @@ struct SjzOutstanding: Identifiable, Hashable {
     /// yyyy-MM-dd，没有记录发出日期时为空
     let sentAt: String
     let sentLabel: String
+    /// evidence_note（取证单）/ data_request（资料清单）
+    var kind: String = "evidence_note"
+    /// 资料清单的要求提供日期 yyyy-MM-dd
+    var dueAt: String = ""
     var id: String { path }
     var sentDate: Date? { Day.parse(sentAt) }
 }
@@ -470,10 +484,14 @@ struct SjzCapture: Identifiable, Hashable {
     var toClue: String = ""
     /// 追加记录挂在哪个证据（台账编号）名下，空表示是独立的一项
     var parentId: String = ""
+    /// 这一项带的原件（PDF / Word / Excel…）
+    var originals: [String] = []
+    /// 证据 / 想法关联的资料清单（台账编号）
+    var listIds: [String] = []
 
-    var kindLabel: String { ["evidence": "证据", "regulation": "法规", "clue": "线索", "idea": "想法", "data": "数据"][kind] ?? kind }
-    var icon: String { ["evidence": "doc.text.image", "regulation": "book.closed", "clue": "lightbulb", "idea": "text.bubble", "data": "tablecells"][kind] ?? "doc" }
-    var statusLabel: String { ["pending": "待核实", "verified": "已核实", "excluded": "已排除", "converted": "已出取证单"][status] ?? "" }
+    var kindLabel: String { ["evidence": "证据", "regulation": "法规", "clue": "线索", "idea": "想法", "data": "数据", "datalist": "资料清单"][kind] ?? kind }
+    var icon: String { ["evidence": "doc.text.image", "regulation": "book.closed", "clue": "lightbulb", "idea": "text.bubble", "data": "tablecells", "datalist": "list.clipboard"][kind] ?? "doc" }
+    var statusLabel: String { ["pending": "待核实", "verified": "已核实", "excluded": "已排除", "converted": "已出取证单", "draft": "草稿", "sent": "已发出", "recalled": "已收回"][status] ?? "" }
     var date: Date? { ISO8601DateFormatter().date(from: at) ?? SjzCapture.fallback.date(from: at) }
     private static let fallback: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()

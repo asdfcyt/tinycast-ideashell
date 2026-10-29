@@ -3,14 +3,13 @@ import Foundation
 
 /// 灵动岛投放到结审的去向
 enum SjzTarget {
-    case evidence, regulation, clue, data
+    case evidence, regulation, clue
 
     var label: String {
         switch self {
         case .evidence: return "证据"
         case .regulation: return "法规"
         case .clue: return "线索"
-        case .data: return "数据"
         }
     }
 }
@@ -24,6 +23,7 @@ enum SjzError: LocalizedError {
 extension AppModel {
     private static var sjzEventTimer: Timer?
     private static var lastOverview: Date = .distantPast
+    static var lastDatalistSync: Date = .distantPast
 
     // MARK: 钉住状态
 
@@ -197,7 +197,7 @@ extension AppModel {
             let focus = SjzDaily.get(p.name, "focus"), done = SjzDaily.get(p.name, "done")
             guard !caps.isEmpty || focus > 0 || done > 0 else { continue }
             var parts: [String] = []
-            let kinds = [("evidence", "证据"), ("regulation", "法规"), ("clue", "线索"), ("data", "数据")]
+            let kinds = [("evidence", "证据"), ("regulation", "法规"), ("clue", "线索")]
             let wrote = kinds.compactMap { k, label -> String? in
                 let n = caps.filter { $0.kind == k }.count
                 return n > 0 ? "\(label) \(n)" : nil
@@ -210,10 +210,24 @@ extension AppModel {
         if !failed { ud.set(day, forKey: "sjz.summary.day") }
     }
 
+    /// 资料清单到期提醒：每 5 分钟读一次各项目已发出未收回的清单，重排系统通知
+    func syncDatalistReminders() async {
+        guard Date().timeIntervalSince(Self.lastDatalistSync) > 300, let projects = sjzOverview?.projects else { return }
+        Self.lastDatalistSync = Date()
+        var all: [(project: String, title: String, item: SjzOutstanding)] = []
+        for p in projects {
+            for it in (try? await sjz.outstanding(project: p.name)) ?? [] where it.kind == "data_request" && !it.dueAt.isEmpty {
+                all.append((p.name, p.title.isEmpty ? p.name : p.title, it))
+            }
+        }
+        await Notifier.shared.syncDatalists(all)
+    }
+
     func pollSjzEvents() async {
         guard hasSjz else { return }
         await refreshSjzOverview()
         await sjzDailySummaryIfDue()
+        await syncDatalistReminders()
         let key = "sjz.eventsSince"
         guard let since = UserDefaults.standard.string(forKey: key) else {
             // 第一次连接：只关心从现在起发生的事
@@ -351,10 +365,6 @@ extension AppModel {
         if unreadableURL, !raw.altPromises.isEmpty {
             raw = await raw.receivingAlt(into: FileManager.default.temporaryDirectory.appendingPathComponent("shiyi-drop", isDirectory: true))
         }
-        if target == .data {
-            await refreshSjzTarget()
-            return try await submitSjzData(raw)
-        }
         let current = raw
         let prepared = await Task.detached(priority: .userInitiated) { DropImages.prepare(current) }.value
         var texts: [String] = []
@@ -476,24 +486,6 @@ extension AppModel {
         } catch let McpError.tool(m) where m.contains("法规名称") {
             throw SjzError.needRegulation
         }
-    }
-
-    /// 数据文件（Excel / CSV / PDF 等）→ 结审原始材料
-    private func submitSjzData(_ raw: RawDrop) async throws -> String {
-        var files: [(name: String, data: Data)] = []
-        for u in raw.fileURLs {
-            var isDir: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: u.path, isDirectory: &isDir), !isDir.boolValue else { continue }
-            let size = (try? FileManager.default.attributesOfItem(atPath: u.path)[.size] as? Int) ?? 0
-            if size > 25 * 1024 * 1024 { throw McpError.tool("\(u.lastPathComponent) 超过 25MB，请直接在结审里导入") }
-            guard let d = try? Data(contentsOf: u), !d.isEmpty else { continue }
-            files.append((u.lastPathComponent, d))
-        }
-        guard !files.isEmpty else {
-            throw McpError.tool(raw.fileURLs.isEmpty ? "数据区只接收文件（Excel / CSV / PDF 等）" : "读不到拖入的文件（没有权限或已被移走）。请到 系统设置 → 隐私与安全性 → 完全磁盘访问 允许拾忆，或先把文件拖到桌面再拖入")
-        }
-        let msg = try await sjz.saveData(project: nil, files: files)
-        return msg + (sjzTargetTitle.isEmpty ? "" : "（\(sjzTargetTitle)）")
     }
 
     /// 没有指定法规名时，从内容里猜一个

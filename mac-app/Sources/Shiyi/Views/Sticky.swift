@@ -430,6 +430,7 @@ private struct StickyView: View {
     @EnvironmentObject private var model: AppModel
     @State private var hovering = false
     @State private var swatches = false
+    @State private var keys = false
     @State private var busy = false
 
     private var paper: Color { StickyPalette.papers[m.color % StickyPalette.papers.count] }
@@ -452,6 +453,7 @@ private struct StickyView: View {
             if let s = m.source { sourceBar(s) }
         }
         .background(paper)
+        .overlay(alignment: .top) { if keys { keysCard.padding(.top, 26).transition(.opacity.combined(with: .offset(y: -4))) } }
         .overlay(alignment: .bottom) { if let c = m.confirm { confirmBar(c) } }
         .clipShape(shape)
         .overlay(shape.strokeBorder(Color.black.opacity(0.1), lineWidth: 0.5))
@@ -460,6 +462,7 @@ private struct StickyView: View {
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
         .animation(.easeOut(duration: 0.12), value: m.confirm)
+        .animation(.easeOut(duration: 0.14), value: keys)
     }
 
     // 标题行：和纸一个颜色，没有底色块；图标很淡，鼠标移上来才清楚。空白处可以拖动
@@ -474,16 +477,8 @@ private struct StickyView: View {
                     .frame(width: 24, height: 22).contentShape(Rectangle())
             }
             .buttonStyle(.plain).help("换颜色")
+            tool("keyboard", "Markdown 快捷键", on: keys) { keys.toggle(); if keys { swatches = false } }
             Menu {
-                Menu("Markdown 快捷键") {
-                    Text("⌘B 粗体　⌘I 斜体")
-                    Text("⇧⌘X 删除线　⌘E 行内代码")
-                    Text("⌘K 链接")
-                    Text("⌥⌘1 / 2 / 3 标题")
-                    Text("⇧⌘L 列表　⇧⌘T 清单")
-                    Text("⇧⌘O 有序列表　⇧⌘U 引用")
-                    Text("⌘↩ 保存")
-                }
                 Button("复制全文") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(ComposerImage.stripMarker(m.text), forType: .string)
@@ -526,6 +521,64 @@ private struct StickyView: View {
         }
         .padding(.horizontal, 10).padding(.bottom, 4)
         .transition(.opacity)
+    }
+
+    /// Markdown 快捷键速查：盖在正文上面，按键画成键帽，点「完成」或键盘图标收起
+    private var keysCard: some View {
+        let groups: [(String, [(String, String)])] = [
+            ("格式", [("粗体", "⌘B"), ("斜体", "⌘I"), ("删除线", "⇧⌘X"), ("行内代码", "⌘E"), ("链接", "⌘K")]),
+            ("段落", [("标题 1 / 2 / 3", "⌥⌘1 2 3"), ("无序列表", "⇧⌘L"), ("待办清单", "⇧⌘T"), ("有序列表", "⇧⌘O"), ("引用", "⇧⌘U")]),
+            ("其他", [("保存便签", "⌘↩")]),
+        ]
+        return VStack(spacing: 0) {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(groups, id: \.0) { g in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(g.0).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(ink.opacity(0.4))
+                            ForEach(g.1, id: \.0) { row in
+                                HStack(spacing: 6) {
+                                    Text(row.0).font(.system(size: 12)).foregroundStyle(ink.opacity(0.85))
+                                    Spacer(minLength: 6)
+                                    keycaps(row.1)
+                                }
+                                .frame(height: 21)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 6)
+            }
+            Divider().opacity(0.5)
+            Button { keys = false } label: {
+                Text("完成").font(.system(size: 11.5, weight: .medium)).foregroundStyle(ink.opacity(0.65))
+                    .frame(maxWidth: .infinity).frame(height: 26).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .background(paper)
+        .overlay(alignment: .top) { Divider().opacity(0.4) }
+    }
+
+    /// 一组键帽：修饰键各一个小方块，其余字符另算一个
+    private func keycaps(_ s: String) -> some View {
+        let mods = Set("⌘⇧⌥⌃")
+        var caps: [String] = []
+        var rest = ""
+        for ch in s {
+            if mods.contains(ch) { caps.append(String(ch)) }
+            else if ch == " " { if !rest.isEmpty { caps.append(rest); rest = "" } }
+            else { rest.append(ch) }
+        }
+        if !rest.isEmpty { caps.append(rest) }
+        return HStack(spacing: 3) {
+            ForEach(Array(caps.enumerated()), id: \.offset) { _, c in
+                Text(c).font(.system(size: 11, weight: .medium, design: .rounded)).foregroundStyle(ink.opacity(0.75))
+                    .frame(minWidth: 18, minHeight: 18).padding(.horizontal, c.count > 1 ? 3 : 0)
+                    .background(Color.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 4.5, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 4.5, style: .continuous).strokeBorder(Color.black.opacity(0.1), lineWidth: 0.5))
+            }
+        }
     }
 
     private func tool(_ icon: String, _ help: String, on: Bool = false, tint: Color? = nil, action: @escaping () -> Void) -> some View {

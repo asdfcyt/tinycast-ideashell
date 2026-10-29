@@ -30,7 +30,7 @@ struct QuickStartSheet: View {
             Divider()
             footer
         }
-        .frame(width: 520, height: 600)
+        .frame(minWidth: 520, idealWidth: 520, maxWidth: .infinity, minHeight: 600, idealHeight: 600, maxHeight: .infinity)
         .task { await load(force: false) }
     }
 

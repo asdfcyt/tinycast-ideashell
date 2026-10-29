@@ -55,7 +55,7 @@ struct NewNoteSheet: View {
             }
         }
         .padding(22)
-        .frame(width: 480)
+        .frame(minWidth: 480, idealWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { bodyFocused = true }
     }
 

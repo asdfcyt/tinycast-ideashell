@@ -810,7 +810,7 @@ private struct DashboardCard: View {
 // MARK: - 侧栏：当前审计项目
 
 /// 正在做的审计项目（结审里「当前项目」，没钉住就取第一个）：阶段进度，以及已发出、还没收回的取证单——到了回复期限没收回的标红
-private struct AuditProjectCard: View {
+struct AuditProjectCard: View {
     @EnvironmentObject var model: AppModel
     @State private var docs: SjzDocs?
     @State private var items: [SjzOutstanding] = []
@@ -818,6 +818,52 @@ private struct AuditProjectCard: View {
     @State private var loadedItems = false
     /// 取证单发出后多少天内应当收回；超过就算逾期（结审里没有单独的期限字段，先统一按这个天数算）
     @AppStorage("sjz.replyDays") private var replyDays = 5
+    /// 正在预览的那一类：点统计数字或右键菜单选择，弹出里面具体有哪些
+    @State private var peek: Peek?
+
+    enum Peek: String, Identifiable, CaseIterable {
+        case today, clues, ideas, evidence, regulations, datalists, all, open, overdue
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .today: return "今日新增"
+            case .clues: return "待核实线索"
+            case .ideas: return "想法"
+            case .evidence: return "证据"
+            case .regulations: return "法规"
+            case .datalists: return "资料清单"
+            case .all: return "全部记录"
+            case .open: return "未完成任务"
+            case .overdue: return "逾期任务"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .today: return "sparkles"
+            case .clues: return "lightbulb"
+            case .ideas: return "text.bubble"
+            case .evidence: return "doc.text.image"
+            case .regulations: return "book.closed"
+            case .datalists: return "list.clipboard"
+            case .all: return "tray.full"
+            case .open: return "checklist"
+            case .overdue: return "exclamationmark.circle"
+            }
+        }
+        /// 统计里有对应数字的几类：弹窗挂在那个数字上，其余的挂在整张卡片上
+        var hasTile: Bool { self == .open || self == .overdue || self == .clues || self == .today }
+    }
+
+    struct PeekEntry: Identifiable {
+        let id: String
+        let icon: String
+        let tint: Color
+        let title: String
+        let sub: String
+        let trailing: String
+        let trailTint: Color
+        let open: () -> Void
+    }
 
     private static var docCache: [String: SjzDocs] = [:]
     private static var itemCache: [String: [SjzOutstanding]] = [:]
@@ -861,11 +907,12 @@ private struct AuditProjectCard: View {
         let n = name
         var out: [Row] = items.map { it in
             let d = it.sentDate
-            let due = d.flatMap { cal.date(byAdding: .day, value: replyDays, to: cal.startOfDay(for: $0)) }
-            return Row(id: "note:" + it.path, isList: false,
+            let isData = it.kind == "data_request"
+            let due = isData ? Day.parse(it.dueAt) : d.flatMap { cal.date(byAdding: .day, value: replyDays, to: cal.startOfDay(for: $0)) }
+            return Row(id: "note:" + it.path, isList: isData,
                        title: [it.no, it.unit.isEmpty ? it.title : it.unit].filter { !$0.isEmpty }.joined(separator: " "),
                        matter: it.matter.isEmpty ? (it.unit.isEmpty ? "" : it.title) : it.matter,
-                       range: d.flatMap { s in due.map { "\(f.string(from: s)) 发出 → \(f.string(from: $0)) 到期" } },
+                       range: d.flatMap { s in due.map { "\(f.string(from: s)) 发出 → \(f.string(from: $0)) \(isData ? "截止" : "到期")" } },
                        left: due.map(days), notStarted: false,
                        open: { model.openSjzApp(project: n, to: "/documents?open=" + AppModel.urlEnc(it.path)) })
         }
@@ -914,11 +961,12 @@ private struct AuditProjectCard: View {
                     .onTapGesture { model.section = .focus; model.selectedProject = SjzTasks.prefix + name }
                     if let d = docs, !d.phases.isEmpty { phaseBar(d) }
                     HStack(alignment: .top, spacing: 0) {
-                        mini("未完成", "\(stat?.open ?? 0)", .primary.opacity(0.85))
-                        mini("逾期", "\(stat?.overdue ?? 0)", (stat?.overdue ?? 0) > 0 ? .red : .primary.opacity(0.85))
-                        mini("待核实线索", "\(pendingClues)", pendingClues > 0 ? .pink : .primary.opacity(0.85))
-                        mini("今天新增", "\(todayCount)", todayCount > 0 ? Brand.orange : .primary.opacity(0.85))
+                        mini("未完成", "\(stat?.open ?? 0)", .primary.opacity(0.85), .open)
+                        mini("逾期", "\(stat?.overdue ?? 0)", (stat?.overdue ?? 0) > 0 ? .red : .primary.opacity(0.85), .overdue)
+                        mini("待核实线索", "\(pendingClues)", pendingClues > 0 ? .pink : .primary.opacity(0.85), .clues)
+                        mini("今天新增", "\(todayCount)", todayCount > 0 ? Brand.orange : .primary.opacity(0.85), .today)
                     }
+                    .padding(.horizontal, -6)
                     if !rs.isEmpty {
                         Divider().opacity(0.6)
                         HStack(spacing: 6) {
@@ -935,27 +983,44 @@ private struct AuditProjectCard: View {
                             if rs.count > 3 { Text("还有 \(rs.count - 3) 条，在结审里查看").font(.caption2).foregroundStyle(.tertiary) }
                         }
                     }
-                    if let c = caps.first {
+                    if !caps.isEmpty {
                         Divider().opacity(0.6)
-                        HStack(spacing: 6) {
-                            Image(systemName: c.icon).font(.system(size: 11)).foregroundStyle(SjzProjectDetailView.kindTint(c.kind))
-                            Text("最近 · \(c.kindLabel) · \(c.title.isEmpty ? c.summary : c.title)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            Spacer(minLength: 4)
-                            if let d = c.date { Text(Self.timeLabel(d)).font(.caption2).foregroundStyle(.tertiary) }
+                        Text("最近").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(caps.prefix(3).enumerated()), id: \.offset) { _, c in
+                                HStack(spacing: 6) {
+                                    Image(systemName: c.icon).font(.system(size: 11)).foregroundStyle(SjzProjectDetailView.kindTint(c.kind))
+                                    Text("\(c.kindLabel) · \(c.title.isEmpty ? c.summary : c.title)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    Spacer(minLength: 4)
+                                    if let d = c.date { Text(Self.timeLabel(d)).font(.caption2).foregroundStyle(.tertiary) }
+                                }
+                            }
                         }
                     }
                 }
                 .padding(14)
             }
+            .popover(item: Binding(get: { peek.flatMap { $0.hasTile ? nil : $0 } }, set: { if $0 == nil { peek = nil } }), arrowEdge: .leading) { k in
+                peekList(k)
+            }
             .contextMenu {
-                Menu("取证单回复期限") {
-                    ForEach([3, 5, 7, 10, 15, 30], id: \.self) { d in
-                        Button { replyDays = d } label: { if replyDays == d { Label("\(d) 天", systemImage: "checkmark") } else { Text("\(d) 天") } }
+                Section("预览") {
+                    ForEach(Peek.allCases) { k in
+                        Button { peek = k } label: { Label("\(k.title)（\(entries(k).count)）", systemImage: k.icon) }
                     }
                 }
-                Divider()
-                Button("在拾忆里打开项目") { model.section = .focus; model.selectedProject = SjzTasks.prefix + name }
-                Button("在结审里打开取证单") { model.openSjzApp(project: name, to: "/evidence?tab=note") }
+                Section("打开") {
+                    Button { model.section = .focus; model.selectedProject = SjzTasks.prefix + name } label: { Label("在拾忆里打开项目", systemImage: "folder") }
+                    Button { model.openSjzApp(project: name, to: "/") } label: { Label("在结审里打开项目", systemImage: "arrow.up.forward.app") }
+                    Button { model.openSjzApp(project: name, to: "/evidence?tab=note") } label: { Label("在结审里打开取证单", systemImage: "doc.text") }
+                }
+                Section("设置") {
+                    Menu {
+                        ForEach([3, 5, 7, 10, 15, 30], id: \.self) { d in
+                            Button { replyDays = d } label: { if replyDays == d { Label("\(d) 天", systemImage: "checkmark") } else { Text("\(d) 天") } }
+                        }
+                    } label: { Label("取证单回复期限（\(replyDays) 天）", systemImage: "clock.badge.checkmark") }
+                }
             }
             .task(id: name) { await load() }
             .onReceive(NotificationCenter.default.publisher(for: .sjzCapturesChanged)) { _ in Task { await load() } }
@@ -988,7 +1053,7 @@ private struct AuditProjectCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(r.isList ? "在结审里打开这个任务" : "在结审里打开这份取证单")
+        .help(r.id.hasPrefix("task:") ? "在结审里打开这个任务" : r.isList ? "在结审里打开这份资料清单" : "在结审里打开这份取证单")
     }
 
     private static func badge(_ left: Int?, notStarted: Bool) -> (String, Color) {
@@ -1000,12 +1065,57 @@ private struct AuditProjectCard: View {
         return ("还剩 \(left) 天", .secondary)
     }
 
-    private func mini(_ label: String, _ value: String, _ color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(value).font(.system(size: 18, weight: .bold)).monospacedDigit().foregroundStyle(color)
-            Text(label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+    private func mini(_ label: String, _ value: String, _ color: Color, _ k: Peek) -> some View {
+        PeekTile(label: label, value: value, color: color, active: peek == k) { peek = peek == k ? nil : k }
+            .popover(isPresented: Binding(get: { peek == k }, set: { if !$0 && peek == k { peek = nil } }), arrowEdge: .bottom) { peekList(k) }
+    }
+
+    private func peekList(_ k: Peek) -> some View {
+        PeekListView(kind: k, entries: entries(k)) { peek = nil }
+    }
+
+    private func capEntries(_ list: [SjzCapture]) -> [PeekEntry] {
+        let n = name
+        return list.map { c in
+            PeekEntry(id: c.id, icon: c.icon, tint: SjzProjectDetailView.kindTint(c.kind),
+                      title: (c.title.isEmpty ? c.summary : c.title).mdPlain,
+                      sub: ["\(c.kindLabel) · \(c.id)", c.statusLabel].filter { !$0.isEmpty }.joined(separator: " · "),
+                      trailing: c.date.map(Self.timeLabel) ?? "", trailTint: .secondary,
+                      open: { model.openSjzEditor(project: n, capture: c) })
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func taskEntries(overdueOnly: Bool) -> [PeekEntry] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let n = name
+        let list: [(SjzTaskLite, Int?)] = (model.sjzOverview?.next ?? []).filter { $0.project == n }.map { t in
+            let due = Day.parse(String(t.dueDate.prefix(10)))
+            return (t, due.map { cal.dateComponents([.day], from: today, to: cal.startOfDay(for: $0)).day ?? 0 })
+        }
+        return list.filter { !overdueOnly || ($0.1 ?? 0) < 0 }
+            .sorted { ($0.1 ?? 9999) < ($1.1 ?? 9999) }
+            .map { t, left in
+                let (badge, tint) = Self.badge(left, notStarted: false)
+                return PeekEntry(id: "task:" + t.id, icon: Self.isList(t) ? "list.clipboard" : "checklist", tint: Self.isList(t) ? .indigo : Brand.orange,
+                                 title: Self.cleanTitle(t.subject), sub: Self.isList(t) ? "资料清单任务" : "任务",
+                                 trailing: badge, trailTint: tint,
+                                 open: { model.openSjzApp(project: n, to: "/tasks?task=" + AppModel.urlEnc(t.id)) })
+            }
+    }
+
+    private func entries(_ k: Peek) -> [PeekEntry] {
+        switch k {
+        case .today: return capEntries(caps.filter { c in c.date.map { Calendar.current.isDateInToday($0) } ?? false })
+        case .clues: return capEntries(caps.filter { $0.kind == "clue" && $0.status == "pending" })
+        case .ideas: return capEntries(caps.filter { $0.kind == "idea" })
+        case .evidence: return capEntries(caps.filter { $0.kind == "evidence" })
+        case .regulations: return capEntries(caps.filter { $0.kind == "regulation" })
+        case .datalists: return capEntries(caps.filter { $0.kind == "datalist" })
+        case .all: return capEntries(caps)
+        case .open: return taskEntries(overdueOnly: false)
+        case .overdue: return taskEntries(overdueOnly: true)
+        }
     }
 
     private static func timeLabel(_ d: Date) -> String {
@@ -1042,6 +1152,89 @@ private struct AuditProjectCard: View {
         if let c = try? await model.sjz.captures(project: n, limit: 300) { caps = c; Self.capCache[n] = c }
         if let c = try? await model.sjz.outstanding(project: n) { items = c; loadedItems = true; Self.itemCache[n] = c }
         if let d = try? await model.sjz.documents(project: n) { docs = d; Self.docCache[n] = d }
+    }
+}
+
+/// 统计里的一格数字：可以点，悬停时有底色，弹窗打开时保持高亮
+private struct PeekTile: View {
+    let label: String
+    let value: String
+    let color: Color
+    let active: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value).font(.system(size: 18, weight: .bold)).monospacedDigit().foregroundStyle(color)
+                Text(label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .padding(.vertical, 4).padding(.horizontal, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(active ? 0.09 : hovering ? 0.05 : 0), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.1), value: hovering)
+        .help("点一下看看是哪些")
+    }
+}
+
+/// 预览弹窗：这一类里具体有哪些，点一条直接打开
+private struct PeekListView: View {
+    let kind: AuditProjectCard.Peek
+    let entries: [AuditProjectCard.PeekEntry]
+    let close: () -> Void
+    @State private var hoverId: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                Image(systemName: kind.icon).font(.system(size: 12, weight: .semibold)).foregroundStyle(Brand.orange)
+                Text(kind.title).font(.system(size: 13, weight: .semibold))
+                Text("\(entries.count)").font(.system(size: 12, weight: .medium)).foregroundStyle(.tertiary)
+                Spacer()
+            }
+            .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 8)
+            Divider().opacity(0.6)
+            if entries.isEmpty {
+                Text("现在没有这一类的内容").font(.callout).foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity).padding(.vertical, 28)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(entries) { e in
+                            Button { close(); e.open() } label: {
+                                HStack(spacing: 9) {
+                                    Image(systemName: e.icon).font(.system(size: 11, weight: .semibold)).foregroundStyle(e.tint)
+                                        .frame(width: 24, height: 24)
+                                        .background(e.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(e.title.isEmpty ? "（无标题）" : e.title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+                                        Text(e.sub).font(.system(size: 10.5)).foregroundStyle(.tertiary).lineLimit(1)
+                                    }
+                                    Spacer(minLength: 6)
+                                    if !e.trailing.isEmpty {
+                                        Text(e.trailing).font(.system(size: 10.5, weight: .medium)).monospacedDigit().foregroundStyle(e.trailTint)
+                                    }
+                                }
+                                .padding(.horizontal, 14).padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(hoverId == e.id ? Color.primary.opacity(0.06) : Color.clear)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .onHover { hoverId = $0 ? e.id : (hoverId == e.id ? nil : hoverId) }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .frame(maxHeight: 340)
+            }
+        }
+        .frame(width: 340)
     }
 }
 

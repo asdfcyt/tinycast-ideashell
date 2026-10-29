@@ -244,7 +244,7 @@ struct ReplanSheet: View {
             Divider()
             bottomBar(all)
         }
-        .frame(width: 840, height: 620)
+        .frame(minWidth: 840, idealWidth: 840, maxWidth: .infinity, minHeight: 620, idealHeight: 620, maxHeight: .infinity)
         .sheet(isPresented: $showAIPlan) {
             AIPlanSheet(
                 scopeName: scopeName,

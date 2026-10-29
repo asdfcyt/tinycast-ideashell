@@ -59,7 +59,7 @@ struct RootView: View {
                         SjzQuickLook(api: model.sjz, project: q.project, capture: q.capture,
                                      size: CGSize(width: max(360, min(620, geo.size.width - 48)), height: max(320, min(720, geo.size.height - 48))),
                                      onClose: { model.closeSjzQuick() },
-                                     onEdit: { model.sjzEdit = q; model.sjzQuick = nil })
+                                     onEdit: { model.openSjzEditor(project: q.project, capture: q.capture) })
                     }
                     .frame(width: geo.size.width, height: geo.size.height)
                 }

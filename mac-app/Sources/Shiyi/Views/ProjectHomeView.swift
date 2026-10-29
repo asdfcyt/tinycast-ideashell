@@ -587,7 +587,7 @@ struct HomeEditSheet: View {
             }
         }
         .padding(22)
-        .frame(width: 460)
+        .frame(minWidth: 460, idealWidth: 460, maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { focused = true }
     }
 }

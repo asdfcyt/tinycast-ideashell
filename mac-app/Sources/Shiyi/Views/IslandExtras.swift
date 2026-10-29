@@ -42,7 +42,6 @@ struct IslandDropPane: View {
                             miniZone(.evidence, icon: "doc.badge.plus", title: "证据")
                             miniZone(.regulation, icon: "book.closed", title: "法规")
                             miniZone(.clue, icon: "lightbulb", title: "线索")
-                            miniZone(.data, icon: "tablecells", title: "数据")
                         }
                         .frame(height: 62)
                     }
@@ -88,7 +87,6 @@ struct IslandDropPane: View {
         case .evidence: return !pin.evidencePath.isEmpty ? "追加 · " + pin.evidenceLabel : pin.noteLabel.isEmpty ? "新证据文件" : "追加 · " + pin.noteLabel
         case .regulation: return pin.regulation.isEmpty ? "自动取名并新建" : "追加 · " + pin.regulation
         case .clue: return pin.clueId.isEmpty ? "新线索" : "追加 · " + pin.clueLabel
-        case .data: return "原始材料 · 文件"
         default: return pin.projectTitle.isEmpty ? pin.project : pin.projectTitle
         }
     }
