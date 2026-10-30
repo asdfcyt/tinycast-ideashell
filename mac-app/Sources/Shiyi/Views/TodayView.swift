@@ -815,6 +815,7 @@ struct AuditProjectCard: View {
     @State private var docs: SjzDocs?
     @State private var items: [SjzOutstanding] = []
     @State private var caps: [SjzCapture] = []
+    @State private var summaries: [SjzSummary] = []
     @State private var loadedItems = false
     /// 取证单发出后多少天内应当收回；超过就算逾期（结审里没有单独的期限字段，先统一按这个天数算）
     @AppStorage("sjz.replyDays") private var replyDays = 5
@@ -822,7 +823,7 @@ struct AuditProjectCard: View {
     @State private var peek: Peek?
 
     enum Peek: String, Identifiable, CaseIterable {
-        case today, clues, ideas, evidence, regulations, datalists, all, open, overdue
+        case today, clues, ideas, evidence, regulations, datalists, all, open, overdue, summaries
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -835,6 +836,7 @@ struct AuditProjectCard: View {
             case .all: return "全部记录"
             case .open: return "未完成任务"
             case .overdue: return "逾期任务"
+            case .summaries: return "工作小结"
             }
         }
         var icon: String {
@@ -848,10 +850,11 @@ struct AuditProjectCard: View {
             case .all: return "tray.full"
             case .open: return "checklist"
             case .overdue: return "exclamationmark.circle"
+            case .summaries: return "doc.richtext"
             }
         }
         /// 统计里有对应数字的几类：弹窗挂在那个数字上，其余的挂在整张卡片上
-        var hasTile: Bool { self == .open || self == .overdue || self == .clues || self == .today }
+        var hasTile: Bool { self == .open || self == .overdue || self == .clues || self == .today || self == .summaries }
     }
 
     struct PeekEntry: Identifiable {
@@ -965,6 +968,7 @@ struct AuditProjectCard: View {
                         mini("逾期", "\(stat?.overdue ?? 0)", (stat?.overdue ?? 0) > 0 ? .red : .primary.opacity(0.85), .overdue)
                         mini("待核实线索", "\(pendingClues)", pendingClues > 0 ? .pink : .primary.opacity(0.85), .clues)
                         mini("今天新增", "\(todayCount)", todayCount > 0 ? Brand.orange : .primary.opacity(0.85), .today)
+                        mini("工作小结", "\(summaries.count)", summaries.isEmpty ? .primary.opacity(0.85) : .indigo, .summaries)
                     }
                     .padding(.horizontal, -6)
                     if !rs.isEmpty {
@@ -983,17 +987,13 @@ struct AuditProjectCard: View {
                             if rs.count > 3 { Text("还有 \(rs.count - 3) 条，在结审里查看").font(.caption2).foregroundStyle(.tertiary) }
                         }
                     }
-                    if !caps.isEmpty {
+                    let recent = recentEntries
+                    if !recent.isEmpty {
                         Divider().opacity(0.6)
                         Text("最近").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 6) {
-                            ForEach(Array(caps.prefix(3).enumerated()), id: \.offset) { _, c in
-                                HStack(spacing: 6) {
-                                    Image(systemName: c.icon).font(.system(size: 11)).foregroundStyle(SjzProjectDetailView.kindTint(c.kind))
-                                    Text("\(c.kindLabel) · \(c.title.isEmpty ? c.summary : c.title)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                    Spacer(minLength: 4)
-                                    if let d = c.date { Text(Self.timeLabel(d)).font(.caption2).foregroundStyle(.tertiary) }
-                                }
+                            ForEach(recent) { r in
+                                RecentRow(icon: r.icon, tint: r.tint, text: r.text, time: r.date.map(Self.timeLabel) ?? "", action: r.action)
                             }
                         }
                     }
@@ -1004,11 +1004,6 @@ struct AuditProjectCard: View {
                 peekList(k)
             }
             .contextMenu {
-                Section("预览") {
-                    ForEach(Peek.allCases) { k in
-                        Button { peek = k } label: { Label("\(k.title)（\(entries(k).count)）", systemImage: k.icon) }
-                    }
-                }
                 Section("打开") {
                     Button { model.section = .focus; model.selectedProject = SjzTasks.prefix + name } label: { Label("在拾忆里打开项目", systemImage: "folder") }
                     Button { model.openSjzApp(project: name, to: "/") } label: { Label("在结审里打开项目", systemImage: "arrow.up.forward.app") }
@@ -1074,6 +1069,16 @@ struct AuditProjectCard: View {
         PeekListView(kind: k, entries: entries(k)) { peek = nil }
     }
 
+    /// 工作小结的列表项：点一下在结审里打开这份小结
+    static func summaryEntries(_ list: [SjzSummary], project: String, model: AppModel) -> [PeekEntry] {
+        list.map { s in
+            PeekEntry(id: "summary:" + s.path, icon: "doc.richtext", tint: .indigo,
+                      title: "\(s.kindLabel) · \(s.shortPeriod)", sub: s.title,
+                      trailing: s.date.map(timeLabel) ?? "", trailTint: .secondary,
+                      open: { model.openSjzPreview(project: project, capture: s.asCapture) })
+        }
+    }
+
     private func capEntries(_ list: [SjzCapture]) -> [PeekEntry] {
         let n = name
         return list.map { c in
@@ -1115,10 +1120,11 @@ struct AuditProjectCard: View {
         case .all: return capEntries(caps)
         case .open: return taskEntries(overdueOnly: false)
         case .overdue: return taskEntries(overdueOnly: true)
+        case .summaries: return Self.summaryEntries(summaries, project: name, model: model)
         }
     }
 
-    private static func timeLabel(_ d: Date) -> String {
+    fileprivate static func timeLabel(_ d: Date) -> String {
         let f = DateFormatter()
         f.dateFormat = Calendar.current.isDateInToday(d) ? "HH:mm" : "M/d HH:mm"
         return f.string(from: d)
@@ -1140,6 +1146,26 @@ struct AuditProjectCard: View {
         }
     }
 
+    private struct RecentEntry: Identifiable {
+        let id: String
+        let icon: String
+        let tint: Color
+        let text: String
+        let date: Date?
+        let action: () -> Void
+    }
+
+    /// 「最近」：拾忆写进去的记录（工作小结单独放在统计行里）
+    private var recentEntries: [RecentEntry] {
+        let n = name
+        let out: [RecentEntry] = caps.prefix(3).map { c in
+            RecentEntry(id: c.id, icon: c.icon, tint: SjzProjectDetailView.kindTint(c.kind),
+                        text: "\(c.kindLabel) · \(c.title.isEmpty ? c.summary : c.title)".mdPlain, date: c.date,
+                        action: { model.openSjzPreview(project: n, capture: c) })
+        }
+        return out
+    }
+
     /// 先用上次的结果画出来，再在后台刷新；钉住的项目或概览还没读到时先读
     private func load() async {
         if model.sjzPin.project.isEmpty { await model.refreshSjzTarget() }
@@ -1151,7 +1177,36 @@ struct AuditProjectCard: View {
         if caps.isEmpty, let c = Self.capCache[n] { caps = c }
         if let c = try? await model.sjz.captures(project: n, limit: 300) { caps = c; Self.capCache[n] = c }
         if let c = try? await model.sjz.outstanding(project: n) { items = c; loadedItems = true; Self.itemCache[n] = c }
+        if let sm = try? await model.sjz.summaries(project: n) { summaries = sm }
         if let d = try? await model.sjz.documents(project: n) { docs = d; Self.docCache[n] = d }
+    }
+}
+
+/// 「最近」里的一条：点一下用快速预览打开
+private struct RecentRow: View {
+    let icon: String
+    let tint: Color
+    let text: String
+    let time: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 11)).foregroundStyle(tint)
+                Text(text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 4)
+                if !time.isEmpty { Text(time).font(.caption2).foregroundStyle(.tertiary) }
+            }
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            .background(Color.primary.opacity(hovering ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, -6)
+        .onHover { hovering = $0 }
+        .help("点一下预览")
     }
 }
 
@@ -1168,9 +1223,9 @@ private struct PeekTile: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(value).font(.system(size: 18, weight: .bold)).monospacedDigit().foregroundStyle(color)
-                Text(label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                Text(label).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
             }
-            .padding(.vertical, 4).padding(.horizontal, 6)
+            .padding(.vertical, 4).padding(.horizontal, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.primary.opacity(active ? 0.09 : hovering ? 0.05 : 0), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(Rectangle())
@@ -1183,7 +1238,7 @@ private struct PeekTile: View {
 }
 
 /// 预览弹窗：这一类里具体有哪些，点一条直接打开
-private struct PeekListView: View {
+struct PeekListView: View {
     let kind: AuditProjectCard.Peek
     let entries: [AuditProjectCard.PeekEntry]
     let close: () -> Void

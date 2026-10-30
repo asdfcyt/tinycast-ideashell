@@ -9,6 +9,9 @@ struct SjzProjectDetailView: View {
     @State private var docs: SjzDocs?
     @State private var selPhase = ""
     @State private var captures: [SjzCapture] = []
+    /// 结审里生成过的工作小结（存在项目工作日志里）
+    @State private var summaries: [SjzSummary] = []
+    @State private var showSummaries = false
     @State private var capsLoaded = false
     @State private var capKind = ""
     @State private var capQuery = ""
@@ -84,7 +87,6 @@ struct SjzProjectDetailView: View {
         .onAppear(perform: installKeys)
         .onDisappear {
             if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
-            model.sjzQuick = nil
         }
         .alert("删除\(deleting?.kindLabel ?? "")？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("删除", role: .destructive) {
@@ -103,17 +105,10 @@ struct SjzProjectDetailView: View {
     private func installKeys() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
-            guard let w = NSApp.keyWindow, ev.window === w, !SjzEditorWindows.shared.isEditorWindow(w), !(w.firstResponder is NSText),
+            guard let w = NSApp.keyWindow, ev.window === w, !SjzEditorWindows.shared.isEditorWindow(w), !SjzPreviewWindows.shared.isPreviewWindow(w), !(w.firstResponder is NSText),
                   ev.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return ev }
-            if let q = model.sjzQuick {
-                switch ev.keyCode {
-                case 49, 53: if !ev.isARepeat { model.closeSjzQuick() }; return nil
-                case 36, 76: model.openSjzEditor(project: name, capture: q.capture); return nil
-                default: return ev
-                }
-            }
             if ev.keyCode == 49, let c = hoverCap {
-                if !ev.isARepeat { withAnimation(.easeOut(duration: 0.08)) { model.sjzQuick = SjzQuickItem(project: name, capture: c) } }
+                if !ev.isARepeat { model.toggleSjzPreview(project: name, capture: c) }
                 return nil
             }
             return ev
@@ -136,10 +131,15 @@ struct SjzProjectDetailView: View {
                 .background(Brand.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).font(.title2.weight(.semibold)).lineLimit(2)
-                HStack(spacing: 6) {
-                    TagChip(text: "审计项目", tint: Brand.orange)
-                    if pinned { TagChip(text: "岛上保存到这里", tint: .green) }
-                    Text("数据来自结审，只保存在本机").font(.caption).foregroundStyle(.tertiary)
+                let tags = stat?.infoTags ?? []
+                if !tags.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(Array(tags.enumerated()), id: \.offset) { i, t in
+                                TagChip(text: t, tint: i == 0 ? Brand.orange : .secondary).lineLimit(1).fixedSize()
+                            }
+                        }
+                    }
                 }
             }
             Spacer(minLength: 8)
@@ -197,6 +197,14 @@ struct SjzProjectDetailView: View {
             StatTile(value: "\(s?.dueToday ?? 0)", label: "今天到期", tint: (s?.dueToday ?? 0) > 0 ? Brand.orange : .primary)
             StatTile(value: "\(s?.overdue ?? 0)", label: "逾期", tint: (s?.overdue ?? 0) > 0 ? .red : .primary)
             StatTile(value: "\(s?.pendingReviews ?? 0)", label: "待复核", tint: (s?.pendingReviews ?? 0) > 0 ? Brand.orange : .primary)
+            Button { showSummaries.toggle() } label: {
+                StatTile(value: "\(summaries.count)", label: "工作小结", tint: summaries.isEmpty ? .primary : .indigo)
+            }
+            .buttonStyle(.plain)
+            .help("结审里生成的日报、周报、阶段报告，点开选一份查看")
+            .popover(isPresented: $showSummaries, arrowEdge: .bottom) {
+                PeekListView(kind: .summaries, entries: AuditProjectCard.summaryEntries(summaries, project: name, model: model)) { showSummaries = false }
+            }
         }
     }
 
@@ -249,12 +257,12 @@ extension SjzProjectDetailView {
                     if let p = sel {
                         Divider().opacity(0.6)
                         VStack(alignment: .leading, spacing: 12) {
+                            if !p.plan.isEmpty { Text("计划：" + p.plan).font(.caption).foregroundStyle(.secondary) }
                             let rows = p.items.filter { $0.count > 0 || $0.required }
                             if rows.isEmpty { Text("这个阶段还没有文书").font(.callout).foregroundStyle(.tertiary) }
                             ForEach(rows) { t in docTypeBlock(t) }
                         }
                     }
-                    Text("只显示编号、标题和状态，文书正文不会出现在拾忆里。").font(.caption2).foregroundStyle(.tertiary)
                 }
             }
         }
@@ -285,6 +293,9 @@ extension SjzProjectDetailView {
                         .foregroundStyle(selected || cur ? Color.primary : Color.secondary)
                     Text(p.count > 0 ? "\(p.count) 份成果" : (cur ? "进行中" : "暂无")).font(.caption2)
                         .foregroundStyle(cur && p.count == 0 ? Brand.orange : Color.secondary.opacity(0.7))
+                    if !p.range.isEmpty {
+                        Text(p.range).font(.caption2).foregroundStyle(.tertiary).monospacedDigit().lineLimit(1)
+                    }
                     Capsule().fill(selected ? Brand.orange : Color.clear).frame(width: 18, height: 2.5).padding(.top, 2)
                 }
             }
@@ -368,6 +379,7 @@ extension SjzProjectDetailView {
         let next = all.filter { !cleared.contains($0.id) }
         if next != captures { captures = next }
         capsLoaded = true
+        if let sm = try? await model.sjz.summaries(project: name), sm != summaries { summaries = sm }
     }
 
     // 「清除记录」：只是不再在拾忆这份列表里显示（记下已清除的记录编号，存在本机），结审里的文件原样保留
@@ -521,7 +533,7 @@ extension SjzProjectDetailView {
 
     static func kindTint(_ k: String) -> Color {
         switch k {
-        case "regulation": return .indigo
+        case "regulation", "summary": return .indigo
         case "clue": return .pink
         case "idea": return .purple
         case "data", "datalist": return .teal
@@ -544,12 +556,12 @@ extension SjzProjectDetailView {
         CaptureRowView(c: c, child: child, kids: kids, seq: seq, expanded: isGroupOpen(c.id),
                        toggle: { if openGroups.contains(c.id) { openGroups.remove(c.id) } else { openGroups.insert(c.id) } },
                        related: c.kind == "clue" || c.kind == "datalist" ? Self.relatedTo(c, in: captures) : [],
-                       all: captures, preview: { model.sjzQuick = SjzQuickItem(project: name, capture: $0) }) { model.openSjzEditor(project: name, capture: c) }
+                       all: captures, preview: { model.openSjzPreview(project: name, capture: $0) }) { model.openSjzEditor(project: name, capture: c) }
         .onHover { inside in
             if inside { hoverCap = c; prefetch(c) } else if hoverCap?.id == c.id { hoverCap = nil }
         }
         .contextMenu {
-            Button("快速预览") { model.sjzQuick = SjzQuickItem(project: name, capture: c) }
+            Button("快速预览") { model.openSjzPreview(project: name, capture: c) }
             Button("使用便签打开") { model.openSjzAsSticky(project: name, capture: c) }
             if model.sjzCanPin(c) {
                 // 钉住后，灵动岛和万能输入保存证据 / 法规 / 线索时直接追加到它，不用再去搜索
@@ -730,10 +742,10 @@ struct SjzCaptureEditor: View {
     private var mainColumn: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
+                Color.clear.frame(width: 56, height: 1)   // 给窗口左上角的红黄绿按钮让位
                 Image(systemName: capture.icon).foregroundStyle(Brand.orange)
                 Text("\(capture.kindLabel) · \(capture.id)").font(.headline)
                 Spacer()
-                Text(isIdea ? "保存后同步改写结审工作日志里的这一条（配图只能保留或删除）" : isClue ? "保存后直接改结审里的线索文件，不写工作日志" : isDatalist ? "保存后写回结审文书中心里的这份资料清单" : "保存后写回结审，并在工作日志留痕").font(.caption).foregroundStyle(.tertiary)
             }
             if !isIdea {
                 field("标题", text: $title)
@@ -772,7 +784,6 @@ struct SjzCaptureEditor: View {
                 }
                 if capture.kind == "data" {
                     Text(capture.path).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                    Text("数据文件不能在这里编辑，可以改标题和来源；文件在结审的「原始材料」里。").font(.caption).foregroundStyle(.tertiary)
                 } else if !loaded {
                     ProgressView().controlSize(.small).frame(maxWidth: .infinity, minHeight: 160)
                 } else if mode == .original, let f = currentFile {
@@ -786,11 +797,9 @@ struct SjzCaptureEditor: View {
                     .frame(minHeight: 200, maxHeight: .infinity)
                     .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 } else {
-                    ScrollView {
-                        SjzMarkdownView(content: content, images: images, files: files) { f, page in fileSel = f.id; jumpPage = page; mode = .original }
-                            .padding(12)
-                    }
-                    .frame(minHeight: 200, maxHeight: .infinity)
+                    QuickTextPane(content: content, images: images, files: files, pad: 12) { f, page in fileSel = f.id; jumpPage = page; mode = .original }
+                        .equatable()
+                        .frame(minHeight: 200, maxHeight: .infinity)
                     .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
             }
@@ -918,7 +927,7 @@ struct SjzCaptureEditor: View {
                     .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent).disabled(busy || !dirty || stale)
             }
         }
-        .padding(20)
+        .padding(EdgeInsets(top: 9, leading: 20, bottom: 20, trailing: 20))
         .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
@@ -1600,7 +1609,6 @@ struct SjzNewDatalistSheet: View {
                 Image(systemName: "list.clipboard").foregroundStyle(Brand.orange)
                 Text("新建资料清单").font(.headline)
                 Spacer()
-                Text("写进结审文书中心的「资料清单」").font(.caption).foregroundStyle(.tertiary)
             }
             TextField("清单名称，如：第一批资料清单", text: $title).textFieldStyle(.roundedBorder)
             VStack(alignment: .leading, spacing: 4) {

@@ -285,6 +285,8 @@ extension AppModel {
     /// 在结审里打开台账里的一项：线索 → 线索编辑；证据 / 法规 / 数据 → 对应文件；想法 → 当天工作日志
     func openSjzCapture(project: String, _ c: SjzCapture) {
         switch c.kind {
+        case "summary":
+            openSjzDoc(project: project, path: c.path)
         case "clue":
             openSjzApp(project: project, to: "/suspicious?clue=" + Self.urlEnc(c.id))
         case "idea":

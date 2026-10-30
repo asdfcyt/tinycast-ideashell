@@ -120,7 +120,9 @@ struct SjzApi {
             let name = (p["name"] as? String) ?? ""
             return SjzProjectStat(name: name, title: (p["title"] as? String) ?? name,
                                   open: (t["open"] as? Int) ?? 0, overdue: (t["overdue"] as? Int) ?? 0,
-                                  dueToday: (t["dueToday"] as? Int) ?? 0, pendingReviews: (p["pendingReviews"] as? Int) ?? 0)
+                                  dueToday: (t["dueToday"] as? Int) ?? 0, pendingReviews: (p["pendingReviews"] as? Int) ?? 0,
+                                  type: p["type"] as? String, phase: p["phase"] as? String, status: p["status"] as? String,
+                                  auditedUnit: p["auditedUnit"] as? String, period: p["period"] as? String, planRange: p["planRange"] as? String)
         }
         ov.next = tasks.sorted { ($0.dueDate.isEmpty ? "9999" : $0.dueDate) < ($1.dueDate.isEmpty ? "9999" : $1.dueDate) }
         return ov
@@ -215,6 +217,16 @@ struct SjzApi {
         return (r["message"] as? String) ?? "已记入工作日志"
     }
 
+    /// 已生成的工作小结（存在项目工作日志里），最新在前
+    func summaries(project: String, limit: Int = 5) async throws -> [SjzSummary] {
+        let r = try await call("list_summaries", ["project": project, "limit": limit])
+        return ((r["summaries"] as? [JSON]) ?? []).compactMap { c in
+            guard let path = c["path"] as? String else { return nil }
+            return SjzSummary(path: path, title: (c["title"] as? String) ?? "", kind: (c["kind"] as? String) ?? "",
+                              period: (c["period"] as? String) ?? "", updatedAt: (c["updatedAt"] as? String) ?? "")
+        }
+    }
+
     // MARK: 拾忆来源台账
 
     func captures(project: String, kind: String? = nil, query: String = "", since: Date? = nil, limit: Int = 300) async throws -> [SjzCapture] {
@@ -238,6 +250,11 @@ struct SjzApi {
 
     /// 正文、是否可编辑，以及正文里引用的图片（`imgN` → 图片数据）
     func captureDetail(project: String, id: String) async throws -> (content: String, editable: Bool, images: [String: Data], files: [SjzFile], times: [String: String]) {
+        // 工作小结（id 形如 summary:logs/xx.md）：读小结正文，只读、没有图片和原件
+        if id.hasPrefix(SjzSummary.idPrefix) {
+            let r = try await call("get_summary", ["project": project, "path": String(id.dropFirst(SjzSummary.idPrefix.count))])
+            return ((r["content"] as? String) ?? "", false, [:], [], [:])
+        }
         let r = try await call("get_capture", ["project": project, "id": id])
         var imgs: [String: Data] = [:]
         for (k, v) in (r["images"] as? [String: String]) ?? [:] { if let d = Data(base64Encoded: v) { imgs[k] = d } }
@@ -313,6 +330,7 @@ struct SjzApi {
         d.phase = (r["phase"] as? String) ?? ""
         d.phases = ((r["phases"] as? [JSON]) ?? []).map { p in
             SjzPhase(key: (p["key"] as? String) ?? "", label: (p["label"] as? String) ?? "", current: (p["current"] as? Bool) ?? false,
+                     startDate: (p["startDate"] as? String) ?? "", endDate: (p["endDate"] as? String) ?? "", plan: (p["plan"] as? String) ?? "",
                      items: ((p["items"] as? [JSON]) ?? []).map { i in
                 SjzDocType(code: (i["code"] as? String) ?? "", label: (i["label"] as? String) ?? "",
                            required: (i["required"] as? Bool) ?? false, count: (i["count"] as? Int) ?? 0, issued: (i["issued"] as? Int) ?? 0,
@@ -416,7 +434,31 @@ struct SjzProjectStat: Equatable, Hashable, Codable, Identifiable {
     var overdue = 0
     var dueToday = 0
     var pendingReviews = 0
+    /// 基本信息（可能为空；旧缓存里没有这些字段）
+    var type: String? = nil
+    var phase: String? = nil
+    var status: String? = nil
+    var auditedUnit: String? = nil
+    var period: String? = nil
+    var planRange: String? = nil
     var id: String { name }
+
+    /// 项目基本信息标签：类型 · 阶段 · 状态 · 被审计单位 · 审计期间（有什么显示什么）
+    var infoTags: [String] {
+        var t: [String] = []
+        if let x = type, !x.isEmpty { t.append(x == "special" ? "专项审计" : "常规审计") }
+        if let x = phase, !x.isEmpty {
+            t.append(["preparation": "审计准备", "implementation": "审计实施", "reporting": "审计报告", "rectification": "整改跟踪"][x] ?? x)
+        }
+        if let x = status, !x.isEmpty, x != "in_progress" {
+            t.append(["planning": "筹划中", "reporting": "报告阶段"][x] ?? x)
+        }
+        if let x = auditedUnit, !x.isEmpty { t.append(x) }
+        // 审计期间和计划起止只显示一个：有审计期间用期间，没填再用计划
+        if let x = period, !x.isEmpty { t.append("期间 " + x) }
+        else if let x = planRange, !x.isEmpty { t.append("计划 " + x) }
+        return t
+    }
 }
 
 /// 已发出但还没收回的取证单
@@ -462,6 +504,34 @@ struct SjzFile: Identifiable, Hashable {
     var sizeLabel: String { ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file) }
 }
 
+/// 结审里生成的一份工作小结（日报 / 周报 / 阶段报告 / 项目小结）
+struct SjzSummary: Identifiable, Hashable {
+    let path: String
+    let title: String
+    let kind: String
+    let period: String
+    let updatedAt: String
+    static let idPrefix = "summary:"
+    var id: String { path }
+    /// 套成一条「记录」：这样就能用拾忆已有的预览窗口打开
+    var asCapture: SjzCapture {
+        SjzCapture(id: Self.idPrefix + path, kind: "summary", title: "\(kindLabel) · \(shortPeriod)", summary: title, source: "结审",
+                   path: path, noteNo: "", notePath: "", status: "", taskId: "", at: updatedAt, editedAt: "")
+    }
+    var kindLabel: String { ["daily": "日报", "weekly": "周报", "phase": "阶段报告", "project": "项目小结"][kind] ?? "小结" }
+    /// 「10-26 ~ 11-01」：去掉年份；单日只留一个日期
+    var shortPeriod: String {
+        let parts = period.components(separatedBy: " ~ ").map { String($0.dropFirst(5)) }
+        guard let a = parts.first, !a.isEmpty else { return "" }
+        return parts.count > 1 && parts[1] != a ? "\(a) ~ \(parts[1])" : a
+    }
+    var date: Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.date(from: updatedAt) ?? ISO8601DateFormatter().date(from: updatedAt)
+    }
+}
+
 /// 拾忆写进结审项目的一条记录（证据 / 法规 / 线索 / 数据）
 struct SjzCapture: Identifiable, Hashable {
     let id: String
@@ -489,8 +559,10 @@ struct SjzCapture: Identifiable, Hashable {
     /// 证据 / 想法关联的资料清单（台账编号）
     var listIds: [String] = []
 
-    var kindLabel: String { ["evidence": "证据", "regulation": "法规", "clue": "线索", "idea": "想法", "data": "数据", "datalist": "资料清单"][kind] ?? kind }
-    var icon: String { ["evidence": "doc.text.image", "regulation": "book.closed", "clue": "lightbulb", "idea": "text.bubble", "data": "tablecells", "datalist": "list.clipboard"][kind] ?? "doc" }
+    var kindLabel: String { ["evidence": "证据", "regulation": "法规", "clue": "线索", "idea": "想法", "data": "数据", "datalist": "资料清单", "summary": "工作小结"][kind] ?? kind }
+    var icon: String { ["evidence": "doc.text.image", "regulation": "book.closed", "clue": "lightbulb", "idea": "text.bubble", "data": "tablecells", "datalist": "list.clipboard", "summary": "doc.richtext"][kind] ?? "doc" }
+    /// 结审的工作小结（只读，不能编辑）
+    var isSummary: Bool { kind == "summary" }
     var statusLabel: String { ["pending": "待核实", "verified": "已核实", "excluded": "已排除", "converted": "已出取证单", "draft": "草稿", "sent": "已发出", "recalled": "已收回"][status] ?? "" }
     var date: Date? { ISO8601DateFormatter().date(from: at) ?? SjzCapture.fallback.date(from: at) }
     private static let fallback: ISO8601DateFormatter = {
@@ -510,8 +582,26 @@ struct SjzPhase: Identifiable, Hashable {
     let key: String
     let label: String
     let current: Bool
+    /// 审计计划里这个阶段的起止日期（结审「编辑项目 → 审计计划」，可能为空）和工作内容
+    var startDate = ""
+    var endDate = ""
+    var plan = ""
     let items: [SjzDocType]
     var id: String { key }
+
+    /// 「10/19 – 11/13」；跨年带年份；都没填返回空串
+    var range: String {
+        func parse(_ s: String) -> (Int, String)? {
+            let nums = s.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+            guard nums.count >= 3 else { return nil }
+            return (nums[0], "\(nums[1])/\(nums[2])")
+        }
+        let a = parse(startDate), b = parse(endDate)
+        if a == nil && b == nil { return "" }
+        let cross = a != nil && b != nil && a!.0 != b!.0
+        func f(_ x: (Int, String)?) -> String { x.map { cross ? "\($0.0)/\($0.1)" : $0.1 } ?? "?" }
+        return "\(f(a)) – \(f(b))"
+    }
     var count: Int { items.reduce(0) { $0 + $1.count } }
     var issued: Int { items.reduce(0) { $0 + $1.issued } }
     /// 必备但还没建立的文书

@@ -20,7 +20,7 @@ struct SjzFilePreview: View {
         let url: URL
         let page: Int?
 
-        final class Coordinator { var jumped: Int? }
+        final class Coordinator { var jumped: Int?; var loaded: URL? }
         func makeCoordinator() -> Coordinator { Coordinator() }
 
         func makeNSView(context: Context) -> PDFView {
@@ -29,13 +29,26 @@ struct SjzFilePreview: View {
             v.displayMode = .singlePageContinuous
             v.displaysPageBreaks = true
             v.backgroundColor = .clear
-            v.document = PDFDocument(url: url)
-            jump(v, context.coordinator)
+            load(v, context.coordinator)
             return v
         }
         func updateNSView(_ v: PDFView, context: Context) {
-            if v.document?.documentURL != url { v.document = PDFDocument(url: url) }
-            jump(v, context.coordinator)
+            if context.coordinator.loaded != url { load(v, context.coordinator) }
+            else { jump(v, context.coordinator) }
+        }
+        /// 在后台读 PDF：大文件同步读会让切换时界面卡住
+        private func load(_ v: PDFView, _ c: Coordinator) {
+            c.loaded = url
+            c.jumped = nil
+            let u = url
+            DispatchQueue.global(qos: .userInitiated).async {
+                let d = PDFDocument(url: u)
+                DispatchQueue.main.async {
+                    guard c.loaded == u else { return }
+                    v.document = d
+                    jump(v, c)
+                }
+            }
         }
         /// 只在目标页变化时跳一次，不然用户翻页后每次刷新都会被拉回去
         private func jump(_ v: PDFView, _ c: Coordinator) {
@@ -58,7 +71,7 @@ struct SjzFilePreview: View {
         func updateNSView(_ v: QLPreviewView, context: Context) {
             if (v.previewItem as? NSURL) as URL? != url { v.previewItem = url as NSURL }
         }
-        static func dismantleNSView(_ v: QLPreviewView, coordinator: ()) { v.close() }
+        // 不要在这里调 close()：视图还没激活完就关会被系统直接 abort（QLPreviewView deactivate 断言），交给系统随视图一起释放
     }
 }
 
@@ -69,6 +82,8 @@ struct SjzMarkdownView: View {
     var files: [SjzFile] = []
     /// 点「预览原件」或出处页码：参数是文件和页码（没有页码为 nil）
     var onOpenFile: (SjzFile, Int?) -> Void = { _, _ in }
+    /// 最多画多少个段落块（内容很长时先画一部分，避免一次画几千行卡住界面）
+    var limit = Int.max
 
     // MARK: 结构
 
@@ -97,7 +112,31 @@ struct SjzMarkdownView: View {
     private static let layerRE = RX("^文字层：\\[\\[([^\\]]+)\\]\\]\\s*(.*)$")
     private static let origRE = RX("^原文件：\\[\\[([^\\]]+)\\]\\]\\s*$")
 
+    private static var cachedMD = ""
+    private static var cachedSections: [Section] = []
     private static func sections(_ md: String) -> [Section] {
+        if md == cachedMD { return cachedSections }
+        let r = parseSections(md)
+        cachedMD = md
+        cachedSections = r
+        return r
+    }
+
+    private static func limited(_ all: [Section], _ limit: Int) -> [Section] {
+        guard limit < Int.max else { return all }
+        var left = limit
+        var cut: [Section] = []
+        for sec in all where left > 0 {
+            cut.append(Section(id: sec.id, card: sec.card, blocks: Array(sec.blocks.prefix(left))))
+            left -= sec.blocks.count
+        }
+        return cut
+    }
+
+    /// 一共有多少个段落块（用来判断要不要分段显示）
+    static func blockTotal(_ md: String) -> Int { sections(md).reduce(0) { $0 + $1.blocks.count } }
+
+    private static func parseSections(_ md: String) -> [Section] {
         var parts: [(card: Bool, lines: [String])] = [(false, [])]
         for raw in md.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
             let t = raw.trimmingCharacters(in: .whitespaces)
@@ -156,7 +195,7 @@ struct SjzMarkdownView: View {
     // MARK: 渲染
 
     var body: some View {
-        let secs = Self.sections(content)
+        let secs = Self.limited(Self.sections(content), limit)
         // 不能用 LazyVStack：放在 ScrollView 里，内容高度是估出来的（图片、换行文字高度各不相同），滚到底时最后一截会被裁掉
         VStack(alignment: .leading, spacing: 10) {
             ForEach(secs) { s in
@@ -357,12 +396,15 @@ enum SjzDetailStore {
 
 /// 空格快速预览：只读、立刻出现。有原件直接看原件，没有就看排好版的正文；回车转到编辑，空格 / Esc 关闭
 struct SjzQuickLook: View {
+    @EnvironmentObject var model: AppModel
     let api: SjzApi
     let project: String
     let capture: SjzCapture
     var size = CGSize(width: 700, height: 560)
     /// 嵌在编辑窗口右侧并排查看：没有卡片外框和快捷键提示，有关闭按钮
     var embedded = false
+    /// 在独立的预览窗口里：铺满窗口，没有卡片外框，大小跟着窗口走
+    var windowed = false
     let onClose: () -> Void
     let onEdit: () -> Void
 
@@ -371,6 +413,8 @@ struct SjzQuickLook: View {
     @State private var fileSel = ""
     @State private var jumpPage: Int?
     @State private var failed = false
+    /// 已经建好的面板（原件 / 文字）
+    @State private var shown: Set<SjzCaptureEditor.PMode> = []
 
     private var tint: Color { SjzProjectDetailView.kindTint(capture.kind) }
     private var files: [SjzFile] { detail?.files ?? [] }
@@ -378,19 +422,105 @@ struct SjzQuickLook: View {
     private var hasOriginal: Bool { files.contains { $0.role == "original" } }
 
     var body: some View {
+        Group {
+            if windowed { windowedBody } else { cardBody }
+        }
+        .onChange(of: mode) { _, m in shown.insert(m) }
+        .task(id: capture.id) {
+            if let c = SjzDetailStore.cached(project: project, id: capture.id) { apply(c, first: true) }
+            if let d = await SjzDetailStore.load(api: api, project: project, id: capture.id) {
+                apply(d, first: detail == nil)
+            } else if detail == nil { failed = true }
+        }
+    }
+
+    // MARK: 独立窗口（访达空格预览的样子）
+
+    /// 一行：左边让开红黄绿按钮，标题居中，右边是动作图标；下面内容铺满，没有卡片外框
+    private var windowedBody: some View {
+        VStack(spacing: 0) {
+            // 标题条本身放在下面 overlay 的独立视图里（见 OnTopHost）：文字面板的 ScrollView 会把自己的范围伸到标题栏下面，盖住这里的按钮
+            Color.clear.frame(height: 28)
+            Group {
+                if let d = detail {
+                    // 两个面板建好后一直留着，切换只是显示 / 隐藏，不再重新读 PDF、重新排版
+                    ZStack {
+                        if let f = currentFile, shown.contains(.original) {
+                            VStack(spacing: 0) {
+                                if files.count > 1 {
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 6) {
+                                            ForEach(files) { x in
+                                                Button { fileSel = x.id; jumpPage = nil } label: {
+                                                    Label(x.name, systemImage: x.icon).font(.caption).lineLimit(1)
+                                                        .padding(.horizontal, 9).padding(.vertical, 4)
+                                                        .background(x.id == f.id ? Brand.orange.opacity(0.18) : Color.primary.opacity(0.06), in: Capsule())
+                                                        .foregroundStyle(x.id == f.id ? Brand.orange : .secondary)
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                        .padding(.horizontal, 12).padding(.vertical, 6)
+                                    }
+                                }
+                                SjzFilePreview(file: f, page: jumpPage).frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                            .opacity(mode == .original ? 1 : 0)
+                            .allowsHitTesting(mode == .original)
+                        }
+                        // 文字面板只在看文字时才建（几百个段落一直留着，每次布局都要重算）；PDF / 原件建好后留着
+                        if mode != .original || currentFile == nil {
+                            QuickTextPane(content: d.content, images: d.images, files: d.files) { f, _ in NSWorkspace.shared.open(f.url) }
+                                .equatable()
+                        }
+                    }
+                } else {
+                    VStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        if failed { Label("暂时读不到详情，请确认结审在运行", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
+                        else { ProgressView().controlSize(.small) }
+                        if !capture.summary.isEmpty { Text(capture.summary).font(.callout).foregroundStyle(.secondary).lineLimit(3).padding(.horizontal, 24) }
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .top) { OnTopHost(content: windowedHeader).frame(maxWidth: .infinity).frame(height: 28) }
+    }
+
+    /// 图标 + 标题 + 编号，右边是动作图标
+    private var windowedHeader: some View {
+        HStack(spacing: 8) {
+            Image(systemName: capture.icon).font(.system(size: 11, weight: .semibold)).foregroundStyle(tint)
+            Text(capture.title.isEmpty ? capture.summary : capture.title).font(.system(size: 12.5, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+            if !capture.isSummary { Text(capture.id).font(.system(size: 11)).foregroundStyle(.tertiary).fixedSize() }
+            Spacer(minLength: 8)
+            HStack(spacing: 0) {
+                if hasOriginal, let f = currentFile {
+                    WinIconButton(icon: "arrow.up.forward.app", help: "用默认应用打开") { NSWorkspace.shared.open(f.url) }
+                }
+                WinIconButton(icon: "note.text", help: "在结审中打开") { [model, project, capture] in model.openSjzCapture(project: project, capture) }
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, minHeight: 28, maxHeight: 28)
+        .background(WindowDragArea())
+        .ignoresSafeArea()
+        .environmentObject(model)
+    }
+
+    // MARK: 卡片 / 并排查看
+
+    private var cardBody: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: capture.icon).foregroundStyle(tint)
                 Text(capture.title.isEmpty ? capture.summary : capture.title).font(.headline).lineLimit(1)
                 Text(capture.id).font(.caption).foregroundStyle(.tertiary)
                 Spacer(minLength: 8)
-                if !files.isEmpty {
-                    Picker("", selection: $mode) {
-                        Text(hasOriginal ? "原件" : "出处原件").tag(SjzCaptureEditor.PMode.original)
-                        Text(hasOriginal ? "文字" : "摘录").tag(SjzCaptureEditor.PMode.text)
-                    }
-                    .pickerStyle(.segmented).labelsHidden().frame(width: 150)
-                }
                 if embedded {
                     Button(action: onClose) { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
                         .buttonStyle(.plain).help("关闭并排查看")
@@ -421,11 +551,9 @@ struct SjzQuickLook: View {
                                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.primary.opacity(0.1), lineWidth: 0.5))
                         }
                     } else {
-                        ScrollView {
-                            SjzMarkdownView(content: d.content, images: d.images, files: d.files) { f, page in fileSel = f.id; jumpPage = page; mode = .original }
-                                .padding(12)
-                        }
-                        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        QuickTextPane(content: d.content, images: d.images, files: d.files, pad: 12) { f, _ in NSWorkspace.shared.open(f.url) }
+                            .equatable()
+                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                 } else {
                     // 详情还没回来时先把已有的信息摆出来，不让窗口空着
@@ -443,25 +571,18 @@ struct SjzQuickLook: View {
             HStack(spacing: 10) {
                 if !capture.source.isEmpty, capture.source != "拾忆" { Text(capture.source).font(.caption).foregroundStyle(.tertiary).lineLimit(1) }
                 Spacer()
-                if !embedded { Text("空格 / Esc 关闭 · 回车编辑").font(.caption).foregroundStyle(.tertiary) }
                 Button("编辑并写回") { onEdit() }.buttonStyle(.borderless).font(.caption)
                 if mode == .original, let f = currentFile {
                     Button("用默认应用打开") { NSWorkspace.shared.open(f.url) }.buttonStyle(.borderless).font(.caption)
                 }
             }
         }
-        .padding(16)
-        .frame(width: size.width, height: embedded ? nil : size.height)
-        .frame(maxHeight: embedded ? .infinity : nil)
-        .background(embedded ? Color.primary.opacity(0.02) : Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: embedded ? 0 : 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(embedded ? 0 : 0.12), lineWidth: 0.5))
-        .shadow(color: .black.opacity(embedded ? 0 : 0.18), radius: embedded ? 0 : 22, y: embedded ? 0 : 8)
-        .task(id: capture.id) {
-            if let c = SjzDetailStore.cached(project: project, id: capture.id) { apply(c, first: true) }
-            if let d = await SjzDetailStore.load(api: api, project: project, id: capture.id) {
-                apply(d, first: detail == nil)
-            } else if detail == nil { failed = true }
-        }
+        .padding(EdgeInsets(top: windowed ? 7 : 16, leading: 16, bottom: 16, trailing: 16))
+        .frame(width: windowed ? nil : size.width, height: embedded || windowed ? nil : size.height)
+        .frame(maxWidth: windowed ? .infinity : nil, maxHeight: embedded || windowed ? .infinity : nil)
+        .background(embedded || windowed ? Color.primary.opacity(0.02) : Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: embedded || windowed ? 0 : 14, style: .continuous))
+        .overlay(RoundRect14(show: !embedded && !windowed))
+        .shadow(color: .black.opacity(embedded || windowed ? 0 : 0.18), radius: embedded || windowed ? 0 : 22, y: embedded || windowed ? 0 : 8)
     }
 
     private func apply(_ d: SjzDetailStore.Detail, first: Bool) {
@@ -469,6 +590,79 @@ struct SjzQuickLook: View {
         if first {
             fileSel = d.files.first?.id ?? ""
             mode = SjzCaptureEditor.defaultMode(content: d.content, files: d.files)
+            shown.insert(mode)
+        }
+    }
+}
+
+/// 把一段 SwiftUI 放进独立的 NSHostingView：它是真正的 AppKit 子视图，叠在同一窗口里其它 ScrollView 的上面，点击不会被盖住
+private struct OnTopHost<Content: View>: NSViewRepresentable {
+    let content: Content
+    func makeNSView(context: Context) -> NSHostingView<Content> {
+        let v = NSHostingView(rootView: content)
+        v.sizingOptions = []
+        return v
+    }
+    func updateNSView(_ v: NSHostingView<Content>, context: Context) { v.rootView = content }
+}
+
+private struct RoundRect14: View {
+    let show: Bool
+    var body: some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.primary.opacity(show ? 0.12 : 0), lineWidth: 0.5)
+    }
+}
+
+/// 预览窗口标题栏右侧的小图标按钮（和访达预览的分享 / 打开按钮一样：只有图标，悬停有底色）
+private struct WinIconLabel: View {
+    let icon: String
+    @State private var hovering = false
+    var body: some View {
+        Image(systemName: icon).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            .frame(width: 26, height: 22)
+            .background(Color.primary.opacity(hovering ? 0.08 : 0), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+    }
+}
+
+private struct WinIconButton: View {
+    let icon: String
+    let help: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) { WinIconLabel(icon: icon) }.buttonStyle(.plain).help(help)
+    }
+}
+
+/// 预览窗口里的文字面板：内容没变就不重画；很长的内容先画前面一部分，点「显示更多」再继续
+struct QuickTextPane: View, Equatable {
+    let content: String
+    let images: [String: NSImage]
+    let files: [SjzFile]
+    let onOpenFile: (SjzFile, Int?) -> Void
+    var pad: CGFloat = 22
+    @State private var limit = 80
+
+    static func == (a: QuickTextPane, b: QuickTextPane) -> Bool {
+        a.content == b.content && a.files == b.files && a.images.count == b.images.count
+    }
+
+    var body: some View {
+        let total = SjzMarkdownView.blockTotal(content)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                SjzMarkdownView(content: content, images: images, files: files, onOpenFile: onOpenFile, limit: limit)
+                if total > limit {
+                    Button { limit += 300 } label: {
+                        Text("还有 \(total - limit) 段，点这里继续显示").font(.callout)
+                            .frame(maxWidth: .infinity).padding(.vertical, 8)
+                            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, pad).padding(.top, 8).padding(.bottom, 20)
         }
     }
 }

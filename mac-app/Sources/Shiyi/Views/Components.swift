@@ -187,10 +187,10 @@ struct TaskRow: View {
                     if showProject, let p = model.overview?.projectName(task.projectId) {
                         Text(p).font(.caption).foregroundStyle(.tertiary)
                     }
-                    ForEach(task.tags.prefix(3), id: \.self) { TagChip(text: "#" + $0, tint: .secondary) }
+                    ForEach(task.tags.filter { $0 != "结审" }.prefix(3), id: \.self) { TagChip(text: "#" + $0, tint: .secondary) }
                 }
-                if !task.content.trimmed.isEmpty {
-                    Text(task.content.trimmed).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                if let note = shownNote {
+                    Text(note).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
                 }
             }
             Spacer(minLength: 0)
@@ -206,6 +206,15 @@ struct TaskRow: View {
     }
 
     private var taskNote: TaskNoteRef? { model.taskNote(forTask: task) }
+
+    /// 备注行：内容只是把标题重复一遍（结审任务常见）时不显示
+    private var shownNote: String? {
+        let c = task.content.trimmed
+        if c.isEmpty { return nil }
+        let core = c.replacingOccurrences(of: "[.…]+$", with: "", options: .regularExpression).trimmed
+        if core.isEmpty || task.cleanTitle.contains(core) { return nil }
+        return c
+    }
 
     private var priorityColor: Color {
         switch task.priority {

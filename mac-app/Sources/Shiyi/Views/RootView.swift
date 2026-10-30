@@ -49,23 +49,6 @@ struct RootView: View {
         .sheet(item: $model.newNoteDraft) { draft in
             NewNoteSheet(draft: draft).environmentObject(model).dismissOnOutsideClick()
         }
-        .overlay {
-            // 空格快速预览：盖在整个窗口上（含侧栏），面板居中、宽 620，窗口小时四周留 24 的边距
-            if let q = model.sjzQuick {
-                GeometryReader { geo in
-                    ZStack {
-                        Color.black.opacity(0.07).ignoresSafeArea().contentShape(Rectangle())
-                            .onTapGesture { model.closeSjzQuick() }
-                        SjzQuickLook(api: model.sjz, project: q.project, capture: q.capture,
-                                     size: CGSize(width: max(360, min(620, geo.size.width - 48)), height: max(320, min(720, geo.size.height - 48))),
-                                     onClose: { model.closeSjzQuick() },
-                                     onEdit: { model.openSjzEditor(project: q.project, capture: q.capture) })
-                    }
-                    .frame(width: geo.size.width, height: geo.size.height)
-                }
-                .transition(.opacity)
-            }
-        }
         .animation(.easeInOut(duration: 0.2), value: model.lastUndo?.id)
         .animation(.easeInOut(duration: 0.2), value: model.notice)
     }
