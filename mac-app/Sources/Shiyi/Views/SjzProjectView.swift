@@ -125,10 +125,6 @@ struct SjzProjectDetailView: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "checkmark.shield")
-                .font(.system(size: 18, weight: .semibold)).foregroundStyle(Brand.orange)
-                .frame(width: 38, height: 38)
-                .background(Brand.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 6) {
                 Text(title).font(.title2.weight(.semibold)).lineLimit(2)
                 let tags = stat?.infoTags ?? []
@@ -198,12 +194,14 @@ struct SjzProjectDetailView: View {
             StatTile(value: "\(s?.overdue ?? 0)", label: "逾期", tint: (s?.overdue ?? 0) > 0 ? .red : .primary)
             StatTile(value: "\(s?.pendingReviews ?? 0)", label: "待复核", tint: (s?.pendingReviews ?? 0) > 0 ? Brand.orange : .primary)
             Button { showSummaries.toggle() } label: {
-                StatTile(value: "\(summaries.count)", label: "工作小结", tint: summaries.isEmpty ? .primary : .indigo)
+                StatTile(value: "\(summaries.count)", label: "工作小结", tint: .primary)
             }
             .buttonStyle(.plain)
             .help("结审里生成的日报、周报、阶段报告，点开选一份查看")
             .popover(isPresented: $showSummaries, arrowEdge: .bottom) {
-                PeekListView(kind: .summaries, entries: AuditProjectCard.summaryEntries(summaries, project: name, model: model)) { showSummaries = false }
+                PeekListView(kind: .summaries, entries: AuditProjectCard.summaryEntries(summaries, project: name, model: model),
+                             headCount: AuditProjectCard.summaryHeadCount(summaries),
+                             actions: AuditProjectCard.summaryActions(project: name, model: model)) { showSummaries = false }
             }
         }
     }

@@ -97,7 +97,8 @@ struct SjzMarkdownView: View {
         case heading(Int, String)
         case meta(String)
         case quote([String])
-        case bullet(String)
+        case bullet(String, Int)
+        case table([String], [[String]], [Bool])
         case ordered(String, String)
         case code(String)
         case rule
@@ -154,7 +155,24 @@ struct SjzMarkdownView: View {
         var out: [Block] = []
         var quote: [String] = []
         var code: [String]? = nil
+        var rows: [[String]] = []
         func flushQuote() { if !quote.isEmpty { out.append(.quote(quote)); quote = [] } }
+        func cells(_ l: String) -> [String] {
+            var t = l.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("|") { t.removeFirst() }
+            if t.hasSuffix("|") { t.removeLast() }
+            return t.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+        }
+        /// 表格：第二行是 | --- | ---: | 分隔行（冒号在右 = 右对齐）
+        func flushTable() {
+            guard !rows.isEmpty else { return }
+            defer { rows = [] }
+            if rows.count >= 2, rows[1].allSatisfy({ !$0.isEmpty && $0.allSatisfy { "-: ".contains($0) } }) {
+                out.append(.table(rows[0], Array(rows.dropFirst(2)), rows[1].map { $0.hasSuffix(":") }))
+            } else {
+                for r in rows { out.append(.para(r.joined(separator: "  "))) }
+            }
+        }
         for raw in lines {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("```") {
@@ -162,6 +180,8 @@ struct SjzMarkdownView: View {
                 continue
             }
             if code != nil { code!.append(raw); continue }
+            if line.hasPrefix("|"), line.count > 1 { flushQuote(); rows.append(cells(line)); continue }
+            flushTable()
             if line.isEmpty { flushQuote(); continue }
             if let m = imgRE.first(in: line) { flushQuote(); out.append(.image(m.group(2), m.group(1))); continue }
             if line.hasPrefix("#") {
@@ -183,11 +203,15 @@ struct SjzMarkdownView: View {
             if line == "---" || line == "***" || line == "___" { out.append(.rule); continue }
             if let m = origRE.first(in: line) { out.append(.original(m.group(1))); continue }
             if let m = layerRE.first(in: line) { out.append(.textLayer(m.group(1), m.group(2))); continue }
-            if line.hasPrefix("- ") || line.hasPrefix("* ") { out.append(.bullet(String(line.dropFirst(2)))); continue }
+            if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                let indent = raw.prefix(while: { $0 == " " }).count / 2
+                out.append(.bullet(String(line.dropFirst(2)), min(indent, 3))); continue
+            }
             if let m = orderedRE.first(in: line) { out.append(.ordered(m.group(1), m.group(2))); continue }
             out.append(.para(line))
         }
         if let c = code { out.append(.code(c.joined(separator: "\n"))) }
+        flushTable()
         flushQuote()
         return out
     }
@@ -248,10 +272,36 @@ struct SjzMarkdownView: View {
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
-        case .bullet(let t):
+        case .bullet(let t, let level):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("•").foregroundStyle(.secondary)
+                Text(level > 0 ? "◦" : "•").foregroundStyle(.secondary)
                 Text(inline(t)).font(.system(size: 13))
+            }
+            .padding(.leading, CGFloat(level) * 16)
+        case .table(let head, let body, let right):
+            ScrollView(.horizontal, showsIndicators: false) {
+                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                    GridRow {
+                        ForEach(Array(head.enumerated()), id: \.offset) { i, h in
+                            Text(inline(h)).font(.system(size: 12, weight: .semibold))
+                                .padding(.horizontal, 10).padding(.vertical, 5)
+                                .frame(maxWidth: .infinity, alignment: i < right.count && right[i] ? .trailing : .leading)
+                                .background(Color.primary.opacity(0.07))
+                        }
+                    }
+                    ForEach(Array(body.enumerated()), id: \.offset) { _, r in
+                        Divider().gridCellColumns(max(head.count, 1)).opacity(0.5)
+                        GridRow {
+                            ForEach(0 ..< head.count, id: \.self) { i in
+                                Text(inline(i < r.count ? r[i] : "")).font(.system(size: 12))
+                                    .padding(.horizontal, 10).padding(.vertical, 5)
+                                    .frame(maxWidth: .infinity, alignment: i < right.count && right[i] ? .trailing : .leading)
+                            }
+                        }
+                    }
+                }
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Color.primary.opacity(0.14), lineWidth: 0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
         case .ordered(let n, let t):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -365,6 +415,9 @@ enum SjzDetailStore {
     private static var cache: [String: Detail] = [:]
     private static var order: [String] = []
     private static var inflight: [String: Task<Detail?, Never>] = [:]
+    /// 上一次读取失败的原因（预览窗口里显示出来，不再只说「读不到」）
+    static var lastError: [String: String] = [:]
+    static func error(project: String, id: String) -> String { lastError[key(project, id)] ?? "" }
 
     private static func key(_ project: String, _ id: String) -> String { "\(project)|\(id)" }
 
@@ -376,7 +429,8 @@ enum SjzDetailStore {
         let k = key(project, id)
         if let t = inflight[k] { return await t.value }
         let t = Task { () -> Detail? in
-            guard let d = try? await api.captureDetail(project: project, id: id) else { return nil }
+            let d: (content: String, editable: Bool, images: [String: Data], files: [SjzFile], times: [String: String])
+            do { d = try await api.captureDetail(project: project, id: id); lastError[k] = nil } catch { lastError[k] = error.localizedDescription; return nil }
             return Detail(content: d.content, editable: d.editable, images: d.images.compactMapValues { NSImage(data: $0) }, files: d.files, times: d.times)
         }
         inflight[k] = t
@@ -413,6 +467,12 @@ struct SjzQuickLook: View {
     @State private var fileSel = ""
     @State private var jumpPage: Int?
     @State private var failed = false
+    /// 工作小结的手动编辑
+    @State private var editingSummary = false
+    @State private var editText = ""
+    @State private var savingSummary = false
+    @State private var editError = ""
+    @State private var exportingSummary = false
     /// 已经建好的面板（原件 / 文字）
     @State private var shown: Set<SjzCaptureEditor.PMode> = []
 
@@ -426,12 +486,34 @@ struct SjzQuickLook: View {
             if windowed { windowedBody } else { cardBody }
         }
         .onChange(of: mode) { _, m in shown.insert(m) }
+        .onReceive(NotificationCenter.default.publisher(for: .sjzSummaryEdit)) { n in
+            if windowed, (n.object as? String) == "\(project)|\(capture.id)" { beginEditSummary() }
+        }
         .task(id: capture.id) {
             if let c = SjzDetailStore.cached(project: project, id: capture.id) { apply(c, first: true) }
-            if let d = await SjzDetailStore.load(api: api, project: project, id: capture.id) {
-                apply(d, first: detail == nil)
-            } else if detail == nil { failed = true }
+            failed = false
+            var d = await SjzDetailStore.load(api: api, project: project, id: capture.id)
+            // 偶尔会赶上结审刚重启 / 会话过期：隔一会儿自动再读一次
+            if d == nil, detail == nil {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                d = await SjzDetailStore.load(api: api, project: project, id: capture.id)
+            }
+            if let d { apply(d, first: detail == nil) } else if detail == nil { failed = true }
         }
+    }
+
+    /// 读不到详情时的提示：带上原因和「重试」
+    @ViewBuilder private var failedNote: some View {
+        let why = SjzDetailStore.error(project: project, id: capture.id)
+        Label("暂时读不到详情，请确认结审在运行", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+        if !why.isEmpty { Text(why).font(.caption2).foregroundStyle(.tertiary).lineLimit(3).padding(.horizontal, 24) }
+        Button("重试") {
+            failed = false
+            Task {
+                if let d = await SjzDetailStore.load(api: api, project: project, id: capture.id) { apply(d, first: detail == nil) } else { failed = true }
+            }
+        }
+        .buttonStyle(.borderless).font(.caption)
     }
 
     // MARK: 独立窗口（访达空格预览的样子）
@@ -442,7 +524,20 @@ struct SjzQuickLook: View {
             // 标题条本身放在下面 overlay 的独立视图里（见 OnTopHost）：文字面板的 ScrollView 会把自己的范围伸到标题栏下面，盖住这里的按钮
             Color.clear.frame(height: 28)
             Group {
-                if let d = detail {
+                if editingSummary {
+                    VStack(spacing: 4) {
+                        TextEditor(text: $editText)
+                            .font(.system(size: 12.5, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                            .padding(.horizontal, 12).padding(.top, 6)
+                        HStack(spacing: 6) {
+                            Text("Markdown 源码；保存后这份小结会标为「手写」，自动生成不会再覆盖它").font(.caption2).foregroundStyle(.tertiary)
+                            if !editError.isEmpty { Text(editError).font(.caption2).foregroundStyle(.red).lineLimit(2) }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 14).padding(.bottom, 8)
+                    }
+                } else if let d = detail {
                     // 两个面板建好后一直留着，切换只是显示 / 隐藏，不再重新读 PDF、重新排版
                     ZStack {
                         if let f = currentFile, shown.contains(.original) {
@@ -477,7 +572,7 @@ struct SjzQuickLook: View {
                 } else {
                     VStack(spacing: 8) {
                         Spacer(minLength: 0)
-                        if failed { Label("暂时读不到详情，请确认结审在运行", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
+                        if failed { failedNote }
                         else { ProgressView().controlSize(.small) }
                         if !capture.summary.isEmpty { Text(capture.summary).font(.callout).foregroundStyle(.secondary).lineLimit(3).padding(.horizontal, 24) }
                         Spacer(minLength: 0)
@@ -499,13 +594,25 @@ struct SjzQuickLook: View {
             if !capture.isSummary { Text(capture.id).font(.system(size: 11)).foregroundStyle(.tertiary).fixedSize() }
             Spacer(minLength: 8)
             HStack(spacing: 0) {
-                if hasOriginal, let f = currentFile {
-                    WinIconButton(icon: "arrow.up.forward.app", help: "用默认应用打开") { NSWorkspace.shared.open(f.url) }
+                if editingSummary {
+                    Button("取消") { editingSummary = false; editError = "" }
+                        .buttonStyle(.borderless).font(.system(size: 12)).padding(.trailing, 8)
+                    Button(savingSummary ? "保存中…" : "保存") { saveSummaryEdit() }
+                        .buttonStyle(.borderedProminent).controlSize(.small).disabled(savingSummary)
+                        .padding(.trailing, 6)
+                } else {
+                    if capture.isSummary {
+                        WinIconButton(icon: "square.and.pencil", help: "编辑这份小结（回车）") { beginEditSummary() }
+                        WinIconButton(icon: exportingSummary ? "hourglass" : "doc.badge.arrow.up", help: "导出 Word（公文版式）") { exportSummaryWord() }
+                    }
+                    if hasOriginal, let f = currentFile {
+                        WinIconButton(icon: "arrow.up.forward.app", help: "用默认应用打开") { NSWorkspace.shared.open(f.url) }
+                    }
+                    WinIconButton(icon: "note.text", help: "在结审中打开") { [model, project, capture] in model.openSjzCapture(project: project, capture) }
                 }
-                WinIconButton(icon: "note.text", help: "在结审中打开") { [model, project, capture] in model.openSjzCapture(project: project, capture) }
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.leading, 11).padding(.trailing, 4)
         .frame(maxWidth: .infinity, minHeight: 28, maxHeight: 28)
         .background(WindowDragArea())
         .ignoresSafeArea()
@@ -559,7 +666,7 @@ struct SjzQuickLook: View {
                     // 详情还没回来时先把已有的信息摆出来，不让窗口空着
                     VStack(alignment: .leading, spacing: 8) {
                         if !capture.summary.isEmpty { Text(capture.summary).font(.callout).foregroundStyle(.secondary) }
-                        if failed { Label("暂时读不到详情，请确认结审在运行", systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
+                        if failed { failedNote }
                         else { ProgressView().controlSize(.small) }
                         Spacer(minLength: 0)
                     }
@@ -583,6 +690,63 @@ struct SjzQuickLook: View {
         .background(embedded || windowed ? Color.primary.opacity(0.02) : Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: embedded || windowed ? 0 : 14, style: .continuous))
         .overlay(RoundRect14(show: !embedded && !windowed))
         .shadow(color: .black.opacity(embedded || windowed ? 0 : 0.18), radius: embedded || windowed ? 0 : 22, y: embedded || windowed ? 0 : 8)
+    }
+
+    private var summaryPath: String { String(capture.id.dropFirst(SjzSummary.idPrefix.count)) }
+
+    /// 读小结原文，切到编辑状态
+    private func beginEditSummary() {
+        guard capture.isSummary, !editingSummary, detail != nil else { return }
+        Task {
+            do {
+                editText = try await api.summarySource(project: project, path: summaryPath)
+                editError = ""
+                editingSummary = true
+            } catch {
+                let a = NSAlert()
+                a.messageText = "读不到小结原文"
+                a.informativeText = error.localizedDescription
+                a.runModal()
+            }
+        }
+    }
+
+    /// 导出成公文版式的 Word，导出后用默认程序打开
+    private func exportSummaryWord() {
+        guard capture.isSummary, !exportingSummary else { return }
+        exportingSummary = true
+        Task {
+            defer { exportingSummary = false }
+            do {
+                let url = try await api.exportSummary(project: project, path: summaryPath)
+                NSWorkspace.shared.open(url)
+                model.showNotice("已导出 \(url.lastPathComponent)")
+            } catch {
+                let a = NSAlert()
+                a.messageText = "导出失败"
+                a.informativeText = error.localizedDescription
+                a.runModal()
+            }
+        }
+    }
+
+    private func saveSummaryEdit() {
+        guard !savingSummary else { return }
+        if editText.trimmed.isEmpty { editError = "内容不能为空"; return }
+        savingSummary = true
+        editError = ""
+        Task {
+            defer { savingSummary = false }
+            do {
+                try await api.saveSummary(project: project, path: summaryPath, markdown: editText)
+                SjzDetailStore.forget(project: project, id: capture.id)
+                if let d = await SjzDetailStore.load(api: api, project: project, id: capture.id) { apply(d, first: false) }
+                editingSummary = false
+                NotificationCenter.default.post(name: .sjzCapturesChanged, object: nil)
+            } catch {
+                editError = error.localizedDescription
+            }
+        }
     }
 
     private func apply(_ d: SjzDetailStore.Detail, first: Bool) {

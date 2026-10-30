@@ -122,7 +122,8 @@ struct SjzApi {
                                   open: (t["open"] as? Int) ?? 0, overdue: (t["overdue"] as? Int) ?? 0,
                                   dueToday: (t["dueToday"] as? Int) ?? 0, pendingReviews: (p["pendingReviews"] as? Int) ?? 0,
                                   type: p["type"] as? String, phase: p["phase"] as? String, status: p["status"] as? String,
-                                  auditedUnit: p["auditedUnit"] as? String, period: p["period"] as? String, planRange: p["planRange"] as? String)
+                                  auditedUnit: p["auditedUnit"] as? String, period: p["period"] as? String, planRange: p["planRange"] as? String,
+                                  typeLabel: p["typeLabel"] as? String, phaseLabel: p["phaseLabel"] as? String, statusLabel: p["statusLabel"] as? String)
         }
         ov.next = tasks.sorted { ($0.dueDate.isEmpty ? "9999" : $0.dueDate) < ($1.dueDate.isEmpty ? "9999" : $1.dueDate) }
         return ov
@@ -223,8 +224,38 @@ struct SjzApi {
         return ((r["summaries"] as? [JSON]) ?? []).compactMap { c in
             guard let path = c["path"] as? String else { return nil }
             return SjzSummary(path: path, title: (c["title"] as? String) ?? "", kind: (c["kind"] as? String) ?? "",
-                              period: (c["period"] as? String) ?? "", updatedAt: (c["updatedAt"] as? String) ?? "")
+                              period: (c["period"] as? String) ?? "", updatedAt: (c["updatedAt"] as? String) ?? "",
+                              auto: (c["auto"] as? Bool) ?? false, ai: (c["generatedBy"] as? String) == "ai",
+                              manual: (c["generatedBy"] as? String) == "manual")
         }
+    }
+
+    /// 小结的原文（Markdown，含附录），编辑用
+    func summarySource(project: String, path: String) async throws -> String {
+        let r = try await call("get_summary", ["project": project, "path": path])
+        return (r["source"] as? String) ?? (r["content"] as? String) ?? ""
+    }
+
+    /// 导出成公文版式的 Word，返回文件的绝对路径
+    func exportSummary(project: String, path: String) async throws -> URL {
+        let r = try await call("export_summary", ["project": project, "path": path])
+        guard let p = r["absPath"] as? String else { throw McpError.tool("导出失败") }
+        return URL(fileURLWithPath: p)
+    }
+
+    /// 保存手动修改后的小结；保存后这份小结标记为「手写」
+    func saveSummary(project: String, path: String, markdown: String) async throws {
+        _ = try await call("update_summary", ["project": project, "path": path, "markdown": markdown])
+    }
+
+    /// 生成一份工作小结（按事实汇总）。同一统计期间已有时 exists 为 true，不覆盖，除非 overwrite
+    func generateSummary(project: String, kind: String, overwrite: Bool = false) async throws -> (exists: Bool, summary: SjzSummary?, message: String) {
+        let r = try await call("generate_summary", ["project": project, "kind": kind, "overwrite": overwrite])
+        let msg = (r["message"] as? String) ?? ""
+        guard let path = r["path"] as? String else { return (false, nil, msg) }
+        let s = SjzSummary(path: path, title: (r["title"] as? String) ?? "", kind: (r["kind"] as? String) ?? kind,
+                           period: (r["period"] as? String) ?? "", updatedAt: (r["updatedAt"] as? String) ?? "")
+        return ((r["exists"] as? Bool) ?? false, s, msg)
     }
 
     // MARK: 拾忆来源台账
@@ -441,17 +472,24 @@ struct SjzProjectStat: Equatable, Hashable, Codable, Identifiable {
     var auditedUnit: String? = nil
     var period: String? = nil
     var planRange: String? = nil
+    /// 结审给出的中文名（优先用；老版本结审没有时退回下面的本地对照）
+    var typeLabel: String? = nil
+    var phaseLabel: String? = nil
+    var statusLabel: String? = nil
     var id: String { name }
 
     /// 项目基本信息标签：类型 · 阶段 · 状态 · 被审计单位 · 审计期间（有什么显示什么）
     var infoTags: [String] {
         var t: [String] = []
-        if let x = type, !x.isEmpty { t.append(x == "special" ? "专项审计" : "常规审计") }
-        if let x = phase, !x.isEmpty {
-            t.append(["preparation": "审计准备", "implementation": "审计实施", "reporting": "审计报告", "rectification": "整改跟踪"][x] ?? x)
+        if let x = typeLabel, !x.isEmpty { t.append(x) }
+        else if let x = type, !x.isEmpty { t.append(x == "special" ? "专项审计" : "普通审计") }
+        if let x = phaseLabel, !x.isEmpty { t.append(x) }
+        else if let x = phase, !x.isEmpty {
+            t.append(["preparation": "审前准备", "implementation": "审计实施", "reporting": "报告与处理", "rectification": "整改跟踪"][x] ?? x)
         }
-        if let x = status, !x.isEmpty, x != "in_progress" {
-            t.append(["planning": "筹划中", "reporting": "报告阶段"][x] ?? x)
+        if let x = statusLabel, !x.isEmpty { t.append(x) }
+        else if let x = status, !x.isEmpty, x != "in_progress" {
+            t.append(["planning": "筹划中", "reporting": "报告中", "completed": "已完成", "archived": "已归档"][x] ?? x)
         }
         if let x = auditedUnit, !x.isEmpty { t.append(x) }
         // 审计期间和计划起止只显示一个：有审计期间用期间，没填再用计划
@@ -511,6 +549,11 @@ struct SjzSummary: Identifiable, Hashable {
     let kind: String
     let period: String
     let updatedAt: String
+    /// 定时自动生成的 / 用 AI 润色过的
+    var auto = false
+    var ai = false
+    /// 手写的（自己写或手动改过）
+    var manual = false
     static let idPrefix = "summary:"
     var id: String { path }
     /// 套成一条「记录」：这样就能用拾忆已有的预览窗口打开
@@ -656,6 +699,7 @@ struct SjzEvent: Identifiable, Equatable {
         case "clue.task_done": return "checkmark.circle.fill"
         case "clue.verified_idle": return "clock.badge.exclamationmark"
         case "evidence.gap": return "doc.badge.ellipsis"
+        case "summary.new": return "doc.richtext.fill"
         default: return "checkmark.shield.fill"
         }
     }
@@ -664,4 +708,6 @@ struct SjzEvent: Identifiable, Equatable {
 extension Notification.Name {
     /// 结审里的拾忆来源台账有变化（刚保存 / 编辑 / 删除了内容）
     static let sjzCapturesChanged = Notification.Name("sjz.capturesChanged")
+    /// 预览窗口里按回车：编辑这份工作小结（object 为 "项目|记录编号"）
+    static let sjzSummaryEdit = Notification.Name("sjz.summaryEdit")
 }

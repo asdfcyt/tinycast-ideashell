@@ -298,6 +298,15 @@ extension AppModel {
 
     /// 提醒事件 → 结审里对应的页面
     func openSjzEvent(_ e: SjzEvent) {
+        // 自动生成的工作小结：用预览窗口打开（事件编号形如 summary.new:<项目>:<小结路径>:<时间>）
+        if e.type == "summary.new" {
+            let rest = e.id.dropFirst("summary.new:\(e.project):".count)
+            if let path = rest.split(separator: ":", maxSplits: 1).first.map(String.init), !path.isEmpty {
+                let kind = path.contains("日报") ? "daily" : path.contains("周报") ? "weekly" : path.contains("阶段") ? "phase" : "project"
+                openSjzPreview(project: e.project, capture: SjzSummary(path: path, title: e.title, kind: kind, period: "", updatedAt: e.at).asCapture)
+                return
+            }
+        }
         let page: String
         if e.type.hasPrefix("research") { page = "/research" }
         else if e.type.hasPrefix("task") { page = "/tasks" }

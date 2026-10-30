@@ -968,7 +968,7 @@ struct AuditProjectCard: View {
                         mini("逾期", "\(stat?.overdue ?? 0)", (stat?.overdue ?? 0) > 0 ? .red : .primary.opacity(0.85), .overdue)
                         mini("待核实线索", "\(pendingClues)", pendingClues > 0 ? .pink : .primary.opacity(0.85), .clues)
                         mini("今天新增", "\(todayCount)", todayCount > 0 ? Brand.orange : .primary.opacity(0.85), .today)
-                        mini("工作小结", "\(summaries.count)", summaries.isEmpty ? .primary.opacity(0.85) : .indigo, .summaries)
+                        mini("工作小结", "\(summaries.count)", .primary.opacity(0.85), .summaries)
                     }
                     .padding(.horizontal, -6)
                     if !rs.isEmpty {
@@ -1066,17 +1066,69 @@ struct AuditProjectCard: View {
     }
 
     private func peekList(_ k: Peek) -> some View {
-        PeekListView(kind: k, entries: entries(k)) { peek = nil }
+        PeekListView(kind: k, entries: entries(k),
+                     headCount: k == .summaries ? Self.summaryHeadCount(summaries) : nil,
+                     actions: k == .summaries ? Self.summaryActions(project: name, model: model) : []) { peek = nil }
     }
 
     /// 工作小结的列表项：点一下在结审里打开这份小结
     static func summaryEntries(_ list: [SjzSummary], project: String, model: AppModel) -> [PeekEntry] {
-        list.map { s in
+        orderedSummaries(list).map { s in
             PeekEntry(id: "summary:" + s.path, icon: "doc.richtext", tint: .indigo,
-                      title: "\(s.kindLabel) · \(s.shortPeriod)", sub: s.title,
+                      title: "\(s.kindLabel) · \(s.shortPeriod)",
+                      sub: [s.manual ? "手写" : (s.auto ? "自动生成" : "手动生成"), s.ai ? "AI 润色" : ""].filter { !$0.isEmpty }.joined(separator: " · "),
                       trailing: s.date.map(timeLabel) ?? "", trailTint: .secondary,
                       open: { model.openSjzPreview(project: project, capture: s.asCapture) })
         }
+    }
+
+    /// 排序：每种小结（周报、日报、阶段报告、项目小结）最新的一份排最前，其余按时间排在后面
+    static func orderedSummaries(_ list: [SjzSummary]) -> [SjzSummary] {
+        let sorted = list.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        let heads = ["weekly", "daily", "phase", "project"].compactMap { k in sorted.first { $0.kind == k } }
+        return heads + sorted.filter { s in !heads.contains(where: { $0.path == s.path }) }
+    }
+
+    /// 前面几条默认展开（每种最新的一份），其余折叠
+    static func summaryHeadCount(_ list: [SjzSummary]) -> Int { Set(list.map(\.kind)).count }
+
+    struct PeekAction: Identifiable {
+        let id: String
+        let label: String
+        let icon: String
+        let run: () async -> Void
+    }
+
+    /// 弹窗底部的「生成今日日报 / 本周周报」
+    static func summaryActions(project: String, model: AppModel) -> [PeekAction] {
+        [("daily", "生成今日日报", "sun.max"), ("weekly", "生成本周周报", "calendar")].map { kind, label, icon in
+            PeekAction(id: kind, label: label, icon: icon, run: { await generateSummary(project: project, kind: kind, model: model) })
+        }
+    }
+
+    /// 生成并打开预览；同一统计期间已有小结时先问：覆盖还是查看已有的
+    @MainActor static func generateSummary(project: String, kind: String, model: AppModel) async {
+        do {
+            var r = try await model.sjz.generateSummary(project: project, kind: kind)
+            if r.exists, let s = r.summary {
+                let alert = NSAlert()
+                alert.messageText = "已经有一份\(s.kindLabel)"
+                let mine = r.message.contains("手写")
+                alert.informativeText = mine ? "这份是你手写的，覆盖后你写的内容会丢失。要覆盖，还是先看看已有的？" : "同一统计期间只保留一份。要覆盖重新生成，还是先看看已有的？"
+                alert.addButton(withTitle: mine ? "仍然覆盖" : "覆盖重新生成")
+                alert.addButton(withTitle: "查看已有的")
+                alert.addButton(withTitle: "取消")
+                switch alert.runModal() {
+                case .alertFirstButtonReturn: r = try await model.sjz.generateSummary(project: project, kind: kind, overwrite: true)
+                case .alertSecondButtonReturn: model.openSjzPreview(project: project, capture: s.asCapture); return
+                default: return
+                }
+            }
+            guard let s = r.summary else { model.showNotice(r.message.isEmpty ? "没有生成" : r.message); return }
+            SjzDetailStore.forget(project: project, id: s.asCapture.id)
+            model.showNotice("已生成\(s.kindLabel)")
+            model.openSjzPreview(project: project, capture: s.asCapture)
+        } catch { model.showNotice(error.localizedDescription) }
     }
 
     private func capEntries(_ list: [SjzCapture]) -> [PeekEntry] {
@@ -1241,8 +1293,16 @@ private struct PeekTile: View {
 struct PeekListView: View {
     let kind: AuditProjectCard.Peek
     let entries: [AuditProjectCard.PeekEntry]
+    /// 只先显示前几条，其余折叠成「显示更早的 n 条」；nil = 全部显示
+    var headCount: Int? = nil
+    var actions: [AuditProjectCard.PeekAction] = []
     let close: () -> Void
     @State private var hoverId: String?
+    @State private var expanded = false
+    private var shown: [AuditProjectCard.PeekEntry] {
+        guard let h = headCount, !expanded, entries.count > h else { return entries }
+        return Array(entries.prefix(h))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1260,7 +1320,7 @@ struct PeekListView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
-                        ForEach(entries) { e in
+                        ForEach(shown) { e in
                             Button { close(); e.open() } label: {
                                 HStack(spacing: 9) {
                                     Image(systemName: e.icon).font(.system(size: 11, weight: .semibold)).foregroundStyle(e.tint)
@@ -1283,10 +1343,30 @@ struct PeekListView: View {
                             .buttonStyle(.plain)
                             .onHover { hoverId = $0 ? e.id : (hoverId == e.id ? nil : hoverId) }
                         }
+                        if let h = headCount, entries.count > h {
+                            Button { expanded.toggle() } label: {
+                                Text(expanded ? "收起" : "显示更早的 \(entries.count - h) 份")
+                                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 7)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                     .padding(.vertical, 4)
                 }
                 .frame(maxHeight: 340)
+            }
+            if !actions.isEmpty {
+                Divider().opacity(0.6)
+                HStack(spacing: 8) {
+                    ForEach(actions) { a in
+                        Button { close(); Task { await a.run() } } label: { Label(a.label, systemImage: a.icon).font(.system(size: 11.5)) }
+                            .buttonStyle(.bordered).controlSize(.small)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 9)
             }
         }
         .frame(width: 340)

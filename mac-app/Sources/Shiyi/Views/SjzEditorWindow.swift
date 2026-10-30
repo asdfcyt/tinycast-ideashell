@@ -178,7 +178,10 @@ final class SjzPreviewWindows: NSObject, NSWindowDelegate {
             switch ev.keyCode {
             case 49, 53: if !ev.isARepeat { w.close() }; return nil
             case 36, 76:
-                if let it = self.items[k], !it.capture.isSummary { w.close(); self.model?.openSjzEditor(project: it.project, capture: it.capture) }
+                if let it = self.items[k] {
+                    if it.capture.isSummary { NotificationCenter.default.post(name: .sjzSummaryEdit, object: "\(it.project)|\(it.capture.id)") }
+                    else { w.close(); self.model?.openSjzEditor(project: it.project, capture: it.capture) }
+                }
                 return nil
             default: return ev
             }
