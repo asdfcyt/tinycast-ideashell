@@ -186,7 +186,7 @@ final class DailyService: @unchecked Sendable {
     }
 
     /// 追加一条到 [at] 那天的 Daily Note（没有就创建，文件夹也按需创建）。条目时间用「记录时间」
-    func append(_ text: String, at: Date) async throws {
+    func append(_ text: String, at: Date, images: [(name: String, data: Data)] = []) async throws {
         let date = Day.string(at)
         let c = Day.cal.dateComponents([.hour, .minute], from: at)
         let stamp = date + " " + String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
@@ -200,7 +200,7 @@ final class DailyService: @unchecked Sendable {
             let notes = try await api.notesInFolder(folder.id)
             if let hit = notes.first(where: { dateRE.first(in: $0.title)?.group(0) == date }) {
                 let detail = try await api.noteFull(hit.id)
-                try await api.updateNoteBody(hit.id, body: DailyFormat.appendEntry(old: detail.content, text: text, stamp: stamp))
+                try await api.updateNoteBody(hit.id, body: DailyFormat.appendEntry(old: detail.content, text: text, stamp: stamp), images: images)
                 return
             }
         }
@@ -210,7 +210,7 @@ final class DailyService: @unchecked Sendable {
             folderId = RX(#"folder_id[:\s"]*([a-f0-9]+)"#, multiline: false, ignoreCase: true).first(in: result)?.group(1)
                 ?? RX("[a-f0-9]{32}", multiline: false, ignoreCase: true).first(in: result)?.group(0)
         }
-        try await api.createNote(title: date, body: DailyFormat.formatEntry(text, stamp: stamp), tags: ["daily-note"], folderId: folderId, inlineTags: false)
+        try await api.createNote(title: date, body: DailyFormat.formatEntry(text, stamp: stamp), tags: ["daily-note"], folderId: folderId, inlineTags: false, images: images)
     }
 
     /// 删除 [date] 那天 Daily Note 里的一条日记；返回是否真的删掉了

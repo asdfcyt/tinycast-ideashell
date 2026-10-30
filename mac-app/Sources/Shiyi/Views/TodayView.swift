@@ -990,8 +990,8 @@ struct AuditProjectCard: View {
                     let recent = recentEntries
                     if !recent.isEmpty {
                         Divider().opacity(0.6)
-                        Text("最近").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 6) {
+                        Text("最近").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.bottom, -4)
+                        VStack(alignment: .leading, spacing: 0) {
                             ForEach(recent) { r in
                                 RecentRow(icon: r.icon, tint: r.tint, text: r.text, time: r.date.map(Self.timeLabel) ?? "", action: r.action)
                             }
@@ -1246,12 +1246,12 @@ private struct RecentRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 11)).foregroundStyle(tint)
-                Text(text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Image(systemName: icon).font(.system(size: 10.5)).foregroundStyle(tint)
+                Text(text).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 4)
-                if !time.isEmpty { Text(time).font(.caption2).foregroundStyle(.tertiary) }
+                if !time.isEmpty { Text(time).font(.system(size: 10.5)).foregroundStyle(.tertiary) }
             }
-            .padding(.horizontal, 6).padding(.vertical, 3)
+            .padding(.horizontal, 6).padding(.vertical, 2)
             .background(Color.primary.opacity(hovering ? 0.06 : 0), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .contentShape(Rectangle())
         }
@@ -1311,6 +1311,17 @@ struct PeekListView: View {
                 Text(kind.title).font(.system(size: 13, weight: .semibold))
                 Text("\(entries.count)").font(.system(size: 12, weight: .medium)).foregroundStyle(.tertiary)
                 Spacer()
+                // 「生成今日日报 / 本周周报」之类的动作：以图标放在标题右边，悬停显示名称
+                ForEach(actions) { a in
+                    Button { close(); Task { await a.run() } } label: {
+                        Image(systemName: a.icon).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Brand.orange)
+                            .frame(width: 26, height: 24)
+                            .background(Brand.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(a.label)
+                }
             }
             .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 8)
             Divider().opacity(0.6)
@@ -1356,17 +1367,6 @@ struct PeekListView: View {
                     .padding(.vertical, 4)
                 }
                 .frame(maxHeight: 340)
-            }
-            if !actions.isEmpty {
-                Divider().opacity(0.6)
-                HStack(spacing: 8) {
-                    ForEach(actions) { a in
-                        Button { close(); Task { await a.run() } } label: { Label(a.label, systemImage: a.icon).font(.system(size: 11.5)) }
-                            .buttonStyle(.bordered).controlSize(.small)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 9)
             }
         }
         .frame(width: 340)

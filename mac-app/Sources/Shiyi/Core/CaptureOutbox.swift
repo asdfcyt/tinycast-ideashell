@@ -83,7 +83,10 @@ final class CaptureOutbox {
         loadIfNeeded()
         self.model = model
         let message: String
-        if !images.isEmpty, !kind.isSjz { throw McpError.tool("图片只能保存到结审（线索 / 想法 / 证据 / 法规），请先切换类型") }
+        if !images.isEmpty, kind == .todo { throw McpError.tool("待办不能带图片，请先切换成笔记 / Daily Note / 结审类型") }
+        if !images.isEmpty, kind == .daily || kind == .note, images.count > DropImages.maxImages {
+            throw McpError.tool("一次最多带 \(DropImages.maxImages) 张图片")
+        }
         switch kind {
         case .todo:
             let title = a.todo.content.trimmed
@@ -94,11 +97,11 @@ final class CaptureOutbox {
             message = "已添加待办" + (date.map { " · " + Day.label($0) + (time.map { " " + $0 } ?? "") } ?? "")
         case .daily:
             guard model.hasIdeashell else { throw McpError.noCredential }
-            guard !a.text.trimmed.isEmpty else { throw McpError.tool("内容为空") }
+            guard !ComposerImage.stripMarker(a.text).trimmed.isEmpty || !images.isEmpty else { throw McpError.tool("内容为空") }
             message = "已记入今天的 Daily Note"
         case .note:
             guard model.hasIdeashell else { throw McpError.noCredential }
-            guard !a.body.trimmed.isEmpty else { throw McpError.tool("内容为空") }
+            guard !ComposerImage.stripMarker(a.body).trimmed.isEmpty || !images.isEmpty else { throw McpError.tool("内容为空") }
             message = "已保存笔记"
         case .clue, .idea, .evidence, .regulation:
             guard model.hasSjz else { throw McpError.tool("先到「设置」开启并连接结审") }

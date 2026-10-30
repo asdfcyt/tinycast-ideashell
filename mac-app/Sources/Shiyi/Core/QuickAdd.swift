@@ -45,17 +45,20 @@ extension AppModel {
 
         case .daily:
             guard hasIdeashell else { throw McpError.noCredential }
-            let text = a.text.trimmed
-            guard !text.isEmpty else { throw McpError.tool("内容为空") }
+            let fitted = try await fitNoteImages(images)
+            var text = ComposerImage.stripMarker(a.text).trimmed
+            guard !text.isEmpty || !fitted.isEmpty else { throw McpError.tool("内容为空") }
+            // 只贴了图没写字：条目里留一个占位，图片作为附件挂在今天的 Daily Note 上
+            if text.isEmpty { text = "[图片 \(fitted.count) 张]" }
             let now = Date()
-            try await daily.append(text, at: now)
+            try await daily.append(text, at: now, images: fitted)
             let c = Day.cal.dateComponents([.hour, .minute], from: now)
             let flat = text.components(separatedBy: .newlines).map(\.trimmed).filter { !$0.isEmpty }.joined(separator: " ")
             lastCreated = .daily(date: Day.string(now), entry: DailyEntry(time: String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0), text: flat))
             invalidateHistory()
             Task { await loadDailyToday(ifStale: false) }
             Task { if section == .review { await loadRiver(silent: true) } }
-            return "已记入今天的 Daily Note"
+            return "已记入今天的 Daily Note" + (fitted.isEmpty ? "" : " · \(fitted.count) 张图片")
 
         case .clue, .idea, .evidence, .regulation:
             // 结审：不经过闪念贝壳 / 滴答，直接存进钉住的审计项目；文字和图片按顺序混排
@@ -65,8 +68,9 @@ extension AppModel {
 
         case .note:
             guard hasIdeashell else { throw McpError.noCredential }
-            let body = a.body.trimmed
-            guard !body.isEmpty else { throw McpError.tool("内容为空") }
+            let fitted = try await fitNoteImages(images)
+            let body = ComposerImage.stripMarker(a.body).trimmed
+            guard !body.isEmpty || !fitted.isEmpty else { throw McpError.tool("内容为空") }
             var folder: IdeashellApi.Folder?
             var folderNote = ""
             let folders = (try? await ideashell.listFolders()) ?? []
@@ -77,14 +81,35 @@ extension AppModel {
                 folder = CaptureParser.inferFolder(body, folders: folders)
             }
             let first = body.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmed ?? body
-            try await ideashell.createNote(title: String(first.prefix(30)), body: body, tags: a.tags, folderId: folder?.id)
+            let title = first.isEmpty ? "图片笔记 " + Self.clockLabel(Date()) : String(first.prefix(30))
+            try await ideashell.createNote(title: title, body: body, tags: a.tags, folderId: folder?.id, images: fitted)
             invalidateHistory()
             Task {
                 await loadTimeline(silent: true)
                 if section == .review { await loadRiver(silent: true) }
             }
-            return "已保存笔记" + (folder.map { " 📁" + $0.name } ?? "") + folderNote
+            return "已保存笔记" + (fitted.isEmpty ? "" : " · \(fitted.count) 张图片") + (folder.map { " 📁" + $0.name } ?? "") + folderNote
         }
+    }
+
+    private static func clockLabel(_ d: Date) -> String {
+        let c = Day.cal.dateComponents([.month, .day, .hour, .minute], from: d)
+        return String(format: "%02d-%02d %02d:%02d", c.month ?? 0, c.day ?? 0, c.hour ?? 0, c.minute ?? 0)
+    }
+
+    /// 笔记 / Daily Note 的图片附件：压到服务端的上限内（单张 ≤ 5MB、最多 9 张）
+    private func fitNoteImages(_ images: [ComposerImage]) async throws -> [(name: String, data: Data)] {
+        guard !images.isEmpty else { return [] }
+        guard images.count <= DropImages.maxImages else { throw McpError.tool("一次最多带 \(DropImages.maxImages) 张图片") }
+        let fitted = await Task.detached(priority: .userInitiated) {
+            images.enumerated().compactMap { i, im -> (name: String, data: Data)? in
+                let name = im.name.trimmed.isEmpty ? "图片-\(i + 1)" : im.name
+                guard let r = DropImages.fit(im.data, name: name) else { return nil }
+                return (name: r.name, data: r.data)
+            }
+        }.value
+        guard !fitted.isEmpty else { throw McpError.tool("图片读取失败，请换一张试试") }
+        return fitted
     }
 
     /// 主窗口里的短暂提示

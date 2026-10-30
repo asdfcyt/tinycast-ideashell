@@ -57,8 +57,13 @@ struct QuickAddView: View {
     @State private var optionsOpen = false
 
     private var analysis: CaptureAnalysis { CaptureParser.analyze(text, sjz: model.hasSjz) }
-    /// 自动识别的类型：贴了图片又没写前缀，按「证据」处理（和截图保存一致）
-    private func autoKind(_ a: CaptureAnalysis) -> CaptureKind { !images.isEmpty && model.hasSjz ? .evidence : a.recommended }
+    /// 自动识别的类型：贴了图片又没写前缀，按「笔记」处理（图片作为附件）；没连闪念贝壳才退到结审「证据」。
+    /// 想存证据 / 线索，用前缀或 Tab 手动选
+    private func autoKind(_ a: CaptureAnalysis) -> CaptureKind {
+        guard !images.isEmpty else { return a.recommended }
+        if model.hasIdeashell { return .note }
+        return model.hasSjz ? .evidence : a.recommended
+    }
     private func kind(_ a: CaptureAnalysis) -> CaptureKind { override ?? a.forced ?? sticky ?? autoKind(a) }
     private func clearSticky() { sticky = nil; UserDefaults.standard.removeObject(forKey: Self.stickyKey) }
 
@@ -86,7 +91,7 @@ struct QuickAddView: View {
                             text: $text,
                             images: $images,
                             contentHeight: $contentH,
-                            allowsImages: model.hasSjz && record == nil,
+                            allowsImages: (model.hasSjz || model.hasIdeashell) && record == nil,
                             markdown: note != nil,
                             fontSize: note != nil ? 14 : (compact ? 14 : 16),
                             focusTick: focusTick,
@@ -337,7 +342,7 @@ struct QuickAddView: View {
                 }
             }
             if !images.isEmpty {
-                Text("\(images.count) 张图片 · 按在文字里的位置混排保存").font(.caption2).foregroundStyle(.tertiary)
+                Text("\(images.count) 张图片 · " + (k.isSjz ? "按在文字里的位置混排保存" : "作为附件保存")).font(.caption2).foregroundStyle(.tertiary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

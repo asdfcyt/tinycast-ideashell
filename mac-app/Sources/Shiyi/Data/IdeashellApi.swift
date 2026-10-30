@@ -27,8 +27,13 @@ struct IdeashellApi {
 
     /// 整篇覆盖笔记正文
     @discardableResult
-    func updateNoteBody(_ noteId: String, body: String) async throws -> String {
-        try await mcp.callText("note_update", ["note_id": noteId, "content": body])
+    func updateNoteBody(_ noteId: String, body: String, images: [(name: String, data: Data)] = []) async throws -> String {
+        var args: JSON = ["note_id": noteId, "content": body]
+        // note_update 的 images 是「追加」：笔记上已有的附件保留，字节相同的图片会被跳过
+        if !images.isEmpty {
+            args["images"] = images.map { ["data": $0.data.base64EncodedString(), "name": $0.name] as JSON }
+        }
+        return try await mcp.callText("note_update", args)
     }
 
     /// 闪念贝壳自带的待办（没连滴答时的退路）

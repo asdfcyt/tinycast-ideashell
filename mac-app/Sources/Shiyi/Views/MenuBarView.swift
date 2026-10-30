@@ -40,7 +40,7 @@ struct MenuBarView: View {
     /// 出现 / 窗口变成 key 时自动刷新。灵动岛里关掉：点一下按钮窗口就变成 key，刷新结果会压在高度动画上，由岛在展开动画停稳后统一刷新
     var autoRefresh = true
     @State private var adding = false
-    @ObservedObject private var shelf = StickyShelf.shared
+    @ObservedObject private var mic = MicEngine.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -192,25 +192,11 @@ struct MenuBarView: View {
             if model.todosLoading { ProgressView().controlSize(.small) }
             iconButton(adding ? "xmark" : "plus", adding ? "收起" : "快速记录") { adding.toggle() }
             iconButton("note.text.badge.plus", "新建便签（可钉在桌面上）") { StickyController.shared.create() }
-            if !shelf.closed.isEmpty {
-                Menu {
-                    ForEach(shelf.closed.prefix(15)) { n in
-                        Button(StickyShelf.preview(n)) { StickyController.shared.reopen(n.id) }
-                    }
-                    Divider()
-                    Button("清空已关闭的便签") { StickyController.shared.clearClosed() }
-                } label: {
-                    Image(systemName: "tray.full")
-                        .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.secondary)
-                        .frame(width: 26, height: 26)
-                        .background(Color.primary.opacity(0.06), in: Circle())
-                        .contentShape(Circle())
-                }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .help("已关闭的便签")
-            }
             iconButton("arrow.clockwise", "刷新") { Task { await model.loadOverview() } }
-            iconButton("dot.radiowaves.left.and.right", "猛犸麦克风按键") { MicWindow.show() }
+            // 只在插着猛犸麦克风接收器时才显示
+            if mic.attached {
+                iconButton("dot.radiowaves.left.and.right", "猛犸麦克风按键") { MicWindow.show() }
+            }
             iconButton("macwindow", "打开拾忆") { MainWindow.show() }
             iconButton("power", "退出") { NSApp.terminate(nil) }
         }
