@@ -24,12 +24,16 @@ struct AgentsPane: View {
     @AppStorage(AgentPrefs.completionWait) private var doneWait = 30
     @AppStorage(AgentPrefs.doneAI) private var doneAI = false
     @AppStorage(AgentPrefs.runStatus) private var runStatus = true
-    @ObservedObject private var dispatch = DispatchCenter.shared
     @AppStorage(AgentPrefs.autoReadOnly) private var autoRO = true
     @AppStorage(AgentPrefs.timeout) private var timeout = 90
     @AppStorage(AgentPrefs.fallback) private var fallback = "ask"
     @AppStorage(AgentPrefs.sound) private var sound = true
 
+    /// 权限档存在 UserDefaults 里，改了之后靠它刷新界面
+    @State private var accessTick = 0
+    @ObservedObject private var ruleEngine = DispatchRuleEngine.shared
+    @State private var ruleEditing: RuleEdit?
+    @State private var editing: ProfileEdit?
     @State private var installed: [String] = []
     @State private var wbInstalled: [String] = []
     @State private var ocInstalled = false
@@ -137,16 +141,45 @@ struct AgentsPane: View {
                 SToggle("AI 写结论和建议", nil, $doneAI)
             }
 
-            if !dispatch.jobs.isEmpty {
-                SGroup("最近派活") {
-                    ForEach(dispatch.jobs.prefix(5)) { j in
-                        SRow(j.prompt.replacingOccurrences(of: "\n", with: " ")) {
-                            HStack(spacing: 8) {
-                                Text(j.target.title).foregroundStyle(.secondary)
-                                Text(Self.jobState(j.state)).foregroundStyle(Self.jobColor(j.state))
+            SGroup("派活目标") {
+                let _ = accessTick
+                ForEach(AgentProfiles.all.filter { $0.kind == .command }) { p in
+                    SRow(p.name, hint: p.binary.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "没装") {
+                        HStack(spacing: 8) {
+                            if p.binary != nil {
+                                SPick(selection: accessBinding(p), options: AgentAccess.allCases.map { ($0.rawValue, $0.label) })
+                            }
+                            if !p.builtin {
+                                SIconButton(symbol: "pencil", help: "修改") { editing = ProfileEdit(profile: p) }
                             }
                         }
-                        .lineLimit(1)
+                    }
+                }
+                SRow("添加命令行目标") {
+                    SIconButton(symbol: "plus", help: "添加") { editing = ProfileEdit(profile: nil) }
+                }
+            }
+
+            SGroup("自动派活") {
+                ForEach(ruleEngine.rules) { r in
+                    SRow(r.name.isEmpty ? "未命名" : r.name, hint: r.summary) {
+                        HStack(spacing: 8) {
+                            SIconButton(symbol: "play.fill", help: "现在试跑一次") { ruleEngine.runNow(r.id) }
+                            SIconButton(symbol: "pencil", help: "修改") { ruleEditing = RuleEdit(rule: r) }
+                            Toggle("", isOn: ruleBinding(r)).labelsHidden().toggleStyle(.switch)
+                        }
+                    }
+                }
+                SRow("添加规则") {
+                    SIconButton(symbol: "plus", help: "添加") { ruleEditing = RuleEdit(rule: nil) }
+                }
+            }
+
+            SGroup("调度页") {
+                SRow("派活、任务进度和用量", hint: "已经搬到主窗口的「调度」页") {
+                    SIconButton(symbol: "arrow.up.forward.app", help: "打开调度页") {
+                        MainWindow.show()
+                        AppModel.current?.section = .workbench
                     }
                 }
             }
@@ -188,6 +221,12 @@ struct AgentsPane: View {
                 }
             }
         }
+        .sheet(item: $editing) { e in
+            AgentProfileEditor(existing: e.profile) { accessTick += 1 }
+        }
+        .sheet(item: $ruleEditing) { e in
+            DispatchRuleEditor(existing: e.rule)
+        }
         .onAppear { refreshStatus() }
         .onReceive(Timer.publish(every: 1.5, on: .main, in: .common).autoconnect()) { _ in refreshStatus() }
         .onChange(of: cursorOn) { _, _ in apply() }
@@ -210,6 +249,27 @@ struct AgentsPane: View {
         .onChange(of: doneWait) { _, _ in apply() }
         .onChange(of: runStatus) { _, _ in apply() }
         .onChange(of: fallback) { _, _ in AgentBridge.rewrite() }
+    }
+
+    private struct RuleEdit: Identifiable {
+        let id = UUID()
+        var rule: DispatchRule?
+    }
+
+    /// 开规则：权限是「完全放开」的要再确认一次
+    private func ruleBinding(_ r: DispatchRule) -> Binding<Bool> {
+        Binding(
+            get: { ruleEngine.rules.first { $0.id == r.id }?.enabled ?? false },
+            set: { on in
+                if on, r.access == .full, !AgentAccess.confirmFull(for: DispatchTarget(rawValue: r.profileId)?.title ?? "这个 Agent") { return }
+                ruleEngine.setEnabled(r.id, on)
+            }
+        )
+    }
+
+    private struct ProfileEdit: Identifiable {
+        let id = UUID()
+        var profile: AgentProfile?
     }
 
     private func apply() {
@@ -241,20 +301,16 @@ struct AgentsPane: View {
         return f.string(from: d)
     }
 
-    private static func jobState(_ s: DispatchJob.State) -> String {
-        switch s {
-        case .running: return "运行中"
-        case .sent: return "已发送"
-        case .failed: return "失败"
-        }
-    }
-
-    private static func jobColor(_ s: DispatchJob.State) -> Color {
-        switch s {
-        case .running: return .orange
-        case .sent: return .green
-        case .failed: return .red
-        }
+    /// 权限档：「完全放开」要二次确认
+    private func accessBinding(_ p: AgentProfile) -> Binding<String> {
+        Binding(
+            get: { p.access.rawValue },
+            set: { new in
+                if new == AgentAccess.full.rawValue, !AgentAccess.confirmFull(for: p.name) { accessTick += 1; return }
+                p.access = AgentAccess(rawValue: new) ?? .edit
+                accessTick += 1
+            }
+        )
     }
 
     private static func color(_ r: String) -> Color {

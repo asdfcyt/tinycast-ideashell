@@ -119,13 +119,38 @@ enum CursorAdapter {
     /// 完成卡片（Cursor / WorkBuddy 共用）
     static func completion(source: AgentSource, project: String, cwd: String, failed: Bool, summary: String, duration: TimeInterval? = nil) -> AgentCompletion {
         let wait = AgentPrefs.completionWaitSeconds
-        let text = AgentTranscript.tidy(summary)
-        let asks = AgentTranscript.asksQuestion(text)
-        return AgentCompletion(
+        // 回执（```shiyi 代码块）：先取出来，正文里不再显示这段 JSON
+        let parsed = ReceiptParser.extract(summary)
+        var text = AgentTranscript.tidy(parsed.text)
+        let receipt = parsed.receipt
+        if let notices = receipt?.notices, !notices.isEmpty {
+            let lines = notices.map { n in "- " + (n.title.isEmpty ? n.text : (n.text.isEmpty ? "**\(n.title)**" : "**\(n.title)**：\(n.text)")) }
+            text += (text.isEmpty ? "" : "\n\n") + lines.joined(separator: "\n")
+        }
+        let receiptOptions = Self.options(from: receipt?.asks ?? [])
+        let asks = !receiptOptions.isEmpty || !(receipt?.asks.isEmpty ?? true) || AgentTranscript.asksQuestion(text)
+        var c = AgentCompletion(
             source: source, project: project, cwd: cwd, failed: failed, summary: text, asksQuestion: asks,
             canFollowUp: wait > 0, wait: TimeInterval(wait), conclusion: nil,
-            options: AgentTranscript.defaultOptions(failed: failed, asks: asks), duration: duration
+            options: receiptOptions.isEmpty ? AgentTranscript.defaultOptions(failed: failed, asks: asks) : receiptOptions, duration: duration
         )
+        c.optionsFromReceipt = !receiptOptions.isEmpty
+        c.laters = receipt?.laters ?? []
+        c.receiptMalformed = parsed.malformed
+        return c
+    }
+
+    /// 回执里的提问 → 验收卡上的选项按钮（点选项 = 把「关于「问题」：选项」发回给 Agent）
+    private static func options(from asks: [AgentReceipt.Ask]) -> [AgentCompletion.Option] {
+        var out: [AgentCompletion.Option] = []
+        for a in asks {
+            for (i, o) in a.options.enumerated() {
+                let label = asks.count > 1 && !a.title.isEmpty ? "\(a.title) · \(o)" : o
+                let instruction = a.title.isEmpty ? o : "关于「\(a.title)」：\(o)"
+                out.append(.init(label: label, instruction: instruction, recommended: a.recommend == i))
+            }
+        }
+        return Array(out.prefix(6))
     }
 
     private static func jsonText(_ any: Any?) -> String? {

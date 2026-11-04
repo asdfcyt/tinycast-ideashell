@@ -9,12 +9,16 @@ import SwiftUI
 /// 审批请求的来源。每个来源在设置里有独立的「是否批阅」开关。
 enum AgentSource: String, Codable, CaseIterable {
     case cursor, opencode, workbuddy
+    /// 派活账本启动的命令行 Agent（没有钩子，跑完由账本弹验收卡）
+    case claude, cli
 
     var title: String {
         switch self {
         case .cursor: return "Cursor"
         case .opencode: return "opencode"
         case .workbuddy: return "WorkBuddy"
+        case .claude: return "Claude Code"
+        case .cli: return "命令行 Agent"
         }
     }
 
@@ -23,6 +27,8 @@ enum AgentSource: String, Codable, CaseIterable {
         case .cursor: return .indigo
         case .opencode: return .teal
         case .workbuddy: return .orange
+        case .claude: return .purple
+        case .cli: return .gray
         }
     }
 
@@ -32,6 +38,7 @@ enum AgentSource: String, Codable, CaseIterable {
         case .cursor: return "com.todesktop.230313mzl4w4u92"
         case .opencode: return "ai.opencode.desktop"
         case .workbuddy: return "com.tencent.workbuddy.mac"
+        case .claude, .cli: return "" // 没有桌面 App
         }
     }
 
@@ -40,6 +47,8 @@ enum AgentSource: String, Codable, CaseIterable {
         case .cursor: return "cursorarrow.rays"
         case .opencode: return "terminal.fill"
         case .workbuddy: return "briefcase.fill"
+        case .claude: return "sparkle"
+        case .cli: return "terminal"
         }
     }
 }
@@ -111,6 +120,8 @@ struct AgentCompletion: Identifiable {
         let id = UUID()
         var label: String
         var instruction: String
+        /// Agent 在回执里推荐的那个
+        var recommended = false
     }
 
     let id = UUID()
@@ -140,6 +151,19 @@ struct AgentCompletion: Identifiable {
     var viaDispatch = false
     /// 对方的会话 id（viaDispatch 时用来接着聊）
     var sessionId: String?
+    /// 派活目标的 id（viaDispatch 时用来接着聊；空 = opencode）
+    var profileId: String?
+    /// 卡片上显示的名字（派活目标的名字）；空 = 用来源的名字
+    var name: String?
+    var displayName: String { name ?? source.title }
+    /// 选项来自 Agent 的回执（不被 AI 建议覆盖）
+    var optionsFromReceipt = false
+    /// 回执里要稍后复查的事
+    var laters: [AgentReceipt.Later] = []
+    /// 复查提醒的处理结果（已建滴答提醒 / 没建成）
+    var laterStatus: String?
+    /// 末尾有回执代码块，但格式不对
+    var receiptMalformed = false
 }
 
 enum CompletionOutcome {

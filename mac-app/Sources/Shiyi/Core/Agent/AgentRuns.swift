@@ -156,6 +156,12 @@ final class AgentRunTracker: ObservableObject {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
                 if let self, let j = self.runs.firstIndex(where: { $0.id == id }), self.runs[j].stopping { self.runs[j].stopping = false }
             }
+        case .claude, .cli:
+            // 账本启动的命令行 Agent：整个进程组停掉（行 id = 来源|任务 id）
+            if let jid = UUID(uuidString: String(r.id.dropFirst(r.source.rawValue.count + 1))) {
+                runs[i].stopping = true
+                DispatchLedger.shared.stop(jid)
+            }
         default:
             break
         }

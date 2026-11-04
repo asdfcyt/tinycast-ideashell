@@ -191,6 +191,8 @@ final class ApprovalCenter: ObservableObject {
     /// 卡片的生命周期和「对方等不等你」分开：对方最多等你 `wait` 秒（悬停 / 正在输入会顺延，上限 10 分钟），
     /// 之后它继续往下走，卡片仍留在岛上，直到你点「知道了」/ 在 Agent 里开始新一轮。
     func presentCompletion(_ c: AgentCompletion, conn: UUID?) async -> CompletionOutcome {
+        // 留一份完成记录：对得上某条派活就挂在它上面，否则存成「外部 Agent 的完成记录」（调度页里能回看结果）
+        if !c.viaDispatch, !DispatchLedger.shared.attachResult(c) { AgentResultStore.shared.add(c) }
         // 同项目的旧卡片作废（新一轮已经结束了）
         for old in completions where old.source == c.source && old.cwd == c.cwd { finishCompletion(old.id, .dismissed) }
         var c = c
@@ -201,6 +203,7 @@ final class ApprovalCenter: ObservableObject {
         if AgentPrefs.defaults.bool(forKey: AgentPrefs.sound) { NSSound(named: "Glass")?.play() }
         pendingChanged()
         if AgentPrefs.defaults.bool(forKey: AgentPrefs.doneAI) { enrich(c) }
+        if !c.laters.isEmpty { createReminders(c) }
         // 兜底：放了很久没人理的卡片自己清掉
         timers[id] = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 30 * 60 * 1_000_000_000)
@@ -255,10 +258,10 @@ final class ApprovalCenter: ObservableObject {
         if c.viaDispatch {
             // 对方一轮跑完就退出了：由拾忆接着这个会话再跑一轮
             finishCompletion(id, .dismissed)
-            let sid = c.sessionId, dir = c.cwd
+            let sid = c.sessionId, dir = c.cwd, pid = c.profileId ?? "opencode", name = c.displayName
             Task {
-                let r = await DispatchCenter.shared.continueOpenCode(sessionId: sid, dir: dir, text: t)
-                if !r.ok { Notifier.post(id: "dispatch.fail", title: "继续 opencode 会话失败", body: r.message) }
+                let r = await DispatchCenter.shared.continueDispatch(profileId: pid, sessionId: sid, dir: dir, text: t)
+                if !r.ok { Notifier.post(id: "dispatch.fail", title: "继续 \(name) 会话失败", body: r.message) }
             }
             return
         }
@@ -305,6 +308,47 @@ final class ApprovalCenter: ObservableObject {
         ws.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 
+    // MARK: 回执：稍后复查 → 滴答提醒
+
+    private static let remindedKey = "dispatch.receipt.reminded"
+    /// 已经让它重写过回执的会话：只重写一次
+    private(set) var receiptRetried = Set<String>()
+
+    func markReceiptRetried(_ c: AgentCompletion) { receiptRetried.insert(c.sessionId ?? c.cwd) }
+    func canRetryReceipt(_ c: AgentCompletion) -> Bool { c.receiptMalformed && !receiptRetried.contains(c.sessionId ?? c.cwd) }
+
+    private func setLaterStatus(_ id: UUID, _ text: String) {
+        if let i = completions.firstIndex(where: { $0.id == id }) { completions[i].laterStatus = text }
+    }
+
+    /// 回执里的 `later`：在滴答建一条带「调度台」标签的待办，到点由你自己决定要不要再派（不会自动再跑一轮）
+    private func createReminders(_ c: AgentCompletion) {
+        guard let model = AppModel.current else { return }
+        let id = c.id
+        guard model.hasDida else { setLaterStatus(id, "没有连接滴答，没建复查提醒"); return }
+        Task { [weak self] in
+            var done = Set(UserDefaults.standard.stringArray(forKey: Self.remindedKey) ?? [])
+            var failed = 0
+            for l in c.laters {
+                let key = "\(c.sessionId ?? c.cwd)|\(Int(l.at.timeIntervalSince1970))|\(l.about)"
+                if done.contains(key) { continue }
+                let f = DateFormatter()
+                f.dateFormat = "HH:mm"
+                f.timeZone = Day.cal.timeZone
+                let title = "复查：" + (l.about.isEmpty ? c.project : l.about)
+                let note = "来自 \(c.source.title) · \(c.project)\n\(c.cwd)"
+                do {
+                    _ = try await model.dida.createTask(title: title, date: Day.string(l.at), time: f.string(from: l.at), priority: 0, content: note, tags: ["调度台"])
+                    done.insert(key)
+                } catch {
+                    failed += 1
+                }
+            }
+            UserDefaults.standard.set(Array(done.suffix(200)), forKey: Self.remindedKey)
+            self?.setLaterStatus(id, failed == 0 ? "已建滴答提醒" : "有 \(failed) 条复查提醒没建成")
+        }
+    }
+
     /// 用配置好的大模型给这张卡写一句结论 + 几个最可能的后续指令（可选功能，默认关闭）
     private func enrich(_ c: AgentCompletion) {
         guard let model = AppModel.current, model.hasLlm, c.summary.count > 20 else { return }
@@ -326,7 +370,7 @@ final class ApprovalCenter: ObservableObject {
             }
             guard let self, let idx = self.completions.firstIndex(where: { $0.id == id }) else { return }
             if let concl, !concl.isEmpty { self.completions[idx].conclusion = concl }
-            if !opts.isEmpty { self.completions[idx].options = opts }
+            if !opts.isEmpty, !self.completions[idx].optionsFromReceipt { self.completions[idx].options = opts }
         }
     }
 

@@ -441,6 +441,9 @@ final class QuickAddPanelController: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             guard let self, let p = self.panel, p.isVisible else { return }
             if p.isKeyWindow || NSMouseInRect(NSEvent.mouseLocation, p.frame, false) { return }
+            // 菜单还展开着（菜单项在面板外面，鼠标不在面板上）、或正在选文件夹：别关，否则点菜单项会「没反应」
+            if FolderPicker.active { return }
+            if NSApp.windows.contains(where: { $0 !== p && $0.isVisible && String(describing: type(of: $0)).contains("Menu") }) { return }
             // 语音听写：语音卡片弹出会抢走 key，说完还要回到输入框，这时不能关
             if VoiceController.shared.phase != .idle || VoiceController.shared.dictating { return }
             // 刚弹出的半秒内失去 key 多半是应用刚被系统激活 / 主窗口抢了一下焦点，不是用户点了别处：抢回来

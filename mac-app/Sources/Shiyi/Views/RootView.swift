@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject var model: AppModel
+    @ObservedObject private var agents = ApprovalCenter.shared
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
@@ -66,6 +67,8 @@ struct RootView: View {
     private func badge(_ s: AppSection) -> Int {
         switch s {
         case .todos: return model.overview?.overdue.count ?? 0
+        // 等你拍板的审批 + 没处理的验收卡
+        case .workbench: return agents.pending.count + agents.completions.count
         default: return 0
         }
     }
@@ -78,6 +81,7 @@ struct RootView: View {
         case .review: ReviewView()
         case .insights: InsightsView()
         case .focus: ProjectsView()
+        case .workbench: AIWorkbenchView()
         case .settings: EmptyView()
         }
     }

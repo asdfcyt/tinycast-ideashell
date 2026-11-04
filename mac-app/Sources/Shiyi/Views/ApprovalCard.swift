@@ -160,17 +160,21 @@ private struct MinimizeButton: View {
 struct AgentRunStrip: View {
     @ObservedObject private var runs = AgentRunTracker.shared
     @ObservedObject private var center = ApprovalCenter.shared
+    @ObservedObject private var ledger = DispatchLedger.shared
     var body: some View {
-        if !runs.runs.isEmpty {
+        if !runs.runs.isEmpty || !DispatchStripRows.rows(ledger.jobs).isEmpty {
             VStack(spacing: 0) {
                 VStack(spacing: 6) {
                     ForEach(runs.runs) { r in
                         HStack(spacing: 8) {
                             row(r)
-                            openButton(r)
+                            // 没有桌面窗口可打开的（命令行 Agent）不放这个按钮
+                            if !r.source.bundleID.isEmpty { openButton(r) }
                             if r.canStop { stopButton(r) }
                         }
                     }
+                    // 排队 / 等待重试 / 刚失败的派活
+                    DispatchStripRows()
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
                 Divider().padding(.horizontal, 12)
@@ -413,16 +417,17 @@ struct CompletionCardView: View {
         VStack(alignment: .leading, spacing: 10) {
             header
             meta
+            receiptInfo
             ForEach(c.options) { o in optionButton(o) }
             if c.detached {
-                Text("\(c.source.title) 已继续往下走，点指令会复制到剪贴板并带你回去粘贴")
+                Text("\(c.displayName) 已继续往下走，点指令会复制到剪贴板并带你回去粘贴")
                     .font(.system(size: 10.5)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
             composer
             HStack(spacing: 6) {
                 WideButton(label: "知道了", symbol: "checkmark") { center.dismissCompletion(c.id) }
-                WideButton(label: "打开 \(c.source.title)", symbol: "arrow.up.forward.app", action: open)
+                WideButton(label: c.source.bundleID.isEmpty ? "打开目录" : "打开 \(c.displayName)", symbol: "arrow.up.forward.app", action: open)
             }
         }
     }
@@ -442,7 +447,7 @@ struct CompletionCardView: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(.plain).disabled(empty)
-            .help(c.detached ? "复制到剪贴板并打开 \(c.source.title)" : "发送给 \(c.source.title)")
+            .help(c.detached ? "复制到剪贴板并打开 \(c.displayName)" : "发送给 \(c.displayName)")
         }
         .padding(.leading, 10).padding(.trailing, 5).padding(.vertical, 3)
         .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -469,6 +474,38 @@ struct CompletionCardView: View {
         }
     }
 
+    /// 回执带来的信息：稍后复查的提醒、回执格式不对
+    @ViewBuilder private var receiptInfo: some View {
+        if !c.laters.isEmpty || c.receiptMalformed {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(Array(c.laters.enumerated()), id: \.offset) { _, l in
+                    Label(Self.laterText(l) + (c.laterStatus.map { " · " + $0 } ?? ""), systemImage: "bell")
+                        .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                if c.receiptMalformed {
+                    Label("回执格式不对，已保留原文", systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11)).foregroundStyle(.orange)
+                    if center.canRetryReceipt(c) {
+                        Button {
+                            center.markReceiptRetried(c)
+                            center.followUp(c.id, text: ReceiptParser.rewriteRequest)
+                        } label: {
+                            Label("让它重写回执", systemImage: "arrow.triangle.2.circlepath").font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.plain).foregroundStyle(c.source.color)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func laterText(_ l: AgentReceipt.Later) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = Calendar.current.isDateInToday(l.at) ? "今天 HH:mm" : "M月d日 HH:mm"
+        return "\(f.string(from: l.at)) 复查" + (l.about.isEmpty ? "" : "：" + l.about)
+    }
+
     private static func durationText(_ s: TimeInterval) -> String {
         let n = Int(s)
         return n >= 60 ? "\(n / 60) 分 \(n % 60) 秒" : "\(n) 秒"
@@ -478,14 +515,15 @@ struct CompletionCardView: View {
         Button { center.followUp(c.id, text: o.instruction) } label: {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
-                    Image(systemName: "arrow.turn.down.right").font(.system(size: 10, weight: .bold)).foregroundStyle(c.source.color)
+                    Image(systemName: o.recommended ? "star.fill" : "arrow.turn.down.right").font(.system(size: 10, weight: .bold)).foregroundStyle(c.source.color)
                     Text(o.label).font(.system(size: 12, weight: .semibold))
+                    if o.recommended { Text("推荐").font(.system(size: 9.5, weight: .medium)).foregroundStyle(c.source.color) }
                 }
                 Text(o.instruction).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
             }
             .padding(.horizontal, 9).padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(c.source.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(c.source.color.opacity(o.recommended ? 0.24 : 0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -498,7 +536,7 @@ struct CompletionCardView: View {
                 .frame(width: 26, height: 26).background(c.source.color.gradient, in: Circle())
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
-                    Text(c.source.title).font(.system(size: 13.5, weight: .semibold))
+                    Text(c.displayName).font(.system(size: 13.5, weight: .semibold))
                     if !embedded {
                         Text("·").foregroundStyle(.tertiary)
                         Text(c.project).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -535,18 +573,19 @@ struct CompletionCardView: View {
     /// 窄卡片（悬浮）的操作区
     private var actions: some View {
         VStack(alignment: .leading, spacing: 8) {
+            receiptInfo
             do {
                 VStack(spacing: 5) {
                     ForEach(c.options) { o in
                         Button { center.followUp(c.id, text: o.instruction) } label: {
                             HStack(spacing: 6) {
-                                Image(systemName: "arrow.turn.down.right").font(.system(size: 10, weight: .bold)).foregroundStyle(c.source.color)
+                                Image(systemName: o.recommended ? "star.fill" : "arrow.turn.down.right").font(.system(size: 10, weight: .bold)).foregroundStyle(c.source.color)
                                 Text(o.label).font(.system(size: 12, weight: .semibold))
                                 Text(o.instruction).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                                 Spacer(minLength: 0)
                             }
                             .padding(.horizontal, 9).frame(height: 28)
-                            .background(c.source.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .background(c.source.color.opacity(o.recommended ? 0.24 : 0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -554,7 +593,7 @@ struct CompletionCardView: View {
                     }
                 }
                 HStack(spacing: 6) {
-                    TextField("接着说点什么，回车发给 \(c.source.title)", text: $text)
+                    TextField("接着说点什么，回车发给 \(c.displayName)", text: $text)
                         .textFieldStyle(.roundedBorder).font(.system(size: 12))
                         .onSubmit(send)
                     CardPill(label: "发送", tint: c.source.color, prominent: true, action: send)
@@ -562,7 +601,7 @@ struct CompletionCardView: View {
             }
             HStack(spacing: 7) {
                 CardPill(label: "知道了", tint: .gray, prominent: false) { center.dismissCompletion(c.id) }
-                CardPill(label: "打开 \(c.source.title)", tint: .gray, prominent: false, action: open)
+                CardPill(label: c.source.bundleID.isEmpty ? "打开目录" : "打开 \(c.displayName)", tint: .gray, prominent: false, action: open)
             }
         }
     }
@@ -570,7 +609,12 @@ struct CompletionCardView: View {
     private func send() { center.followUp(c.id, text: text) }
 
     private func open() {
-        center.openSource(c.source)
+        if c.source.bundleID.isEmpty {
+            // 没有桌面 App 的命令行 Agent：打开它工作的目录
+            if !c.cwd.isEmpty { NSWorkspace.shared.open(URL(fileURLWithPath: c.cwd)) }
+        } else {
+            center.openSource(c.source)
+        }
         center.dismissCompletion(c.id)
     }
 

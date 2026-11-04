@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 
 enum AppSection: String, CaseIterable, Identifiable {
-    case today, focus, todos, calendar, review, insights, settings
+    case today, focus, workbench, todos, calendar, review, insights, settings
 
     var id: String { rawValue }
 
@@ -13,6 +13,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .todos: return "待办"
         case .calendar: return "日历"
         case .focus: return "行动"
+        case .workbench: return "调度"
         case .insights: return "洞察"
         case .review: return "回顾"
         case .settings: return "设置"
@@ -25,6 +26,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .todos: return "checklist"
         case .calendar: return "calendar"
         case .focus: return "target"
+        case .workbench: return "wand.and.stars"
         case .insights: return "chart.bar.xaxis"
         case .review: return "water.waves"
         case .settings: return "gearshape"
@@ -223,6 +225,8 @@ final class AppModel: ObservableObject {
     /// 打开万能输入时预填的文字 / 指定类型 / 默认日期（日历里「添加待办」用）
     @Published var quickAddText = ""
     @Published var quickAddKind: CaptureKind?
+    /// 右键「派活」带进来的资料（想法 / 笔记 / Daily Note）：不放进输入框，作为附件和指令分开
+    var quickAddMaterial: String?
     @Changed var notice: String?
     /// 空格快速预览的审计记录（盖在整个窗口上）；回车 / 点「编辑」时放进 sjzEdit，由项目页接手打开编辑窗口
     @Published var sjzQuick: SjzQuickItem?
@@ -664,6 +668,7 @@ final class AppModel: ObservableObject {
             overviewFP = fp
             if changed && fresh.warning == nil { Self.writeCache("overview.json", fresh) }
             todosError = overview?.warning
+            DispatchRuleEngine.shared.tick()
         } catch {
             if !silent || overview == nil { todosError = error.localizedDescription }
         }
