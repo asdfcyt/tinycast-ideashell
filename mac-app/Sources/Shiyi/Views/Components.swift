@@ -326,3 +326,19 @@ struct SidebarRow<Icon: View>: View {
         .onHover { hover = $0 }
     }
 }
+
+/// 右键菜单里的「派活」二级菜单：列出现在能接活的 Agent，选一个就带着内容打开万能输入的派活
+struct DispatchMenu: View {
+    let model: AppModel
+    /// 要带进去的内容（点开才计算，免得右键菜单一出来就去翻全文）
+    let text: () -> String
+
+    var body: some View {
+        Menu("派活") {
+            ForEach(DispatchTarget.available) { t in
+                Button { model.openDispatch(with: text(), target: t) } label: { Label(t.title, systemImage: t.icon) }
+            }
+        }
+        .disabled(!model.canDispatch)
+    }
+}

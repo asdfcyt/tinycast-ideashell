@@ -116,6 +116,8 @@ enum DidaParser {
     /// 滴答返回的日期可能是 UTC，也可能带 +0800 / +08:00，统一换算成本地日期 / 时间
     static func parseDate(_ value: String?, isAllDay: Bool) -> (date: String?, time: String?) {
         guard let value, let m = dateRe.fullMatch(in: value.trimmed) else { return (nil, nil) }
+        // 滴答用 1970-01-01 表示「清除了日期」，不是真的日期（否则清了日期的任务会被当成有日期、从无日期列表里消失）
+        if let y = Int(m.group(1)), y <= 1970 { return (nil, nil) }
         if !m.hasGroup(4) { return ("\(m.group(1))-\(m.group(2))-\(m.group(3))", nil) }
 
         var offsetMin = 0

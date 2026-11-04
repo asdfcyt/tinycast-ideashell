@@ -20,6 +20,12 @@ extension DidaApi {
         return errs.mapValues { "\($0)" }
     }
 
+    /// 单条改字段（批量接口没改成时的兜底；`task` 就是批量里的那一项，含 id / projectId）
+    func updateRaw(_ task: JSON) async throws {
+        guard let id = task["id"] as? String else { return }
+        _ = try await mcp.callText("update_task", ["task_id": id, "task": task, "client_timezone": TimeZone.current.identifier])
+    }
+
     /// 批量新建；返回和传入顺序一一对应的新任务 id（失败的那条是 nil）
     func batchAdd(_ tasks: [JSON]) async throws -> [String?] {
         guard !tasks.isEmpty else { return [] }

@@ -288,6 +288,10 @@ private struct TodayContent: View {
         Button("使用便签打开") {
             if it.isDaily { StickyController.shared.create(text: it.text) } else { model.openNoteAsSticky(it.noteId, title: it.title) }
         }
+        DispatchMenu(model: model) {
+            let full = it.isDaily ? nil : model.timeline.first(where: { $0.id == it.noteId })?.text?.trimmed.nonEmpty
+            return full ?? it.text
+        }
         Button("在闪念贝壳中打开") { model.open(noteURL(it.noteId)) }
         Divider()
         Button(it.isDaily ? "复制这条" : "复制标题") { model.copy(it.text) }

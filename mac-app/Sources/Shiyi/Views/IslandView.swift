@@ -670,7 +670,11 @@ final class IslandController {
         p.animationBehavior = .none
         p.onResign = { [weak self] in self?.panelResigned() }
         p.onCancel = { [weak self] in self?.collapse() }
-        p.onPaste = { [weak self] toShelf in self?.pasteClipboard(toShelf: toShelf) }
+        p.onPaste = { [weak self] toShelf in
+            // 正在往 WorkBuddy 里粘贴派活内容时，剪贴板里是要派的任务：不能当成「投放」存起来
+            if DispatchCenter.shared.isTyping { return }
+            self?.pasteClipboard(toShelf: toShelf)
+        }
 
         let c = IslandContainer(frame: .zero)
         c.earMax = ear

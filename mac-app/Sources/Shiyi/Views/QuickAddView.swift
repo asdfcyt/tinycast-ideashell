@@ -78,7 +78,7 @@ struct QuickAddView: View {
     /// opencode 继续对话用的会话：选过的，没选过就是最近一个
     private var ocWorkSession: OpenCodeSession? { ocStore.sessions.first { $0.id == pickedSession } ?? ocStore.sessions.first }
 
-    private var analysis: CaptureAnalysis { CaptureParser.analyze(text, sjz: model.hasSjz, agents: agentTargets) }
+    private var analysis: CaptureAnalysis { CaptureParser.analyze(text, sjz: model.hasSjz, agents: agentTargets, light: override == .agent) }
     /// 自动识别的类型：贴了图片又没写前缀，按「笔记」处理（图片作为附件）；没连闪念贝壳才退到结审「证据」。
     /// 想存证据 / 线索，用前缀或 Tab 手动选
     private func autoKind(_ a: CaptureAnalysis) -> CaptureKind {
@@ -86,7 +86,11 @@ struct QuickAddView: View {
         if model.hasIdeashell { return .note }
         return model.hasSjz ? .evidence : a.recommended
     }
-    private func kind(_ a: CaptureAnalysis) -> CaptureKind { override ?? a.forced ?? sticky ?? autoKind(a) }
+    private func kind(_ a: CaptureAnalysis) -> CaptureKind {
+        // 开头明确 @ 了 Agent（或写了「派活」）：以文字为准。否则残留的手动类型会把 @wb 开头的内容按 Daily Note 存掉（@wb 已被剥掉）
+        if a.forced == .agent { return .agent }
+        return override ?? a.forced ?? sticky ?? autoKind(a)
+    }
     private func clearSticky() { sticky = nil; UserDefaults.standard.removeObject(forKey: Self.stickyKey) }
 
     /// 输入框高度：一行起步，按内容（粗估折行）长到最多 5 行，再多就在框里滚动；带图片时按缩略图再加高

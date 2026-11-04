@@ -273,6 +273,7 @@ final class SyncQueue {
 
         /// 失败的部分：网络类退回队列重试，其余放弃
         func fail(_ part: Entry, _ error: Error) {
+            SyncLog.write("失败「\(part.title)」\(part.taskId)（第 \(part.attempts + 1) 次）：\(error.localizedDescription)")
             if SyncQueue.isTransient(error), part.attempts + 1 < SyncQueue.maxAttempts { retry.append(part) }
             else { hard.append((part, error.localizedDescription)) }
         }
@@ -289,11 +290,30 @@ final class SyncQueue {
         // 1. 改字段（一次请求最多 20 条）
         let upd = batch.filter { !$0.delete && $0.hasPatch }
         for chunk in Self.chunks(upd) {
+            // 批量接口没改成的（整批报错 / 单条被拒），退回逐条 update_task 再试一次：
+            // 批量接口对改期 / 清日期的校验比单条更挑剔，单条路径是验证过的
+            var redo: [(Entry, String)] = []
             do {
                 let failed = try await dida.batchUpdate(chunk.map { $0.updateJSON() })
-                for e in chunk { if let why = failed[e.taskId] { out.hard.append((e.only(.patch), "服务器拒绝了修改（\(why)）")) } }
+                for e in chunk { if let why = failed[e.taskId] { redo.append((e, why)) } }
             } catch {
-                for e in chunk { out.fail(e.only(.patch), error) }
+                SyncLog.write("batch_update_tasks 失败（\(chunk.count) 条）：\(error.localizedDescription)")
+                if Self.isTransient(error) || Self.isAuth(error) {
+                    for e in chunk { out.fail(e.only(.patch), error) }
+                    continue
+                }
+                redo = chunk.map { ($0, error.localizedDescription) }
+            }
+            guard !redo.isEmpty else { continue }
+            let items = redo
+            let single: [Error?] = await runConcurrently(items.count) { i in
+                do { try await dida.updateRaw(items[i].0.updateJSON()); return nil } catch { return error }
+            }
+            for (i, r) in single.enumerated() {
+                let e = items[i].0
+                guard let err = r else { continue }
+                SyncLog.write("逐条 update_task 也失败「\(e.title)」\(e.taskId)：\(err.localizedDescription)（批量原因：\(items[i].1)）")
+                out.fail(e.only(.patch), err)
             }
         }
 
@@ -352,10 +372,38 @@ final class SyncQueue {
             switch e {
             case .sessionExpired, .proto: return true
             case let .http(code, _): return code >= 500 || code == 429 || code == 408
+            // 滴答 MCP 限流 / 繁忙时会以工具错误的形式返回，重试就能过
+            case let .tool(msg), let .rpc(_, msg):
+                let m = msg.lowercased()
+                return ["rate", "limit", "too many", "busy", "timeout", "timed out", "try again", "temporar", "频繁", "稍后", "繁忙", "超时"].contains { m.contains($0) }
             default: return false
             }
         }
         return false
+    }
+
+    private static func isAuth(_ error: Error) -> Bool {
+        if let e = error as? McpError, case .auth = e { return true }
+        if let e = error as? McpError, case .noCredential = e { return true }
+        return false
+    }
+}
+
+/// 同步失败的原因落盘（~/Library/Application Support/Shiyi/sync-failures.log），UI 上只有一句提示，排查靠它
+enum SyncLog {
+    static func write(_ text: String) {
+        let url = LocalStore.dir.appendingPathComponent("sync-failures.log")
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd HH:mm:ss"
+        let line = "\(f.string(from: Date()))  \(text)\n"
+        guard let data = line.data(using: .utf8) else { return }
+        if let h = try? FileHandle(forWritingTo: url) {
+            defer { try? h.close() }
+            if let size = try? h.seekToEnd(), size > 200_000 { try? h.truncate(atOffset: 0) }
+            try? h.write(contentsOf: data)
+        } else {
+            try? data.write(to: url)
+        }
     }
 }
 

@@ -70,7 +70,7 @@ enum CaptureParser {
     private static let reMention = RX(#"^@([A-Za-z]+)(?![A-Za-z0-9_])(?:\s*[:：,，]\s*|\s+)?"#, multiline: false, ignoreCase: true)
     private static let reMultiSpace = RX(#"[ \t]{2,}"#, multiline: false)
 
-    static func analyze(_ input: String, now: Date = Date(), sjz: Bool? = nil, agents: [DispatchTarget] = []) -> CaptureAnalysis {
+    static func analyze(_ input: String, now: Date = Date(), sjz: Bool? = nil, agents: [DispatchTarget] = [], light: Bool = false) -> CaptureAnalysis {
         var text = input.trimmed
         var forced: CaptureKind?
         let sjzOn = sjz ?? Self.sjzOn
@@ -89,6 +89,14 @@ enum CaptureParser {
                 text = re.replace(in: text, with: "").trimmed
                 break
             }
+        }
+
+        // 派活：整段文字原样交给 Agent，不需要识别标签 / 日期（长内容上这些正则很慢，会拖慢输入框弹出）
+        if light || forced == .agent {
+            return CaptureAnalysis(
+                text: text, body: text, tags: [], folderName: nil, todo: ParsedTodo(content: text),
+                forced: forced, recommended: .agent, agentTarget: agentTarget
+            )
         }
 
         var tags: [String] = []

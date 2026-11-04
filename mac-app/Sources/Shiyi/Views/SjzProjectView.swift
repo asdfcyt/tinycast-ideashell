@@ -561,6 +561,9 @@ extension SjzProjectDetailView {
         .contextMenu {
             Button("快速预览") { model.openSjzPreview(project: name, capture: c) }
             Button("使用便签打开") { model.openSjzAsSticky(project: name, capture: c) }
+            if c.kind == "idea" {
+                DispatchMenu(model: model) { [c.title, c.summary].map(\.trimmed).filter { !$0.isEmpty }.joined(separator: "\n") }
+            }
             if model.sjzCanPin(c) {
                 // 钉住后，灵动岛和万能输入保存证据 / 法规 / 线索时直接追加到它，不用再去搜索
                 Button(model.sjzIsPinned(c, project: name) ? "取消钉住" : "钉住", systemImage: model.sjzIsPinned(c, project: name) ? "pin.slash" : "pin") {

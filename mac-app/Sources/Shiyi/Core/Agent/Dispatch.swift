@@ -71,6 +71,11 @@ final class DispatchCenter: ObservableObject {
 
     @Published private(set) var jobs: [DispatchJob] = []
 
+    /// 正在往 WorkBuddy 里「打字」（⌘V / 回车）：这期间拾忆自己的面板（灵动岛）不处理粘贴，
+    /// 免得按键被截走、把要派的内容当成「剪贴板内容」存进 Daily Note
+    private var typingUntil = Date.distantPast
+    var isTyping: Bool { Date() < typingUntil }
+
     static func registerDefaults() {}
 
     private static var appURL: URL? {
@@ -111,6 +116,8 @@ final class DispatchCenter: ObservableObject {
         let bid = AgentSource.workbuddy.bundleID
         guard let url = Self.appURL else { return DispatchOutcome(ok: false, message: "没有找到 WorkBuddy，请确认已安装") }
         let previous = ws.frontmostApplication.flatMap { $0.bundleIdentifier == bid ? nil : $0 }
+        typingUntil = Date().addingTimeInterval(40)
+        defer { typingUntil = Date().addingTimeInterval(1.5) }
 
         var fresh = false
         if NSRunningApplication.runningApplications(withBundleIdentifier: bid).isEmpty {
@@ -120,7 +127,10 @@ final class DispatchCenter: ObservableObject {
             _ = try? await ws.openApplication(at: url, configuration: cfg)
         }
         guard let app = await waitForApp(bid) else { return DispatchOutcome(ok: false, message: "WorkBuddy 没有启动起来") }
-        let ax = AXUIElementCreateApplication(app.processIdentifier)
+        // 上一次派完会把它收起来（hide）：不先展开，激活不了窗口、也找不到输入框
+        if app.isHidden { app.unhide() }
+        let pid = app.processIdentifier
+        let ax = AXUIElementCreateApplication(pid)
         AXUIElementSetAttributeValue(ax, "AXManualAccessibility" as CFString, kCFBooleanTrue)
 
         // 冷启动：等主窗口里的输入框出现（最多 20 秒）
@@ -155,21 +165,39 @@ final class DispatchCenter: ObservableObject {
         let change = pb.changeCount
 
         app.activate(options: [.activateAllWindows])
-        for _ in 0 ..< 12 where ws.frontmostApplication?.bundleIdentifier != bid { try? await Task.sleep(nanoseconds: 150_000_000) }
+        for _ in 0 ..< 20 where ws.frontmostApplication?.bundleIdentifier != bid { try? await Task.sleep(nanoseconds: 150_000_000) }
+        // 前台是 WorkBuddy 还不够：键盘焦点（key 窗口）可能还在拾忆自己的面板上，这时按键会落到拾忆里。
+        // 再多等一会儿，并确认输入框真的拿到了焦点；拿不到就不发按键，交给手动粘贴
         AXUIElementSetAttributeValue(composer.area, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-        try? await Task.sleep(nanoseconds: 250_000_000)
-        Self.press(9, command: true) // ⌘V
+        var focused = false
+        for _ in 0 ..< 10 {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            if ws.frontmostApplication?.bundleIdentifier == bid, Self.isFocused(composer.area) { focused = true; break }
+            AXUIElementSetAttributeValue(composer.area, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        }
+        // 有的版本不上报输入框的焦点属性：没确认也继续（按键是直接发给 WorkBuddy 进程的，不会落到别处），只是多等一会儿
+        if !focused { try? await Task.sleep(nanoseconds: 300_000_000) }
+        Self.press(9, command: true, to: pid) // ⌘V（只发给 WorkBuddy 进程）
 
         // 等「发送」按钮亮起（说明输入框真的收到了内容），再点它；点不到就回车
         var armed = false
+        var sawButton = false
         for _ in 0 ..< 14 {
             try? await Task.sleep(nanoseconds: 150_000_000)
-            if let b = Self.findComposer(ax)?.send, Self.axValue(b, kAXEnabledAttribute) as? Bool == true { armed = true; break }
+            if let b = Self.findComposer(ax)?.send {
+                sawButton = true
+                if Self.axValue(b, kAXEnabledAttribute) as? Bool == true { armed = true; break }
+            }
         }
         if armed, let b = Self.findComposer(ax)?.send {
             AXUIElementPerformAction(b, kAXPressAction as CFString)
+        } else if !sawButton {
+            // 这个版本里认不出「发送」按钮：回车（只发给 WorkBuddy 进程）
+            Self.press(36, command: false, to: pid)
         } else {
-            Self.press(36, command: false)
+            // 有发送按钮但一直不亮 = 输入框没收到内容：别盲按回车，免得发出空消息
+            copyForManual(text)
+            return DispatchOutcome(ok: true, message: "没有确认 WorkBuddy 收到内容，任务已复制到剪贴板，请手动粘贴并回车。")
         }
 
         // 还给你原来的 App；剪贴板也还原
@@ -212,13 +240,19 @@ final class DispatchCenter: ObservableObject {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    private static func press(_ key: CGKeyCode, command: Bool) {
+    /// 直接把按键发给指定进程（不走系统级的全局事件）：不管此刻键盘焦点在哪，都不会落到拾忆自己的面板或别的 App 里
+    private static func press(_ key: CGKeyCode, command: Bool, to pid: pid_t) {
         let src = CGEventSource(stateID: .combinedSessionState)
         for down in [true, false] {
             let ev = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: down)
             if command { ev?.flags = .maskCommand }
-            ev?.post(tap: .cghidEventTap)
+            ev?.postToPid(pid)
         }
+    }
+
+    /// 这个元素是不是当前的键盘焦点
+    private static func isFocused(_ el: AXUIElement) -> Bool {
+        axValue(el, kAXFocusedAttribute) as? Bool == true
     }
 
     // MARK: 辅助功能：找输入框和「发送」按钮

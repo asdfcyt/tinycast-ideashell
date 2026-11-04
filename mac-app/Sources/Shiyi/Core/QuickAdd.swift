@@ -9,6 +9,21 @@ extension AppModel {
         showQuickAdd = true
     }
 
+    /// 有没有能接活的 Agent（右键菜单里「派活」是否可用）
+    var canDispatch: Bool { !DispatchTarget.available.isEmpty }
+
+    /// 把一段内容（想法 / Daily Note / 笔记）带进万能输入的「派活」：类型直接是派活，内容已填好，
+    /// 在前面补一句要它做什么，再选新开还是继续对话，回车派出去。`target` = 右键二级菜单里选的 Agent
+    func openDispatch(with text: String, target: DispatchTarget) {
+        let t = text.trimmed
+        guard !t.isEmpty else { return }
+        UserDefaults.standard.set(target.rawValue, forKey: "dispatch.lastTarget")
+        // 等右键菜单收起来再弹输入框：两个动画叠在一起、同时还要重排整个列表，会卡
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.openQuickAdd(text: t, kind: .agent)
+        }
+    }
+
     /// 标题栏的加号 / ⌘N：在日历里按「添加待办」处理（带上选中的日子），其他页面是普通的万能输入
     func openQuickAddHere() {
         if section == .calendar {
