@@ -8,6 +8,10 @@ final class GlobalHotkey {
     static let quickAdd = GlobalHotkey(id: 2)
     static let voice = GlobalHotkey(id: 3)
     static let sticky = GlobalHotkey(id: 4)
+    /// AI 调度台：有待批时才注册（⌃⌥Y 准 / ⌃⌥N 驳）
+    static let approveYes = GlobalHotkey(id: 5)
+    static let approveNo = GlobalHotkey(id: 6)
+    /// 派活面板（⌃⌥D）
 
     var onPress: (() -> Void)?
     /// 松开（只有需要「按住说话」的热键用）

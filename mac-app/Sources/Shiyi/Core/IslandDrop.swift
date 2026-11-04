@@ -107,7 +107,9 @@ enum DropReader {
             raw.imageData = [img]
             raw.text = str.isEmpty ? (web ?? "") : str
         } else {
-            raw.text = str.isEmpty ? (web ?? "") : str
+            // 网页 / 文档 / 表格软件里复制的表格、列表等转成 Markdown（只有纯文字时原样）
+            let rich = RichPaste.result(from: pb, keepInline: false)?.text.trimmed
+            raw.text = rich.flatMap { $0.isEmpty ? nil : $0 } ?? (str.isEmpty ? (web ?? "") : str)
             if raw.text.isEmpty {
                 raw.promises = (pb.readObjects(forClasses: [NSFilePromiseReceiver.self], options: nil) as? [NSFilePromiseReceiver]) ?? []
             }

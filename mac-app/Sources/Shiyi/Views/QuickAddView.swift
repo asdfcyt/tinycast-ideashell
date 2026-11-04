@@ -13,7 +13,7 @@ struct QuickAddNote {
 
 /// 万能输入（复刻安卓端）：一个输入框，自动识别是待办 / Daily Note / 笔记。
 /// - 前缀强制：`待办 …`、`日记 …`、`笔记 …`
-/// - `#标签`、`@文件夹`；「明天 15:00 开会」「下周五下午3点半 交周报」这类日期时间会被识别成待办
+/// - `#标签`；开头写 `@WorkBuddy` / `@opencode` 直接派活；「明天 15:00 开会」「下周五下午3点半 交周报」这类日期时间会被识别成待办
 /// - 识别结果可以在输入框下面直接改
 /// 主窗口里以弹层出现，菜单栏里以紧凑形态内嵌。
 struct QuickAddView: View {
@@ -56,7 +56,29 @@ struct QuickAddView: View {
     /// 便签形态下，结审的「去向与关联」默认收起（只留一行），点开才显示取证单 / 线索选择
     @State private var optionsOpen = false
 
-    private var analysis: CaptureAnalysis { CaptureParser.analyze(text, sjz: model.hasSjz) }
+    /// 派活：有可用的 Agent 才出现（便签 / 专注记录里不出现）
+    private var agentTargets: [DispatchTarget] { record == nil && note == nil ? DispatchTarget.available : [] }
+    private var agentOn: Bool { !agentTargets.isEmpty }
+    @AppStorage("dispatch.lastTarget") private var lastTarget = DispatchTarget.workbuddy.rawValue
+    @AppStorage("dispatch.opencode.dir") private var ocDir = ""
+    @AppStorage("dispatch.opencode.extraDirs") private var ocExtra = ""
+    /// opencode 的会话 / 目录：只读缓存，后台刷新
+    @ObservedObject private var ocStore = OpenCodeStore.shared
+    /// 派活是继续对话还是新开对话（默认新开）
+    @State private var continueChat = false
+    @State private var pickedSession: String?
+    /// 这段话交给谁：开头 @ 了谁就是谁，否则用上次的
+    private func agentTarget(_ a: CaptureAnalysis) -> DispatchTarget {
+        if let t = a.agentTarget { return t }
+        let list = DispatchTarget.available
+        return list.first { $0.rawValue == lastTarget } ?? list.first ?? .workbuddy
+    }
+    /// opencode 新开对话用的目录：选过的，没选过就是最近一个项目
+    private var ocWorkDir: String { ocDir.isEmpty ? (ocStore.dirs.first ?? "") : ocDir }
+    /// opencode 继续对话用的会话：选过的，没选过就是最近一个
+    private var ocWorkSession: OpenCodeSession? { ocStore.sessions.first { $0.id == pickedSession } ?? ocStore.sessions.first }
+
+    private var analysis: CaptureAnalysis { CaptureParser.analyze(text, sjz: model.hasSjz, agents: agentTargets) }
     /// 自动识别的类型：贴了图片又没写前缀，按「笔记」处理（图片作为附件）；没连闪念贝壳才退到结审「证据」。
     /// 想存证据 / 线索，用前缀或 Tab 手动选
     private func autoKind(_ a: CaptureAnalysis) -> CaptureKind {
@@ -100,7 +122,7 @@ struct QuickAddView: View {
                             onBackspaceEmpty: { exitKind() }
                         )
                         if text.isEmpty {
-                            Text(note != nil ? "写点什么…支持 Markdown" : (record != nil ? "专注时的想法、进展、卡点…" : (compact ? "记点什么…（Tab 切换类型）" : (model.hasSjz ? "记点什么？按 Tab 切换 想法 / 证据 / 法规 / 线索" : "记点什么？待办、想法、日记都可以，Tab 切换类型"))))
+                            Text(note != nil ? "写点什么…支持 Markdown" : (k == .agent ? "让 \(agentTarget(a).title) 做点什么…" : record != nil ? "专注时的想法、进展、卡点…" : (compact ? "记点什么…（Tab 切换类型）" : (model.hasSjz ? "记点什么？按 Tab 切换 想法 / 证据 / 法规 / 线索" : "记点什么？待办、想法、日记都可以，Tab 切换类型"))))
                                 .font(.system(size: note != nil ? 14 : (compact ? 14 : 16)))
                                 .foregroundStyle(.secondary)
                                 .padding(.top, 2)
@@ -115,7 +137,7 @@ struct QuickAddView: View {
             .padding(.horizontal, compact ? 12 : 18).padding(.top, compact ? 8 : 14)
 
             // 提示行：空的时候给几个例子，写了字就显示识别结果
-            if note?.bound != true {
+            if note?.bound != true, k != .agent {
                 hintRow(a, k)
                     .padding(.horizontal, compact ? 12 : 18).padding(.top, 6)
             }
@@ -174,6 +196,7 @@ struct QuickAddView: View {
                 return
             }
             focusTick += 1
+            if agentOn { ocStore.refresh(after: 1.5) }
             if let record { text = record.recordDraft }
             if !model.quickAddText.isEmpty { text = model.quickAddText }
             override = model.quickAddKind
@@ -197,6 +220,8 @@ struct QuickAddView: View {
             recordHint(record)
         } else if k.isSjz {
             sjzTarget(a, k)
+        } else if k == .agent {
+            EmptyView()
         } else if text.trimmed.isEmpty {
             if note != nil {
                 Text("⇥ 切换类型 · ⌘↩ 保存").font(.caption2).foregroundStyle(.tertiary)
@@ -286,6 +311,7 @@ struct QuickAddView: View {
         kindMenu(a, k)
         if k == .todo { priorityMenu }
         if k.isSjz, withProject { sjzChip(k) }
+        if k == .agent { agentModeMenu(a) }
     }
 
     // MARK: - 组件
@@ -293,7 +319,7 @@ struct QuickAddView: View {
     /// 开启结审后，示例里带上线索 / 想法 / 证据 / 法规前缀
     private var exampleList: [String] {
         if model.hasSjz { return compact ? ["明天 15:00 开会", "想法 …", "证据 …", "线索 …"] : ["明天 15:00 开会", "想法 …", "证据 …", "法规 …", "线索 …"] }
-        return ["明天 15:00 开会", "#读书 一句话想法", "笔记 @项目 …"]
+        return agentOn ? ["明天 15:00 开会", "#读书 一句话想法", "@\(DispatchTarget.available[0].title) …"] : ["明天 15:00 开会", "#读书 一句话想法"]
     }
 
     /// 结审项目：放在底栏，空间不够时从末尾截断（具体追加到哪一份见上面的「去向」行）
@@ -346,6 +372,136 @@ struct QuickAddView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - 派活（把这段话交给 Agent）
+
+    /// 底栏：继续对话还是新开对话（颜色就是接活的 Agent）
+    private func agentModeMenu(_ a: CaptureAnalysis) -> some View {
+        let t = agentTarget(a)
+        let session = ocWorkSession
+        let icon: String
+        let label: String
+        if continueChat {
+            icon = "text.bubble"
+            label = t == .opencode ? "继续 · " + (session?.displayTitle ?? "无会话") : "继续对话"
+        } else {
+            icon = "plus.bubble"
+            label = t == .opencode ? "新开 · " + (ocWorkDir.isEmpty ? "选择文件夹" : (ocWorkDir as NSString).lastPathComponent) : "新开对话"
+        }
+        return Menu {
+            if t == .opencode {
+                Section("新开对话") {
+                    ForEach(ocDirChoices, id: \.self) { d in
+                        Button {
+                            ocDir = d
+                            continueChat = false
+                        } label: {
+                            let n = (d as NSString).lastPathComponent
+                            if !continueChat && d == ocWorkDir { Label(n, systemImage: "checkmark") } else { Label(n, systemImage: "folder") }
+                        }
+                        .help(d)
+                    }
+                    Button("选择文件夹…") { chooseOpenCodeDir() }
+                }
+                if !ocStore.sessions.isEmpty {
+                    Section("继续对话") {
+                        ForEach(ocStore.sessions.prefix(8)) { s in
+                            Button {
+                                pickedSession = s.id
+                                continueChat = true
+                            } label: {
+                                let n = s.displayTitle + " · " + s.dirName
+                                if continueChat && s.id == session?.id { Label(n, systemImage: "checkmark") } else { Label(n, systemImage: "text.bubble") }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Button { continueChat = false } label: {
+                    if !continueChat { Label("新开对话", systemImage: "checkmark") } else { Label("新开对话", systemImage: "plus.bubble") }
+                }
+                Button { continueChat = true } label: {
+                    if continueChat { Label("继续当前对话", systemImage: "checkmark") } else { Label("继续当前对话", systemImage: "text.bubble") }
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.system(size: 11, weight: .semibold))
+                Text(label).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.tail)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 4)
+            .background(t.color.opacity(0.14), in: Capsule())
+            .foregroundStyle(t.color)
+            .frame(maxWidth: 240, alignment: .leading)
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+    }
+
+    /// 候选目录：当前选的 + 自己选过的 + opencode 最近用过的项目
+    private var ocDirChoices: [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for d in [ocWorkDir] + ocExtra.split(separator: "\n").map(String.init) + ocStore.dirs where !d.isEmpty && seen.insert(d).inserted { out.append(d) }
+        return out
+    }
+
+    private func chooseOpenCodeDir() {
+        let floating = onSubmitted != nil // 悬浮输入窗：弹出文件夹选择会让它失焦收起，选完再唤出来
+        let p = NSOpenPanel()
+        p.title = "选择 opencode 的工作目录"
+        p.canChooseFiles = false
+        p.canChooseDirectories = true
+        p.allowsMultipleSelection = false
+        if !ocWorkDir.isEmpty { p.directoryURL = URL(fileURLWithPath: ocWorkDir) }
+        NSApp.activate(ignoringOtherApps: true)
+        if p.runModal() == .OK, let url = p.url {
+            ocDir = url.path
+            continueChat = false
+            var extra = ocExtra.split(separator: "\n").map(String.init).filter { $0 != url.path }
+            extra.insert(url.path, at: 0)
+            ocExtra = extra.prefix(6).joined(separator: "\n")
+        }
+        if floating { DispatchQueue.main.async { QuickAddPanelController.shared.show() } }
+    }
+
+    private func submitAgent(_ a: CaptureAnalysis) {
+        let prompt = ComposerImage.stripMarker(a.text).trimmed
+        guard !prompt.isEmpty else { return }
+        let target = agentTarget(a)
+        var plan = DispatchPlan(target: target, fresh: !continueChat)
+        var place = ""
+        if target == .opencode {
+            if continueChat {
+                guard let s = ocWorkSession else { error = "没有可以继续的 opencode 会话"; return }
+                plan.session = s
+                place = s.dirName
+            } else {
+                guard !ocWorkDir.isEmpty else { error = "先选一个文件夹（底栏左边的按钮）"; return }
+                plan.dir = ocWorkDir
+                place = (ocWorkDir as NSString).lastPathComponent
+            }
+        }
+        lastTarget = target.rawValue
+        text = ""
+        images = []
+        override = nil
+        priority = 0
+        Task {
+            let r = await DispatchCenter.shared.send(prompt, plan: plan)
+            if !r.ok { Notifier.post(id: "dispatch.fail", title: "派给 \(target.title) 失败", body: r.message) }
+        }
+        let msg = "已派给 \(target.title)" + (place.isEmpty ? "" : " · " + place)
+        if let onSubmitted {
+            onSubmitted(msg)
+        } else if let onDone {
+            model.showNotice(msg)
+            onDone()
+        } else {
+            okText = msg
+            focusTick += 1
+        }
     }
 
     // MARK: - 专注记录
@@ -405,7 +561,8 @@ struct QuickAddView: View {
     /// Tab / Shift+Tab 切换类型：结审开着时在「自动 → 想法 → 证据 → 法规 → 线索」里转圈，否则在「自动 → 待办 → Daily Note → 笔记」里转圈
     private func cycleKind(reverse: Bool) {
         guard record == nil else { return }
-        let steps: [CaptureKind?] = model.hasSjz ? [nil, .idea, .evidence, .regulation, .clue] : [nil, .todo, .daily, .note]
+        var steps: [CaptureKind?] = model.hasSjz ? [nil, .idea, .evidence, .regulation, .clue] : [nil, .todo, .daily, .note]
+        if agentOn { steps.append(.agent) }
         let cur: CaptureKind? = override ?? analysis.forced ?? sticky
         let i = steps.firstIndex { $0 == cur } ?? 0
         let next = steps[(i + (reverse ? steps.count - 1 : 1)) % steps.count]
@@ -477,7 +634,7 @@ struct QuickAddView: View {
     /// 类型：默认自动识别，点开可以手动改
     private func kindMenu(_ a: CaptureAnalysis, _ k: CaptureKind) -> some View {
         Menu {
-            ForEach(CaptureKind.available(sjz: model.hasSjz)) { c in
+            ForEach(CaptureKind.available(sjz: model.hasSjz, agent: agentOn)) { c in
                 Button {
                     if c == autoKind(a) && a.forced == nil { override = nil; clearSticky() } else { override = c }
                 } label: {
@@ -540,7 +697,7 @@ struct QuickAddView: View {
             submit(a, k)
         } label: {
             HStack(spacing: 6) {
-                if submitting { ProgressView().controlSize(.small) } else { Text(submitLabel(k)).font(.callout.weight(.semibold)) }
+                if submitting { ProgressView().controlSize(.small) } else { Text(submitLabel(k, a)).font(.callout.weight(.semibold)) }
                 if note == nil { Text("↩").font(.caption2).opacity(0.7) }
             }
             .foregroundStyle(note != nil && disabled ? Color.primary.opacity(0.35) : .white)
@@ -565,9 +722,8 @@ struct QuickAddView: View {
                 }
             }
             ForEach(a.tags, id: \.self) { chip("number", $0, tint: Brand.orange) }
-            if let f = a.folderName { chip("folder", f, tint: Brand.orange) }
             if k == .daily { chip("clock", "追加到今天的 Daily Note", tint: .secondary) }
-            if k == .note && a.tags.isEmpty && a.folderName == nil { chip("doc.text", "新建一条笔记", tint: .secondary) }
+            if k == .note && a.tags.isEmpty { chip("doc.text", "新建一条笔记", tint: .secondary) }
             Spacer(minLength: 0)
         }
         .font(.caption)
@@ -584,7 +740,7 @@ struct QuickAddView: View {
         .background(tint.opacity(0.1), in: Capsule())
     }
 
-    private func submitLabel(_ k: CaptureKind) -> String {
+    private func submitLabel(_ k: CaptureKind, _ a: CaptureAnalysis) -> String {
         if note != nil {
             switch k {
             case .daily: return "记入日记"
@@ -601,6 +757,7 @@ struct QuickAddView: View {
         case .idea: return "记为想法"
         case .evidence: return "保存为证据"
         case .regulation: return "保存为法规"
+        case .agent: return "派给 \(agentTarget(a).title)"
         }
     }
 
@@ -610,6 +767,7 @@ struct QuickAddView: View {
         guard !submitting, !text.trimmed.isEmpty else { return }
         error = nil
         okText = nil
+        if k == .agent { submitAgent(a); return }
         // 先记到本机发件箱（立刻返回），写进滴答 / 闪念贝壳在后台做；失败会自动重试，真失败了再提示
         _ = CaptureOutbox.shared.takeSubmitted()   // 清掉之前遗留的，撤销只针对这一次
         do {

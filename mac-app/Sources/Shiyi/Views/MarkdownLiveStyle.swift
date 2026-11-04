@@ -20,6 +20,8 @@ private enum MD {
     static let bullet = re("^([ \\t]*)([-*+])([ \\t]+)")
     static let ordered = re("^([ \\t]*)(\\d{1,3})([.、])([ \\t]+)")
     static let rule = re("^[ \\t]*([-*_])(?:[ \\t]*\\1){2,}[ \\t]*$")
+    static let tableSep = re("^[ \\t]*\\|[ \\t]*:?-+:?[ \\t]*(\\|[ \\t]*:?-+:?[ \\t]*)*\\|?[ \\t]*$")
+    static let pipe = re("(?<!\\\\)\\|")
     static let bold = re("(\\*\\*|__)(?=\\S)(.+?)(?<=\\S)\\1")
     static let italic = re("(?<![\\*\\w])\\*(?=[^\\s*])(.+?)(?<=[^\\s*])\\*(?![\\*\\w])")
     static let strike = re("(~~)(?=\\S)(.+?)(?<=\\S)~~")
@@ -41,7 +43,10 @@ extension ComposerNSTextView {
         para.lineSpacing = 2.5
         let base: [NSAttributedString.Key: Any] = [.font: font0, .foregroundColor: NSColor.labelColor, .paragraphStyle: para]
         defer { typingAttributes = base }
-        guard let ts = textStorage, ts.length > 0, !hasMarkedText() else { return }
+        guard let ts = textStorage, ts.length > 0, !hasMarkedText() else {
+            if textStorage?.length == 0, !liveTables.isEmpty { liveTables = []; needsDisplay = true }
+            return
+        }
 
         let ns = ts.string as NSString
         let full = NSRange(location: 0, length: ns.length)
@@ -49,6 +54,23 @@ extension ComposerNSTextView {
         let fm = NSFontManager.shared
         let sel = selectedRange()
         let focused = window?.firstResponder === self
+
+        // 表格：光标不在里面时折叠成一条细线，在第一行的位置画真正的表格（见 MarkdownTableLive.swift）
+        var tableLine: [Int: (enc: NSRange, first: Bool, height: CGFloat)] = [:]
+        var live: [LiveTable] = []
+        for blk in findTableBlocks(ns) {
+            let start = blk.lines[0].location
+            let end = NSMaxRange(blk.lines[blk.lines.count - 1])
+            let inside = focused && ((sel.location >= start && sel.location <= end)
+                || (sel.length > 0 && NSIntersectionRange(NSRange(location: start, length: end - start), sel).length > 0))
+            if inside { continue }
+            let layout = tableLayout(for: blk, ns: ns)
+            let height = layout.height + LiveTableLayout.gap
+            for (i, l) in blk.lines.enumerated() { tableLine[l.location] = (blk.enclosing[i], i == 0, height) }
+            live.append(LiveTable(lines: blk.lines, layout: layout))
+        }
+        liveTables = live
+        needsDisplay = true
 
         ts.beginEditing()
         ts.addAttributes(base, range: full)
@@ -69,6 +91,16 @@ extension ComposerNSTextView {
 
         var inFence = false
         ns.enumerateSubstrings(in: full, options: [.byLines, .substringNotRequired]) { _, line, _, _ in
+            // 渲染成表格的行：文字折叠成细线（第一行撑出表格的高度）
+            if let t = tableLine[line.location] {
+                let p = NSMutableParagraphStyle()
+                p.lineSpacing = 0
+                p.paragraphSpacing = 0
+                p.minimumLineHeight = t.first ? t.height : 0.5
+                p.maximumLineHeight = t.first ? t.height : 0.5
+                ts.addAttributes([.font: NSFont.systemFont(ofSize: 0.1), .foregroundColor: NSColor.clear, .paragraphStyle: p], range: t.enc)
+                return
+            }
             let text = ns.substring(with: line)
             let l = NSRange(location: 0, length: line.length)
             // 光标 / 选区碰到这一行：显示符号；否则隐藏
@@ -89,6 +121,15 @@ extension ComposerNSTextView {
             if MD.rule.firstMatch(in: text, range: l) != nil {
                 color(line, MD.dim)
                 return
+            }
+
+            // 表格行：竖线变淡，分隔行（| --- |）整行淡掉并用等宽字
+            if text.trimmingCharacters(in: .whitespaces).hasPrefix("|") {
+                if MD.tableSep.firstMatch(in: text, range: l) != nil {
+                    ts.addAttributes([.font: mono, .foregroundColor: MD.dim], range: line)
+                    return
+                }
+                for m in MD.pipe.matches(in: text, range: l) { color(at(m.range, in: line), MD.dim) }
             }
 
             // 块级

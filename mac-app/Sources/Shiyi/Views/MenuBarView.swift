@@ -39,18 +39,17 @@ struct MenuBarView: View {
     var showInbox = true
     /// 出现 / 窗口变成 key 时自动刷新。灵动岛里关掉：点一下按钮窗口就变成 key，刷新结果会压在高度动画上，由岛在展开动画停稳后统一刷新
     var autoRefresh = true
-    @State private var adding = false
+    @AppStorage(AgentPrefs.workbuddyOn) private var wbOn = false
     @ObservedObject private var mic = MicEngine.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             MicStrip()
+            SedentaryStrip()
             Divider()
             MenuFocus(focus: model.focus)
-            if adding {
-                QuickAddView(compact: true).environmentObject(model)
-            } else if !model.hasDida {
+            if !model.hasDida {
                 Text("还没有填写滴答清单 API 口令").foregroundStyle(.secondary).padding(14)
             } else if let ov = model.overview {
                 tasks(ov)
@@ -190,7 +189,6 @@ struct MenuBarView: View {
             }
             Spacer(minLength: 4)
             if model.todosLoading { ProgressView().controlSize(.small) }
-            iconButton(adding ? "xmark" : "plus", adding ? "收起" : "快速记录") { adding.toggle() }
             iconButton("note.text.badge.plus", "新建便签（可钉在桌面上）") { StickyController.shared.create() }
             iconButton("arrow.clockwise", "刷新") { Task { await model.loadOverview() } }
             // 只在插着猛犸麦克风接收器时才显示
@@ -342,5 +340,47 @@ private struct MenuTaskRow: View {
         let c = task.content.trimmed.replacingOccurrences(of: "\n", with: " ")
         if !c.isEmpty { parts.append(String(c.prefix(24))) }
         return parts.joined(separator: " · ")
+    }
+}
+
+
+/// 菜单栏弹窗里的久坐提醒条：只在快要黑白（10 分钟内）/ 已经黑白 / 被推迟时出现，平时不占地方
+struct SedentaryStrip: View {
+    @ObservedObject private var r = SedentaryReminder.shared
+
+    private var text: String? {
+        if r.phase == .gray { return "屏幕已变黑白 · 离开电脑休息一会儿" }
+        guard r.enabled, let left = r.secondsLeft else { return nil }
+        if r.deferred { return "该休息了 · 专注或播放视频结束后提醒" }
+        if left <= 10 * 60 { return "久坐提醒 · \(Int(left / 60.0 + 0.99)) 分钟后屏幕变黑白" }
+        return nil
+    }
+
+    var body: some View {
+        if let text {
+            HStack(spacing: 8) {
+                Image(systemName: r.phase == .gray ? "circle.lefthalf.filled" : "figure.stand")
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(.green)
+                Text(text).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 4)
+                if r.phase == .gray {
+                    stripButton("提前退出…") { r.requestEarlyExit() }
+                } else if !r.deferred, r.canPostpone {
+                    stripButton("推迟 5 分钟") { r.snooze() }
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(Color.green.opacity(0.07))
+            Divider()
+        }
+    }
+
+    private func stripButton(_ title: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.green)
+                .padding(.horizontal, 9).padding(.vertical, 4)
+                .background(Color.green.opacity(0.14), in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }

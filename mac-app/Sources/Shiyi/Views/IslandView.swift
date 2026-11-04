@@ -42,7 +42,8 @@ enum DropPhase: Equatable {
 }
 
 /// 展开后显示什么：待办小组件 / 投放区 / 实时活动
-enum IslandMode: Equatable { case widget, drop, activity }
+/// `agent`：AI 调度台（审批 / Agent 完成验收卡），不会自动收起，要你处理或手动收起
+enum IslandMode: Equatable { case widget, drop, activity, agent }
 
 /// 灵动岛的几何与状态；SwiftUI 视图读它，控制器改它。
 /// 展开 / 收起的动画由 AppKit 驱动（面板 frame + 图层圆角），SwiftUI 内容尺寸固定，动画期间不重新布局。
@@ -67,6 +68,9 @@ final class IslandState: ObservableObject {
     var onLayoutChange: (() -> Void)?
     var onTapCollapsed: (() -> Void)?
     var onActivityAction: ((IslandActivity, ActivityAction) -> Void)?
+    var onAgentHeight: ((CGFloat) -> Void)?
+    /// 调度台卡片的内容高度（SwiftUI 量好后回传）
+    @Published var agentHeight: CGFloat = 220
 
     var hasNotch: Bool { notchHeight > 0 }
     /// 收起时的高度：有刘海就和刘海一样高，没有就是一条细的 Top Handle
@@ -75,7 +79,12 @@ final class IslandState: ObservableObject {
     var wing: CGFloat { 36 }
     var collapsedWidth: CGFloat { notchWidth + wing * 2 }
     /// 展开后的宽度：普通 400；番茄完成的「专注终端」左右拉宽到 780（左边小票、右边休息跟练卡）
-    var expandedWidth: CGFloat { isTerminal ? Self.terminalWidth : 400 }
+    var expandedWidth: CGFloat { isTerminal ? Self.terminalWidth : (mode == .agent ? (agentWide ? Self.agentWideWidth : Self.agentWidth) : 400) }
+    /// 调度台卡片（要读 Agent 的回复）比待办小组件宽一些
+    static let agentWidth: CGFloat = 520
+    /// Agent 做完的验收卡：左 2/3 读回复、右 1/3 操作，更宽
+    static let agentWideWidth: CGFloat = 780
+    @Published var agentWide = false
     static let terminalWidth: CGFloat = 780
     /// 终端里打印的小票高度（弹出前量好）
     var ticketH: CGFloat = 230
@@ -97,8 +106,11 @@ final class IslandState: ObservableObject {
         if sjzOn, case .capture? = activity { return topInset + 118 }
         return topInset + 76
     }
+    var shownAgentHeight: CGFloat { min(agentHeight, maxContentHeight) }
+    var agentTotalHeight: CGFloat { topInset + shownAgentHeight + 14 }
     var targetHeight: CGFloat {
         switch mode {
+        case .agent: return agentTotalHeight
         case .widget: return widgetHeight
         case .drop: return dropHeight
         case .activity: return activityHeight
@@ -119,8 +131,13 @@ private struct IslandCollapsedView: View {
     @ObservedObject var focus: FocusStore
     @ObservedObject var state: IslandState
     @ObservedObject private var session = BreakSession.shared
+    @ObservedObject private var sed = SedentaryReminder.shared
     @ObservedObject private var mic = MicEngine.shared
     @ObservedObject private var micSettings = MicSettingsStore.shared
+    @ObservedObject private var agents = ApprovalCenter.shared
+    @ObservedObject private var runs = AgentRunTracker.shared
+
+    private var agentCount: Int { agents.pending.count + agents.completions.count }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -136,7 +153,14 @@ private struct IslandCollapsedView: View {
     }
 
     @ViewBuilder private var leading: some View {
-        if let end = session.practiceEnd {
+        if agentCount > 0 {
+            // 有 Agent 等着你：橙色 = 要批；绿色 = 做完了等验收
+            let waiting = !agents.pending.isEmpty
+            Image(systemName: waiting ? "exclamationmark.bubble.fill" : "checkmark.bubble.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(waiting ? Color.orange : Color.green)
+                .symbolEffect(.pulse, isActive: waiting && !state.expanded)
+        } else if let end = session.practiceEnd {
             // 跟练中：左边是动作图标，右边是跟练倒计时（走完就退回平时的样子）
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 if end.timeIntervalSince(ctx.date) > 0 {
@@ -148,7 +172,11 @@ private struct IslandCollapsedView: View {
     }
 
     @ViewBuilder private var trailing: some View {
-        if let end = session.practiceEnd {
+        if agentCount > 0 {
+            Text("\(agentCount)")
+                .font(.system(size: 11, weight: .bold, design: .rounded)).monospacedDigit()
+                .foregroundStyle(agents.pending.isEmpty ? Color.green : Color.orange)
+        } else if let end = session.practiceEnd {
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 let left = Int(end.timeIntervalSince(ctx.date).rounded(.up))
                 if left > 0 {
@@ -159,8 +187,16 @@ private struct IslandCollapsedView: View {
         } else { baseTrailing }
     }
 
+    /// Agent 正在跑：左边是它的图标（呼吸），右边是已运行时长；多个同时跑时右边显示个数
+    private var runningNow: AgentRun? { focus.run == nil && !sed.resting ? runs.runs.first : nil }
+
     @ViewBuilder private var baseLeading: some View {
-        if let r = focus.run {
+        if let run = runningNow {
+            Image(systemName: run.source.icon)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(run.source.color)
+                .help(runs.runs.map { "\($0.source.title) · \($0.project)" }.joined(separator: "\n"))
+        } else if let r = focus.run {
             ZStack {
                 Circle().stroke(Color.white.opacity(0.2), lineWidth: 2)
                 FocusTick(clock: focus.clock) { nowMs in
@@ -176,6 +212,19 @@ private struct IslandCollapsedView: View {
             .contentShape(Rectangle())
             .onTapGesture { focus.pauseOrResume() }
             .help(r.paused ? "继续" : "暂停")
+        } else if sed.resting {
+            // 久坐提醒的休息：和专注休息一样，左边是进度环（离开电脑的进度）
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                ZStack {
+                    Circle().stroke(Color.white.opacity(0.2), lineWidth: 2)
+                    Circle().trim(from: 0, to: sed.restProgress())
+                        .stroke(Color.green, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                    Image(systemName: "figure.stand").font(.system(size: 7.5, weight: .bold)).foregroundStyle(.white)
+                }
+                .frame(width: 18, height: 18)
+            }
+            .help("久坐休息中：离开电脑 \(sed.restIdleMin) 分钟，屏幕恢复彩色")
         } else {
             if mic.connected {
                 // 麦克风连着：这里显示它现在驱动的语音输出对象（拾忆 / 外部输入法），录音时变红
@@ -191,11 +240,28 @@ private struct IslandCollapsedView: View {
     }
 
     @ViewBuilder private var baseTrailing: some View {
-        if let r = focus.run {
+        if let run = runningNow {
+            if runs.runs.count > 1 {
+                Text("\(runs.runs.count)")
+                    .font(.system(size: 11, weight: .bold, design: .rounded)).monospacedDigit().foregroundStyle(run.source.color)
+            } else {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    let s = max(Int(ctx.date.timeIntervalSince(run.started)), 0)
+                    Text(String(format: "%d:%02d", s / 60, s % 60))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit().foregroundStyle(run.source.color)
+                }
+            }
+        } else if let r = focus.run {
             FocusTick(clock: focus.clock) { now in
                 let left = max(Int(r.remainingMs(now) / 1000), 0)
                 Text(String(format: "%02d:%02d", left / 60, left % 60))
                     .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit().foregroundStyle(.white)
+            }
+        } else if sed.resting {
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                let left = Int(sed.restRemaining().rounded(.up))
+                Text(String(format: "%d:%02d", left / 60, left % 60))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit().foregroundStyle(Color.green)
             }
         } else if model.hasDida, let ov = model.overview {
             HStack(spacing: 3) {
@@ -220,6 +286,7 @@ private struct IslandExpandedView: View {
         ZStack(alignment: .top) {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 0) {
+                    AgentRunStrip()
                     MenuBarView(showInbox: false, autoRefresh: false)
                     if model.hasSjz {
                         Divider().padding(.horizontal, 12)
@@ -249,6 +316,10 @@ private struct IslandExpandedView: View {
                 .padding(.top, state.topInset)
                 .opacity(state.mode == .drop ? 1 : 0)
                 .allowsHitTesting(false)
+
+            IslandAgentView(state: state)
+                .opacity(state.mode == .agent ? 1 : 0)
+                .allowsHitTesting(state.mode == .agent)
 
             if let a = state.activity {
                 Group {
@@ -518,6 +589,7 @@ final class IslandController {
             self.resizeExpanded()
         }
         state.onTapCollapsed = { [weak self] in self?.expand() }
+        state.onAgentHeight = { [weak self] h in self?.agentHeightChanged(h) }
         state.onActivityAction = { [weak self] a, act in self?.perform(a, act) }
         captureWatcher.onOffer = { [weak self] offer in self?.present(.capture(offer)) }
         GlobalHotkey.shared.onPress = { [weak self] in self?.hotkeyPressed() }
@@ -544,7 +616,10 @@ final class IslandController {
 
     private func apply() {
         let want = DisplayMode.current == .island
+        let had = panel != nil
         if want, panel == nil { show() } else if !want, panel != nil { hide() }
+        // 岛开了 / 关了：正在等你的审批要换个地方显示
+        if (panel != nil) != had { Task { @MainActor in ApprovalCenter.shared.refreshSurface() } }
         guard panel != nil else { return }
         // 这些设置随时可能被改：对账一次
         let wantCapture = DisplayMode.captureEnabled
@@ -794,6 +869,8 @@ final class IslandController {
         guard panel != nil, !state.expanded else { return }
         collapseWork?.cancel(); collapseWork = nil
         var mode = mode
+        // 有 Agent 在等你：展开就直接看到它们，而不是待办小组件
+        if mode == .widget, ApprovalCenter.shared.pending.count + ApprovalCenter.shared.completions.count > 0 { mode = .agent }
         // 跟练还在进行：点岛 / 悬停回到跟练的状态，而不是待办小组件
         if mode == .widget, practicing, let a = lastFocusDone {
             state.activity = a
@@ -841,6 +918,47 @@ final class IslandController {
             if panel.isKeyWindow || self.mouseInsidePanel() || self.shouldKeepOpen() { return }
             self.collapse()
         }
+    }
+
+    // MARK: AI 调度台
+
+    private var agentSeen = 0
+
+    /// 审批 / 验收卡变化时调用。返回 true = 岛在负责展示（false 时由右上角悬浮卡片展示）
+    @discardableResult
+    func syncAgents() -> Bool {
+        guard panel != nil else { agentSeen = 0; return false }
+        let c = ApprovalCenter.shared
+        let n = c.pending.count + c.completions.count
+        defer { agentSeen = n }
+        // 第一张是验收卡时用宽版（两栏）；审批卡窄一些
+        let wide = c.pending.isEmpty && !c.completions.isEmpty
+        if state.agentWide != wide {
+            state.agentWide = wide
+            if state.expanded, state.mode == .agent { resizeExpanded() }
+        }
+        if n == 0 {
+            if state.mode == .agent {
+                if state.expanded { collapse() } else { state.mode = .widget }
+            }
+            return true
+        }
+        // 只是批掉了一张、还有剩的：已经收起的就别再弹出来；还开着的由高度回传来调整
+        if n <= agentSeen { return true }
+        activityWork?.cancel(); activityWork = nil
+        collapseWork?.cancel(); collapseWork = nil
+        if state.expanded {
+            if state.mode == .agent { resizeExpanded() } else { switchMode(.agent) }
+        } else {
+            expand(mode: .agent)
+        }
+        return true
+    }
+
+    private func agentHeightChanged(_ h: CGFloat) {
+        guard abs(h - state.agentHeight) > 0.5 else { return }
+        state.agentHeight = h
+        if state.expanded, state.mode == .agent { resizeExpanded() }
     }
 
     // MARK: 快捷键 / 粘贴
@@ -1015,7 +1133,7 @@ final class IslandController {
     private func present(_ a: IslandActivity) -> Bool {
         guard panel != nil, DisplayMode.activitiesEnabled else { return false }
         if case .capture = a, !DisplayMode.captureEnabled { return false }
-        if state.expanded, state.mode == .drop { return false }
+        if state.expanded, state.mode == .drop || state.mode == .agent { return false }
         if state.expanded, state.mode == .widget, mouseInsidePanel() { return false }
         syncSjz()
         state.activity = a
@@ -1159,6 +1277,7 @@ final class IslandController {
     /// 正在输入、保存中、拖着东西出去、或有弹出菜单时，不因为鼠标移开而收起
     private func shouldKeepOpen(checkMouseButton: Bool = true) -> Bool {
         if state.drop == .working { return true }
+        if state.mode == .agent { return true }
         if practicing { return true }
         if case .done = state.drop { return true }
         if let p = panel, p.isKeyWindow, p.firstResponder is NSText { return true }
@@ -1292,6 +1411,9 @@ final class IslandController {
             if hoverZone(on: s).contains(p) { expand() }
             return
         }
+
+        // 调度台：要你处理，不因为鼠标移开而收起（Esc / 右上角的小箭头可以手动收）
+        if state.mode == .agent { return }
 
         // 实时活动：鼠标在上面时不消失，移开后再停留一会儿
         if state.mode == .activity {

@@ -157,12 +157,7 @@ struct SjzMarkdownView: View {
         var code: [String]? = nil
         var rows: [[String]] = []
         func flushQuote() { if !quote.isEmpty { out.append(.quote(quote)); quote = [] } }
-        func cells(_ l: String) -> [String] {
-            var t = l.trimmingCharacters(in: .whitespaces)
-            if t.hasPrefix("|") { t.removeFirst() }
-            if t.hasSuffix("|") { t.removeLast() }
-            return t.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-        }
+        func cells(_ l: String) -> [String] { MarkdownTable.cells(l) }
         /// 表格：第二行是 | --- | ---: | 分隔行（冒号在右 = 右对齐）
         func flushTable() {
             guard !rows.isEmpty else { return }

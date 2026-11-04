@@ -13,6 +13,7 @@ struct MarkdownView: View {
         case code(String)
         case rule
         case para(String)
+        case table([String], [[String]], [MarkdownTable.Align])
     }
 
     private static let reHeading = RX(#"^(#{1,6})\s+(.*)$"#, multiline: false)
@@ -27,13 +28,28 @@ struct MarkdownView: View {
         var out: [Block] = []
         var inCode = false
         var code: [String] = []
+        var tableLines: [String] = []
+        /// 连续的 | 开头的行：第二行是 | --- | 分隔行才算表格，否则按普通文字
+        func flushTable() {
+            guard !tableLines.isEmpty else { return }
+            defer { tableLines = [] }
+            let rows = tableLines.map { MarkdownTable.cells($0) }
+            if rows.count >= 2, let aligns = MarkdownTable.aligns(ofSeparator: rows[1]) {
+                out.append(.table(rows[0], Array(rows.dropFirst(2)), aligns))
+            } else {
+                for l in tableLines { out.append(.para(l)) }
+            }
+        }
         for raw in text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
             if raw.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                flushTable()
                 if inCode { out.append(.code(code.joined(separator: "\n"))); code = [] }
                 inCode.toggle()
                 continue
             }
             if inCode { code.append(raw); continue }
+            if MarkdownTable.isRow(raw) { tableLines.append(raw); continue }
+            flushTable()
             if raw.trimmed.isEmpty || Self.reImageLine.contains(in: raw) { continue }
             if let m = Self.reHeading.first(in: raw) { out.append(.heading(m.group(1).count, m.group(2))) }
             else if Self.reRule.contains(in: raw) { out.append(.rule) }
@@ -43,6 +59,7 @@ struct MarkdownView: View {
             else if let m = Self.reQuote.first(in: raw) { out.append(.quote(m.group(1))) }
             else { out.append(.para(raw)) }
         }
+        flushTable()
         if inCode, !code.isEmpty { out.append(.code(code.joined(separator: "\n"))) }
         return out
     }
@@ -51,6 +68,43 @@ struct MarkdownView: View {
         let opts = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         if let a = try? AttributedString(markdown: s, options: opts) { return Text(a) }
         return Text(s)
+    }
+
+    private func cellAlignment(_ aligns: [MarkdownTable.Align], _ i: Int) -> Alignment {
+        guard i < aligns.count else { return .leading }
+        switch aligns[i] {
+        case .left: return .leading
+        case .center: return .center
+        case .right: return .trailing
+        }
+    }
+
+    private func tableView(_ head: [String], _ body: [[String]], _ aligns: [MarkdownTable.Align]) -> some View {
+        let cols = max(head.count, body.map { $0.count }.max() ?? 0, 1)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                GridRow {
+                    ForEach(0 ..< cols, id: \.self) { i in
+                        inline(i < head.count ? head[i] : "").font(.system(size: 12.5, weight: .semibold))
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .frame(maxWidth: .infinity, alignment: cellAlignment(aligns, i))
+                            .background(Color.primary.opacity(0.07))
+                    }
+                }
+                ForEach(Array(body.enumerated()), id: \.offset) { _, r in
+                    Divider().gridCellColumns(cols).opacity(0.5)
+                    GridRow {
+                        ForEach(0 ..< cols, id: \.self) { i in
+                            inline(i < r.count ? r[i] : "").font(.system(size: 12.5))
+                                .padding(.horizontal, 10).padding(.vertical, 5)
+                                .frame(maxWidth: .infinity, alignment: cellAlignment(aligns, i))
+                        }
+                    }
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Color.primary.opacity(0.14), lineWidth: 0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
     }
 
     var body: some View {
@@ -93,6 +147,8 @@ struct MarkdownView: View {
                     Divider().padding(.vertical, 4)
                 case let .para(s):
                     inline(s)
+                case let .table(head, body, aligns):
+                    tableView(head, body, aligns)
                 }
             }
         }

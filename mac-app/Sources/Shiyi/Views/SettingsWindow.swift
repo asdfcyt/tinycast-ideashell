@@ -6,14 +6,14 @@ import UniformTypeIdentifiers
 
 /// 设置的分类：左侧导航，一类一页
 enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
-    case general, account, data, voice, mic, widget, focus, notify
+    case general, account, data, voice, mic, widget, focus, notify, agents
 
     var id: String { rawValue }
 
     /// 侧边栏的分组
     static let sections: [(title: String, tabs: [SettingsTab])] = [
         ("通用", [.general, .account, .data]),
-        ("功能", [.voice, .mic, .widget, .focus, .notify]),
+        ("功能", [.voice, .mic, .widget, .focus, .notify, .agents]),
     ]
 
     var title: String {
@@ -26,6 +26,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .widget: return "小组件"
         case .focus: return "专注"
         case .notify: return "通知"
+        case .agents: return "AI 调度台"
         }
     }
 
@@ -39,6 +40,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .widget: return "capsule.portrait.fill"
         case .focus: return "timer"
         case .notify: return "bell.badge.fill"
+        case .agents: return "checkmark.seal.fill"
         }
     }
 
@@ -53,6 +55,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .widget: return .cyan
         case .focus: return .orange
         case .notify: return .red
+        case .agents: return .purple
         }
     }
 
@@ -66,7 +69,8 @@ enum SettingsTab: String, CaseIterable, Identifiable, Hashable {
         case .mic: return "猛犸 hollyland lark a2 无线麦克风 发射器 接收器 按键 单击 双击 三击 静音 降噪 电量"
         case .widget: return "灵动岛 菜单栏 小组件 悬停 截图 暂存架 刘海 ocr 状态提醒"
         case .focus: return "专注 番茄 目标 小票 打印 提示音"
-        case .notify: return "通知 提醒 简报 逾期 到点 提前"
+        case .notify: return "通知 提醒 简报 逾期 到点 提前 久坐 黑白 灰度 屏幕 休息 起身 活动 走动 连续使用 解锁口令"
+        case .agents: return "ai 调度台 调度 审批 确认 权限 agent 智能体 cursor opencode 结审 workbuddy 钩子 hook 命令 mcp 删除 权限 放行 拒绝 理由"
         }
     }
 }
@@ -163,6 +167,7 @@ struct SettingsRoot: View {
         case .widget: WidgetPane()
         case .focus: FocusPane()
         case .notify: NotifyPane()
+        case .agents: AgentsPane()
         }
     }
 }
@@ -758,6 +763,66 @@ private struct FocusPane: View {
     }
 }
 
+// MARK: - 久坐提醒（放在「通知」页里）
+
+private struct SedentaryGroups: View {
+    @ObservedObject private var reminder = SedentaryReminder.shared
+    @AppStorage(SedentaryPrefs.enabled) private var on = true
+    @AppStorage(SedentaryPrefs.interval) private var interval = 45
+    @AppStorage(SedentaryPrefs.restIdle) private var restIdle = 3
+    @AppStorage(SedentaryPrefs.warn) private var warn = true
+    @AppStorage(SedentaryPrefs.respectBusy) private var busy = true
+    @State private var pinSet = SedentaryPin.isSet
+
+    private var status: String {
+        if !on { return "" }
+        if reminder.phase == .gray { return "屏幕已变黑白，离开电脑 \(restIdle) 分钟后恢复；提前退出要口令或挑战" }
+        let used = Int(reminder.activeSeconds / 60)
+        if reminder.deferred { return "已连续使用 \(used) 分钟 · 正在专注或播放视频，先不打扰" }
+        let left = Int((reminder.secondsLeft ?? 0) / 60.0 + 0.99)
+        return "已连续使用 \(used) 分钟 · 还有 \(left) 分钟变黑白"
+    }
+
+    var body: some View {
+        Group {
+            SGroup("久坐", footer: ScreenGrayscale.available ? nil : "这个系统版本不支持整屏黑白，到时间只会发通知。", trailing: {
+                if on {
+                    SIconButton(symbol: "eye", help: "预览：整个屏幕变黑白 6 秒", disabled: reminder.previewing || reminder.phase == .gray) { reminder.preview() }
+                }
+            }) {
+                SToggle("久坐提醒", nil, $on)
+                if on {
+                    SRow(status) {
+                        if reminder.phase == .gray {
+                            Button("提前退出…") { reminder.requestEarlyExit() }.controlSize(.small)
+                        }
+                    }
+                    Group {
+                    SRow("连续使用") {
+                        SPick(selection: $interval, options: [(20, "20 分钟"), (30, "30 分钟"), (45, "45 分钟"), (60, "60 分钟"), (90, "90 分钟")])
+                    }
+                    SRow("休息时长") {
+                        SPick(selection: $restIdle, options: [(1, "1 分钟"), (2, "2 分钟"), (3, "3 分钟"), (5, "5 分钟"), (10, "10 分钟")])
+                    }
+                    SToggle("休息前 1 分钟先通知", nil, $warn)
+                    SToggle("专注计时中始终不打扰", nil, $busy)
+                    SRow("解锁口令") {
+                        HStack(spacing: 8) {
+                            Button(pinSet ? "修改…" : "设置…") { pinSet = SedentaryPin.edit(clear: false) || SedentaryPin.isSet }.controlSize(.small)
+                            if pinSet {
+                                Button("清除…") { _ = SedentaryPin.edit(clear: true); pinSet = SedentaryPin.isSet }.controlSize(.small)
+                            }
+                        }
+                    }
+                    }
+                    // 黑白期间不能靠改设置绕过去
+                    .disabled(reminder.phase == .gray)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 通知
 
 private struct NotifyPane: View {
@@ -790,6 +855,8 @@ private struct NotifyPane: View {
                 SToggle("早晚简报", nil, $nDigest)
                 SToggle("逾期提醒", nil, $nOverdue)
             }
+
+            SedentaryGroups()
 
             if model.hasSjz {
                 SGroup("结审") {

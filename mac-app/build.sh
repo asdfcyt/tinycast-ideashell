@@ -27,6 +27,10 @@ swiftc -Onone -parse-as-library -swift-version 5 -sdk "$SDK" \
     -module-name Shiyi \
     "${SOURCES[@]}" -o "$OUT/Shiyi"
 
+# Agent 钩子（批奏折）：Cursor / WorkBuddy 的钩子命令，独立小程序，启动要快
+swiftc -Onone -swift-version 5 -sdk "$SDK" -target arm64-apple-macos14.0 \
+    Tools/shiyi-hook.swift -o "$OUT/shiyi-hook"
+
 # 应用图标：取自安卓端 ic_launcher_foreground.xml；Resources/AppIcon.icns 不存在时才重新生成
 if [ ! -f Resources/AppIcon.icns ]; then
     mkdir -p Resources "$OUT/AppIcon.iconset"
@@ -42,6 +46,7 @@ fi
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$OUT/Shiyi" "$APP/Contents/MacOS/Shiyi"
+cp "$OUT/shiyi-hook" "$APP/Contents/MacOS/shiyi-hook"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # 环境音（真实录音，CC0）
 [ -d Resources/Ambient ] && cp -R Resources/Ambient "$APP/Contents/Resources/Ambient"

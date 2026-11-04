@@ -22,6 +22,8 @@ extension AppModel {
     /// `priority`：只对待办有效；`defaultDate`：待办没写日期时用（日历里点「添加待办」带进来）。
     func submitCapture(_ a: CaptureAnalysis, kind: CaptureKind, priority: Int = 0, defaultDate: String? = nil, defaultTime: String? = nil, images: [ComposerImage] = [], newNote: String? = nil) async throws -> String {
         switch kind {
+        case .agent:
+            throw McpError.tool("「派活」不走这里")
         case .todo:
             let title = a.todo.content.trimmed
             guard !title.isEmpty else { throw McpError.tool("待办内容为空") }

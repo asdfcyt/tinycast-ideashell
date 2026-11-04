@@ -199,6 +199,14 @@ final class ComposerNSTextView: NSTextView {
     var markdownStyle = false
     var grabsFocus = true
     var baseFont: NSFont = .systemFont(ofSize: 16)
+    /// 便签里渲染成真表格的块 / 排版缓存（见 MarkdownTableLive.swift）
+    var liveTables: [LiveTable] = []
+    var tableCache: [String: LiveTableLayout] = [:]
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        drawLiveTables(dirtyRect)
+    }
 
     static let maxImages = 9
     static let thumbMax = NSSize(width: 360, height: 160)
@@ -227,6 +235,7 @@ final class ComposerNSTextView: NSTextView {
 
     override func mouseDown(with event: NSEvent) {
         if toggleTaskIfClicked(event) { return }
+        if expandTableIfClicked(event) { return }
         super.mouseDown(with: event)
     }
 
@@ -348,7 +357,7 @@ final class ComposerNSTextView: NSTextView {
                 return
             }
         }
-        pasteAsPlainText(sender)
+        insertPasted(convert: true)
     }
 
     /// 悬浮输入窗不激活应用，菜单里的 ⌘V 不一定能到这里：自己接一下
@@ -363,13 +372,41 @@ final class ComposerNSTextView: NSTextView {
         return super.performKeyEquivalent(with: event)
     }
 
-    override func pasteAsPlainText(_ sender: Any?) {
-        guard let s = NSPasteboard.general.string(forType: .string) else { return }
-        insertText(ComposerImage.stripMarker(s), replacementRange: selectedRange())
+    /// ⌥⇧⌘V：原样粘贴纯文字，不转换格式
+    override func pasteAsPlainText(_ sender: Any?) { insertPasted(convert: false) }
+
+    override func pasteAsRichText(_ sender: Any?) { insertPasted(convert: true) }
+
+    /// convert：网页 / 文档 / 表格软件里复制的表格、列表、标题等转成 Markdown（见 RichPaste）；不转就只取纯文字
+    private func insertPasted(convert: Bool) {
+        let pb = NSPasteboard.general
+        var piece: String?
+        var block = false
+        if convert, let r = RichPaste.result(from: pb, keepInline: markdownStyle) {
+            piece = r.text
+            block = r.isBlock
+        }
+        guard var s = piece ?? pb.string(forType: .string) else { return }
+        s = ComposerImage.stripMarker(s)
+        let sel = selectedRange()
+        if block { s = padBlock(s, at: sel) }
+        insertText(s, replacementRange: sel)
         onTextChange?()
     }
 
-    override func pasteAsRichText(_ sender: Any?) { pasteAsPlainText(sender) }
+    /// 表格 / 列表这类块级内容要独占几行：前面有字就先空一行，后面接着字也补空行，光标落在块的下面
+    private func padBlock(_ s: String, at r: NSRange) -> String {
+        let ns = string as NSString
+        var out = s
+        if r.location > 0, r.location <= ns.length {
+            if ns.character(at: r.location - 1) != 10 { out = "\n\n" + out }
+            else if r.location > 1, ns.character(at: r.location - 2) != 10 { out = "\n" + out }
+        }
+        let end = r.location + r.length
+        if end >= ns.length { out += "\n" }
+        else if ns.character(at: end) != 10 { out += "\n\n" }
+        return out
+    }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         if allowsImages, Self.hasImage(sender.draggingPasteboard) { return .copy }
@@ -401,7 +438,13 @@ final class ComposerNSTextView: NSTextView {
         if let s = pb.string(forType: .string) {
             let p = convert(sender.draggingLocation, from: nil)
             let at = characterIndexForInsertion(at: p)
-            insertText(ComposerImage.stripMarker(s), replacementRange: NSRange(location: at == NSNotFound ? selectedRange().location : at, length: 0))
+            let range = NSRange(location: at == NSNotFound ? selectedRange().location : at, length: 0)
+            var text = ComposerImage.stripMarker(s)
+            if let r = RichPaste.result(from: pb, keepInline: markdownStyle) {
+                text = ComposerImage.stripMarker(r.text)
+                if r.isBlock { text = padBlock(text, at: range) }
+            }
+            insertText(text, replacementRange: range)
             onTextChange?()
             return true
         }

@@ -36,6 +36,19 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         NotifyPrefs.register()
         center.delegate = self
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        // 久坐提醒的预告通知带一个「再等 5 分钟」按钮
+        let snooze = UNNotificationAction(identifier: SedentaryReminder.snoozeAction, title: "再等 5 分钟", options: [])
+        center.setNotificationCategories([UNNotificationCategory(identifier: SedentaryReminder.warnCategory, actions: [snooze], intentIdentifiers: [])])
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        if response.actionIdentifier == SedentaryReminder.snoozeAction {
+            Task { @MainActor in SedentaryReminder.shared.snooze() }
+        }
+        completionHandler()
     }
 
     nonisolated func userNotificationCenter(
@@ -48,11 +61,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     // MARK: - 发送
 
     /// 立刻发一条（相同 id 会替换上一条）
-    nonisolated static func post(id: String, title: String, body: String) {
+    nonisolated static func post(id: String, title: String, body: String, category: String? = nil) {
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
         c.sound = .default
+        if let category { c.categoryIdentifier = category }
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: c, trigger: nil))
     }
 

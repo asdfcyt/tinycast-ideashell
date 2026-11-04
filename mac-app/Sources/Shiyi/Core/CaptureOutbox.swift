@@ -95,6 +95,8 @@ final class CaptureOutbox {
             let date = a.todo.date ?? defaultDate
             let time = date == nil ? nil : (a.todo.time ?? (a.todo.date == nil ? defaultTime : nil))
             message = "已添加待办" + (date.map { " · " + Day.label($0) + (time.map { " " + $0 } ?? "") } ?? "")
+        case .agent:
+            throw McpError.tool("「派活」不走发件箱")
         case .daily:
             guard model.hasIdeashell else { throw McpError.noCredential }
             guard !ComposerImage.stripMarker(a.text).trimmed.isEmpty || !images.isEmpty else { throw McpError.tool("内容为空") }

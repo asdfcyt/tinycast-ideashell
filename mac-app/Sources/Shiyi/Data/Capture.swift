@@ -5,11 +5,15 @@ enum CaptureKind: String, CaseIterable, Identifiable {
     /// 结审（开启并连接后才出现），直接存进当前钉住的审计项目：
     /// 线索（独立 Markdown，可转疑点）/ 想法（阅读笔记，写进当天工作日志）/ 证据 / 法规
     case idea = "结审想法", evidence = "结审证据", regulation = "结审法规", clue = "结审线索"
+    /// 派活：不是记录，而是把这段话交给 Agent（WorkBuddy / opencode）去做；有可用的 Agent 时才出现
+    case agent = "派活"
     var id: String { rawValue }
 
     var isSjz: Bool { self == .clue || self == .idea || self == .evidence || self == .regulation }
 
-    static func available(sjz: Bool) -> [CaptureKind] { allCases.filter { sjz || !$0.isSjz } }
+    static func available(sjz: Bool, agent: Bool = false) -> [CaptureKind] {
+        allCases.filter { ($0.isSjz ? sjz : true) && ($0 != .agent || agent) }
+    }
 
     var icon: String {
         switch self {
@@ -20,14 +24,15 @@ enum CaptureKind: String, CaseIterable, Identifiable {
         case .idea: return "text.bubble"
         case .evidence: return "doc.badge.plus"
         case .regulation: return "book.closed"
+        case .agent: return "paperplane"
         }
     }
 }
 
 struct CaptureAnalysis {
-    /// 去掉强制前缀后的原文（保留 #标签 / @文件夹），追加到 Daily Note 时使用
+    /// 去掉强制前缀后的原文（保留 #标签），追加到 Daily Note 时使用
     var text: String
-    /// 再去掉 #标签 / @文件夹 后的正文，笔记和待办使用
+    /// 再去掉 #标签 后的正文，笔记和待办使用
     var body: String
     var tags: [String]
     var folderName: String?
@@ -36,14 +41,17 @@ struct CaptureAnalysis {
     var forced: CaptureKind?
     /// 自动判断的类型
     var recommended: CaptureKind
+    /// 开头写了 @WorkBuddy / @opencode：交给谁
+    var agentTarget: DispatchTarget? = nil
 
     var kind: CaptureKind { forced ?? recommended }
 }
 
 /// 万能输入解析，移植自安卓端 `CaptureParser.kt`：
 /// - 前缀强制类型：`待办 …` / `todo …` / `提醒我 …`、`日记 …` / `daily …`、`笔记 …` / `note …`
-/// - `#标签`、`@文件夹` 会被抽出（要求前面是行首或空白，避免误伤 C#、邮箱）
-/// - 自动判断：待办 = 含「今天及以后的明确时间」或「明天及以后的日期」；笔记 = 带标签 / 文件夹；其余追加到 Daily Note
+/// - `#标签` 会被抽出（要求前面是行首或空白，避免误伤 C#、邮箱）
+/// - 开头写 `@WorkBuddy` / `@opencode`：直接派活给它（只在有可用 Agent 时识别）
+/// - 自动判断：待办 = 含「今天及以后的明确时间」或「明天及以后的日期」；笔记 = 带标签；其余追加到 Daily Note
 enum CaptureParser {
     /// 结审已启用并连接时，才识别「线索 / 想法 / 证据 / 法规」前缀（由 AppModel 同步）
     nonisolated(unsafe) static var sjzOn = false
@@ -56,17 +64,26 @@ enum CaptureParser {
         (RX("^(?:想法|idea)" + sep, multiline: false, ignoreCase: true), .idea),
         (RX("^(?:证据|evidence)" + sep, multiline: false, ignoreCase: true), .evidence),
         (RX("^(?:法规|regulation)" + sep, multiline: false, ignoreCase: true), .regulation),
+        (RX("^派活" + sep, multiline: false, ignoreCase: true), .agent),
     ]
     private static let reTag = RX(#"(^|[\s\u3000])#([^\s#@]+)"#, multiline: false)
-    private static let reFolder = RX(#"(^|[\s\u3000])@([^\s#@]+)"#, multiline: false)
+    private static let reMention = RX(#"^@([A-Za-z]+)(?![A-Za-z0-9_])(?:\s*[:：,，]\s*|\s+)?"#, multiline: false, ignoreCase: true)
     private static let reMultiSpace = RX(#"[ \t]{2,}"#, multiline: false)
 
-    static func analyze(_ input: String, now: Date = Date(), sjz: Bool? = nil) -> CaptureAnalysis {
+    static func analyze(_ input: String, now: Date = Date(), sjz: Bool? = nil, agents: [DispatchTarget] = []) -> CaptureAnalysis {
         var text = input.trimmed
         var forced: CaptureKind?
         let sjzOn = sjz ?? Self.sjzOn
-        for (re, kind) in prefixes {
+        var agentTarget: DispatchTarget?
+        if let m = reMention.first(in: text), m.range.location == 0,
+           let t = mentioned(m.group(1), in: agents) {
+            forced = .agent
+            agentTarget = t
+            text = reMention.replace(in: text, with: "").trimmed
+        }
+        for (re, kind) in prefixes where forced == nil {
             if kind.isSjz && !sjzOn { continue }
+            if kind == .agent && agents.isEmpty { continue }
             if let m = re.first(in: text), m.range.location == 0 {
                 forced = kind
                 text = re.replace(in: text, with: "").trimmed
@@ -75,13 +92,9 @@ enum CaptureParser {
         }
 
         var tags: [String] = []
-        var folderName: String?
+        let folderName: String? = nil
         var body = reTag.replace(in: text) { m in
             tags.append(m.group(2))
-            return m.group(1)
-        }
-        body = reFolder.replace(in: body) { m in
-            if folderName == nil { folderName = m.group(2) }
             return m.group(1)
         }
         body = reMultiSpace.replace(in: body, with: " ").trimmed
@@ -100,8 +113,15 @@ enum CaptureParser {
         return CaptureAnalysis(
             text: text, body: body,
             tags: tags.filter { seen.insert($0).inserted },
-            folderName: folderName, todo: todo, forced: forced, recommended: recommended
+            folderName: folderName, todo: todo, forced: forced, recommended: recommended, agentTarget: agentTarget
         )
+    }
+
+    /// @ 后面写的字母对应哪个 Agent：名字或简称的开头几个字母就行（@op、@wo、@oc…），有歧义不算
+    private static func mentioned(_ token: String, in agents: [DispatchTarget]) -> DispatchTarget? {
+        let k = token.lowercased()
+        let hits = agents.filter { $0.aliases.contains { $0.hasPrefix(k) } }
+        return hits.count == 1 ? hits[0] : nil
     }
 
     private static func normInfer(_ s: String) -> String {

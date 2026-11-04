@@ -344,6 +344,8 @@ final class AppModel: ObservableObject {
         VoiceController.shared.start(model: self)
         VoicePanelHost.shared.start()
         MicEngine.shared.start()
+        SedentaryReminder.shared.start(focus: focus)
+        AgentRuntime.start()
         restoreHistoryCaches()
         loadAIInsights()
         Task { await refreshAll(startup: true) }
