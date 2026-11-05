@@ -601,8 +601,27 @@ extension SjzProjectDetailView {
                 }
             }
             Divider()
+            Button("删除记录", systemImage: "trash") { hideCapture(c) }
             Button("删除…", role: .destructive) { deleting = c }
         }
+    }
+
+    /// 「删除记录」：只把这一条（连同挂在它名下的追加记录）从拾忆列表里去掉，结审里的文件原样保留
+    private func hideCapture(_ c: SjzCapture) {
+        let kids = captures.filter { $0.parentId == c.id }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "删除这条记录？"
+        alert.informativeText = "只从拾忆「来自拾忆」的列表里去掉「\((c.title.isEmpty ? c.summary : c.title).mdPlain)」" + (kids.isEmpty ? "" : "和它名下的 \(kids.count) 条追加记录")
+            + "，结审里的文件不会被删除。"
+        let ok = alert.addButton(withTitle: "删除记录")
+        ok.hasDestructiveAction = true
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let gone = Set([c.id] + kids.map(\.id))
+        UserDefaults.standard.set(Array(clearedIds.union(gone)), forKey: clearedKey)
+        captures.removeAll { gone.contains($0.id) }
+        model.showNotice("已从拾忆列表里删除这条记录，结审里的文件没有动")
     }
 
     private func runCapture(_ work: () async throws -> String) async {
@@ -774,9 +793,14 @@ struct SjzCaptureEditor: View {
                 HStack {
                     Text(capture.kind == "data" ? "文件" : isDatalist ? "资料明细" : "正文").font(.caption).foregroundStyle(.secondary)
                     Spacer()
+                    if isDatalist, loaded {
+                        Button { let urls = SjzAttach.pick(); Task { await attach(urls) } } label: { Label("添加附件", systemImage: "paperclip") }
+                            .buttonStyle(.borderless).font(.caption).disabled(busy)
+                            .help("上传 Excel / Word / PDF 等文件，作为这份资料清单的附件")
+                    }
                     if capture.kind != "data", loaded, editable || !files.isEmpty {
                         Picker("", selection: $mode) {
-                            if !files.isEmpty { Text(files.contains(where: { $0.role == "original" }) ? "原件" : "出处原件").tag(PMode.original) }
+                            if !files.isEmpty { Text(files.contains(where: { $0.role == "original" }) ? (isDatalist ? "附件" : "原件") : "出处原件").tag(PMode.original) }
                             Text(textLabel).tag(PMode.text)
                             if editable { Text("编辑").tag(PMode.edit) }
                         }
@@ -805,6 +829,13 @@ struct SjzCaptureEditor: View {
                 }
             }
             .frame(maxHeight: .infinity, alignment: .top)
+            .dropDestination(for: URL.self) { urls, _ in
+                guard isDatalist, loaded else { return false }
+                let ok = urls.filter { $0.isFileURL }
+                guard !ok.isEmpty else { return false }
+                Task { await attach(ok) }
+                return true
+            }
             if canLink {
                 HStack(spacing: 8) {
                     Text("取证单").font(.caption).foregroundStyle(.secondary)
@@ -991,7 +1022,8 @@ struct SjzCaptureEditor: View {
         }
         if first {
             fileSel = d.files.first?.id ?? ""
-            mode = Self.defaultMode(content: d.content, files: d.files)
+            // 资料清单：写了资料明细就先看明细，只有附件没有明细才直接看附件
+            mode = isDatalist && !d.content.trimmed.isEmpty && !d.files.isEmpty ? .text : Self.defaultMode(content: d.content, files: d.files)
         } else if !d.files.contains(where: { $0.id == fileSel }) { fileSel = d.files.first?.id ?? "" }
     }
 
@@ -1065,9 +1097,56 @@ struct SjzCaptureEditor: View {
                 Spacer()
                 Button("用默认应用打开") { NSWorkspace.shared.open(f.url) }
                 Button("在访达中显示") { NSWorkspace.shared.activateFileViewerSelecting([f.url]) }
+                if isDatalist, f.role == "original" {
+                    Button("移除附件", role: .destructive) { Task { await detach(f) } }.disabled(busy)
+                }
             }
             .buttonStyle(.borderless).font(.caption)
         }
+    }
+
+    /// 资料清单：上传附件（Excel / Word 等），存进结审项目目录，登记在这份清单名下
+    private func attach(_ urls: [URL]) async {
+        guard !urls.isEmpty else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            message = ""
+            let before = Set(files.map(\.id))
+            let m = try await model.sjz.addDatalistFiles(project: project, id: capture.id, files: try SjzAttach.read(urls))
+            model.showNotice(m)
+            await reloadFiles()
+            if let f = files.first(where: { !before.contains($0.id) }) { fileSel = f.id; jumpPage = nil }
+            mode = .original
+            await onDone()
+        } catch { message = error.localizedDescription }
+    }
+
+    private func detach(_ f: SjzFile) async {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "移除附件「\(f.name)」？"
+        alert.informativeText = "文件会从结审项目里删除，不能恢复。"
+        alert.addButton(withTitle: "移除").hasDestructiveAction = true
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            message = ""
+            try await model.sjz.removeDatalistFile(project: project, id: capture.id, rel: f.rel)
+            await reloadFiles()
+            if files.isEmpty { mode = .text }
+            await onDone()
+        } catch { message = error.localizedDescription }
+    }
+
+    /// 只刷新附件列表，不动正在编辑的正文
+    private func reloadFiles() async {
+        SjzDetailStore.forget(project: project, id: capture.id)
+        guard let d = await SjzDetailStore.load(api: model.sjz, project: project, id: capture.id) else { return }
+        files = d.files
+        if !files.contains(where: { $0.id == fileSel }) { fileSel = files.first?.id ?? "" }
     }
 
     /// 这一段属于哪次摘录：往前找到最近的带标识的那一段
@@ -1572,6 +1651,7 @@ private struct CaptureRowView: View {
                             if !child || crossKind { TagChip(text: c.id, tint: .gray).fixedSize() }
                             if !source.isEmpty { TagChip(text: source, tint: .gray).lineLimit(1) }
                             if !c.editedAt.isEmpty { TagChip(text: "已编辑", tint: .blue).fixedSize() }
+                            if c.kind == "datalist", !c.originals.isEmpty { TagChip(text: "附件 \(c.originals.count)", tint: .teal).fixedSize() }
                             if !summary.isEmpty {
                                 Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
@@ -1592,6 +1672,43 @@ private struct CaptureRowView: View {
 }
 
 
+/// 资料清单的附件（Excel / Word / PDF 等原件）：选文件、读成数据
+enum SjzAttach {
+    static let maxBytes = 25 * 1024 * 1024
+
+    /// 弹出系统选文件对话框（可多选）
+    @MainActor static func pick() -> [URL] {
+        let p = NSOpenPanel()
+        p.title = "选择资料清单附件"
+        p.prompt = "添加"
+        p.message = "可以选择 Excel、Word、PDF 等文件（单个不超过 25MB）"
+        p.canChooseFiles = true
+        p.canChooseDirectories = false
+        p.allowsMultipleSelection = true
+        return p.runModal() == .OK ? p.urls : []
+    }
+
+    /// 读成可上传的数据；超过 25MB 或读不出来的会抛错
+    static func read(_ urls: [URL]) throws -> [(name: String, data: Data)] {
+        try urls.map { u in
+            let size = (try? u.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            if size > maxBytes { throw McpError.tool("\(u.lastPathComponent) 超过 25MB") }
+            let d = try Data(contentsOf: u)
+            if d.isEmpty { throw McpError.tool("\(u.lastPathComponent) 内容为空") }
+            return (u.lastPathComponent, d)
+        }
+    }
+
+    static func icon(_ ext: String) -> String {
+        switch ext.lowercased() {
+        case "pdf": return "doc.richtext"
+        case "doc", "docx", "wps", "rtf": return "doc.text"
+        case "xls", "xlsx", "csv", "et": return "tablecells"
+        default: return "doc"
+        }
+    }
+}
+
 /// 在拾忆里新建资料清单：写进结审文书中心的「资料清单」分类
 struct SjzNewDatalistSheet: View {
     @EnvironmentObject var model: AppModel
@@ -1601,8 +1718,49 @@ struct SjzNewDatalistSheet: View {
     @State private var title = ""
     @State private var items = ""
     @State private var due = ""
+    @State private var files: [URL] = []
+    @State private var dropping = false
     @State private var busy = false
     @State private var message = ""
+
+    private func add(_ urls: [URL]) {
+        for u in urls where !files.contains(u) { files.append(u) }
+    }
+
+    private var attachBox: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("附件（Excel / Word 等）").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button { add(SjzAttach.pick()) } label: { Label("添加文件", systemImage: "paperclip") }
+                    .buttonStyle(.borderless).font(.caption)
+            }
+            if files.isEmpty {
+                Text("点「添加文件」或把文件拖到这里").font(.caption).foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, minHeight: 34)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(files, id: \.self) { u in
+                        HStack(spacing: 8) {
+                            Image(systemName: SjzAttach.icon(u.pathExtension)).font(.system(size: 11)).foregroundStyle(.teal).frame(width: 16)
+                            Text(u.lastPathComponent).font(.callout).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 6)
+                            Button { files.removeAll { $0 == u } } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                                .buttonStyle(.plain).help("移除")
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+        .padding(8)
+        .background(dropping ? Color.teal.opacity(0.12) : Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .dropDestination(for: URL.self) { urls, _ in
+            let ok = urls.filter { $0.isFileURL }
+            add(ok)
+            return !ok.isEmpty
+        } isTargeted: { dropping = $0 }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1616,9 +1774,10 @@ struct SjzNewDatalistSheet: View {
                 Text("资料明细（每行一项）").font(.caption).foregroundStyle(.secondary)
                 TextEditor(text: $items)
                     .font(.callout).scrollContentBackground(.hidden)
-                    .padding(6).frame(height: 180)
+                    .padding(6).frame(height: files.isEmpty ? 150 : 120)
                     .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
+            attachBox
             HStack(spacing: 8) {
                 Text("要求提供日期").font(.caption).foregroundStyle(.secondary)
                 DayPickerButton(title: "选择", icon: "calendar", value: $due)
@@ -1642,7 +1801,7 @@ struct SjzNewDatalistSheet: View {
         busy = true
         defer { busy = false }
         do {
-            let m = try await model.sjz.addDatalist(project: project, title: title.trimmed, items: items.trimmed, dueDate: due)
+            let m = try await model.sjz.addDatalist(project: project, title: title.trimmed, items: items.trimmed, dueDate: due, files: try SjzAttach.read(files))
             model.showNotice(m)
             await onDone()
             dismiss()

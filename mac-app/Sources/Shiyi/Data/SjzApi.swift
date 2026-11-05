@@ -20,7 +20,7 @@ struct SjzApi {
     func call(_ tool: String, _ args: JSON = [:]) async throws -> JSON {
         let text = try await mcp.callText(tool, args)
         // 写入类调用成功后通知界面：拾忆里「来自拾忆」的列表立刻重读，不用等轮询
-        if !tool.hasPrefix("list_") && !tool.hasPrefix("get_") {
+        if !tool.hasPrefix("list_") && !tool.hasPrefix("get_") && tool != "search" {
             DispatchQueue.main.async { NotificationCenter.default.post(name: .sjzCapturesChanged, object: nil) }
         }
         guard let d = text.data(using: .utf8), let obj = try? JSONSerialization.jsonObject(with: d) as? JSON else {
@@ -249,13 +249,35 @@ struct SjzApi {
     }
 
     /// 生成一份工作小结（按事实汇总）。同一统计期间已有时 exists 为 true，不覆盖，除非 overwrite
-    func generateSummary(project: String, kind: String, overwrite: Bool = false) async throws -> (exists: Bool, summary: SjzSummary?, message: String) {
-        let r = try await call("generate_summary", ["project": project, "kind": kind, "overwrite": overwrite])
+    func generateSummary(project: String, kind: String, overwrite: Bool = false, date: String? = nil) async throws -> (exists: Bool, summary: SjzSummary?, message: String) {
+        var a: JSON = ["project": project, "kind": kind, "overwrite": overwrite]
+        if let date { a["date"] = date }
+        let r = try await call("generate_summary", a)
         let msg = (r["message"] as? String) ?? ""
         guard let path = r["path"] as? String else { return (false, nil, msg) }
         let s = SjzSummary(path: path, title: (r["title"] as? String) ?? "", kind: (r["kind"] as? String) ?? kind,
                            period: (r["period"] as? String) ?? "", updatedAt: (r["updatedAt"] as? String) ?? "")
         return ((r["exists"] as? Bool) ?? false, s, msg)
+    }
+
+    // MARK: 全能搜索
+
+    /// 结审的全能搜索（MCP 工具 `search`）：任务 / 文书全文 / 取证单 / 台账 / 日志与小结 / 法规库；
+    /// `kinds` 含 table / row 才会搜数据中心。`currentOnly` = 只搜钉住的项目
+    func search(_ query: String, kinds: [String]? = nil, currentOnly: Bool = false, limit: Int = 30) async throws -> [SjzSearchHit] {
+        var a: JSON = ["query": query, "limit": limit]
+        if let kinds, !kinds.isEmpty { a["kinds"] = kinds }
+        if currentOnly { a["currentOnly"] = true }
+        let r = try await call("search", a)
+        return ((r["hits"] as? [JSON]) ?? []).compactMap { h in
+            guard let kind = h["kind"] as? String else { return nil }
+            return SjzSearchHit(kind: kind, kindLabel: (h["kindLabel"] as? String) ?? kind,
+                                project: (h["project"] as? String) ?? "", projectTitle: (h["projectTitle"] as? String) ?? "",
+                                ref: (h["id"] as? String) ?? "", title: (h["title"] as? String) ?? "",
+                                snippet: (h["snippet"] as? String) ?? "", path: (h["path"] as? String) ?? "",
+                                status: (h["status"] as? String) ?? "", updatedAt: (h["updatedAt"] as? String) ?? "",
+                                to: (h["to"] as? String) ?? "", score: (h["score"] as? Double) ?? Double((h["score"] as? Int) ?? 0))
+        }
     }
 
     // MARK: 拾忆来源台账
@@ -321,10 +343,25 @@ struct SjzApi {
     }
 
     /// 新建资料清单：写进结审文书中心的「资料清单」分类，并登记到来自拾忆
-    func addDatalist(project: String, title: String, items: String, dueDate: String) async throws -> String {
+    func addDatalist(project: String, title: String, items: String, dueDate: String, files: [(name: String, data: Data)] = []) async throws -> String {
         var a: JSON = ["project": project, "title": title, "items": items]
         if !dueDate.isEmpty { a["dueDate"] = dueDate }
+        if !files.isEmpty { a["files"] = Self.filePayload(files) }
         return ((try await call("add_datalist", a))["message"] as? String) ?? "已新建资料清单"
+    }
+
+    /// 给资料清单添加附件（Excel / Word / PDF 等原件）
+    func addDatalistFiles(project: String, id: String, files: [(name: String, data: Data)]) async throws -> String {
+        ((try await call("add_datalist_files", ["project": project, "id": id, "files": Self.filePayload(files)]))["message"] as? String) ?? "已添加附件"
+    }
+
+    /// 删除资料清单的一个附件（文件一并删除）
+    func removeDatalistFile(project: String, id: String, rel: String) async throws {
+        _ = try await call("remove_datalist_file", ["project": project, "id": id, "rel": rel])
+    }
+
+    private static func filePayload(_ files: [(name: String, data: Data)]) -> [JSON] {
+        files.map { ["name": $0.name, "data": $0.data.base64EncodedString()] as JSON }
     }
 
     /// 想法转为线索：想法保留，生成一条新的待核实线索
@@ -418,6 +455,25 @@ struct SjzPin: Equatable {
         return noteLabel
     }
     var clueLabel: String { [clueId, clueTitle].filter { !$0.isEmpty }.joined(separator: " ") }
+}
+
+/// 结审全能搜索的一条命中
+struct SjzSearchHit: Identifiable, Hashable {
+    let kind: String
+    let kindLabel: String
+    let project: String
+    let projectTitle: String
+    /// 台账编号 / 任务编号 / 文书路径 / 法规 id（看 kind）
+    let ref: String
+    let title: String
+    let snippet: String
+    let path: String
+    let status: String
+    let updatedAt: String
+    /// 在结审里打开的页面路径
+    let to: String
+    let score: Double
+    var id: String { "\(project)|\(kind)|\(ref)" }
 }
 
 struct SjzNoteHit: Identifiable, Hashable {

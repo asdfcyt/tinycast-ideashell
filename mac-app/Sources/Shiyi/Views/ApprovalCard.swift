@@ -336,7 +336,6 @@ struct CompletionCardView: View {
     var embedded = false
     @State private var text = ""
     @State private var expanded = false
-    @State private var mdHeight: CGFloat = 160
     @State private var hovering = false
 
     private var center: ApprovalCenter { ApprovalCenter.shared }
@@ -362,6 +361,8 @@ struct CompletionCardView: View {
                     .frame(maxHeight: .infinity, alignment: .topLeading)
                     .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
+            // 固定高度：左栏回复在框里滚动，右栏选项多了也在自己的区域里滚动，输入框和按钮始终贴在底部
+            .frame(height: Self.islandBodyHeight)
             .cardChrome(embedded: true)
         } else {
             VStack(alignment: .leading, spacing: 9) {
@@ -386,6 +387,8 @@ struct CompletionCardView: View {
 
     /// 右栏宽度：岛 760 宽时约占 1/3
     static let rightWidth: CGFloat = 250
+    /// 嵌在岛里时，卡片主体（回复区 / 操作区）的固定高度
+    static let islandBodyHeight: CGFloat = 520
 
     // MARK: 左栏：Markdown 回复
 
@@ -403,11 +406,9 @@ struct CompletionCardView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-                .background(GeometryReader { g in Color.clear.preference(key: MDHeightKey.self, value: g.size.height) })
             }
-            .frame(height: min(max(mdHeight, 230), 430))
+            .frame(maxHeight: .infinity)
             .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .onPreferenceChange(MDHeightKey.self) { h in if h > 0, abs(h - mdHeight) > 1 { mdHeight = h } }
         }
     }
 
@@ -417,13 +418,18 @@ struct CompletionCardView: View {
         VStack(alignment: .leading, spacing: 10) {
             header
             meta
-            receiptInfo
-            ForEach(c.options) { o in optionButton(o) }
-            if c.detached {
-                Text("\(c.displayName) 已继续往下走，点指令会复制到剪贴板并带你回去粘贴")
-                    .font(.system(size: 10.5)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 10) {
+                    receiptInfo
+                    ForEach(c.options) { o in optionButton(o) }
+                    if c.detached {
+                        Text("\(c.displayName) 已继续往下走，点指令会复制到剪贴板并带你回去粘贴")
+                            .font(.system(size: 10.5)).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            Spacer(minLength: 6)
+            .frame(maxHeight: .infinity)
             composer
             HStack(spacing: 6) {
                 WideButton(label: "知道了", symbol: "checkmark") { center.dismissCompletion(c.id) }
@@ -624,11 +630,6 @@ struct CompletionCardView: View {
         let opt = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: s, options: opt)) ?? AttributedString(s)
     }
-}
-
-private struct MDHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// 可以点输入理由，但不抢其他 App 的焦点（nonactivatingPanel）

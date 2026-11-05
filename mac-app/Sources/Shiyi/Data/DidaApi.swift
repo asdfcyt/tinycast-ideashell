@@ -223,6 +223,12 @@ struct DidaApi {
         )
     }
 
+    /// 滴答服务端的关键词搜索（全部清单，含已完成）。服务端没有搜索类工具时返回 nil，调用方退回本机已缓存的任务
+    func searchTasks(_ query: String) async throws -> [DidaTask]? {
+        guard let text = try await mcp.callKeywordSearch(query, nameHints: ["search_task", "search_tasks", "filter_tasks"], mustContain: "task") else { return nil }
+        return DidaParser.extractTasks(text)
+    }
+
     /// 查单个任务；查不到返回 nil
     func fetchTask(_ taskId: String) async -> DidaTask? {
         if SjzTasks.owns(taskId) { return await MainActor.run { AppModel.current?.localTask(taskId) } }

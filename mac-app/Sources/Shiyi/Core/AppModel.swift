@@ -225,6 +225,8 @@ final class AppModel: ObservableObject {
     /// 打开万能输入时预填的文字 / 指定类型 / 默认日期（日历里「添加待办」用）
     @Published var quickAddText = ""
     @Published var quickAddKind: CaptureKind?
+    /// 重新唤出输入窗时恢复搜索模式（值 = 当时选的分类；nil = 不在搜索）
+    @Published var quickAddSearch: SearchFilter?
     /// 右键「派活」带进来的资料（想法 / 笔记 / Daily Note）：不放进输入框，作为附件和指令分开
     var quickAddMaterial: String?
     @Changed var notice: String?

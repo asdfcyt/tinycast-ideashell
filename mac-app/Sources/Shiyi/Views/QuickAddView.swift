@@ -29,12 +29,22 @@ struct QuickAddView: View {
     var onDraftChange: ((String) -> Void)?
     /// 手动选的类型变化（全局悬浮输入窗用它连同草稿一起留住类型）
     var onKindChange: ((CaptureKind?) -> Void)?
+    /// 搜索模式 / 分类变化（全局悬浮输入窗用它连同草稿一起留住搜索状态；nil = 不在搜索）
+    var onSearchChange: ((SearchFilter?) -> Void)?
     /// 提交成功（参数是结果文案）。设置后不再调 onDone 关闭，而是在输入框下面显示结果，由调用方决定什么时候关（全局悬浮输入窗用）
     var onSubmitted: ((String) -> Void)?
     /// 便签形态：输入框占满整张便签，回车换行（⌘↩ 保存），不写草稿，文字同步给便签
     var note: QuickAddNote?
 
     @State private var text = ""
+    /// 全能搜索：结审 / 闪念贝壳 / 滴答的数据都通过各自的 MCP 取回来
+    @StateObject private var search = UniversalSearch()
+    /// Tab / 菜单切到了「搜索」（也可以在开头写「ss …」「搜 …」「? …」，写完前缀 + 空格就自动切过去）
+    @State private var searchOn = false
+    @State private var searchFilter: SearchFilter = .all
+    @State private var searchSel = 0
+    @AppStorage("search.includeData") private var searchData = false
+    @AppStorage("search.currentOnly") private var searchCurrent = false
     /// 输入框里插入的图片（结审类型支持图文混排）：text 里每个 U+FFFC 对应一张
     @State private var images: [ComposerImage] = []
     /// 输入框里内容实际排出来的高度（ComposerTextView 量出来的）
@@ -79,6 +89,29 @@ struct QuickAddView: View {
     private var ocWorkDir: String { ocDir.isEmpty ? (ocStore.dirs.first ?? "") : ocDir }
     /// opencode 继续对话用的会话：选过的，没选过就是最近一个
     private var ocWorkSession: OpenCodeSession? { ocStore.sessions.first { $0.id == pickedSession } ?? ocStore.sessions.first }
+
+    /// 搜索关键词：开头写了「搜 …」，或者 Tab / 菜单切到了搜索；不是搜索时为 nil（便签 / 专注记录里没有搜索）
+    private var searchQuery: String? {
+        guard record == nil, note == nil else { return nil }
+        let t = String(ComposerImage.stripMarker(text).drop(while: { $0.isWhitespace }))
+        if searchOn { return t.trimmed }
+        if let p = SearchFilter.parsePrefix(t) { return p.rest.trimmed }
+        return nil
+    }
+    private var searchActive: Bool { searchQuery != nil }
+    /// 「全部」里每个来源最多列几条（免得某一个来源把别的挤到下面看不见）；单选某个分类时全列
+    private static let perSourceCap = 8
+    private var searchVisible: [SearchItem] {
+        if searchFilter != .all { return search.items.filter { searchFilter.matches($0) } }
+        var counts: [SearchItem.Source: Int] = [:]
+        var out: [SearchItem] = []
+        for it in search.items {
+            let n = counts[it.source, default: 0]
+            if n < Self.perSourceCap { out.append(it); counts[it.source] = n + 1 }
+        }
+        return out
+    }
+    private var searchHidden: Int { searchFilter == .all ? max(search.items.count - searchVisible.count, 0) : 0 }
 
     private var analysis: CaptureAnalysis { CaptureParser.analyze(text, sjz: model.hasSjz, agents: agentTargets, light: override == .agent) }
     /// 自动识别的类型：贴了图片又没写前缀，按「笔记」处理（图片作为附件）；没连闪念贝壳才退到结审「证据」。
@@ -125,10 +158,11 @@ struct QuickAddView: View {
                             focusTick: focusTick,
                             onSubmit: note == nil ? { submitFromKeyboard() } : nil,
                             onTab: { reverse in cycleKind(reverse: reverse) },
-                            onBackspaceEmpty: { exitKind() }
+                            onBackspaceEmpty: { exitKind() },
+                            onMove: { moveSearch($0) }
                         )
                         if text.isEmpty {
-                            Text(note != nil ? "写点什么…支持 Markdown" : (k == .agent ? (material != nil ? "对这份资料做什么？留空 = 让 \(agentTarget(a).title) 处理它" : "让 \(agentTarget(a).title) 做点什么…") : record != nil ? "专注时的想法、进展、卡点…" : (compact ? "记点什么…（Tab 切换类型）" : (model.hasSjz ? "记点什么？按 Tab 切换 想法 / 证据 / 法规 / 线索" : "记点什么？待办、想法、日记都可以，Tab 切换类型"))))
+                            Text(searchActive ? searchPlaceholder : note != nil ? "写点什么…支持 Markdown" : (k == .agent ? (material != nil ? "对这份资料做什么？留空 = 让 \(agentTarget(a).title) 处理它" : "让 \(agentTarget(a).title) 做点什么…") : record != nil ? "专注时的想法、进展、卡点…" : (compact ? "记点什么…（Tab 切换类型）" : (model.hasSjz ? "记点什么？按 Tab 切换 想法 / 证据 / 法规 / 线索" : "记点什么？待办、想法、日记都可以，Tab 切换类型"))))
                                 .font(.system(size: note != nil ? 14 : (compact ? 14 : 16)))
                                 .foregroundStyle(.secondary)
                                 .padding(.top, 2)
@@ -142,13 +176,21 @@ struct QuickAddView: View {
             .frame(maxHeight: note != nil ? .infinity : nil)
             .padding(.horizontal, compact ? 12 : 18).padding(.top, compact ? 8 : 14)
 
+            // 搜索：结果列表代替提示行
+            if let q = searchQuery {
+                QuickSearchResults(engine: search, query: q, visible: searchVisible, filter: $searchFilter, selection: $searchSel,
+                                   compact: compact, hidden: searchHidden,
+                                   onOpen: { openSearchResult($0, inSjz: $1) })
+                    .padding(.horizontal, compact ? 12 : 18).padding(.top, 8)
+            }
+
             // 提示行：空的时候给几个例子，写了字就显示识别结果
-            if note?.bound != true, k != .agent {
+            if searchQuery == nil, note?.bound != true, k != .agent {
                 hintRow(a, k)
                     .padding(.horizontal, compact ? 12 : 18).padding(.top, 6)
             }
 
-            if k == .agent, let m = material {
+            if searchQuery == nil, k == .agent, let m = material {
                 materialChip(m)
                     .padding(.horizontal, compact ? 12 : 18).padding(.top, 6)
             }
@@ -164,7 +206,10 @@ struct QuickAddView: View {
             if compact, note == nil { Divider().opacity(0.6).padding(.top, 12) }
 
             // 底栏：类型 + 优先级 + 提交
-            if note?.bound != true {
+            if searchActive {
+                searchFooter
+                    .padding(.horizontal, compact ? 12 : 14).padding(.top, compact ? 8 : 8).padding(.bottom, compact ? 8 : 12)
+            } else if note?.bound != true {
                 footer(a, k)
                     .padding(.horizontal, compact ? 12 : 14).padding(.top, compact ? 8 : 8).padding(.bottom, compact ? 8 : 12)
             }
@@ -172,6 +217,16 @@ struct QuickAddView: View {
         .frame(width: compact ? nil : 480)
         .frame(maxHeight: note != nil ? .infinity : nil)
         .onChange(of: override) { _, new in onKindChange?(new) }
+        .onChange(of: searchOn) { _, on in onSearchChange?(on ? searchFilter : nil) }
+        .onChange(of: searchFilter) { _, f in if searchOn { onSearchChange?(f) } }
+        .onChange(of: searchQuery) { _, _ in triggerSearch() }
+        .onChange(of: searchData) { _, _ in triggerSearch() }
+        .onChange(of: searchCurrent) { _, _ in triggerSearch() }
+        .onChange(of: search.items) { _, _ in
+            let n = searchVisible.count
+            if searchSel >= n { searchSel = max(n - 1, 0) }
+        }
+        .onChange(of: searchFilter) { _, _ in searchSel = 0 }
         // 语音听写（麦克风按钮，或输入窗开着时按语音快捷键）：说的话追加到输入框，可以直接说「证据，…」「想法，…」带类型口令
         .onChange(of: model.quickAddInsert) { _, new in
             guard !new.isEmpty, record == nil else { return }
@@ -188,6 +243,15 @@ struct QuickAddView: View {
             if note?.bound != true, !text.trimmed.isEmpty { submitFromKeyboard() }
         }
         .onChange(of: text) { _, new in
+            // 开头写了搜索前缀（ss / sj / sn / sd / sr / 搜 / ?）加空格：直接切到搜索，前缀不留在输入框里
+            if record == nil, note == nil, !searchOn, let p = SearchFilter.parsePrefix(new) {
+                searchOn = true
+                searchFilter = p.filter
+                searchSel = 0
+                override = nil
+                text = p.rest
+                return
+            }
             if let record, record.recordDraft != new { record.recordDraft = new }
             onDraftChange?(ComposerImage.stripMarker(new))
             if let note {
@@ -213,6 +277,8 @@ struct QuickAddView: View {
             material = model.quickAddMaterial
             model.quickAddMaterial = nil
             override = model.quickAddKind
+            if record == nil, let f = model.quickAddSearch { searchOn = true; searchFilter = f; override = nil }
+            model.quickAddSearch = nil
             if override == nil, record == nil, model.hasSjz,
                let raw = UserDefaults.standard.string(forKey: Self.stickyKey), let k = CaptureKind(rawValue: raw), k.isSjz { sticky = k }
             model.quickAddInsert = ""
@@ -223,6 +289,7 @@ struct QuickAddView: View {
             model.quickAddText = ""
             model.quickAddKind = nil
             model.quickAddDate = nil
+            if searchActive { triggerSearch() }
         }
     }
 
@@ -332,8 +399,8 @@ struct QuickAddView: View {
 
     /// 开启结审后，示例里带上线索 / 想法 / 证据 / 法规前缀
     private var exampleList: [String] {
-        if model.hasSjz { return compact ? ["明天 15:00 开会", "想法 …", "证据 …", "线索 …"] : ["明天 15:00 开会", "想法 …", "证据 …", "法规 …", "线索 …"] }
-        return agentOn ? ["明天 15:00 开会", "#读书 一句话想法", "@\(DispatchTarget.available[0].title) …"] : ["明天 15:00 开会", "#读书 一句话想法"]
+        if model.hasSjz { return compact ? ["明天 15:00 开会", "想法 …", "证据 …", "ss …"] : ["明天 15:00 开会", "想法 …", "证据 …", "线索 …", "ss …"] }
+        return agentOn ? ["明天 15:00 开会", "#读书 一句话想法", "@\(DispatchTarget.available[0].title) …", "ss …"] : ["明天 15:00 开会", "#读书 一句话想法", "ss …"]
     }
 
     /// 结审项目：放在底栏，空间不够时从末尾截断（具体追加到哪一份见上面的「去向」行）
@@ -601,15 +668,28 @@ struct QuickAddView: View {
         guard record == nil else { return }
         var steps: [CaptureKind?] = model.hasSjz ? [nil, .idea, .evidence, .regulation, .clue] : [nil, .todo, .daily, .note]
         if agentOn { steps.append(.agent) }
-        let cur: CaptureKind? = override ?? analysis.forced ?? sticky
-        let i = steps.firstIndex { $0 == cur } ?? 0
-        let next = steps[(i + (reverse ? steps.count - 1 : 1)) % steps.count]
-        override = next
-        if next == nil { clearSticky() }
+        // 最后多一格「搜索」（便签里没有）：自动 → … → 派活 → 搜索 → 自动
+        let canSearch = note == nil
+        let total = steps.count + (canSearch ? 1 : 0)
+        let cur: Int
+        if searchActive { cur = steps.count } else {
+            let k: CaptureKind? = override ?? analysis.forced ?? sticky
+            cur = steps.firstIndex { $0 == k } ?? 0
+        }
+        let next = (cur + (reverse ? total - 1 : 1)) % total
+        if canSearch, next == steps.count {
+            searchOn = true
+            override = nil
+        } else {
+            leaveSearch()
+            override = steps[next]
+            if steps[next] == nil { clearSticky() }
+        }
     }
 
     /// 输入框是空的还按删除键：退出 Tab 选的类型，回到自动识别
     private func exitKind() -> Bool {
+        if searchOn, text.isEmpty { searchOn = false; searchFilter = .all; return true }
         guard record == nil, override != nil || sticky != nil else { return false }
         override = nil
         clearSticky()
@@ -617,6 +697,10 @@ struct QuickAddView: View {
     }
 
     private func submitFromKeyboard() {
+        if searchActive {
+            openSelectedResult(inSjz: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
+            return
+        }
         if let record { if !model.recording { recordSubmit(record) }; return }
         let a = analysis
         submit(a, kind(a))
@@ -678,6 +762,10 @@ struct QuickAddView: View {
                 } label: {
                     if c == k { Label(c.rawValue, systemImage: "checkmark") } else { Label(c.rawValue, systemImage: c.icon) }
                 }
+            }
+            if note == nil, record == nil {
+                Divider()
+                Button { searchOn = true; override = nil } label: { Label("搜索（ss）", systemImage: "magnifyingglass") }
             }
             if override != nil || sticky != nil {
                 Divider()
@@ -796,6 +884,124 @@ struct QuickAddView: View {
         case .evidence: return "保存为证据"
         case .regulation: return "保存为法规"
         case .agent: return "派给 \(agentTarget(a).title)"
+        }
+    }
+
+    // MARK: - 全能搜索
+
+    private func triggerSearch() {
+        guard let q = searchQuery else { search.reset(); searchSel = 0; return }
+        searchSel = 0
+        search.update(q, model: model, includeData: searchData, currentOnly: searchCurrent)
+    }
+
+    /// 上 / 下方向键：在结果里挪选中项（只在搜索时接管，其他时候照常移动光标）
+    private func moveSearch(_ dir: Int) -> Bool {
+        guard searchActive else { return false }
+        let n = searchVisible.count
+        guard n > 0 else { return true }
+        searchSel = (searchSel + dir + n) % n
+        return true
+    }
+
+    private func openSelectedResult(inSjz: Bool) {
+        let list = searchVisible
+        guard list.indices.contains(searchSel) else { return }
+        openSearchResult(list[searchSel], inSjz: inSjz)
+    }
+
+    private func openSearchResult(_ item: SearchItem, inSjz: Bool) {
+        model.openSearchItem(item, inSjzApp: inSjz)
+        text = ""
+        images = []
+        searchOn = false
+        searchFilter = .all
+        search.reset()
+        // 输入窗马上就收起，onChange 来不及触发：直接告诉它「打开结果后不用再恢复搜索」
+        onDraftChange?("")
+        onSearchChange?(nil)
+        if let onDone { onDone() } else { focusTick += 1 }
+    }
+
+    /// 退出搜索：去掉开头的「搜 」前缀（输入框里留着原来的关键词），关掉搜索开关
+    private func leaveSearch() {
+        searchOn = false
+        searchFilter = .all
+        if let p = SearchFilter.parsePrefix(text) { text = p.rest }
+    }
+
+    private var searchPlaceholder: String {
+        switch searchFilter {
+        case .all: return "搜索" + [model.hasSjz ? "结审" : nil, model.hasIdeashell ? "笔记" : nil, "待办", model.hasIdeashell ? "日记" : nil].compactMap { $0 }.joined(separator: "、") + "…"
+        case .sjz: return "搜索结审（任务、文书、取证单、线索、法规）…"
+        case .note: return "搜索闪念贝壳笔记…"
+        case .todo: return "搜索滴答 / 闪念待办…"
+        case .daily: return "搜索 Daily Note 里的日记…"
+        }
+    }
+
+    /// 搜索范围开关：关着只有图标（悬停看说明），开着显示文字
+    private func searchToggle(_ icon: String, _ label: String, on: Binding<Bool>, help: String) -> some View {
+        Button { on.wrappedValue.toggle() } label: {
+            HStack(spacing: 3) {
+                Image(systemName: icon).font(.system(size: 10.5))
+                if !compact, on.wrappedValue { Text(label).lineLimit(1) }
+            }
+            .font(.caption)
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(on.wrappedValue ? Color.indigo.opacity(0.14) : Color.primary.opacity(0.06), in: Capsule())
+            .foregroundStyle(on.wrappedValue ? Color.indigo : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help(help)
+    }
+
+    private var searchFooter: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(CaptureKind.available(sjz: model.hasSjz, agent: agentOn)) { c in
+                    Button { leaveSearch(); override = c } label: { Label(c.rawValue, systemImage: c.icon) }
+                }
+                Divider()
+                Button("退出搜索") { leaveSearch(); override = nil }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .semibold))
+                    Text("搜索").font(.callout.weight(.medium))
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(Color.indigo.opacity(0.14), in: Capsule())
+                .foregroundStyle(Color.indigo)
+            }
+            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+            .help("正在搜索（⇥ 切换类型，也可以改成记录）")
+            if model.hasSjz {
+                if !model.sjzTargetTitle.isEmpty {
+                    searchToggle("scope", "当前项目", on: $searchCurrent, help: "只搜结审里钉住的项目「\(model.sjzTargetTitle)」")
+                }
+                searchToggle("cylinder.split.1x2", "数据中心", on: $searchData, help: "同时搜索数据中心的表结构和表内数据（涉及原始数据，默认不搜）")
+            }
+            Spacer(minLength: 8)
+            dictateButton
+            if let onDone {
+                Button("取消", action: onDone)
+                    .keyboardShortcut(.cancelAction)
+                    .frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
+            }
+            let disabled = searchVisible.isEmpty
+            Button { openSelectedResult(inSjz: false) } label: {
+                HStack(spacing: 6) {
+                    Text("打开").font(.callout.weight(.semibold)).lineLimit(1).fixedSize()
+                    Text("↩").font(.caption2).opacity(0.7)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .background(Brand.orange.opacity(disabled ? 0.35 : 1), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(disabled)
         }
     }
 

@@ -10,6 +10,34 @@ struct IdeashellApi {
         return text.trimmed.isEmpty ? [] : NoteParser.parseNotes(text)
     }
 
+    /// 闪念贝壳自带的待办，按关键词查（未完成 + 已完成各查一次）
+    func searchTodos(_ keyword: String, limit: Int = 30) async throws -> [IdeaTodo] {
+        let tz = TimeZone.current.identifier
+        let results: [Result<[IdeaTodo], Error>] = await runConcurrently(2) { i in
+            do {
+                let text = try await mcp.callText("todo_list", ["timezone": tz, "is_completed": i == 1, "keyword": keyword, "limit": limit])
+                return .success(Self.parseTodos(text))
+            } catch { return .failure(error) }
+        }
+        if case let .failure(e) = results[0], case .failure = results[1] { throw e }
+        return results.flatMap { r -> [IdeaTodo] in if case let .success(l) = r { return l } else { return [] } }
+    }
+
+    struct IdeaTodo: Hashable { let id: String; let content: String; let date: String?; let time: String?; let done: Bool }
+
+    private static func parseTodos(_ text: String) -> [IdeaTodo] {
+        guard let data = text.data(using: .utf8), let root = try? JSONSerialization.jsonObject(with: data) else { return [] }
+        let list: [Any]
+        if let a = root as? [Any] { list = a }
+        else if let o = root as? JSON, let a = (o["todos"] as? [Any]) ?? (o["updated"] as? [Any]) { list = a }
+        else { return [] }
+        return list.compactMap { el -> IdeaTodo? in
+            guard let o = el as? JSON, let content = o["content"] as? String, !content.trimmed.isEmpty else { return nil }
+            return IdeaTodo(id: (o["id"] as? String) ?? content, content: content, date: o["date"] as? String, time: o["time"] as? String,
+                            done: (o["is_completed"] as? Bool) == true)
+        }
+    }
+
     /// 新建笔记。标签以 `#标签` 写进正文末尾（闪念贝壳 App 只识别正文里的行内标签）
     @discardableResult
     func createNote(title: String, body: String, tags: [String], folderId: String? = nil, inlineTags: Bool = true,

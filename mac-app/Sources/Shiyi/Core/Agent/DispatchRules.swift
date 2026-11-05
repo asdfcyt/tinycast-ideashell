@@ -196,13 +196,50 @@ final class DispatchRuleEngine: ObservableObject {
     func runNow(_ id: UUID) {
         guard let r = rules.first(where: { $0.id == id }), let model = AppModel.current else { return }
         Task {
-            let material = r.isTimed ? await buildMaterial(r, model) : nil
-            if r.isTimed, r.pickMaterial ? (r.material != .none && material == nil) : material == nil {
-                note(r.id, r.trigger == .overdue ? "试跑：现在没有逾期任务" : "试跑：没有可带的资料")
-                return
+            switch r.trigger {
+            case .todoTag, .sjzDue:
+                // 盯数据的规则：试跑 = 立刻处理「现在符合条件」的第一条；没有就如实说没有，绝不派一个没资料的空任务
+                await model.loadOverview(silent: true)
+                guard let ov = model.overview else { note(r.id, "试跑：还没读到待办"); return }
+                guard let t = pendingTasks(r, ov, Date()).first else {
+                    let total = (ov.overdue + ov.upcoming + ov.undated).count
+                    note(r.id, r.trigger == .sjzDue ? "试跑：没有临近截止的结审任务" : "试跑：读了 \(total) 条待办，没有带 #\(r.tag) 的（先在任务的「编辑任务」里加上标签）")
+                    return
+                }
+                send(r, material: taskMaterial(t, ov), tag: "试跑", subject: "任务「\(Self.brief(t.cleanTitle))」")
+            case .noteTag:
+                await model.loadTimeline(silent: true)
+                guard let n = pendingNotes(r, model, Date()).first else { note(r.id, "试跑：没有带 #\(r.tag) 的新笔记"); return }
+                send(r, material: await noteMaterial(n, model), tag: "试跑", subject: "笔记「\(Self.brief(n.title))」")
+            default:
+                let material = await buildMaterial(r, model)
+                if r.pickMaterial ? (r.material != .none && material == nil) : material == nil {
+                    note(r.id, r.trigger == .overdue ? "试跑：现在没有逾期任务" : "试跑：没有可带的资料")
+                    return
+                }
+                send(r, material: material, tag: "试跑", subject: "试跑")
             }
-            send(r, material: material, tag: "试跑", subject: "试跑")
         }
+    }
+
+    private func taskMaterial(_ t: DidaTask, _ ov: DidaOverview) -> String {
+        var m = "# " + t.cleanTitle
+        if !t.content.trimmed.isEmpty { m += "\n\n" + t.content.trimmed }
+        if let p = ov.projectName(t.projectId) { m += "\n\n（\(SjzTasks.owns(t.id) ? "" : "滴答清单：")\(p)）" }
+        if let d = t.date { m += "\n\n截止：" + d + (t.time.map { " " + $0 } ?? "") }
+        return m
+    }
+
+    private func noteMaterial(_ n: NoteInfo, _ model: AppModel) async -> String {
+        var m = "# " + n.title
+        if let d = try? await model.noteDetail(n.id), !d.content.trimmed.isEmpty {
+            m += "\n\n" + d.content.trimmed
+        } else if let t = n.text?.trimmed, !t.isEmpty {
+            m += "\n\n" + t
+        } else if let t = n.summary?.trimmed, !t.isEmpty {
+            m += "\n\n" + t
+        }
+        return m
     }
 
     // MARK: 触发
@@ -258,24 +295,14 @@ final class DispatchRuleEngine: ObservableObject {
                 for t in pendingTasks(rule, ov, now) {
                     guard remaining(rule, day) > 0 else { break }
                     record(rule, Self.taskKey(rule, t), day)
-                    var m = "# " + t.cleanTitle
-                    if !t.content.trimmed.isEmpty { m += "\n\n" + t.content.trimmed }
-                    if let p = ov.projectName(t.projectId) { m += "\n\n（\(SjzTasks.owns(t.id) ? "" : "滴答清单：")\(p)）" }
-                    if let d = t.date { m += "\n\n截止：" + d + (t.time.map { " " + $0 } ?? "") }
+                    let m = taskMaterial(t, ov)
                     send(rule, material: m, tag: nil, subject: "任务「\(Self.brief(t.cleanTitle))」")
                 }
             case .noteTag:
                 for n in pendingNotes(rule, model, now) {
                     guard remaining(rule, day) > 0 else { break }
                     record(rule, Self.noteKey(rule, n), day)
-                    var m = "# " + n.title
-                    if let d = try? await model.noteDetail(n.id), !d.content.trimmed.isEmpty {
-                        m += "\n\n" + d.content.trimmed
-                    } else if let t = n.text?.trimmed, !t.isEmpty {
-                        m += "\n\n" + t
-                    } else if let t = n.summary?.trimmed, !t.isEmpty {
-                        m += "\n\n" + t
-                    }
+                    let m = await noteMaterial(n, model)
                     send(rule, material: m, tag: nil, subject: "笔记「\(Self.brief(n.title))」")
                 }
             }

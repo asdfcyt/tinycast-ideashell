@@ -8,6 +8,12 @@ struct TodayData {
     var todayTasks: [DidaTask] = []
     var undated: [DidaTask] = []
     var todayDone: [DidaTask] = []
+    /// 昨天完成的（滴答里取最近 3 天已完成的）
+    var yesterdayDone: [DidaTask] = []
+    /// 原定昨天、到现在还没做的
+    var yesterdayMissed: [DidaTask] = []
+    /// 昨天以前就逾期的（最久的在前）：拖得久的放最前面
+    var olderOverdue: [DidaTask] = []
     /// 今天的笔记（Daily Note 单独按条显示，这里不重复列那一篇）
     var todayNotes: [NoteInfo] = []
     /// 今天 Daily Note 里最近的 5 条（新的在上）
@@ -27,6 +33,11 @@ extension AppModel {
                 return a != b ? a < b : $0.priority > $1.priority
             }
             d.undated = ov.undated
+            let yesterday = Day.add(today, days: -1)
+            d.yesterdayMissed = d.overdue.filter { $0.date == yesterday }
+            d.olderOverdue = d.overdue.filter { ($0.date ?? "") < yesterday }
+            d.yesterdayDone = ov.done.filter { $0.completedDate.map { Day.cal.isDateInYesterday($0) } ?? false }
+                .sorted { ($0.completedAt ?? 0) < ($1.completedAt ?? 0) }
             // 比对时间戳所在的日子，不必给每条已完成的待办格式化一次日期字符串
             d.todayDone = ov.done.filter { $0.completedDate.map { Day.cal.isDateInToday($0) } ?? false }
         }

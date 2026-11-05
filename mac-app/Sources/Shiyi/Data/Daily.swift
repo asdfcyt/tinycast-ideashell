@@ -164,6 +164,12 @@ final class DailyService: @unchecked Sendable {
         }
     }
 
+    /// 本机已经读过的过去日子的 Daily Note（搜索用，不发请求）
+    func cachedDays() -> [String: DailyDay] {
+        loadDiskIfNeeded()
+        return lock.withLock { pastDays.mapValues(\.day) }
+    }
+
     /// 手动刷新时：过去的日子也重读
     func clearPast() {
         lock.withLock { pastDays.removeAll(); diskLoaded = true }

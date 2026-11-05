@@ -176,6 +176,11 @@ struct SjzMarkdownView: View {
             }
             if code != nil { code!.append(raw); continue }
             if line.hasPrefix("|"), line.count > 1 { flushQuote(); rows.append(cells(line)); continue }
+            // 摘录常把整段原文（含表格）放在引用里：`> | a | b |` 也按表格渲染，不再显示成一行行竖线
+            if line.hasPrefix(">") {
+                let q = String(line.drop(while: { $0 == ">" || $0 == " " }))
+                if q.hasPrefix("|"), q.count > 1 { flushQuote(); rows.append(cells(q)); continue }
+            }
             flushTable()
             if line.isEmpty { flushQuote(); continue }
             if let m = imgRE.first(in: line) { flushQuote(); out.append(.image(m.group(2), m.group(1))); continue }
@@ -189,6 +194,12 @@ struct SjzMarkdownView: View {
             if line.hasPrefix(">") {
                 let t = String(line.drop(while: { $0 == ">" || $0 == " " }))
                 if t.isEmpty { continue }
+                // 引用里的 Markdown 标题（`> ## 标题`）按标题渲染
+                if t.hasPrefix("#") {
+                    let level = t.prefix(while: { $0 == "#" }).count
+                    let text = String(t.dropFirst(level)).trimmed
+                    if level <= 6, t.dropFirst(level).first == " ", !text.isEmpty { flushQuote(); out.append(.heading(level, text)); continue }
+                }
                 if t.hasPrefix("摘录于") || t.hasPrefix("来源：") || t.hasPrefix("出处：") || t.hasPrefix("备注：") || t.hasPrefix("导入于") {
                     flushQuote(); out.append(.meta(t))
                 } else { quote.append(t) }

@@ -56,6 +56,53 @@ actor McpClient {
         sessionId = nil
         initialized = false
         initTask = nil
+        toolList = nil
+    }
+
+    /// `tools/list` 的结果（每个会话只读一次）：只用来按名字 / schema 找「关键词搜索」类工具
+    private var toolList: [JSON]?
+
+    /// 在服务端的工具清单里找一个按关键词搜索的工具并调用，返回文本；服务端没有这类工具返回 nil。
+    /// 工具名按 `nameHints` 优先，其次任何名字里同时有 search 和 `mustContain` 的；参数名从 inputSchema 里找（keywords / query / 嵌套对象里的都行）。
+    func callKeywordSearch(_ query: String, nameHints: [String], mustContain: String) async throws -> String? {
+        if toolList == nil {
+            let r = try await request("tools/list", [:])
+            toolList = (r["tools"] as? [Any])?.compactMap { $0 as? JSON } ?? []
+        }
+        let tools = toolList ?? []
+        func name(_ t: JSON) -> String { (t["name"] as? String) ?? "" }
+        let tool = nameHints.compactMap { h in tools.first { name($0) == h } }.first
+            ?? tools.first { let n = name($0).lowercased(); return n.contains("search") && n.contains(mustContain) }
+        guard let tool, let schema = tool["inputSchema"] as? JSON, var args = Self.keywordArgs(schema, query) else { return nil }
+        if let props = schema["properties"] as? JSON, props["client_timezone"] != nil { args["client_timezone"] = TimeZone.current.identifier }
+        return try await callText(name(tool), args)
+    }
+
+    /// 按 schema 生成「把关键词填进去」的参数：先找 keywords / query 之类的字符串（或字符串数组）参数，再往嵌套对象里找，最后退到唯一必填的字符串参数
+    private static func keywordArgs(_ schema: JSON, _ q: String) -> JSON? {
+        guard let props = schema["properties"] as? JSON else { return nil }
+        func kind(_ p: JSON) -> String? {
+            guard let t = p["type"] as? String else { return nil }
+            if t == "array" {
+                let itemType = (p["items"] as? JSON)?["type"] as? String
+                return itemType == "string" ? "strings" : nil
+            }
+            return t
+        }
+        for k in ["keywords", "keyword", "query", "search", "searchText", "search_text", "text", "q", "content", "title"] {
+            guard let p = props[k] as? JSON else { continue }
+            switch kind(p) {
+            case "string": return [k: q]
+            case "strings": return [k: [q]]
+            default: break
+            }
+        }
+        for (k, v) in props {
+            if let p = v as? JSON, kind(p) == "object", let inner = keywordArgs(p, q) { return [k: inner] }
+        }
+        let required = (schema["required"] as? [Any])?.compactMap { $0 as? String } ?? []
+        if required.count == 1, let p = props[required[0]] as? JSON, kind(p) == "string" { return [required[0]: q] }
+        return nil
     }
 
     func callText(_ name: String, _ arguments: JSON = [:]) async throws -> String {

@@ -45,6 +45,8 @@ struct ComposerTextView: NSViewRepresentable {
     var onTab: ((Bool) -> Void)?
     /// 输入框为空时按删除键：返回 true 表示外面处理了（比如退出 Tab 选的类型），不再往下走
     var onBackspaceEmpty: (() -> Bool)?
+    /// 上 / 下方向键（-1 / +1）：返回 true 表示外面处理了（搜索结果列表里挪选中项），不再移动光标；输入法候选状态下不触发
+    var onMove: ((Int) -> Bool)?
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -146,6 +148,10 @@ struct ComposerTextView: NSViewRepresentable {
             if let tab = parent.onTab {
                 if selector == #selector(NSResponder.insertTab(_:)) { tab(false); return true }
                 if selector == #selector(NSResponder.insertBacktab(_:)) { tab(true); return true }
+            }
+            if let move = parent.onMove, !textView.hasMarkedText() {
+                if selector == #selector(NSResponder.moveUp(_:)), move(-1) { return true }
+                if selector == #selector(NSResponder.moveDown(_:)), move(1) { return true }
             }
             if selector == #selector(NSResponder.deleteBackward(_:)), let back = parent.onBackspaceEmpty,
                textView.string.isEmpty, !textView.hasMarkedText(), back() { return true }

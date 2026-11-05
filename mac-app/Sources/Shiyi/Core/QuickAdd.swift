@@ -53,7 +53,7 @@ extension AppModel {
             // 自己写了日期就按自己写的；没写日期、用的是日历带进来的日子，就用点出来的时间
             let time = date == nil ? nil : (a.todo.time ?? (a.todo.date == nil ? defaultTime : nil))
             if hasDida {
-                if let t = try await dida.createTask(title: title, date: date, time: time, priority: priority) { lastCreated = .todo(t) }
+                if let t = try await dida.createTask(title: title, date: date, time: time, priority: priority, tags: a.tags.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "# ")) }.filter { !$0.isEmpty }) { lastCreated = .todo(t) }
                 invalidateHistory()
                 Task {
                     await loadOverview(silent: true)
