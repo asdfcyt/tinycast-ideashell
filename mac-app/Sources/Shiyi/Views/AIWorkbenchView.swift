@@ -33,7 +33,7 @@ final class WorkbenchDraft: ObservableObject {
 /// 配置（各 Agent 的开关、审批规则、命令行目标）仍在「设置 → AI 调度台」。
 struct AIWorkbenchView: View {
     private enum Tab: String, CaseIterable {
-        case tasks = "任务", rules = "自动派活", agents = "Agent 与用量"
+        case tasks = "任务", rules = "自动派活", agents = "用量"
     }
 
     private enum TaskFilter: String, CaseIterable {
@@ -80,11 +80,15 @@ struct AIWorkbenchView: View {
     @State private var tab: Tab = .tasks
     @State private var filter: TaskFilter = .all
     @State private var showAll = false
-    @State private var detailJob: UUID?
+    @State private var detail: TaskRef?
     @State private var ruleEditing: RuleEdit?
     /// 权限档存在 UserDefaults 里，改了之后靠它刷新界面
     @State private var accessTick = 0
     @State private var showPicker = false
+    @State private var panelOpen = false
+    /// 底部输入条的实际高度：办公室按剩下的高度算大小
+    @State private var barH: CGFloat = 130
+    @State private var selected: String?
 
     private static let pageWidth: CGFloat = 900
 
@@ -101,103 +105,252 @@ struct AIWorkbenchView: View {
     private var attention: Int { center.pending.count + center.completions.count }
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 14) {
-                composer
-                tabBar
-            }
-            .padding(.horizontal, 28).padding(.top, 14)
-            .frame(maxWidth: Self.pageWidth, alignment: .leading)
-            .frame(maxWidth: .infinity)
-            Divider()
-            ScrollView {
-                Group {
-                    switch tab {
-                    case .tasks: tasksTab
-                    case .rules: rulesTab
-                    case .agents: agentsTab
+        let cast = OfficeCast.build()
+        return GeometryReader { geo in
+            // 办公室 + 底下的输入条合成一整块，按窗口宽高整体缩放，不裁剪、不滚动；
+            // 窗口比 16:9 更高时，办公室竖向最多拉长 12%，其余留白
+            let availW = geo.size.width - 40
+            let availH = geo.size.height - 24
+            let hFit = availH - barH - 3
+            let w0 = min(availW, 1500)
+            let w = hFit >= w0 * OfficeLayout.H / OfficeLayout.W ? w0 : max(480, hFit * OfficeLayout.W / OfficeLayout.H)
+            let hMin = w * OfficeLayout.H / OfficeLayout.W
+            let h = max(hMin, min(hFit, hMin * 1.12))
+            VStack(spacing: 0) {
+                PixelOfficeScene(agents: cast, board: board, selected: $selected)
+                    .frame(width: w, height: h)
+                    .overlay {
+                        // 面板开着时，点面板以外的地方就收起来
+                        if panelOpen {
+                            Color.black.opacity(0.001).contentShape(Rectangle()).onTapGesture { panelOpen = false }
+                        }
                     }
-                }
-                .padding(.horizontal, 28).padding(.vertical, 20)
-                .frame(maxWidth: Self.pageWidth, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                    .overlay(alignment: .topLeading) { hudTitle(cast) }
+                    .overlay(alignment: .topTrailing) { hudSigns }
+                    .overlay(alignment: .topLeading) {
+                        if let a = cast.first(where: { $0.id == selected }) {
+                            agentCard(a).frame(width: 280).padding(.leading, 12).padding(.top, 60)
+                        }
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if panelOpen { panel(width: min(w * 0.44, 460), height: h - 54 - 12).padding(.top, 54).padding(.trailing, 12) }
+                    }
+                composer
+                    .pixelBar()
+                    .frame(width: w)
+                    .background(GeometryReader { g in Color.clear.preference(key: BarHeightKey.self, value: g.size.height) })
+            }
+            .pixelFrame()
+            .frame(width: geo.size.width, height: geo.size.height)
+            .onPreferenceChange(BarHeightKey.self) { v in
+                if abs(v - barH) > 0.5 { barH = v }
             }
         }
         .background(AmbientBackground())
+        .animation(.easeOut(duration: 0.18), value: panelOpen)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { SettingsWindow.show() } label: { Image(systemName: "slider.horizontal.3") }
-                    .help("Agent 开关、审批规则、命令行目标（设置 → AI 调度台）")
+                    .help("Agent 开关、审批规则（设置 → AI 调度台）")
             }
         }
         .sheet(item: $ruleEditing) { e in
             DispatchRuleEditor(existing: e.rule, preset: e.preset)
         }
-        .sheet(isPresented: Binding(get: { detailJob != nil }, set: { if !$0 { detailJob = nil } })) {
-            if let id = detailJob { DispatchJobDetail(id: id) }
+        .sheet(item: $detail) { ref in
+            TaskDetailSheet(ref: ref)
         }
         .onAppear {
             ocStore.refresh(after: 0.6)
             focused = true
         }
         .onChange(of: draft.focusTick) { _, _ in
-            tab = .tasks
             focused = true
         }
     }
 
-    // MARK: - 标签栏
+    // MARK: - 办公室里的牌子
 
-    private var tabBar: some View {
-        HStack(alignment: .bottom, spacing: 26) {
-            ForEach(Tab.allCases, id: \.self) { t in tabButton(t) }
-            Spacer(minLength: 0)
-        }
-        .padding(.top, 2)
+    private var board: OfficeBoard {
+        let start = Calendar.current.startOfDay(for: Date())
+        let done = ledger.jobs.filter { $0.state == .done && ($0.endedAt ?? $0.createdAt) >= start }.count
+        return OfficeBoard(active: ledger.activeCount + extraRuns.count, waiting: attention, done: done)
     }
 
-    private func tabButton(_ t: Tab) -> some View {
-        let on = tab == t
-        let activeCount = ledger.jobs.filter { $0.state.isActive }.count
-        return Button { tab = t } label: {
-            VStack(spacing: 7) {
-                HStack(spacing: 6) {
-                    Text(t.rawValue).font(.system(size: 14, weight: on ? .semibold : .regular))
-                        .foregroundStyle(on ? Color.primary : Color.secondary)
-                    if t == .tasks, attention > 0 {
-                        Text("等你 \(attention)").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white)
-                            .padding(.horizontal, 6).padding(.vertical, 1).background(Color.orange, in: Capsule())
-                    } else if t == .tasks, activeCount > 0 {
-                        Text("\(activeCount) 个进行中").font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
-                            .padding(.horizontal, 6).padding(.vertical, 1).background(Color.primary.opacity(0.08), in: Capsule())
-                    }
+    private func hudTitle(_ cast: [OfficeAgent]) -> some View {
+        let working = cast.filter { $0.mood == .working }.count
+        let failed = cast.filter { $0.mood == .error }.count
+        var parts: [String] = ["\(cast.count) 位 Agent"]
+        if working > 0 { parts.append("\(working) 在忙") }
+        if attention > 0 { parts.append("\(attention) 件等你") }
+        if failed > 0 { parts.append("\(failed) 个没跑成") }
+        if working == 0 && attention == 0 && failed == 0 { parts.append("都在休息") }
+        if board.done > 0 { parts.append("今天完成 \(board.done)") }
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("AI 办公室").font(OfficeAssets.pixelFont(18))
+            Text(parts.joined(separator: " · ")).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .pixelBox()
+        .padding(.leading, 14).padding(.top, 12)
+    }
+
+    private var hudSigns: some View {
+        HStack(spacing: 6) {
+            sign(.tasks, "list.bullet.rectangle", badge: attention > 0 ? "\(attention)" : nil)
+            sign(.rules, "clock.arrow.2.circlepath", badge: nil)
+            sign(.agents, "chart.bar", badge: nil)
+        }
+        .padding(.trailing, 14).padding(.top, 14)
+    }
+
+    /// 挂在办公室墙上的牌子：点一下，在办公室里展开对应的面板
+    private func sign(_ t: Tab, _ icon: String, badge: String?) -> some View {
+        let on = panelOpen && tab == t
+        return Button {
+            if on { panelOpen = false } else { tab = t; panelOpen = true }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 12, weight: .semibold))
+                Text(t.rawValue).font(OfficeAssets.pixelFont(14))
+                if let badge {
+                    Text(badge).font(OfficeAssets.pixelFont(12)).foregroundStyle(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 1).background(Color.red, in: Rectangle())
                 }
-                Rectangle().fill(on ? Brand.orange : Color.clear).frame(height: 2)
             }
-            .contentShape(Rectangle())
+            .foregroundStyle(on ? Color.white : Color(red: 1, green: 0.94, blue: 0.82))
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(on ? Brand.orange : Color(red: 0.42, green: 0.27, blue: 0.14))
+            .overlay(Rectangle().strokeBorder(Color(red: 0.1, green: 0.07, blue: 0.04), lineWidth: 2))
         }
         .buttonStyle(.plain)
+    }
+
+    private func agentCard(_ a: OfficeAgent) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Rectangle().fill(a.color).frame(width: 10, height: 10)
+                Text(a.name).font(OfficeAssets.pixelFont(16))
+                Text(OfficeBreed.of(a.id).name).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
+                Text(a.mood.label).font(OfficeAssets.pixelFont(12)).foregroundStyle(.white)
+                    .padding(.horizontal, 6).padding(.vertical, 1).background(a.mood.tint, in: Rectangle())
+                Spacer(minLength: 0)
+                Button { selected = nil } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary) }
+                    .buttonStyle(.plain)
+            }
+            if !a.task.trimmed.isEmpty {
+                Text(a.task.trimmed).font(OfficeAssets.pixelFont(12)).lineLimit(3).textSelection(.enabled)
+            } else {
+                Text(a.mood == .idle ? "手头没有活，在沙发上歇着。" : "没有记录到具体任务。").font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
+            }
+            if let act = a.activity, !act.isEmpty {
+                Label(act, systemImage: "terminal").font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            if let st = a.started {
+                Text("开始于 " + clockText(st)).font(OfficeAssets.pixelFont(12)).foregroundStyle(.tertiary)
+            }
+            HStack(spacing: 8) {
+                if let id = a.jobId {
+                    cardButton("查看详情", "doc.text") { detail = .job(id) }
+                    if a.jobActive { cardButton("停止", "stop.circle") { ledger.stop(id) } }
+                    if a.canRerun { cardButton("重跑", "arrow.clockwise") { ledger.rerun(id) } }
+                }
+                if a.mood == .waiting { cardButton("去处理", "bell") { tab = .tasks; panelOpen = true } }
+                Button { draft.targetId = a.id.hasPrefix("src.") ? draft.targetId : a.id; focused = true } label: {
+                    Text("派活给它").font(OfficeAssets.pixelFont(12)).foregroundStyle(Brand.orange)
+                }
+                .buttonStyle(.plain)
+                .disabled(a.id.hasPrefix("src."))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .pixelCard()
+    }
+
+    private func cardButton(_ title: String, _ icon: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                Text(title).font(OfficeAssets.pixelFont(12))
+            }
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(Color.primary.opacity(0.08), in: Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 昨日小记：昨天派过什么、结果怎样
+    private var memoCard: some View {
+        let cal = Calendar.current
+        let end = cal.startOfDay(for: Date())
+        let start = cal.date(byAdding: .day, value: -1, to: end) ?? end
+        let js = ledger.jobs.filter { j in
+            let d = j.startedAt ?? j.createdAt
+            return d >= start && d < end
+        }
+        let ok = js.filter { $0.state == .done }.count
+        let bad = js.filter { $0.state == .failed || $0.state == .interrupted }.count
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("昨日小记").font(OfficeAssets.pixelFont(14)).foregroundStyle(.secondary)
+            if js.isEmpty {
+                Text("昨天没有派活").font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
+            } else {
+                Text("派出 \(js.count) · 完成 \(ok)" + (bad > 0 ? " · 没跑成 \(bad)" : "")).font(OfficeAssets.pixelFont(12))
+                ForEach(js.prefix(3)) { j in
+                    Text("· " + j.targetTitle + "：" + j.prompt.replacingOccurrences(of: "\n", with: " "))
+                        .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .pixelCard()
+    }
+
+    // MARK: - 办公室里的面板：任务 / 自动派活 / 用量
+
+    private func panel(width: CGFloat, height: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(tab.rawValue).font(OfficeAssets.pixelFont(14)).lineLimit(1)
+                if tab == .tasks, attention > 0 {
+                    Text("等你 \(attention)").font(OfficeAssets.pixelFont(12)).lineLimit(1).fixedSize().foregroundStyle(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 1).background(Color.orange, in: Rectangle())
+                }
+                Spacer(minLength: 0)
+                Button { panelOpen = false } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary).padding(4)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            PixelRule()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if tab == .tasks { memoCard }
+                    switch tab {
+                    case .tasks: tasksTab
+                    case .rules: rulesTab
+                    case .agents: agentsTab
+                    }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(width: width, height: height)
+        .pixelBox()
     }
 
     // MARK: - 派活输入条
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $draft.text)
-                    .font(.system(size: 15))
-                    .scrollContentBackground(.hidden)
-                    .scrollIndicators(.hidden)
-                    .focused($focused)
-                    .frame(height: editorHeight)
-                    .padding(.horizontal, -5)
-                if draft.text.isEmpty {
-                    Text(placeholder)
-                        .font(.system(size: 15)).foregroundStyle(.tertiary)
-                        .allowsHitTesting(false)
-                        .padding(.top, 0)
-                }
-            }
+            TextField(placeholder, text: $draft.text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15))
+                .lineLimit(2...8)
+                .focused($focused)
             if !draft.items.isEmpty { itemsRow }
             if let e = draft.error {
                 Text(e).font(.caption).foregroundStyle(.red).textSelection(.enabled)
@@ -222,9 +375,6 @@ struct AIWorkbenchView: View {
                 sendButton
             }
         }
-        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 10)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.7), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.primary.opacity(0.08)))
     }
 
     /// 带入上下文：搜想法 / 待办，或一键带入剪贴板、Daily Note；作为「资料」和指令分开发给 Agent
@@ -247,12 +397,6 @@ struct AIWorkbenchView: View {
     private var placeholder: String {
         if targets.isEmpty { return "还没有能接活的 Agent：到「设置 → AI 调度台」接入 WorkBuddy，或安装 opencode / Claude Code" }
         return draft.material != nil ? "对这份资料做什么？留空 = 让 \(target.title) 处理它" : "让 \(target.title) 做点什么…"
-    }
-
-    /// 输入框高度：两行起步，随内容长，最多 7 行
-    private var editorHeight: CGFloat {
-        let lines = draft.text.components(separatedBy: "\n").reduce(0) { $0 + max(1, Int((Double($1.count) / 64).rounded(.up))) }
-        return min(CGFloat(max(lines, 2)) * 21 + 4, 150)
     }
 
     /// 选项里的一格：图标 + 文字（+ 上下箭头）；外面的整体胶囊负责背景
@@ -448,7 +592,7 @@ struct AIWorkbenchView: View {
                 draft.material = nil
                 model.showNotice("已派给 \(t.title)")
                 filter = .all
-                tab = .tasks
+                selected = t.id
                 draft.focusTick += 1
             } else {
                 draft.error = r.message
@@ -488,25 +632,32 @@ struct AIWorkbenchView: View {
         let all = showFinished ? finished : []
         let shown = Array(all.prefix(showAll ? 80 : 20))
         let hasAny = showAttention || (showActive && !(activeJobs.isEmpty && others.isEmpty)) || !shown.isEmpty
-        return VStack(alignment: .leading, spacing: 22) {
-            HStack(spacing: 12) {
-                Picker("", selection: $filter) {
-                    ForEach(TaskFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    ForEach(TaskFilter.allCases, id: \.self) { f in
+                        Button { filter = f } label: {
+                            Text(f.rawValue).font(OfficeAssets.pixelFont(12))
+                                .foregroundStyle(filter == f ? Color.white : Color.primary)
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(filter == f ? Brand.orange : Color.primary.opacity(0.08), in: Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .pickerStyle(.segmented).labelsHidden().fixedSize()
                 Spacer()
                 if ledger.jobs.contains(where: { !$0.state.isActive }) || !results.records.isEmpty {
                     Button("清空已结束") {
                         ledger.clearFinished()
                         results.clear()
                     }
-                    .buttonStyle(.plain).font(.callout).foregroundStyle(.secondary)
+                    .buttonStyle(.plain).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
                 }
             }
 
             if showAttention {
                 block("需要你处理", count: attention) {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 440, maximum: 460), spacing: 14, alignment: .top)], alignment: .leading, spacing: 14) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 300, maximum: 460), spacing: 14, alignment: .top)], alignment: .leading, spacing: 14) {
                         ForEach(center.pending) { a in
                             ApprovalCardView(a: a, first: a.id == center.pending.first?.id)
                         }
@@ -519,8 +670,8 @@ struct AIWorkbenchView: View {
 
             if showActive, !(activeJobs.isEmpty && others.isEmpty) {
                 block("进行中", count: activeJobs.count + others.count) {
-                    VStack(spacing: 8) {
-                        ForEach(activeJobs) { j in WorkbenchJobRow(j: j) { detailJob = j.id } }
+                    VStack(spacing: 6) {
+                        ForEach(activeJobs) { j in WorkbenchJobRow(j: j) { detail = .job(j.id) } }
                         ForEach(others) { r in WorkbenchRunRow(r: r) }
                     }
                 }
@@ -528,11 +679,11 @@ struct AIWorkbenchView: View {
 
             ForEach(grouped(shown), id: \.title) { g in
                 block(g.title, count: nil) {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 6) {
                         ForEach(g.items) { a in
                             switch a {
-                            case .job(let j): WorkbenchJobRow(j: j) { detailJob = j.id }
-                            case .record(let r): WorkbenchRecordRow(r: r)
+                            case .job(let j): WorkbenchJobRow(j: j) { detail = .job(j.id) }
+                            case .record(let r): WorkbenchRecordRow(r: r) { detail = .record(r.id) }
                             }
                         }
                     }
@@ -541,7 +692,7 @@ struct AIWorkbenchView: View {
 
             if all.count > 20 {
                 Button(showAll ? "收起" : "显示更多（还有 \(all.count - 20) 条）") { showAll.toggle() }
-                    .buttonStyle(.plain).font(.callout).foregroundStyle(.secondary)
+                    .buttonStyle(.plain).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
             }
 
@@ -573,7 +724,7 @@ struct AIWorkbenchView: View {
     }
 
     private var rulesTab: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 14) {
             block("规则", count: engine.rules.isEmpty ? nil : engine.rules.count, trailing: {
                 Menu {
                     ForEach(DispatchRuleTemplate.all) { t in
@@ -582,20 +733,20 @@ struct AIWorkbenchView: View {
                     Divider()
                     Button("空白规则…") { ruleEditing = RuleEdit(rule: nil, preset: nil) }
                 } label: {
-                    Label("添加", systemImage: "plus").font(.callout)
+                    Label("添加", systemImage: "plus").font(OfficeAssets.pixelFont(12))
                 }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().foregroundStyle(.secondary)
             }) {
                 if engine.rules.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("到点、或滴答任务带上标签，Agent 就自己开工。默认关闭、默认只读；跑完没有要你拍板的事，不打扰你。")
-                            .font(.callout).foregroundStyle(.secondary)
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
+                            .font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
                             ForEach(DispatchRuleTemplate.all) { t in templateCard(t) }
                         }
                     }
                 } else {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 6) {
                         ForEach(engine.rules) { r in ruleRow(r) }
                     }
                 }
@@ -604,7 +755,7 @@ struct AIWorkbenchView: View {
             let list = reminders
             if !list.isEmpty {
                 block("待复查", count: list.count) {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 6) {
                         ForEach(list.prefix(8)) { t in reminderRow(t) }
                     }
                 }
@@ -616,18 +767,18 @@ struct AIWorkbenchView: View {
         Button { ruleEditing = RuleEdit(rule: nil, preset: t.rule) } label: {
             HStack(spacing: 10) {
                 Image(systemName: t.icon).font(.system(size: 13, weight: .semibold)).foregroundStyle(Brand.orange)
-                    .frame(width: 30, height: 30).background(Brand.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .frame(width: 24, height: 24).background(Brand.orange.opacity(0.14), in: Rectangle())
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(t.title).font(.system(size: 13.5, weight: .semibold))
-                    Text(t.detail).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    Text(t.title).font(OfficeAssets.pixelFont(12))
+                    Text(t.detail).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "plus.circle").foregroundStyle(.tertiary)
             }
-            .padding(12)
+            .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .pixelTile()
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -637,23 +788,33 @@ struct AIWorkbenchView: View {
         let used = engine.firedToday(r)
         var status = [engine.nextText(r)]
         if let n = r.lastNote, !n.isEmpty { status.append("上次 " + n) }
-        return HStack(spacing: 12) {
+        if r.enabled, let t = engine.lastCheck { status.append("检查于 " + clockText(t)) }
+        return HStack(spacing: 8) {
             Image(systemName: icon).font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
-                .frame(width: 28, height: 28).background((r.enabled ? Brand.orange : Color.gray).gradient, in: Circle())
+                .frame(width: 24, height: 24).background((r.enabled ? Brand.orange : Color.gray), in: Rectangle())
             VStack(alignment: .leading, spacing: 2) {
-                Text(r.name.isEmpty ? "未命名" : r.name).font(.system(size: 13.5, weight: .medium)).lineLimit(1)
-                Text(r.baseSummary + " · " + status.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                Text(r.name.isEmpty ? "未命名" : r.name).font(OfficeAssets.pixelFont(12)).lineLimit(1)
+                Text(r.baseSummary + " · " + status.joined(separator: " · ")).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Text("\(used)/\(r.dailyLimit)").font(.system(size: 11.5)).monospacedDigit()
+            Text("\(used)/\(r.dailyLimit)").font(OfficeAssets.pixelFont(12)).monospacedDigit()
                 .foregroundStyle(used >= r.dailyLimit ? Color.orange : Color.secondary).fixedSize().help("今天已触发 / 每天上限")
             moreMenu {
+                Button("预览会派哪些") { previewRule(r) }
                 Button("现在试跑一次") { engine.runNow(r.id) }
                 Button("修改…") { ruleEditing = RuleEdit(rule: r, preset: nil) }
             }
-            Toggle("", isOn: ruleToggle(r)).labelsHidden().toggleStyle(.switch).controlSize(.small)
+            Toggle("", isOn: ruleToggle(r)).labelsHidden().toggleStyle(PixelToggleStyle())
         }
         .rowCard()
+    }
+
+    private func previewRule(_ r: DispatchRule) {
+        let alert = NSAlert()
+        alert.messageText = "「\(r.name.isEmpty ? "未命名" : r.name)」" + (r.enabled ? "" : "（已关闭）")
+        alert.informativeText = r.baseSummary + "\n\n" + engine.preview(r)
+        alert.addButton(withTitle: "好")
+        alert.runModal()
     }
 
     private func ruleToggle(_ r: DispatchRule) -> Binding<Bool> {
@@ -674,12 +835,12 @@ struct AIWorkbenchView: View {
             when = day + (t.time.map { " " + $0 } ?? "")
         }
         return Button { model.openTask(t) } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 Image(systemName: "alarm").font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 28, height: 28).background(Color.indigo.gradient, in: Circle())
-                Text(t.cleanTitle).font(.system(size: 13.5, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                    .frame(width: 24, height: 24).background(Color.indigo, in: Rectangle())
+                Text(t.cleanTitle).font(OfficeAssets.pixelFont(12)).lineLimit(1).truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                Text(when).font(.system(size: 12)).foregroundStyle(late ? Color.red : Color.secondary).fixedSize()
+                Text(when).font(OfficeAssets.pixelFont(12)).foregroundStyle(late ? Color.red : Color.secondary).fixedSize()
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
             }
             .rowCard()
@@ -712,13 +873,17 @@ struct AIWorkbenchView: View {
 
     private var agentsTab: some View {
         let list = AgentProfiles.all.filter { $0.kind == .command || $0.id == "workbuddy" }
-        return VStack(alignment: .leading, spacing: 22) {
+        return VStack(alignment: .leading, spacing: 14) {
             block("用量", count: nil) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("近 7 天派活").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(.secondary)
+                VStack(spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
+                        usageTile("今天", since: Calendar.current.startOfDay(for: Date()))
+                        usageTile("近 7 天", since: Date().addingTimeInterval(-7 * 86400))
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("近 7 天派活").font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
                         Chart(weekData) { d in
-                            BarMark(x: .value("日期", d.day, unit: .day), y: .value("轮数", d.n), width: .ratio(0.6))
+                            BarMark(x: .value("日期", d.day, unit: .day), y: .value("轮数", d.n), width: .ratio(0.5))
                                 .foregroundStyle(by: .value("结果", d.kind))
                         }
                         .chartForegroundStyleScale(["完成": Color.green, "没跑成": Color.red, "其他": Color.gray.opacity(0.45)])
@@ -728,21 +893,17 @@ struct AIWorkbenchView: View {
                             }
                         }
                         .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) }
-                        .chartLegend(position: .bottom, alignment: .leading, spacing: 6)
-                        .frame(height: 130)
+                        .chartLegend(position: .trailing, alignment: .top, spacing: 8)
+                        .font(OfficeAssets.pixelFont(12))
+                        .frame(height: 84)
                     }
-                    .padding(14)
+                    .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    VStack(spacing: 12) {
-                        usageTile("今天", since: Calendar.current.startOfDay(for: Date()))
-                        usageTile("近 7 天", since: Date().addingTimeInterval(-7 * 86400))
-                    }
-                    .frame(width: 220)
+                    .pixelTile()
                 }
             }
             block("Agent", count: list.filter(\.enabled).count) {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 12, alignment: .top)], alignment: .leading, spacing: 12) {
                     ForEach(list) { p in agentCard(p) }
                 }
             }
@@ -755,18 +916,19 @@ struct AIWorkbenchView: View {
         if u.runs > u.unreported { detail.append(DispatchResult.compact(u.tokens) + " Token") }
         if u.hasCost { detail.append(String(format: "$%.2f", u.cost)) }
         if u.unreported > 0 { detail.append("\(u.unreported) 轮未上报") }
-        return VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(.secondary)
+        return VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text("\(u.runs)").font(.system(size: 24, weight: .bold, design: .rounded)).monospacedDigit()
-                Text("轮").font(.callout).foregroundStyle(.secondary)
+                Text(title).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Text("\(u.runs)").font(OfficeAssets.pixelFont(24)).monospacedDigit()
+                Text("轮").font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
             }
             Text(detail.isEmpty ? "—" : detail.joined(separator: " · "))
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                .font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
         }
-        .padding(14)
+        .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .pixelTile()
     }
 
     private func agentCard(_ p: AgentProfile) -> some View {
@@ -787,31 +949,31 @@ struct AIWorkbenchView: View {
             if !(p.id == "opencode" || p.id == "workbuddy") { draft.continueChat = false }
             draft.focusTick += 1
         } label: {
-            HStack(spacing: 11) {
+            HStack(spacing: 8) {
                 Image(systemName: p.icon).font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 30, height: 30).background(tint.gradient, in: Circle())
+                    .frame(width: 24, height: 24).background(tint, in: Rectangle())
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(p.name).font(.system(size: 14, weight: .semibold)).lineLimit(1)
-                        Circle().fill(!on ? Color.gray : (busy > 0 ? Color.orange : Color.green)).frame(width: 6, height: 6)
-                        Text(state).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
+                        Text(p.name).font(OfficeAssets.pixelFont(14)).lineLimit(1)
+                        Rectangle().fill(!on ? Color.gray : (busy > 0 ? Color.orange : Color.green)).frame(width: 6, height: 6)
+                        Text(state).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    Text(stats.joined(separator: " · ")).font(.system(size: 11.5)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+                    Text(stats.joined(separator: " · ")).font(OfficeAssets.pixelFont(12)).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
                 }
                 Spacer(minLength: 0)
                 if p.kind == .command, on {
                     let _ = accessTick
-                    Text(p.access.label).font(.system(size: 10.5, weight: .medium))
+                    Text(p.access.label).font(OfficeAssets.pixelFont(12))
                         .foregroundStyle(p.access == .full ? Color.red : Color.secondary)
                         .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background((p.access == .full ? Color.red : Color.primary).opacity(0.08), in: Capsule())
+                        .background((p.access == .full ? Color.red : Color.primary).opacity(0.08), in: Rectangle())
                 }
             }
-            .padding(12)
+            .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .pixelTile()
             .opacity(on ? 1 : 0.5)
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(on ? "选它来派活" : "到「设置 → AI 调度台」接入或安装")
@@ -826,9 +988,9 @@ struct AIWorkbenchView: View {
     private func block<C: View, T: View>(_ title: String, count: Int?, @ViewBuilder trailing: () -> T, @ViewBuilder _ content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                Text(title).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
                 if let count, count > 0 {
-                    Text("\(count)").font(.system(size: 11, weight: .semibold)).monospacedDigit().foregroundStyle(.tertiary)
+                    Text("\(count)").font(OfficeAssets.pixelFont(12)).monospacedDigit().foregroundStyle(.tertiary)
                 }
                 Spacer()
                 trailing()
@@ -840,8 +1002,8 @@ struct AIWorkbenchView: View {
     private func emptyState(_ title: String, _ hint: String?) -> some View {
         VStack(spacing: 6) {
             Image(systemName: "tray").font(.system(size: 26)).foregroundStyle(.tertiary)
-            Text(title).font(.system(size: 14, weight: .medium)).foregroundStyle(.secondary)
-            if let hint { Text(hint).font(.callout).foregroundStyle(.tertiary) }
+            Text(title).font(OfficeAssets.pixelFont(14)).foregroundStyle(.secondary)
+            if let hint { Text(hint).font(OfficeAssets.pixelFont(12)).foregroundStyle(.tertiary) }
         }
         .frame(maxWidth: .infinity).padding(.vertical, 50)
     }
@@ -849,7 +1011,7 @@ struct AIWorkbenchView: View {
     private func moreMenu<C: View>(@ViewBuilder _ items: () -> C) -> some View {
         Menu { items() } label: {
             Image(systemName: "ellipsis").font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
-                .frame(width: 24, height: 24).background(Color.primary.opacity(0.08), in: Circle())
+                .frame(width: 24, height: 24).background(Color.primary.opacity(0.08), in: Rectangle())
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
     }
@@ -861,8 +1023,8 @@ private extension View {
     /// 列表里一行的外框：统一的留白和圆角
     func rowCard() -> some View {
         self
-            .padding(.horizontal, 12).padding(.vertical, 10)
-            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .pixelTile()
             .contentShape(Rectangle())
     }
 }
@@ -873,7 +1035,7 @@ private struct RowMore<C: View>: View {
     var body: some View {
         Menu { items } label: {
             Image(systemName: "ellipsis").font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary)
-                .frame(width: 24, height: 24).background(Color.primary.opacity(0.08), in: Circle())
+                .frame(width: 24, height: 24).background(Color.primary.opacity(0.08), in: Rectangle())
         }
         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
     }
@@ -884,8 +1046,8 @@ private struct StatusTag: View {
     let color: Color
 
     var body: some View {
-        Text(text).font(.system(size: 11, weight: .semibold)).foregroundStyle(color).lineLimit(1).fixedSize()
-            .padding(.horizontal, 7).padding(.vertical, 1.5).background(color.opacity(0.13), in: Capsule())
+        Text(text).font(OfficeAssets.pixelFont(12)).foregroundStyle(color).lineLimit(1).fixedSize()
+            .padding(.horizontal, 7).padding(.vertical, 1.5).background(color.opacity(0.13), in: Rectangle())
     }
 }
 
@@ -895,7 +1057,7 @@ private struct RowIcon: View {
 
     var body: some View {
         Image(systemName: symbol).font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
-            .frame(width: 28, height: 28).background(tint.gradient, in: Circle())
+            .frame(width: 24, height: 24).background(tint, in: Rectangle())
     }
 }
 
@@ -914,22 +1076,20 @@ private func clockText(_ d: Date) -> String {
 private struct WorkbenchJobRow: View {
     let j: LedgerJob
     var onDetail: () -> Void
-    @State private var expanded = false
     private var ledger: DispatchLedger { DispatchLedger.shared }
     private var target: DispatchTarget? { DispatchTarget(rawValue: j.target) }
     /// Agent 的结果（账本自己拿到的，或从验收卡 / opencode 本地数据库里取的；不另外调用模型）
     private var preview: String { (j.result ?? "").trimmed }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(spacing: 8) {
             RowIcon(symbol: target?.icon ?? "terminal", tint: target?.color ?? .gray)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
-                    Text(j.prompt.replacingOccurrences(of: "\n", with: " ")).font(.system(size: 13.5, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                    Text(j.prompt.replacingOccurrences(of: "\n", with: " ")).font(OfficeAssets.pixelFont(12)).lineLimit(1).truncationMode(.tail)
                     StatusTag(text: j.state.label, color: color)
                 }
                 meta
-                if !preview.isEmpty { ResultText(text: preview, expanded: expanded) }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 6) {
@@ -941,7 +1101,7 @@ private struct WorkbenchJobRow: View {
                     }
                 }
                 RowMore {
-                    Button("详情和时间线") { onDetail() }
+                    Button("查看详情") { onDetail() }
                     if !preview.isEmpty { Button("复制结果") { copyToPasteboard(preview) } }
                     if !j.cwd.isEmpty { Button("打开目录") { NSWorkspace.shared.open(URL(fileURLWithPath: j.cwd)) } }
                     if j.managed { Button("打开日志") { NSWorkspace.shared.open(DispatchLedger.logURL(j.id)) } }
@@ -953,8 +1113,9 @@ private struct WorkbenchJobRow: View {
                 }
             }
         }
+        .frame(height: 36)
         .rowCard()
-        .onTapGesture { if preview.isEmpty { onDetail() } else { withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() } } }
+        .onTapGesture { onDetail() }
     }
 
     private var color: Color {
@@ -970,7 +1131,7 @@ private struct WorkbenchJobRow: View {
     private func circleButton(_ symbol: String, _ help: String, _ tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol).font(.system(size: 10, weight: .bold)).foregroundStyle(tint)
-                .frame(width: 24, height: 24).background(Color.primary.opacity(0.08), in: Circle())
+                .frame(width: 24, height: 24).background(Color.primary.opacity(0.08), in: Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)
@@ -981,10 +1142,10 @@ private struct WorkbenchJobRow: View {
         if j.state == .running {
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 let s = max(Int(ctx.date.timeIntervalSince(j.startedAt ?? ctx.date)), 0)
-                Text(base(extra: String(format: "%d:%02d", s / 60, s % 60))).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                Text(base(extra: String(format: "%d:%02d", s / 60, s % 60))).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             }
         } else {
-            Text(base(extra: nil)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+            Text(base(extra: nil)).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
         }
     }
 
@@ -1035,21 +1196,21 @@ private struct ResultText: View {
 /// 外部 Agent 的一条完成记录
 private struct WorkbenchRecordRow: View {
     let r: AgentResultRecord
-    @State private var expanded = false
+    var onDetail: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(spacing: 8) {
             RowIcon(symbol: r.source.icon, tint: r.source.color)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
-                    Text("\(r.source.title) · \(r.project)").font(.system(size: 13.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                    Text("\(r.source.title) · \(r.project)").font(OfficeAssets.pixelFont(12)).lineLimit(1).truncationMode(.middle)
                     StatusTag(text: r.failed ? "没做成" : "已完成", color: r.failed ? .red : .green)
                 }
-                Text(meta).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-                ResultText(text: r.summary, expanded: expanded)
+                Text(meta).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             RowMore {
+                Button("查看详情") { onDetail() }
                 Button("复制结果") { copyToPasteboard(r.summary) }
                 if !r.cwd.isEmpty, FileManager.default.fileExists(atPath: r.cwd) {
                     Button("打开目录") { NSWorkspace.shared.open(URL(fileURLWithPath: r.cwd)) }
@@ -1058,8 +1219,9 @@ private struct WorkbenchRecordRow: View {
                 Button("删除这条记录", role: .destructive) { AgentResultStore.shared.remove(r.id) }
             }
         }
+        .frame(height: 36)
         .rowCard()
-        .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() } }
+        .onTapGesture { onDetail() }
     }
 
     private var meta: String {
@@ -1076,11 +1238,11 @@ private struct WorkbenchRunRow: View {
 
     var body: some View {
         let waiting = center.pending.contains { $0.source == r.source }
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             RowIcon(symbol: r.source.icon, tint: r.source.color)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
-                    Text("\(r.source.title) · \(r.project)").font(.system(size: 13.5, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                    Text("\(r.source.title) · \(r.project)").font(OfficeAssets.pixelFont(12)).lineLimit(1).truncationMode(.middle)
                     StatusTag(text: waiting ? "等你批准" : "运行中", color: .orange)
                 }
                 Text(r.activity ?? "思考中…")
@@ -1099,12 +1261,393 @@ private struct WorkbenchRunRow: View {
                         if r.stopping { ProgressView().controlSize(.mini) } else { Image(systemName: "stop.fill").font(.system(size: 10, weight: .bold)) }
                     }
                     .foregroundStyle(r.stopping ? Color.secondary : Color.red)
-                    .frame(width: 24, height: 24).background(Color.primary.opacity(0.08), in: Circle())
+                    .frame(width: 24, height: 24).background(Color.primary.opacity(0.08), in: Rectangle())
                 }
                 .buttonStyle(.plain).disabled(r.stopping)
                 .help(r.stopping ? "正在停止…" : "停止")
             }
         }
+        .frame(height: 36)
         .rowCard()
+    }
+}
+
+
+private struct BarHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+// MARK: - 像素风的卡片 / 边框
+
+private struct PixelPalette {
+    let bg: Color
+    let line: Color
+
+    init(_ scheme: ColorScheme) {
+        if scheme == .dark {
+            bg = Color(red: 0x2A / 255, green: 0x21 / 255, blue: 0x1A / 255)
+            line = Color(red: 0x8A / 255, green: 0x6A / 255, blue: 0x44 / 255)
+        } else {
+            bg = Color(red: 0xFB / 255, green: 0xF1 / 255, blue: 0xDA / 255)
+            line = Color(red: 0x6B / 255, green: 0x44 / 255, blue: 0x23 / 255)
+        }
+    }
+}
+
+private struct PixelCardModifier: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    var padding: CGFloat = 12
+
+    func body(content: Content) -> some View {
+        let c = PixelPalette(scheme)
+        return content
+            .padding(padding)
+            .background(c.bg)
+            .overlay(Rectangle().strokeBorder(c.line, lineWidth: 2))
+            .background(c.line.opacity(0.28).offset(x: 3, y: 3))
+    }
+}
+
+private struct PixelFrameModifier: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        let c = PixelPalette(scheme)
+        return content
+            .overlay(Rectangle().strokeBorder(c.line, lineWidth: 4))
+            .background(c.line.opacity(0.28).offset(x: 4, y: 4))
+    }
+}
+
+private struct PixelBarModifier: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        let c = PixelPalette(scheme)
+        return content
+            .padding(.horizontal, 14).padding(.vertical, 12)
+            .background(c.bg)
+            .overlay(alignment: .top) { Rectangle().fill(c.line).frame(height: 3) }
+    }
+}
+
+/// 像素风的开关：方块滑轨
+private struct PixelToggleStyle: ToggleStyle {
+    @Environment(\.colorScheme) private var scheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        let c = PixelPalette(scheme)
+        return Button { configuration.isOn.toggle() } label: {
+            ZStack(alignment: configuration.isOn ? .trailing : .leading) {
+                Rectangle().fill(configuration.isOn ? Brand.orange : c.line.opacity(0.25))
+                Rectangle().fill(Color.white).frame(width: 10, height: 10).padding(2)
+            }
+            .frame(width: 30, height: 14)
+            .overlay(Rectangle().strokeBorder(c.line, lineWidth: 2))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct PixelRule: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Rectangle().fill(PixelPalette(scheme).line).frame(height: 2)
+    }
+}
+
+private struct PixelTileModifier: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        let c = PixelPalette(scheme)
+        return content
+            .background(c.line.opacity(0.09))
+            .overlay(Rectangle().strokeBorder(c.line.opacity(0.5), lineWidth: 1.5))
+    }
+}
+
+private extension View {
+    func pixelTile() -> some View { modifier(PixelTileModifier()) }
+    func pixelBar() -> some View { modifier(PixelBarModifier()) }
+    func pixelCard() -> some View { modifier(PixelCardModifier()) }
+    func pixelBox() -> some View { modifier(PixelCardModifier(padding: 0)) }
+    func pixelFrame() -> some View { modifier(PixelFrameModifier()) }
+}
+
+// MARK: - 任务详情（所有记录统一的弹窗）
+
+private enum TaskRef: Identifiable {
+    case job(UUID)
+    case record(UUID)
+
+    var id: UUID {
+        switch self {
+        case .job(let i), .record(let i): return i
+        }
+    }
+}
+
+/// 一条记录的详情：指令 / 信息 / 结果 / 时间线 / 日志 合在一起；没有的段落（比如外部 Agent 没有日志）就不显示
+private struct TaskDetailSheet: View {
+    let ref: TaskRef
+    @ObservedObject private var ledger = DispatchLedger.shared
+    @ObservedObject private var results = AgentResultStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var log = ""
+
+    private struct Action: Identifiable {
+        let id = UUID()
+        let title: String
+        let run: () -> Void
+        var danger = false
+    }
+
+    private struct Model {
+        var title: String
+        var icon: String
+        var tint: Color
+        var status: String
+        var statusColor: Color
+        var prompt: String?
+        var info: [(String, String)] = []
+        var resultTitle = "结果"
+        var result: String?
+        var events: [(Date, String)] = []
+        var logId: UUID?
+        var active = false
+        var actions: [Action] = []
+    }
+
+    var body: some View {
+        let c = PixelPalette(scheme)
+        Group {
+            if let m = model {
+                content(m, c)
+            } else {
+                VStack(spacing: 12) {
+                    Text("这条记录已经不在了").font(OfficeAssets.pixelFont(14)).foregroundStyle(.secondary)
+                    Button("关闭") { dismiss() }
+                }
+                .padding(40).frame(width: 520, height: 200)
+            }
+        }
+        .background(c.bg)
+        .task(id: ref.id) { await followLog() }
+    }
+
+    private var model: Model? {
+        switch ref {
+        case .job(let id):
+            guard let j = ledger.jobs.first(where: { $0.id == id }) else { return nil }
+            let t = DispatchTarget(rawValue: j.target)
+            var m = Model(title: j.targetTitle, icon: t?.icon ?? "terminal", tint: t?.color ?? .gray,
+                          status: j.state.label, statusColor: Self.color(j.state))
+            m.prompt = j.prompt
+            if !j.cwd.isEmpty { m.info.append(("目录", (j.cwd as NSString).abbreviatingWithTildeInPath)) }
+            if let a = j.access, let acc = AgentAccess(rawValue: a) { m.info.append(("权限", acc.label)) }
+            m.info.append(("来源", j.origin + (j.hasMaterial ? " · 带资料" : "")))
+            if j.managed { m.info.append(("尝试", "\(j.attempts) 次")) }
+            if let d = j.duration { m.info.append(("耗时", Self.duration(d))) }
+            if let sid = j.sessionId, !sid.isEmpty { m.info.append(("会话", sid)) }
+            if let u = j.usage {
+                m.info.append(("用量", DispatchResult.compact(u.tokens) + " Token（入 \(DispatchResult.compact(u.input)) · 出 \(DispatchResult.compact(u.output))）"
+                    + (u.cost.map { String(format: " · $%.4f", $0) } ?? "")))
+            } else if j.managed, !j.state.isActive {
+                m.info.append(("用量", "未上报"))
+            }
+            if let r = j.result, !r.isEmpty {
+                m.result = r
+            } else if !j.message.isEmpty {
+                m.result = j.message
+                m.resultTitle = j.state == .done ? "输出" : "说明"
+            }
+            m.events = j.events.map { ($0.at, $0.text) }
+            m.active = j.state.isActive
+            if j.managed { m.logId = j.id }
+            if j.managed {
+                if j.state.isActive {
+                    m.actions.append(Action(title: "停止") { ledger.stop(j.id) })
+                } else {
+                    m.actions.append(Action(title: "重跑") { ledger.rerun(j.id) })
+                }
+            }
+            if j.hasMaterial { m.actions.append(Action(title: "查看资料") { NSWorkspace.shared.open(DispatchLedger.materialURL(j.id)) }) }
+            if !j.cwd.isEmpty { m.actions.append(Action(title: "打开目录") { NSWorkspace.shared.open(URL(fileURLWithPath: j.cwd)) }) }
+            if j.managed { m.actions.append(Action(title: "打开日志文件") { NSWorkspace.shared.open(DispatchLedger.logURL(j.id)) }) }
+            return m
+        case .record(let id):
+            guard let r = results.records.first(where: { $0.id == id }) else { return nil }
+            var m = Model(title: r.source.title, icon: r.source.icon, tint: r.source.color,
+                          status: r.failed ? "没做成" : "已完成", statusColor: r.failed ? .red : .green)
+            m.info.append(("项目", r.project))
+            if !r.cwd.isEmpty { m.info.append(("目录", (r.cwd as NSString).abbreviatingWithTildeInPath)) }
+            m.info.append(("来源", "外部 Agent"))
+            if let d = r.duration { m.info.append(("耗时", Self.duration(d))) }
+            if let sid = r.sessionId, !sid.isEmpty { m.info.append(("会话", sid)) }
+            m.result = r.summary
+            // 外部 Agent 只留下了「做完了」这一个事件：开始时间由耗时倒推
+            if let d = r.duration { m.events.append((r.at.addingTimeInterval(-d), "开始")) }
+            m.events.append((r.at, r.failed ? "没做成" : "完成"))
+            if !r.summary.isEmpty { m.actions.append(Action(title: "复制结果") { copyToPasteboard(r.summary) }) }
+            if !r.cwd.isEmpty, FileManager.default.fileExists(atPath: r.cwd) {
+                m.actions.append(Action(title: "打开目录") { NSWorkspace.shared.open(URL(fileURLWithPath: r.cwd)) })
+            }
+            m.actions.append(Action(title: "删除这条记录", run: {
+                AgentResultStore.shared.remove(r.id)
+                dismiss()
+            }, danger: true))
+            return m
+        }
+    }
+
+    private func content(_ m: Model, _ c: PixelPalette) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                RowIcon(symbol: m.icon, tint: m.tint)
+                Text(m.title).font(OfficeAssets.pixelFont(16)).lineLimit(1)
+                StatusTag(text: m.status, color: m.statusColor)
+                Spacer(minLength: 0)
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary).padding(4)
+                }
+                .buttonStyle(.plain).keyboardShortcut(.cancelAction)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            PixelRule()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let p = m.prompt, !p.trimmed.isEmpty {
+                        section("指令") {
+                            Text(p).font(.system(size: 12.5)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    section("信息") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(m.info.enumerated()), id: \.offset) { _, kv in
+                                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                    Text(kv.0).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary).frame(width: 36, alignment: .leading)
+                                    Text(kv.1).font(.system(size: 12.5)).textSelection(.enabled).lineLimit(3).truncationMode(.middle)
+                                    Spacer(minLength: 0)
+                                }
+                            }
+                        }
+                    }
+                    if let r = m.result, !r.trimmed.isEmpty {
+                        section(m.resultTitle) {
+                            Text(markdown(r)).font(.system(size: 12.5)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    if !m.events.isEmpty {
+                        section("时间线") {
+                            VStack(alignment: .leading, spacing: 5) {
+                                ForEach(Array(m.events.enumerated()), id: \.offset) { _, e in
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        Rectangle().fill(c.line).frame(width: 6, height: 6)
+                                        Text(Self.time(e.0)).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
+                                        Text(e.1).font(.system(size: 12.5))
+                                        Spacer(minLength: 0)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if m.logId != nil, !log.isEmpty {
+                        section("日志") {
+                            ScrollViewReader { proxy in
+                                ScrollView {
+                                    Text(log).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                                    Color.clear.frame(height: 1).id("logEnd")
+                                }
+                                .frame(height: 190)
+                                .onChange(of: log) { _, _ in proxy.scrollTo("logEnd", anchor: .bottom) }
+                                .onAppear { proxy.scrollTo("logEnd", anchor: .bottom) }
+                            }
+                        }
+                    }
+                }
+                .padding(14)
+            }
+            .scrollIndicators(.hidden)
+            if !m.actions.isEmpty {
+                PixelRule()
+                HStack(spacing: 6) {
+                    ForEach(m.actions) { a in
+                        Button(action: a.run) {
+                            Text(a.title).font(OfficeAssets.pixelFont(12))
+                                .foregroundStyle(a.danger ? Color.red : Color.primary)
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(c.line.opacity(0.12), in: Rectangle())
+                                .overlay(Rectangle().strokeBorder(c.line.opacity(0.5), lineWidth: 1.5))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 10)
+            }
+        }
+        .frame(width: 560, height: 620)
+    }
+
+    private func section<C: View>(_ title: String, @ViewBuilder _ body: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 5) {
+                Rectangle().fill(Brand.orange).frame(width: 6, height: 6)
+                Text(title).font(OfficeAssets.pixelFont(12)).foregroundStyle(.secondary)
+            }
+            body().padding(8).frame(maxWidth: .infinity, alignment: .leading).pixelTile()
+        }
+    }
+
+    private func markdown(_ s: String) -> AttributedString {
+        let opt = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: s, options: opt)) ?? AttributedString(s)
+    }
+
+    /// 读日志末尾；任务还在跑就每两秒刷新一次
+    private func followLog() async {
+        guard case .job(let id) = ref else { return }
+        while !Task.isCancelled {
+            log = Self.readLogTail(id)
+            let active = ledger.jobs.first(where: { $0.id == id })?.state.isActive ?? false
+            if !active { break }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+    }
+
+    private static func readLogTail(_ id: UUID) -> String {
+        guard let h = try? FileHandle(forReadingFrom: DispatchLedger.logURL(id)) else { return "" }
+        defer { try? h.close() }
+        let size = (try? h.seekToEnd()) ?? 0
+        try? h.seek(toOffset: size > 40_000 ? size - 40_000 : 0)
+        let s = String(data: h.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let clean = s.replacingOccurrences(of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression)
+        return clean.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func color(_ s: LedgerState) -> Color {
+        switch s {
+        case .queued, .running: return .orange
+        case .retrying: return .yellow
+        case .done: return .green
+        case .failed: return .red
+        case .cancelled, .interrupted: return .secondary
+        }
+    }
+
+    private static func time(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = Calendar.current.isDateInToday(d) ? "HH:mm:ss" : "M/d HH:mm:ss"
+        return f.string(from: d)
+    }
+
+    private static func duration(_ s: TimeInterval) -> String {
+        let n = Int(s)
+        return n >= 60 ? "\(n / 60) 分 \(n % 60) 秒" : "\(n) 秒"
     }
 }

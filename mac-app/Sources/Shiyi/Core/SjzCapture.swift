@@ -532,6 +532,36 @@ enum SjzDaily {
 }
 
 /// 结审任务在拾忆待办里的身份：id 形如 `sjz:<项目>:<任务>`，改动直接写回结审，不经过滴答
+/// 结审任务的本地标签：结审系统里没有标签这回事，拾忆自己在本机存一份（不会写回结审）。
+/// 用来给「自动派活」的标签规则认——给结审任务打上「派活」，就和滴答任务一样会被派出去。
+final class SjzLocalTags: @unchecked Sendable {
+    static let shared = SjzLocalTags()
+    /// 结审任务固定带的标签，不算本地标签
+    static let fixed = "结审"
+
+    private let lock = NSLock()
+    private var map: [String: [String]] = [:]
+    private static var url: URL { LocalStore.dir.appendingPathComponent("sjz-local-tags.json") }
+
+    private init() {
+        if let d = try? Data(contentsOf: Self.url), let m = try? JSONDecoder().decode([String: [String]].self, from: d) { map = m }
+    }
+
+    func tags(_ id: String) -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        return map[id] ?? []
+    }
+
+    func set(_ id: String, _ tags: [String]) {
+        let clean = tags.filter { $0 != Self.fixed && !$0.isEmpty }
+        lock.lock()
+        if clean.isEmpty { map.removeValue(forKey: id) } else { map[id] = clean }
+        let snapshot = map
+        lock.unlock()
+        if let d = try? JSONEncoder().encode(snapshot) { try? d.write(to: Self.url, options: .atomic) }
+    }
+}
+
 enum SjzTasks {
     static let prefix = "sjz:"
 
@@ -556,8 +586,9 @@ enum SjzTasks {
         case "low": level = 1
         default: level = 3
         }
-        return DidaTask(id: "\(prefix)\(t.project):\(t.id)", projectId: "\(prefix)\(t.project)", title: t.subject, content: t.detail,
-                        date: t.dueDate.isEmpty ? nil : t.dueDate, priority: level, tags: ["结审"], startDate: t.startDate, phase: t.phase)
+        let id = "\(prefix)\(t.project):\(t.id)"
+        return DidaTask(id: id, projectId: "\(prefix)\(t.project)", title: t.subject, content: t.detail,
+                        date: t.dueDate.isEmpty ? nil : t.dueDate, priority: level, tags: [SjzLocalTags.fixed] + SjzLocalTags.shared.tags(id), startDate: t.startDate, phase: t.phase)
     }
 
     static func parse(_ id: String) -> (project: String, task: String)? {

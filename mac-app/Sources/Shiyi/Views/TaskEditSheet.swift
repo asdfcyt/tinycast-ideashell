@@ -19,7 +19,8 @@ struct TaskEditSheet: View {
         self.task = task
         _title = State(initialValue: task.cleanTitle)
         _content = State(initialValue: task.content)
-        _tags = State(initialValue: task.tags.map { "#" + $0 }.joined(separator: " "))
+        // 结审任务只显示本地标签（固定的「结审」不用改）
+        _tags = State(initialValue: task.tags.filter { !SjzTasks.owns(task.id) || $0 != SjzLocalTags.fixed }.map { "#" + $0 }.joined(separator: " "))
         _startStr = State(initialValue: task.startDate ?? "")
         _phaseKey = State(initialValue: task.phase ?? "")
         _dueStr = State(initialValue: task.date ?? "")
@@ -32,10 +33,13 @@ struct TaskEditSheet: View {
     }
 
     private var changed: Bool {
-        title.trimmed != task.cleanTitle || content != task.content || parsedTags != task.tags || startChanged || dueChanged || phaseChanged
+        title.trimmed != task.cleanTitle || content != task.content || tagsChanged || startChanged || dueChanged || phaseChanged
     }
 
     private var isSjz: Bool { SjzTasks.owns(task.id) }
+    /// 结审任务的标签只存在拾忆本地（不含固定的「结审」）
+    private var originalTags: [String] { isSjz ? task.tags.filter { $0 != SjzLocalTags.fixed } : task.tags }
+    private var tagsChanged: Bool { parsedTags != originalTags }
     private var newStart: String? { startStr.isEmpty ? nil : startStr }
     private var startChanged: Bool { isSjz && newStart != task.startDate }
     private var dueChanged: Bool { isSjz && dueStr != (task.date ?? "") }
@@ -84,10 +88,9 @@ struct TaskEditSheet: View {
                         Spacer()
                     }
                 }
-            } else {
-                field("标签", hint: "用空格分隔，例如 #经济学 #读书") {
-                    TextField("#标签", text: $tags).textFieldStyle(.roundedBorder)
-                }
+            }
+            field(isSjz ? "本地标签" : "标签", hint: isSjz ? "只存在拾忆里，不会改动结审；给它打上「派活」，自动派活规则就会认" : "用空格分隔，例如 #经济学 #读书") {
+                TextField("#标签", text: $tags).textFieldStyle(.roundedBorder)
             }
 
             HStack {
@@ -119,9 +122,14 @@ struct TaskEditSheet: View {
     private func save() {
         saving = true
         let t = title.trimmed, c = content, g = parsedTags
-        let start = newStart, startChanged = startChanged, dueChanged = dueChanged, phaseChanged = phaseChanged, phase = phaseKey, due = dueStr, textChanged = t != task.cleanTitle || c != task.content || g != task.tags
+        let start = newStart, startChanged = startChanged, dueChanged = dueChanged, phaseChanged = phaseChanged, phase = phaseKey, due = dueStr, textChanged = t != task.cleanTitle || c != task.content || (!isSjz && g != task.tags)
+        let sjzTagsChanged = isSjz && tagsChanged
         Task {
             if textChanged || !isSjz { await model.edit(task, .details(title: t, content: c, tags: g)) }
+            if sjzTagsChanged {
+                SjzLocalTags.shared.set(task.id, g)
+                await model.edit(task, .tags([SjzLocalTags.fixed] + g.filter { $0 != SjzLocalTags.fixed }))
+            }
             if startChanged { await model.edit(task, .startDate(start)) }
             if phaseChanged { await model.edit(task, .phase(phase)) }
             if dueChanged { await model.edit(task, due.isEmpty ? .clearDate : .schedule(date: due, time: nil)) }

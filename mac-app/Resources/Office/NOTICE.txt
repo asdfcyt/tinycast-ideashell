@@ -1,0 +1,4 @@
+调度页「AI 办公室」使用的像素美术素材来自 Star-Office-UI（https://github.com/ringhyacinth/Star-Office-UI）：
+办公室背景、办公桌、猫咪角色动画、沙发、植物、海报、服务器、小猫。
+这些美术素材仅限学习 / 演示 / 交流，禁止商用；代码部分为 MIT。
+像素字体 Ark Pixel（SIL OFL 1.1，见 OFL-ArkPixel.txt），已从 woff2 转为 ttf。

@@ -52,6 +52,8 @@ cp "$OUT/shiyi-hook" "$APP/Contents/MacOS/shiyi-hook"
 [ -d Resources/Ambient ] && cp -R Resources/Ambient "$APP/Contents/Resources/Ambient"
 # 猛犸麦克风界面用到的发射器图片
 [ -d Resources/Mic ] && cp -R Resources/Mic "$APP/Contents/Resources/Mic"
+# 调度页「AI 办公室」的像素素材（Star-Office-UI，仅限非商用，见 Resources/Office/NOTICE.txt）
+[ -d Resources/Office ] && cp -R Resources/Office "$APP/Contents/Resources/Office"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

@@ -208,8 +208,16 @@ final class SyncQueue {
         timer = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            _ = await self?.flushNow()
+            await self?.timerFired()
         }
+    }
+
+    /// 定时器到点：先把自己从 timer 上摘下来再发。
+    /// flushNow 开头会 `timer?.cancel()`，如果这时 timer 还是正在跑 flushNow 的这个任务，就等于自己取消自己，
+    /// 里面的网络请求全部报「已取消」（sync-failures.log 里那一串「已取消」就是这么来的），改动永远推不到滴答。
+    private func timerFired() async {
+        timer = nil
+        _ = await flushNow()
     }
 
     // MARK: 发送
