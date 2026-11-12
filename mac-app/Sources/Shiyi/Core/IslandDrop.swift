@@ -325,7 +325,7 @@ extension AppModel {
         invalidateHistory()
         Task {
             await loadTimeline(silent: true)
-            if section == .review { await loadRiver(silent: true) }
+            if section == .calendar { await loadCalendar() }
         }
         return "已保存为笔记（\(prepared.images.count) 张图片" + (found.isEmpty ? "" : "，识别出文字") + "）" + (folder.map { " 📁" + $0.name } ?? "")
     }

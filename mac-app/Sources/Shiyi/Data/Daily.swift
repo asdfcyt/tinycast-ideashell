@@ -284,40 +284,6 @@ final class DailyService: @unchecked Sendable {
     }
 }
 
-// MARK: - 范围预设
-
-enum RangePreset: String, CaseIterable, Identifiable {
-    case today = "今天", yesterday = "昨天", last7 = "最近 7 天", thisWeek = "本周", lastWeek = "上周", thisMonth = "本月", lastMonth = "上月"
-    var id: String { rawValue }
-
-    /// 闭区间 [from, to]（yyyy-MM-dd）
-    func range() -> (from: String, to: String) {
-        let today = Day.today()
-        let cal = Day.cal
-        let now = Date()
-        func weekStart(_ d: Date) -> Date {
-            let wd = cal.component(.weekday, from: d)           // 1 = 周日
-            return cal.date(byAdding: .day, value: -((wd + 5) % 7), to: Day.startOfDay(d)) ?? d
-        }
-        switch self {
-        case .today: return (today, today)
-        case .yesterday: let y = Day.add(today, days: -1); return (y, y)
-        case .last7: return (Day.add(today, days: -6), today)
-        case .thisWeek:
-            let s = weekStart(now)
-            return (Day.string(s), Day.string(cal.date(byAdding: .day, value: 6, to: s) ?? s))
-        case .lastWeek:
-            let s = cal.date(byAdding: .day, value: -7, to: weekStart(now)) ?? now
-            return (Day.string(s), Day.string(cal.date(byAdding: .day, value: 6, to: s) ?? s))
-        case .thisMonth, .lastMonth:
-            let base = self == .thisMonth ? now : (cal.date(byAdding: .month, value: -1, to: now) ?? now)
-            let first = cal.date(from: cal.dateComponents([.year, .month], from: base)) ?? base
-            let last = cal.date(byAdding: DateComponents(month: 1, day: -1), to: first) ?? first
-            return (Day.string(first), Day.string(last))
-        }
-    }
-}
-
 // MARK: - 时间河数据
 
 struct DayBucket: Identifiable, Codable {

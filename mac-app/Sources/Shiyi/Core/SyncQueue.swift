@@ -421,6 +421,5 @@ extension AppModel {
         invalidateHistory()
         await loadOverview(silent: true)
         if section == .calendar { await loadCalendar() }
-        if section == .review { await loadRiver(silent: true) }
     }
 }

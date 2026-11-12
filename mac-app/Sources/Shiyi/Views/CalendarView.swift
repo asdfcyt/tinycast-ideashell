@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// 日历：版式参考系统「日历」的月视图（满铺的格子线、左上农历 / 节日 / 节气、右上日期、法定节假日整条标出），
@@ -5,6 +6,8 @@ import SwiftUI
 struct CalendarView: View {
     @EnvironmentObject var model: AppModel
     @State private var dropTarget: String?
+    @State private var keyMonitor: Any?
+    @State private var hostWindow = WindowRef()
 
     private let weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
@@ -42,6 +45,28 @@ struct CalendarView: View {
         Group { content }
             // 背景铺在整个窗口（含标题栏）后面，标题栏和页面是同一个底色，不再割裂
             .background(AmbientBackground())
+            .background(WinGrab { hostWindow.window = $0 })
+            .searchable(text: $model.searchQuery, placement: .toolbar, prompt: "语义搜索笔记")
+            .onSubmit(of: .search) { Task { await model.searchAndShow() } }
+            .onChange(of: model.searchQuery) { _, new in if new.isEmpty { model.clearSearch() } }
+            .onAppear(perform: installKeys)
+            .onDisappear {
+                if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
+            }
+    }
+
+    /// 空格：预览右侧时间河里选中的那一条（再按一次或 Esc 关闭，回车转到完整页面）。在输入框里打字时不拦截
+    private func installKeys() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [model, hostWindow] ev in
+            guard ev.keyCode == 49,
+                  model.section == .calendar, model.sheetStack.isEmpty, model.calendarDraft == nil,
+                  let w = hostWindow.window, ev.window === w, w.isKeyWindow, !(w.firstResponder is NSText),
+                  ev.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+                  let page = model.calPane.page else { return ev }
+            if !ev.isARepeat { QuickPreviewWindow.shared.toggle(page, model: model) }
+            return nil
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -56,7 +81,7 @@ struct CalendarView: View {
                     monthPane.frame(width: max(geo.size.width - (showPanel ? panelW + 1 : 0), 0))
                     if showPanel {
                         Divider()
-                        CalendarSide(pane: model.calPane) { dayPanel }.frame(width: panelW)
+                        CalendarSide().frame(width: panelW)
                     }
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
@@ -240,66 +265,6 @@ struct CalendarView: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
         .background(.bar)
-    }
-
-    // MARK: - 当天面板
-
-    private var dayPanel: some View {
-        let tasks = model.calendarTasks(on: selectedDay)
-        let notes = (model.calendarNotes[selectedDay] ?? []).sorted { ($0.createdAt ?? "") < ($1.createdAt ?? "") }
-        let info = DayInfo.of(selectedDay, holiday: model.holidays[selectedDay])
-        let isToday = selectedDay == Day.today()
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(panelTitle + (isToday ? " · 今天" : "")).font(.title2.bold())
-                    Text(info.detail() + (tasks.isEmpty ? "" : " · \(tasks.count) 项"))
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-
-                Card {
-                    VStack(alignment: .leading, spacing: 6) {
-                        SectionTitle(text: "待办", count: tasks.count)
-                        if !model.hasDida {
-                            Text("填写滴答清单 API 口令后显示").foregroundStyle(.tertiary)
-                        } else if tasks.isEmpty {
-                            Text(model.calendarLoading ? "加载中…" : "这天没有安排").foregroundStyle(.secondary)
-                        }
-                        ForEach(tasks) { t in
-                            TaskRow(task: t, overdue: !t.done && (t.date ?? "") < Day.today(), showProject: false)
-                                .modifier(DraggableWhenOpen(task: t))
-                        }
-                        if tasks.contains(where: { !$0.done }) {
-                            Text("拖动任务到日历格子可以改期").font(.caption).foregroundStyle(.tertiary).padding(.top, 2)
-                        }
-                    }
-                }
-
-                Card {
-                    VStack(alignment: .leading, spacing: 6) {
-                        SectionTitle(text: "笔记", count: notes.count)
-                        if !model.hasIdeashell {
-                            Text("填写闪念贝壳 API Key 后显示").foregroundStyle(.tertiary)
-                        } else if notes.isEmpty {
-                            Text(model.calendarLoading ? "加载中…" : "这天没有笔记").foregroundStyle(.secondary)
-                        }
-                        ForEach(notes) { n in
-                            NoteRow(note: n).onTapGesture { model.openNote(n.id, title: n.title) }
-                            if n.id != notes.last?.id { Divider() }
-                        }
-                    }
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var panelTitle: String {
-        guard let d = Day.parse(selectedDay) else { return selectedDay }
-        let c = Day.cal.dateComponents([.month, .day, .weekday], from: d)
-        let w = ["日", "一", "二", "三", "四", "五", "六"][max(0, (c.weekday ?? 1) - 1)]
-        return "\(c.month ?? 0)月\(c.day ?? 0)日 周\(w)"
     }
 }
 
@@ -528,21 +493,148 @@ private struct DayCell: View, Equatable {
     }
 }
 
-// MARK: - 右侧面板：新建草稿 > 选中的任务详情 > 当天概览
+// MARK: - 右侧面板：新建草稿 > 选中那一天的时间河（有搜索结果时显示搜索结果）
 
-private struct CalendarSide<Overview: View>: View {
+private struct CalendarSide: View {
     @EnvironmentObject var model: AppModel
-    @ObservedObject var pane: PaneState
-    @ViewBuilder var overview: () -> Overview
 
     var body: some View {
         if model.calendarDraft != nil {
             CalendarDraftPanel()
-        } else if pane.page != nil {
-            PaneDetailBody(pane: pane)
         } else {
-            overview()
+            CalendarDayPanel()
         }
+    }
+}
+
+/// 拿到所在的窗口（空格预览只在日历所在的主窗口里响应）
+final class WindowRef { weak var window: NSWindow? }
+
+/// 选中那一天的时间河：日记、笔记、待办按时间排在一条线上。单击选中，空格预览，双击弹出完整页面
+private struct CalendarDayPanel: View {
+    @EnvironmentObject var model: AppModel
+    @State private var daily: DailyDay?
+    /// daily 是哪一天的
+    @State private var dailyFor = ""
+
+    private var day: String { model.calendarDay }
+
+    private struct LoadKey: Equatable { let day: String; let tick: Int; let on: Bool }
+
+    var body: some View {
+        Group {
+            if model.searchResults != nil { searchPanel } else { dayPanel }
+        }
+        .task(id: LoadKey(day: day, tick: model.calendarLoadTick, on: model.hasIdeashell)) { await loadDaily() }
+    }
+
+    private func loadDaily() async {
+        let d = day
+        guard model.hasIdeashell else { daily = nil; dailyFor = d; return }
+        let r = try? await model.daily.days(from: d, to: d)
+        guard d == day else { return }
+        daily = r?[d]
+        dailyFor = d
+    }
+
+    private var bucket: DayBucket {
+        let entries = dailyFor == day ? (daily?.entries ?? []) : []
+        let dailyId = entries.isEmpty ? nil : daily?.noteId
+        let notes = (model.calendarNotes[day] ?? [])
+            .filter { $0.id != dailyId }
+            .sorted { ($0.createdAt ?? "") > ($1.createdAt ?? "") }
+        return DayBucket(date: day, notes: notes, todos: model.calendarTasks(on: day), daily: entries, dailyNoteId: dailyId)
+    }
+
+    private var panelTitle: String {
+        guard let d = Day.parse(day) else { return day }
+        let c = Day.cal.dateComponents([.month, .day, .weekday], from: d)
+        let w = ["日", "一", "二", "三", "四", "五", "六"][max(0, (c.weekday ?? 1) - 1)]
+        return "\(c.month ?? 0)月\(c.day ?? 0)日 周\(w)"
+    }
+
+    private var dayPanel: some View {
+        let b = bucket
+        let info = DayInfo.of(day, holiday: model.holidays[day])
+        var counts: [String] = []
+        if !b.daily.isEmpty { counts.append("\(b.daily.count) 日记") }
+        if !b.notes.isEmpty { counts.append("\(b.notes.count) 笔记") }
+        if !b.todos.isEmpty { counts.append("\(b.todos.filter(\.done).count)/\(b.todos.count) 待办") }
+        let empty = b.notes.isEmpty && b.todos.isEmpty && b.daily.isEmpty
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(panelTitle + (day == Day.today() ? " · 今天" : "")).font(.title2.bold())
+                        Text(([info.detail()] + counts).filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    Menu {
+                        Button("复制这天为日报") { Task { await copyReport([day], label: Day.label(day)) } }
+                        Button("复制本周为周报") { Task { await copyReport(AppModel.weekDays(of: day), label: "本周") } }
+                            .disabled(model.calendarMode == .day)
+                        Divider()
+                        Button("刷新") { Task { await model.loadCalendar() } }
+                    } label: {
+                        Image(systemName: "ellipsis.circle").font(.system(size: 15)).foregroundStyle(.secondary)
+                    }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .help("复制日报 / 周报、刷新")
+                }
+                if !model.hasDida && !model.hasIdeashell {
+                    Text("填写凭证后显示").foregroundStyle(.tertiary)
+                } else if empty {
+                    Text(model.calendarLoading ? "加载中…" : "这天没有记录").foregroundStyle(.secondary).padding(.top, 4)
+                } else {
+                    DayRiverList(day: b)
+                }
+                if !empty {
+                    Text("单击选中，空格预览，双击弹出；拖动日历里的待办可以改期").font(.caption).foregroundStyle(.tertiary).padding(.top, 2)
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// 语义搜索结果：替换当天的时间河
+    private var searchPanel: some View {
+        let results = model.searchResults ?? []
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("搜索「\(model.searchQuery)」· \(results.count) 条").font(.callout.weight(.semibold)).lineLimit(1)
+                    if model.searching { ProgressView().controlSize(.small) }
+                    Spacer()
+                    Button("退出搜索") { model.clearSearch() }.buttonStyle(.link)
+                }
+                if results.isEmpty { Text("没有找到相关笔记").foregroundStyle(.secondary).padding(.top, 4) }
+                ForEach(results) { n in
+                    PaneSelection(pane: model.calPane, match: { $0.isNote(n.id) }) { selected in
+                        NoteRow(note: n, showDay: true)
+                            .padding(.horizontal, 10).padding(.vertical, 4)
+                            .background(selected ? Brand.orange.opacity(0.14) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                            .contentShape(Rectangle())
+                            .onTapGesture { model.riverSelect(.note(NoteRef(id: n.id, fallbackTitle: n.title))) }
+                            .simultaneousGesture(TapGesture(count: 2).onEnded { model.openNote(n.id, title: n.title) })
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// 复制成可直接贴进日报 / 周报的 Markdown（范围内日历已经读过的待办、笔记，加上这几天的 Daily Note）
+    private func copyReport(_ days: [String], label: String) async {
+        guard let from = days.first, let to = days.last else { return }
+        let dailyMap = (try? await model.daily.days(from: from, to: to)) ?? [:]
+        let tasks = days.flatMap { model.calendarTasks(on: $0) }
+        let notes = days.flatMap { model.calendarNotes[$0] ?? [] }
+        let data = TimelineData.build(from: from, to: to, notes: notes, tasks: tasks, truncated: false, todoNote: nil, daily: dailyMap)
+        model.copy(data.report(label: label))
+        model.showNotice("已复制，可直接贴进日报 / 周报")
     }
 }
 

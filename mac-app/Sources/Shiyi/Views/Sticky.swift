@@ -32,6 +32,8 @@ struct StickyNote: Codable, Identifiable {
     var original: String?
     /// 已关闭（不在桌面上，收在「已关闭的便签」里）
     var closed: Bool?
+    /// 已折叠：只显示标题行和第一行文字（h 记的是展开时的高度）
+    var collapsed: Bool?
 
     var rect: NSRect { NSRect(x: x, y: y, width: w, height: h) }
 }
@@ -90,8 +92,13 @@ final class StickyModel: ObservableObject, Identifiable {
     @Published var text: String { didSet { if oldValue != text { onEdit?() } } }
     @Published var color: Int { didSet { onEdit?() } }
     @Published var pinned: Bool { didSet { onEdit?(); onPinChanged?() } }
+    /// 折叠：窗口缩成一条，只留第一行
+    @Published var collapsed: Bool { didSet { if oldValue != collapsed { onEdit?(); onCollapseChanged?() } } }
+    /// 展开时的窗口高度（折叠期间记着，展开时还原）
+    var expandedH: Double
     var onEdit: (() -> Void)?
     var onPinChanged: (() -> Void)?
+    var onCollapseChanged: (() -> Void)?
     let source: StickySource?
     /// 打开时的原文（带来源的便签用来判断有没有改过）
     @Published var original: String
@@ -111,6 +118,8 @@ final class StickyModel: ObservableObject, Identifiable {
         text = n.text
         color = n.color
         pinned = n.pinned
+        collapsed = n.collapsed ?? false
+        expandedH = n.h
     }
 }
 
@@ -129,14 +138,23 @@ private final class StickyPanel: NSPanel {
 
 /// 顶部的拖动区：按住拖动整个窗口（SwiftUI 内容上窗口自带的「拖背景移动」不生效，自己处理）
 private struct StickyDragHandle: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { DragView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    /// 双击标题行空白处：折叠 / 展开
+    var onDoubleClick: () -> Void = {}
+
+    func makeNSView(context: Context) -> NSView {
+        let v = DragView()
+        v.onDoubleClick = onDoubleClick
+        return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) { (nsView as? DragView)?.onDoubleClick = onDoubleClick }
 
     final class DragView: NSView {
+        var onDoubleClick: (() -> Void)?
         private var mouseStart = NSPoint.zero
         private var originStart = NSPoint.zero
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 { onDoubleClick?(); return }
             mouseStart = NSEvent.mouseLocation
             originStart = window?.frame.origin ?? .zero
         }
@@ -255,14 +273,44 @@ final class StickyController {
         }
     }
 
+    /// 折叠后的窗口高度：只剩标题行（第一行文字显示在标题行中间）
+    private static let collapsedH: CGFloat = 26
+
+    /// 存盘用的快照；折叠时 h 记展开时的高度
+    private static func snapshot(_ id: UUID, _ m: StickyModel, _ f: NSRect) -> StickyNote {
+        StickyNote(id: id, text: m.text, color: m.color, pinned: m.pinned,
+                   x: f.origin.x, y: f.origin.y, w: f.width, h: m.collapsed ? m.expandedH : f.height, createdAt: m.createdAt,
+                   source: m.source, original: m.original, closed: nil, collapsed: m.collapsed ? true : nil)
+    }
+
+    /// 折叠 / 展开：上边缘不动，窗口高度在「一条」和展开时的高度之间切换；折叠时不能再拉高
+    private func layoutCollapse(_ p: NSPanel, _ m: StickyModel) {
+        var f = p.frame
+        let top = f.maxY
+        if m.collapsed {
+            if f.height > Self.collapsedH + 1 { m.expandedH = f.height }
+            p.minSize = NSSize(width: 220, height: Self.collapsedH)
+            p.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: Self.collapsedH)
+            f.size.height = Self.collapsedH
+        } else {
+            p.minSize = NSSize(width: 220, height: 190)
+            p.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+            f.size.height = max(CGFloat(m.expandedH), 190)
+        }
+        f.origin.y = top - f.height
+        p.setFrame(f, display: true)
+        if !m.collapsed {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self, weak p] in
+                if let p { self?.focusEditor(p) }
+            }
+        }
+    }
+
     /// 把窗口拆掉（不动存盘数据）：返回关掉时的内容快照
     @discardableResult
     private func teardown(_ id: UUID) -> StickyNote? {
         guard let e = entries.removeValue(forKey: id) else { return nil }
-        let f = e.panel.frame
-        let snap = StickyNote(id: id, text: e.model.text, color: e.model.color, pinned: e.model.pinned,
-                              x: f.origin.x, y: f.origin.y, w: f.width, h: f.height, createdAt: e.model.createdAt,
-                              source: e.model.source, original: e.model.original, closed: nil)
+        let snap = Self.snapshot(id, e.model, e.panel.frame)
         e.tokens.forEach(NotificationCenter.default.removeObserver)
         e.panel.orderOut(nil)
         e.panel.contentView = nil
@@ -322,7 +370,9 @@ final class StickyController {
     private func open(_ n: StickyNote) {
         guard let model else { return }
         let m = StickyModel(n)
-        let p = StickyPanel(contentRect: Self.visible(n.rect), styleMask: [.borderless, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
+        var rect = n.rect
+        if n.collapsed == true { rect.size.height = Self.collapsedH }
+        let p = StickyPanel(contentRect: Self.visible(rect), styleMask: [.borderless, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = true
@@ -332,6 +382,7 @@ final class StickyController {
         p.animationBehavior = .utilityWindow
         p.minSize = NSSize(width: 220, height: 190)
         applyLevel(p, pinned: m.pinned)
+        if m.collapsed { layoutCollapse(p, m) }
 
         let root = StickyView(m: m, onDelete: { [weak self] in self?.delete(n.id) }, onClose: { [weak self] in self?.close(n.id) }).environmentObject(model)
         let host = FirstMouseHostingView(rootView: root)
@@ -342,6 +393,10 @@ final class StickyController {
         m.onPinChanged = { [weak self, weak p, weak m] in
             guard let p, let m else { return }
             self?.applyLevel(p, pinned: m.pinned)
+        }
+        m.onCollapseChanged = { [weak self, weak p, weak m] in
+            guard let p, let m else { return }
+            self?.layoutCollapse(p, m)
         }
         p.onKey = { [weak self, weak p] in
             guard let p else { return }
@@ -376,6 +431,8 @@ final class StickyController {
 
     /// 面板不激活应用：输入法默认还挂在原来的 App 上，要显式把输入上下文切到便签的输入框（和万能输入悬浮窗一样）
     private func focusEditor(_ p: NSPanel) {
+        // 折叠着的便签输入框看不见，不要把键盘交给它
+        if entries.values.contains(where: { $0.panel === p && $0.model.collapsed }) { return }
         guard let root = p.contentView, let tv = Self.firstTextView(in: root) else { return }
         if p.firstResponder !== tv { p.makeFirstResponder(tv) }
         tv.inputContext?.activate()
@@ -409,10 +466,7 @@ final class StickyController {
         saveWork = nil
         let notes: [StickyNote] = order.compactMap { id in
             guard let e = entries[id] else { return nil }
-            let f = e.panel.frame
-            return StickyNote(id: id, text: e.model.text, color: e.model.color, pinned: e.model.pinned,
-                              x: f.origin.x, y: f.origin.y, w: f.width, h: f.height, createdAt: e.model.createdAt,
-                              source: e.model.source, original: e.model.original, closed: nil)
+            return Self.snapshot(id, e.model, e.panel.frame)
         } + StickyShelf.shared.closed
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .millisecondsSince1970
@@ -441,7 +495,7 @@ private struct StickyView: View {
         let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         VStack(spacing: 0) {
             header
-            if swatches { swatchRow }
+            if swatches && !m.collapsed { swatchRow }
             // 内容就是万能输入（便签形态）：自动识别、Tab 切类型、优先级、听写、图片、⌘↩ 保存。
             // 从笔记 / 结审记录打开的便签有来源：底部改成来源条，不再显示「保存到哪里」的识别
             QuickAddView(
@@ -450,10 +504,15 @@ private struct StickyView: View {
                 note: QuickAddNote(text: $m.text, isActive: { [id = m.id] in StickyController.shared.isActive(id) },
                                    bound: m.source != nil, submitTick: m.submitTick)
             )
-            if let s = m.source { sourceBar(s) }
+            // 折叠时输入区高度压成 0 但仍留在视图里：展开后输入状态（类型、优先级等）都还在
+            .frame(height: m.collapsed ? 0 : nil)
+            .clipped()
+            .opacity(m.collapsed ? 0 : 1)
+            .allowsHitTesting(!m.collapsed)
+            if let s = m.source, !m.collapsed { sourceBar(s) }
         }
         .background(paper)
-        .overlay(alignment: .top) { if keys { keysCard.padding(.top, 26).transition(.opacity.combined(with: .offset(y: -4))) } }
+        .overlay(alignment: .top) { if keys && !m.collapsed { keysCard.padding(.top, 26).transition(.opacity.combined(with: .offset(y: -4))) } }
         .overlay(alignment: .bottom) { if let c = m.confirm { confirmBar(c) } }
         .clipShape(shape)
         .overlay(shape.strokeBorder(Color.black.opacity(0.1), lineWidth: 0.5))
@@ -469,7 +528,18 @@ private struct StickyView: View {
     private var header: some View {
         HStack(spacing: 0) {
             tool(m.pinned ? "pin.fill" : "pin", m.pinned ? "已钉住：浮在所有窗口上面，点一下取消" : "钉住：浮在所有窗口上面", on: m.pinned) { m.pinned.toggle() }
-            Spacer(minLength: 4)
+            if m.collapsed {
+                // 折叠时第一行文字就放在标题行中间；不接收点击，按住可以拖动窗口，双击展开
+                Text(firstLine.isEmpty ? "空白便签" : firstLine)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(ink.opacity(firstLine.isEmpty ? 0.35 : 0.85))
+                    .lineLimit(1).truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+                    .allowsHitTesting(false)
+            } else {
+                Spacer(minLength: 4)
+            }
             Button { swatches.toggle() } label: {
                 Circle().strokeBorder(ink.opacity(hovering || swatches ? 0.55 : 0.3), lineWidth: 1.2)
                     .background(Circle().fill(ink.opacity(0.1)))
@@ -477,7 +547,9 @@ private struct StickyView: View {
                     .frame(width: 24, height: 22).contentShape(Rectangle())
             }
             .buttonStyle(.plain).help("换颜色")
-            tool("keyboard", "Markdown 快捷键", on: keys) { keys.toggle(); if keys { swatches = false } }
+            if !m.collapsed {
+                tool("keyboard", "Markdown 快捷键", on: keys) { keys.toggle(); if keys { swatches = false } }
+            }
             Menu {
                 Button("复制全文") {
                     NSPasteboard.general.clearContents()
@@ -486,7 +558,7 @@ private struct StickyView: View {
                 .disabled(empty)
                 Divider()
                 Button("删除便签…", role: .destructive) {
-                    if empty { onDelete() } else { m.confirm = .delete }
+                    if empty { onDelete() } else { askConfirm(.delete) }
                 }
             } label: {
                 Image(systemName: "ellipsis")
@@ -495,11 +567,25 @@ private struct StickyView: View {
                     .frame(width: 24, height: 22).contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            tool(m.collapsed ? "chevron.down" : "chevron.up", m.collapsed ? "展开（双击标题行也可以）" : "折叠：只留第一行（双击标题行也可以）") { toggleCollapse() }
             tool("xmark", "关闭", action: requestClose)
         }
         .padding(.horizontal, 6)
         .frame(height: 24)
-        .background(StickyDragHandle())
+        .background(StickyDragHandle(onDoubleClick: { toggleCollapse() }))
+    }
+
+    private func toggleCollapse() {
+        swatches = false
+        keys = false
+        m.collapsed.toggle()
+    }
+
+    /// 折叠时显示的第一行
+    private var firstLine: String {
+        let plain = ComposerImage.stripMarker(m.text)
+        if let l = plain.components(separatedBy: "\n").first(where: { !$0.trimmed.isEmpty }) { return l.mdPlain }
+        return empty ? "" : "图片"
     }
 
     /// 颜色：点一个就换，行收起
@@ -672,10 +758,16 @@ private struct StickyView: View {
     private func requestClose() {
         if empty { onClose(); return }
         if let s = m.source {
-            if s.writable, m.dirty { m.confirm = .close } else { onClose() }
+            if s.writable, m.dirty { askConfirm(.close) } else { onClose() }
         } else {
-            m.confirm = .close
+            askConfirm(.close)
         }
+    }
+
+    /// 确认条在窗口底部：折叠着的话先展开，不然看不到
+    private func askConfirm(_ c: StickyModel.Confirm) {
+        if m.collapsed { m.collapsed = false }
+        m.confirm = c
     }
 
     private func openSource(_ s: StickySource) {

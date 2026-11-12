@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 
 enum AppSection: String, CaseIterable, Identifiable {
-    case today, focus, workbench, todos, calendar, review, insights, settings
+    case today, focus, workbench, todos, calendar, insights, settings
 
     var id: String { rawValue }
 
@@ -15,7 +15,6 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .focus: return "行动"
         case .workbench: return "调度"
         case .insights: return "洞察"
-        case .review: return "回顾"
         case .settings: return "设置"
         }
     }
@@ -28,7 +27,6 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .focus: return "target"
         case .workbench: return "wand.and.stars"
         case .insights: return "chart.bar.xaxis"
-        case .review: return "water.waves"
         case .settings: return "gearshape"
         }
     }
@@ -250,20 +248,12 @@ final class AppModel: ObservableObject {
     var timelineFP = 0
     var historyDirty = false
 
-    // 回顾页：顶部的新入口（时间河 / 洞察 / 专注）和右侧详情
-    /// 回顾页右侧详情的选中状态。单独一个对象：选中变化只刷新右侧和被选行，不会让整条河重新绘制
-    let pane = PaneState()
     let focus: FocusStore
 
-    // 回顾：时间河
     /// 数据读过多久内再进页面不重新请求（切页面时不卡）；手动刷新 / 改范围不受影响
     var loadStamps: [String: (key: String, at: Date)] = [:]
-    @Published var riverPreset: RangePreset = .last7
-    @Published var river: TimelineData?
-    @Changed var riverLoading = false
-    @Changed var riverError: String?
-    /// 被用户翻转过「展开 / 收起」的日子（默认只展开今天、昨天）
-    @Published var riverFlipped: Set<String> = []
+    /// 日历读完一次（或日记有改动）就 +1：右侧那天的时间河据此重读 Daily Note
+    @Published var calendarLoadTick = 0
 
     // 日历：法定节假日 / 调休
     @Changed var holidays: [String: HolidayEntry] = [:]
@@ -377,7 +367,6 @@ final class AppModel: ObservableObject {
         // 当前页的历史数据超过缓存时间才重读
         switch section {
         case .calendar: await loadCalendar(ifStale: true)
-        case .review: await loadRiver(silent: true, ifStale: true)
         case .insights: await loadReview(ifStale: true)
         default: break
         }
@@ -396,7 +385,6 @@ final class AppModel: ObservableObject {
         switch section {
         case .calendar: await loadCalendar(ifStale: startup)
         case .focus: await focus.settle(); await focus.refresh()
-        case .review: await loadRiver(silent: river != nil, ifStale: startup)
         case .insights: await loadReview(ifStale: startup)
         default: break
         }
@@ -511,10 +499,11 @@ final class AppModel: ObservableObject {
     }
 
     func openTask(_ task: DidaTask) {
-        // 日历里（年视图除外）：在右侧面板展开，和系统日历点日程一样
+        // 日历里（年视图除外）：选中并弹出预览浮窗（和空格预览一样，可拖动、缩放，空格 / Esc 关闭，回车转到完整页面）
         if section == .calendar && calendarMode != .year {
             calendarDraft = nil
             calPane.select(.task(task), entry: nil)
+            QuickPreviewWindow.shared.show(.task(task), model: self)
         } else {
             present(.task(task))
         }
@@ -536,12 +525,8 @@ final class AppModel: ObservableObject {
         sheetStack.append(page)
     }
 
-    // MARK: - 回顾页右侧详情：单击在右边展开，双击弹出页面
+    // MARK: - 日历右侧时间河：单击选中、空格预览、双击弹出页面
 
-    func paneNote(_ id: String, title: String? = nil, entry: String? = nil) {
-        pane.select(.note(NoteRef(id: id, fallbackTitle: title)), entry: entry)
-    }
-    func paneTask(_ task: DidaTask) { pane.select(.task(task), entry: nil) }
 
     /// 搜索：从笔记结果里选一条；跳到时间河，搜索结果替换河
     func searchAndShow() async {
@@ -909,7 +894,7 @@ final class AppModel: ObservableObject {
         guard beginLoad("calendar", ifStale: ifStale) else { return }
         defer { endLoad("calendar") }
         calendarLoading = true
-        defer { calendarLoading = false }
+        defer { calendarLoading = false; calendarLoadTick += 1 }
         calendarError = nil
 
         if hasDida {
@@ -973,7 +958,6 @@ final class AppModel: ObservableObject {
     /// 我们自己改了数据（新建 / 完成 / 改期）后，回顾、洞察、日历的缓存作废，下次进页面重读
     func invalidateHistory() {
         historyDirty = false
-        loadStamps.removeValue(forKey: "river")
         loadStamps.removeValue(forKey: "review")
         calendarCover = nil
     }

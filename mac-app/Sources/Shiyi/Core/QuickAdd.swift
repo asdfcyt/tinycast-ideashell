@@ -58,7 +58,6 @@ extension AppModel {
                 Task {
                     await loadOverview(silent: true)
                     if section == .calendar { await loadCalendar() }
-                    if section == .review { await loadRiver(silent: true) }
                 }
             } else if hasIdeashell {
                 try await ideashell.createTodo(title, date: date, time: time)
@@ -81,7 +80,7 @@ extension AppModel {
             lastCreated = .daily(date: Day.string(now), entry: DailyEntry(time: String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0), text: flat))
             invalidateHistory()
             Task { await loadDailyToday(ifStale: false) }
-            Task { if section == .review { await loadRiver(silent: true) } }
+            Task { if section == .calendar { await loadCalendar() } }
             return "已记入今天的 Daily Note" + (fitted.isEmpty ? "" : " · \(fitted.count) 张图片")
 
         case .clue, .idea, .evidence, .regulation:
@@ -110,7 +109,7 @@ extension AppModel {
             invalidateHistory()
             Task {
                 await loadTimeline(silent: true)
-                if section == .review { await loadRiver(silent: true) }
+                if section == .calendar { await loadCalendar() }
             }
             return "已保存笔记" + (fitted.isEmpty ? "" : " · \(fitted.count) 张图片") + (folder.map { " 📁" + $0.name } ?? "") + folderNote
         }

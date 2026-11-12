@@ -3,7 +3,6 @@ import Foundation
 /// 回顾 / 洞察 / 日历的数据存本机：重启后切到这些页面立刻有内容（后台再悄悄更新），不用对着空白等网络。
 /// 读写都在后台线程做，不占主线程。
 
-private struct RiverStore: Codable { var preset: String; var data: TimelineData }
 private struct ReviewStore: Codable { var days: Int; var data: ReviewData }
 private struct CalendarStore: Codable { var tasks: [String: DidaTask]; var notes: [String: [NoteInfo]] }
 
@@ -23,12 +22,10 @@ extension AppModel {
     /// 启动后在后台读回上次的数据；网络先回来了的就不覆盖
     func restoreHistoryCaches() {
         Task.detached(priority: .utility) { [weak self] in
-            let river: RiverStore? = HistoryDisk.read("river.json")
             let review: ReviewStore? = HistoryDisk.read("review.json")
             let calendar: CalendarStore? = HistoryDisk.read("calendar.json")
             await MainActor.run {
                 guard let self else { return }
-                if self.river == nil, let r = river, r.preset == self.riverPreset.rawValue { self.river = r.data }
                 if self.review == nil, let v = review, v.days == self.reviewDays { self.review = v.data }
                 if self.calendarTasks.isEmpty, let c = calendar {
                     self.calendarTasks = c.tasks
@@ -36,12 +33,6 @@ extension AppModel {
                 }
             }
         }
-    }
-
-    func saveRiverCache() {
-        guard let data = river else { return }
-        let s = RiverStore(preset: riverPreset.rawValue, data: data)
-        Task.detached(priority: .utility) { HistoryDisk.write("river.json", s) }
     }
 
     func saveReviewCache() {
@@ -79,7 +70,6 @@ extension AppModel {
         invalidateHistory()
         switch section {
         case .calendar: Task { await loadCalendar(ifStale: true) }
-        case .review: Task { await loadRiver(silent: true, ifStale: true) }
         case .insights: Task { await loadReview(ifStale: true) }
         default: break
         }

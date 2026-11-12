@@ -62,7 +62,7 @@ struct RootView: View {
         }
     }
 
-    private var isLoading: Bool { model.notesLoading || model.todosLoading || model.backupLoading || model.riverLoading || model.calendarLoading }
+    private var isLoading: Bool { model.notesLoading || model.todosLoading || model.backupLoading || model.calendarLoading }
 
     private func badge(_ s: AppSection) -> Int {
         switch s {
@@ -78,7 +78,6 @@ struct RootView: View {
         case .today: TodayView()
         case .todos: TodosView()
         case .calendar: CalendarView()
-        case .review: ReviewView()
         case .insights: InsightsView()
         case .focus: ProjectsView()
         case .workbench: AIWorkbenchView()

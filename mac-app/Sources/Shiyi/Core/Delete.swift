@@ -40,19 +40,12 @@ extension AppModel {
         guard hasDida || SjzTasks.owns(task.id) else { showNotice("先到「设置」填写滴答清单 API 口令"); return }
         let beforeOverview = overview
         let beforeCalendar = calendarTasks
-        let beforeRiver = river
         if var ov = overview {
             ov = ov.withoutTask(task.id)
             ov.done.removeAll { $0.id == task.id }
             overview = ov
         }
         calendarTasks.removeValue(forKey: task.id)
-        // 只有真的有东西要去掉才赋值：@Published 的数组赋值（哪怕没变）也会让整个界面重画一遍
-        if var r = river, r.days.contains(where: { $0.todos.contains { $0.id == task.id } }) {
-            for i in r.days.indices { r.days[i].todos.removeAll { $0.id == task.id } }
-            river = r
-        }
-        if pane.isTask(task.id) { pane.clear() }
         if calPane.isTask(task.id) { calPane.clear() }
         let hasSheet: (SheetPage) -> Bool = { if case let .task(t) = $0 { return t.id == task.id }; return false }
         if sheetStack.contains(where: hasSheet) { sheetStack.removeAll(where: hasSheet) }
@@ -67,11 +60,9 @@ extension AppModel {
             try await dida.deleteTask(task)
             await loadOverview(silent: true)
             if section == .calendar { await loadCalendar() }
-            if section == .review { await loadRiver(silent: true) }
         } catch {
             overview = beforeOverview
             calendarTasks = beforeCalendar
-            river = beforeRiver
             showNotice("删除失败：" + error.localizedDescription)
         }
     }
@@ -79,12 +70,6 @@ extension AppModel {
     /// 删除 Daily Note 里的一条日记：先在时间河里去掉，再改那天的 Daily Note，最后悄悄重读一遍对齐（失败时也靠它回滚）
     func deleteDaily(date: String, entry: DailyEntry, noteId: String?) async {
         guard hasIdeashell else { showNotice("先到「设置」填写闪念贝壳 API Key"); return }
-        if var r = river, let i = r.days.firstIndex(where: { $0.date == date }),
-           let j = r.days[i].daily.firstIndex(where: { $0.time == entry.time && $0.text == entry.text }) {
-            r.days[i].daily.remove(at: j)
-            r.dailyCount = max(0, r.dailyCount - 1)
-            river = r
-        }
         // 今天页的「今天的笔记」也先去掉这一条
         if date == Day.today(), var d = dailyToday, let j = d.entries.firstIndex(where: { $0.time == entry.time && $0.text == entry.text }) {
             d.entries.remove(at: j)
@@ -92,7 +77,7 @@ extension AppModel {
         }
         if let noteId {
             noteCache.removeValue(forKey: noteId)
-            if pane.page != nil, case let .note(n)? = pane.page, n.id == noteId { pane.clear() }
+            if case let .note(n)? = calPane.page, n.id == noteId { calPane.clear() }
         }
         do {
             let ok = try await daily.deleteEntry(date: date, entry: entry)
@@ -102,6 +87,6 @@ extension AppModel {
         }
         invalidateHistory()
         if date == Day.today() { Task { await loadDailyToday(ifStale: false) } }
-        await loadRiver(silent: true)
+        calendarLoadTick += 1
     }
 }

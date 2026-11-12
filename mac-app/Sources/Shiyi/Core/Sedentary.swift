@@ -72,6 +72,11 @@ enum SedentaryPrefs {
     static let respectBusy = "sedentary.respectBusy"
     /// 黑白是我们打开的：记在本机，应用异常退出后下次启动会据此恢复
     static let grayOn = "sedentary.grayOn"
+    /// 关闭应用时记下「已连续使用多久」，再打开时接着算（离开超过 5 分钟才当作休息过）
+    static let savedActive = "sedentary.savedActive"
+    static let savedAt = "sedentary.savedAt"
+    static let savedPostponed = "sedentary.savedPostponed"
+    static let savedWarned = "sedentary.savedWarned"
 
     static func register() {
         UserDefaults.standard.register(defaults: [
@@ -243,8 +248,13 @@ final class SedentaryReminder: ObservableObject {
             ScreenGrayscale.set(false)
             ud.set(false, forKey: SedentaryPrefs.grayOn)
         }
+        restoreProgress()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { SedentaryReminder.shared.terminating = true; SedentaryReminder.shared.restoreColor() }
+            MainActor.assumeIsolated {
+                SedentaryReminder.shared.terminating = true
+                SedentaryReminder.shared.persistProgress()
+                SedentaryReminder.shared.restoreColor()
+            }
         }
         let ws = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
@@ -266,10 +276,31 @@ final class SedentaryReminder: ObservableObject {
 
     // MARK: 计时
 
+    /// 把当前的连续使用进度记到本机（每次计时都记，退出时再记一次；异常退出最多少 5 秒）
+    private func persistProgress() {
+        ud.set(activeSeconds, forKey: SedentaryPrefs.savedActive)
+        ud.set(Date().timeIntervalSince1970, forKey: SedentaryPrefs.savedAt)
+        ud.set(postponed, forKey: SedentaryPrefs.savedPostponed)
+        ud.set(warned, forKey: SedentaryPrefs.savedWarned)
+    }
+
+    /// 启动时接着上次的进度：关掉应用的时间不到 5 分钟、而且这段时间键鼠也没离开过 5 分钟，就当作没中断
+    private func restoreProgress() {
+        let at = ud.double(forKey: SedentaryPrefs.savedAt)
+        guard at > 0 else { return }
+        let gap = Date().timeIntervalSince1970 - at
+        let saved = ud.double(forKey: SedentaryPrefs.savedActive)
+        guard enabled, saved > 0, gap >= 0, gap < Self.awayResetSeconds, Self.idleSeconds() < Self.awayResetSeconds else { return }
+        activeSeconds = saved
+        postponed = ud.integer(forKey: SedentaryPrefs.savedPostponed)
+        warned = ud.bool(forKey: SedentaryPrefs.savedWarned)
+    }
+
     private func tick() {
         let now = Date()
         let dt = min(now.timeIntervalSince(lastTick), 30)
         lastTick = now
+        defer { persistProgress() }
 
         guard enabled else {
             if phase == .gray { endGray() }

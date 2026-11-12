@@ -14,11 +14,11 @@ enum Brand {
 }
 
 /*
- * 回顾的「河」（节点时刻表），复刻安卓端 RiverPane：没有卡片外壳，正文直接落在底色上。
- * 每天一个大号日期头，下面是这一天的每一件事，按时间从晚到早排开：竖线在左、时间居中、正文在右，每条记录是线上的一个节点。
+ * 时间河（节点时刻表），复刻安卓端 RiverPane：没有卡片外壳，正文直接落在底色上，现在放在日历右侧显示选中的那一天。
+ * 这一天的每一件事按时间从晚到早排开：竖线在左、时间居中、正文在右，每条记录是线上的一个节点。
  * Daily Note 里的每一条（`- **时间** 文字`）拆成独立的一行。
  * 节点区分类型：日记 = 橙色实心圆，笔记 = 深色三角，待办 = 方块（空心 = 没做，红色 = 逾期，灰色实心 = 做完）。
- * 默认只展开今天、昨天，更早的收起成一行日期头，点日期头展开 / 收起。待办可以交互：点节点直接勾选完成（再点恢复），点文字打开任务详情。
+ * 待办可以交互：点节点直接勾选完成（再点恢复）。单击一行选中，空格预览，双击弹出完整页面。
  */
 
 private enum RiverKind { case daily, note, todo, todoDone, todoOverdue }
@@ -46,60 +46,15 @@ private enum RiverRow: Identifiable {
     }
 }
 
-struct RiverView: View {
-    @EnvironmentObject var model: AppModel
-    let data: TimelineData
+// MARK: - 一天的行
 
-    var body: some View {
-        LazyVStack(alignment: .leading, spacing: 6) {
-            ForEach(data.days) { DaySection(day: $0, today: Day.today()) }
-        }
-    }
-}
-
-// MARK: - 一天
-
-private struct DaySection: View {
-    @EnvironmentObject var model: AppModel
-    let day: DayBucket
-    let today: String
-
-    private var open: Bool { model.isRiverDayOpen(day.date) }
-    private var isToday: Bool { day.date == today }
-
-    private static let weekdayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "EEE"
-        return f
-    }()
-
-    private var dayNumber: String { String(Int(day.date.suffix(2)) ?? 0) }
-
-    private var weekday: String {
-        guard let d = Day.parse(day.date) else { return "" }
-        let w = Self.weekdayFormatter.string(from: d)
-        // 不是本月的日子带上月份，免得只看到一个「6」不知道是哪个月
-        let c = Day.cal
-        guard let t = Day.parse(today) else { return w }
-        if !c.isDate(d, equalTo: t, toGranularity: .month) { return "\(c.component(.month, from: d))月 \(w)" }
-        return w
-    }
-
-    private var counts: String {
-        var parts: [String] = []
-        if !day.daily.isEmpty { parts.append("\(day.daily.count) 日记") }
-        if !day.notes.isEmpty { parts.append("\(day.notes.count) 笔记") }
-        if !day.todos.isEmpty { parts.append("\(day.todos.filter(\.done).count)/\(day.todos.count) 待办") }
-        return parts.joined(separator: " · ")
-    }
-
-    private var rows: [RiverRow] {
+private enum RiverRows {
+    /// 当天的所有行：全天（没有具体时间）的待办排在最上面，其余按时间从晚到早
+    static func make(_ day: DayBucket, today: String) -> [RiverRow] {
         var r: [RiverRow] = []
         for (i, e) in day.daily.enumerated() { r.append(.daily(e, noteId: day.dailyNoteId, index: i)) }
         for n in day.notes { r.append(.note(n)) }
-        for t in day.todos { r.append(.todo(t, clock: todoClock(t), overdue: isOverdue(t))) }
-        // 全天（没有具体时间）的待办排在当天最上面，其余按时间从晚到早
+        for t in day.todos { r.append(.todo(t, clock: todoClock(t), overdue: isOverdue(t, day: day.date, today: today))) }
         return r.sorted {
             let a = $0.clock.isEmpty, b = $1.clock.isEmpty
             if a != b { return a }
@@ -108,7 +63,7 @@ private struct DaySection: View {
     }
 
     /// 待办的时间：做完的用完成时刻，没做完的用计划时刻
-    private func todoClock(_ t: DidaTask) -> String {
+    static func todoClock(_ t: DidaTask) -> String {
         if t.done, let d = t.completedDate {
             let c = Day.cal.dateComponents([.hour, .minute], from: d)
             return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
@@ -117,56 +72,35 @@ private struct DaySection: View {
     }
 
     /// 没做完、计划时刻已经过了：过去的日子里没做完的，或今天里时间已过的（全天的待办要到第二天才算）
-    private func isOverdue(_ t: DidaTask) -> Bool {
+    static func isOverdue(_ t: DidaTask, day: String, today: String) -> Bool {
         if t.done { return false }
-        if day.date < today { return true }
-        if day.date != today { return false }
+        if day < today { return true }
+        if day != today { return false }
         guard let time = t.time else { return false }
         let c = Day.cal.dateComponents([.hour, .minute], from: Date())
         return time < String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
     }
+}
+
+/// 日历右侧：选中那一天的时间河（节点样式沿用原来的回顾页）。
+/// 单击选中，空格弹出预览浮窗，双击弹出完整页面；待办的节点可以直接勾选完成。
+struct DayRiverList: View {
+    let day: DayBucket
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) { model.toggleRiverDay(day.date) }
-            } label: {
-                HStack(spacing: 8) {
-                    Text(dayNumber).font(.system(size: 28, weight: .black)).monospacedDigit()
-                    Text(weekday).font(.subheadline.weight(.heavy))
-                    if isToday {
-                        Text("今天")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(Brand.brown)
-                            .padding(.horizontal, 8).padding(.vertical, 2)
-                            .background(Brand.orange, in: Capsule())
-                    }
-                    Spacer(minLength: 8)
-                    Text(counts).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    Image(systemName: open ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(height: 40)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if open {
-                let list = rows
-                ForEach(Array(list.enumerated()), id: \.element.id) { i, row in
-                    switch row {
-                    case let .daily(e, noteId, idx):
-                        DailyLine(entry: e, date: day.date, noteId: noteId, index: idx, first: i == 0, last: i == list.count - 1)
-                    case let .note(n):
-                        NoteLine(note: n, first: i == 0, last: i == list.count - 1)
-                    case let .todo(t, clock, overdue):
-                        TodoLine(task: t, clock: clock, overdue: overdue, first: i == 0, last: i == list.count - 1)
-                    }
+        let list = RiverRows.make(day, today: Day.today())
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(list.enumerated()), id: \.element.id) { i, row in
+                switch row {
+                case let .daily(e, noteId, idx):
+                    DailyLine(entry: e, date: day.date, noteId: noteId, index: idx, first: i == 0, last: i == list.count - 1)
+                case let .note(n):
+                    NoteLine(note: n, first: i == 0, last: i == list.count - 1)
+                case let .todo(t, clock, overdue):
+                    TodoLine(task: t, clock: clock, overdue: overdue, first: i == 0, last: i == list.count - 1)
                 }
             }
         }
-        .padding(.bottom, 6)
     }
 }
 
@@ -286,11 +220,11 @@ private struct DailyLine: View {
 
     var body: some View {
         let key = "\(index)-\(entry.time)"
-        PaneSelection(pane: model.pane, match: { p in noteId.map { p.isNote($0, entry: key) } ?? false }) { selected in
+        PaneSelection(pane: model.calPane, match: { p in noteId.map { p.isNote($0, entry: key) } ?? false }) { selected in
             TimelineRow(
                 clock: entry.time, kind: .daily, first: first, last: last,
                 selected: selected,
-                onClick: noteId.map { id in { model.paneNote(id, title: "Daily Note", entry: key) } },
+                onClick: noteId.map { id in { model.riverSelect(.note(NoteRef(id: id, fallbackTitle: "Daily Note")), entry: key) } },
                 onDoubleClick: noteId.map { id in { model.openNote(id, title: "Daily Note") } }
             ) {
                 Text(entry.text)
@@ -307,7 +241,7 @@ private struct DailyLine: View {
             Button("使用便签打开") { StickyController.shared.create(text: entry.text) }
             DispatchMenu(model: model) { entry.text }
             if let id = noteId {
-                Button("在右侧查看") { model.paneNote(id, title: "Daily Note", entry: key) }
+                Button("预览") { model.riverPreview(.note(NoteRef(id: id, fallbackTitle: "Daily Note")), entry: key) }
                 Button("弹出这天的 Daily Note") { model.openNote(id, title: "Daily Note") }
                 Button("在闪念贝壳中打开") { model.open(noteURL(id)) }
             }
@@ -324,11 +258,11 @@ private struct NoteLine: View {
     let last: Bool
 
     var body: some View {
-        PaneSelection(pane: model.pane, match: { $0.isNote(note.id) }) { selected in
+        PaneSelection(pane: model.calPane, match: { $0.isNote(note.id) }) { selected in
             TimelineRow(
                 clock: note.clock ?? "", kind: .note, first: first, last: last,
                 selected: selected,
-                onClick: { model.paneNote(note.id, title: note.title) },
+                onClick: { model.riverSelect(.note(NoteRef(id: note.id, fallbackTitle: note.title))) },
                 onDoubleClick: { model.openNote(note.id, title: note.title) }
             ) {
                 Text(note.title).font(.system(size: 14, weight: .bold)).lineLimit(2)
@@ -338,7 +272,7 @@ private struct NoteLine: View {
             }
         }
         .contextMenu {
-            Button("在右侧查看") { model.paneNote(note.id, title: note.title) }
+            Button("预览") { model.riverPreview(.note(NoteRef(id: note.id, fallbackTitle: note.title))) }
             Button("弹出") { model.openNote(note.id, title: note.title) }
             Button("使用便签打开") { model.openNoteAsSticky(note.id, title: note.title) }
             DispatchMenu(model: model) { note.text?.trimmed.nonEmpty ?? [note.title, note.summary].compactMap { $0?.trimmed.nonEmpty }.joined(separator: "\n") }
@@ -357,15 +291,15 @@ private struct TodoLine: View {
     let last: Bool
 
     var body: some View {
-        PaneSelection(pane: model.pane, match: { $0.isTask(task.id) }) { selected in
+        PaneSelection(pane: model.calPane, match: { $0.isTask(task.id) }) { selected in
             TimelineRow(
                 clock: clock,
                 kind: task.done ? .todoDone : (overdue ? .todoOverdue : .todo),
                 first: first, last: last,
                 allDay: clock.isEmpty,
                 selected: selected,
-                onClick: { model.paneTask(task) },
-                onDoubleClick: { model.openTask(task) },
+                onClick: { model.riverSelect(.task(task)) },
+                onDoubleClick: { model.present(.task(task)) },
                 onNodeClick: { Task { await model.toggleTask(task) } }
             ) {
                 Text(task.cleanTitle)
@@ -379,7 +313,7 @@ private struct TodoLine: View {
             }
         }
         .contextMenu {
-            Button("在右侧查看") { model.paneTask(task) }
+            Button("预览") { model.riverPreview(.task(task)) }
             TaskContextMenu(task: task)
         }
     }

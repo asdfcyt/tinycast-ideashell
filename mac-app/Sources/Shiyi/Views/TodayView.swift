@@ -1579,6 +1579,8 @@ struct AuditProjectCard: View {
         let left: Int?
         /// 还没到计划开始日（资料清单）
         let notStarted: Bool
+        /// 已发出的资料清单：结审里的文书路径（用来找到对应的记录，标记已收回）；取证单和任务形式的清单为 nil
+        var recallPath: String? = nil
         let open: () -> Void
     }
 
@@ -1603,6 +1605,7 @@ struct AuditProjectCard: View {
                        matter: it.matter.isEmpty ? (it.unit.isEmpty ? "" : it.title) : it.matter,
                        range: d.flatMap { s in due.map { "\(f.string(from: s)) 发出 → \(f.string(from: $0)) \(isData ? "截止" : "到期")" } },
                        left: due.map(days), notStarted: false,
+                       recallPath: isData ? it.path : nil,
                        open: { model.openSjzApp(project: n, to: "/documents?open=" + AppModel.urlEnc(it.path)) })
         }
         for t in model.sjzOverview?.next ?? [] where t.project == n && Self.isList(t) {
@@ -1689,20 +1692,7 @@ struct AuditProjectCard: View {
             .popover(item: Binding(get: { peek.flatMap { $0.hasTile ? nil : $0 } }, set: { if $0 == nil { peek = nil } }), arrowEdge: .leading) { k in
                 peekList(k)
             }
-            .contextMenu {
-                Section("打开") {
-                    Button { model.section = .focus; model.selectedProject = SjzTasks.prefix + name } label: { Label("在拾忆里打开项目", systemImage: "folder") }
-                    Button { model.openSjzApp(project: name, to: "/") } label: { Label("在结审里打开项目", systemImage: "arrow.up.forward.app") }
-                    Button { model.openSjzApp(project: name, to: "/evidence?tab=note") } label: { Label("在结审里打开取证单", systemImage: "doc.text") }
-                }
-                Section("设置") {
-                    Menu {
-                        ForEach([3, 5, 7, 10, 15, 30], id: \.self) { d in
-                            Button { replyDays = d } label: { if replyDays == d { Label("\(d) 天", systemImage: "checkmark") } else { Text("\(d) 天") } }
-                        }
-                    } label: { Label("取证单回复期限（\(replyDays) 天）", systemImage: "clock.badge.checkmark") }
-                }
-            }
+            .contextMenu { projectMenu }
             .task(id: name) { await load() }
             .onReceive(NotificationCenter.default.publisher(for: .sjzCapturesChanged)) { _ in Task { await load() } }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await load() } }
@@ -1735,6 +1725,68 @@ struct AuditProjectCard: View {
         }
         .buttonStyle(.plain)
         .help(r.id.hasPrefix("task:") ? "在结审里打开这个任务" : r.isList ? "在结审里打开这份资料清单" : "在结审里打开这份取证单")
+        .contextMenu {
+            // 资料清单：对方交齐了就标记已收回，收回日期默认今天
+            if r.recallPath != nil {
+                Button { Task { await markRecalled(r) } } label: { Label("已收回", systemImage: "tray.and.arrow.down") }
+                Divider()
+            }
+            Button(action: r.open) {
+                Label(r.id.hasPrefix("task:") ? "在结审里打开这个任务" : r.isList ? "在结审里打开这份资料清单" : "在结审里打开这份取证单", systemImage: "arrow.up.forward.app")
+            }
+            Button { model.copy(r.title) } label: { Label("复制标题", systemImage: "doc.on.doc") }
+            Divider()
+            projectMenu
+        }
+    }
+
+    /// 卡片本身的右键菜单（行上的菜单在最后也带上这些）
+    @ViewBuilder private var projectMenu: some View {
+        Section("打开") {
+            Button { model.section = .focus; model.selectedProject = SjzTasks.prefix + name } label: { Label("在拾忆里打开项目", systemImage: "folder") }
+            Button { model.openSjzApp(project: name, to: "/") } label: { Label("在结审里打开项目", systemImage: "arrow.up.forward.app") }
+        }
+        // 期限只对取证单有用：当前没有待收回的取证单就不显示
+        if rows.contains(where: { !$0.isList }) {
+            Section("设置") {
+                Menu {
+                    ForEach([3, 5, 7, 10, 15, 30], id: \.self) { d in
+                        Button { replyDays = d } label: { if replyDays == d { Label("\(d) 天", systemImage: "checkmark") } else { Text("\(d) 天") } }
+                    }
+                } label: { Label("取证单回复期限（\(replyDays) 天）", systemImage: "clock.badge.checkmark") }
+            }
+        }
+    }
+
+    /// 在这个项目的资料清单记录里找到对应的一条（文书路径一致；退一步按文件名）
+    private static func datalistCapture(path: String, in list: [SjzCapture]) -> SjzCapture? {
+        let ls = list.filter { $0.kind == "datalist" }
+        if let c = ls.first(where: { $0.path == path }) { return c }
+        let file = (path as NSString).lastPathComponent
+        guard !file.isEmpty else { return nil }
+        return ls.first { ($0.path as NSString).lastPathComponent == file }
+    }
+
+    /// 标记资料清单已收回：收回日期写成今天，结审会把状态流转为「已收回」
+    private func markRecalled(_ r: Row) async {
+        guard let path = r.recallPath else { return }
+        let n = name
+        var cap = Self.datalistCapture(path: path, in: caps)
+        if cap == nil, let fresh = try? await model.sjz.captures(project: n, kind: "datalist", limit: 200) {
+            cap = Self.datalistCapture(path: path, in: fresh)
+        }
+        guard let cap else { model.showNotice("没找到这份资料清单的记录，请到结审里标记"); return }
+        do {
+            _ = try await model.sjz.updateCapture(project: n, id: cap.id, fields: ["recalledAt": Day.today()])
+            SjzDetailStore.forget(project: n, id: cap.id)
+            items.removeAll { $0.path == path }
+            Self.itemCache[n] = items
+            model.showNotice("已收回：\(r.title)")
+            await model.refreshSjzOverview(force: true)
+            AppModel.lastDatalistSync = .distantPast
+            await model.syncDatalistReminders()
+            await load()
+        } catch { model.showNotice(error.localizedDescription) }
     }
 
     private static func badge(_ left: Int?, notStarted: Bool) -> (String, Color) {
@@ -1932,7 +1984,8 @@ private struct RecentRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 10.5)).foregroundStyle(tint)
+                // 不同图标宽度不一样（气泡比文档宽），固定宽度让后面的文字左边对齐
+                Image(systemName: icon).font(.system(size: 10.5)).foregroundStyle(tint).frame(width: 15)
                 Text(text).font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 4)
                 if !time.isEmpty { Text(time).font(.system(size: 10.5)).foregroundStyle(.tertiary) }
