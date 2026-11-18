@@ -37,6 +37,7 @@ struct TaskDetailView: View {
             .padding(24)
             .frame(maxWidth: 780, alignment: .leading)
             .frame(maxWidth: .infinity)
+            .overlayScrollers()
         }
         .background(AmbientBackground())
         .task(id: ref?.noteId) { await loadNote() }

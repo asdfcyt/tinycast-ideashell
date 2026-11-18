@@ -47,6 +47,7 @@ struct NoteDetailView: View {
             .padding(24)
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity)
+            .overlayScrollers()
         }
         .background(AmbientBackground())
         .task(id: noteId) { await load() }

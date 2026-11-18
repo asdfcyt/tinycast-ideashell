@@ -10,7 +10,7 @@ import SwiftUI
  *   带优先级、听写、图片，⌘↩ 保存；保存后默认删掉便签
  * - Markdown 边写边预览：标题 / 粗体 / 列表 / 引用 / 代码当场上样式，点 [ ] 方框勾选，列表末尾回车自动续项
  * - 关闭 = 关闭：新建的便签有内容时先问是否保存；关掉的便签收在「已关闭的便签」里，随时能再打开。删除放在「…」里
- * - 从笔记 / 结审记录「使用便签打开」的便签带着来源：底部显示来源，能写回的（笔记、想法、线索）有「写回」按钮
+ * - 从笔记 / 结审记录「使用便签打开」的便签带着来源：底部显示来源，能写回的（笔记、想法、线索、证据、法规）有「写回」按钮
  * 窗口都是「不激活应用」的面板：点便签不会把主窗口带到前面。
  */
 
@@ -45,7 +45,7 @@ struct StickySource: Codable, Equatable {
     var project = ""
     var captureKind = ""        // 结审：idea / clue / evidence / regulation
     var title = ""
-    /// 能写回原处：笔记整篇、结审的想法 / 线索（证据 / 法规带摘录和图片，写回会丢结构，不开放）
+    /// 能写回原处：笔记整篇、结审的想法 / 线索 / 证据 / 法规（证据 / 法规的摘录标记行和图片引用行原样留在正文里，写回不丢结构）
     var writable = false
     /// 在结审里打开的路径
     var openTo = ""
@@ -66,9 +66,22 @@ final class StickyShelf: ObservableObject {
     static let shared = StickyShelf()
     @Published var closed: [StickyNote] = []
 
+    /// 结审证据 / 法规正文里的结构行：摘录标记 `<!-- excerpt:ID -->` 和图片引用 `![说明][img1]`
+    nonisolated static func isStructureLine(_ line: String) -> Bool {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("<!--"), t.hasSuffix("-->") { return true }
+        return t.range(of: "^!\\[[^\\]]*\\]\\[img\\d+\\]$", options: .regularExpression) != nil
+    }
+
+    /// 第一行有内容的文字（跳过空行和结构行），去掉 Markdown 符号
+    static func firstLine(_ text: String) -> String {
+        let plain = ComposerImage.stripMarker(text)
+        return plain.components(separatedBy: "\n").first { !$0.trimmed.isEmpty && !isStructureLine($0) }?.mdPlain ?? ""
+    }
+
     /// 菜单里的一行：来源标签或首行文字
     static func preview(_ n: StickyNote) -> String {
-        let first = n.text.components(separatedBy: "\n").first { !$0.trimmed.isEmpty }?.mdPlain ?? "空白便签"
+        let first = firstLine(n.text).nonEmpty ?? "空白便签"
         let head = first.count > 22 ? String(first.prefix(22)) + "…" : first
         return n.source.map { "\($0.label)　\(head)" } ?? head
     }
@@ -583,8 +596,8 @@ private struct StickyView: View {
 
     /// 折叠时显示的第一行
     private var firstLine: String {
-        let plain = ComposerImage.stripMarker(m.text)
-        if let l = plain.components(separatedBy: "\n").first(where: { !$0.trimmed.isEmpty }) { return l.mdPlain }
+        let l = StickyShelf.firstLine(m.text)
+        if !l.isEmpty { return l }
         return empty ? "" : "图片"
     }
 

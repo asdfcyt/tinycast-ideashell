@@ -784,7 +784,7 @@ private struct RoundRect14: View {
 }
 
 /// 预览窗口标题栏右侧的小图标按钮（和访达预览的分享 / 打开按钮一样：只有图标，悬停有底色）
-private struct WinIconLabel: View {
+struct WinIconLabel: View {
     let icon: String
     @State private var hovering = false
     var body: some View {
@@ -796,7 +796,7 @@ private struct WinIconLabel: View {
     }
 }
 
-private struct WinIconButton: View {
+struct WinIconButton: View {
     let icon: String
     let help: String
     let action: () -> Void
@@ -833,6 +833,7 @@ struct QuickTextPane: View, Equatable {
                 }
             }
             .padding(.horizontal, pad).padding(.top, 8).padding(.bottom, 20)
+            .overlayScrollers()
         }
     }
 }

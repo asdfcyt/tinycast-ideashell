@@ -77,6 +77,30 @@ struct WindowDragArea: NSViewRepresentable {
     func updateNSView(_ v: NSView, context: Context) {}
 }
 
+/// 把所在的 ScrollView 的滚动条改成「悬浮式」：系统设成「始终显示滚动条」（接了鼠标）时，经典滚动条会在磨砂窗口里
+/// 画出一整条不透明的白色轨道，盖住内容右边一截。放在 ScrollView 的内容里：`.overlayScrollers()`
+struct OverlayScrollerFix: NSViewRepresentable {
+    final class V: NSView {
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); fix() }
+        override func viewDidMoveToSuperview() { super.viewDidMoveToSuperview(); fix() }
+        override func layout() { super.layout(); fix() }
+        private func fix() {
+            DispatchQueue.main.async { [weak self] in
+                guard let sv = self?.enclosingScrollView else { return }
+                if sv.scrollerStyle != .overlay { sv.scrollerStyle = .overlay }
+                if !sv.autohidesScrollers { sv.autohidesScrollers = true }
+                sv.scrollerKnobStyle = .default
+            }
+        }
+    }
+    func makeNSView(context: Context) -> NSView { V() }
+    func updateNSView(_ v: NSView, context: Context) {}
+}
+
+extension View {
+    func overlayScrollers() -> some View { background(OverlayScrollerFix().allowsHitTesting(false)) }
+}
+
 /// 拿到所在的 NSWindow（用来在打开并排预览时把窗口拉宽）
 struct WinGrab: NSViewRepresentable {
     let onWindow: (NSWindow) -> Void

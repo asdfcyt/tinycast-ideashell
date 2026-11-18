@@ -86,8 +86,6 @@ struct AIWorkbenchView: View {
     @State private var accessTick = 0
     @State private var showPicker = false
     @State private var panelOpen = false
-    /// 底部输入条的实际高度：办公室按剩下的高度算大小
-    @State private var barH: CGFloat = 130
     @State private var selected: String?
 
     private static let pageWidth: CGFloat = 900
@@ -106,46 +104,39 @@ struct AIWorkbenchView: View {
 
     var body: some View {
         let cast = OfficeCast.build()
-        return GeometryReader { geo in
-            // 办公室 + 底下的输入条合成一整块，按窗口宽高整体缩放，不裁剪、不滚动；
-            // 窗口比 16:9 更高时，办公室竖向最多拉长 12%，其余留白
-            let availW = geo.size.width - 40
-            let availH = geo.size.height - 24
-            let hFit = availH - barH - 3
-            let w0 = min(availW, 1500)
-            let w = hFit >= w0 * OfficeLayout.H / OfficeLayout.W ? w0 : max(480, hFit * OfficeLayout.W / OfficeLayout.H)
-            let hMin = w * OfficeLayout.H / OfficeLayout.W
-            let h = max(hMin, min(hFit, hMin * 1.12))
-            VStack(spacing: 0) {
-                PixelOfficeScene(agents: cast, board: board, selected: $selected)
-                    .frame(width: w, height: h)
-                    .overlay {
-                        // 面板开着时，点面板以外的地方就收起来
-                        if panelOpen {
-                            Color.black.opacity(0.001).contentShape(Rectangle()).onTapGesture { panelOpen = false }
+        // 办公室 + 底下的输入条合成一整块，按窗口宽高整体缩放，不裁剪、不滚动；
+        // 窗口比 16:9 更高时，办公室竖向最多拉长 12%，其余留白。
+        // 大小在 OfficeStackLayout 里一次算完（输入条的高度直接量，不再靠「量完存进状态、再重排」的回路——
+        // 那个回路在窗口拉伸时会量成 0，办公室占满整个高度，把输入条挤出窗口外）
+        return OfficeStackLayout {
+            PixelOfficeScene(agents: cast, board: board, selected: $selected)
+                .overlay {
+                    // 面板开着时，点面板以外的地方就收起来
+                    if panelOpen {
+                        Color.black.opacity(0.001).contentShape(Rectangle()).onTapGesture { panelOpen = false }
+                    }
+                }
+                .overlay(alignment: .topLeading) { hudTitle(cast) }
+                .overlay(alignment: .topTrailing) { hudSigns }
+                .overlay(alignment: .topLeading) {
+                    if let a = cast.first(where: { $0.id == selected }) {
+                        agentCard(a).frame(width: 280).padding(.leading, 12).padding(.top, 60)
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if panelOpen {
+                        GeometryReader { g in
+                            panel(width: min(g.size.width * 0.44, 460), height: max(g.size.height - 54 - 12, 0))
+                                .padding(.top, 54).padding(.trailing, 12)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                         }
                     }
-                    .overlay(alignment: .topLeading) { hudTitle(cast) }
-                    .overlay(alignment: .topTrailing) { hudSigns }
-                    .overlay(alignment: .topLeading) {
-                        if let a = cast.first(where: { $0.id == selected }) {
-                            agentCard(a).frame(width: 280).padding(.leading, 12).padding(.top, 60)
-                        }
-                    }
-                    .overlay(alignment: .topTrailing) {
-                        if panelOpen { panel(width: min(w * 0.44, 460), height: h - 54 - 12).padding(.top, 54).padding(.trailing, 12) }
-                    }
-                composer
-                    .pixelBar()
-                    .frame(width: w)
-                    .background(GeometryReader { g in Color.clear.preference(key: BarHeightKey.self, value: g.size.height) })
-            }
-            .pixelFrame()
-            .frame(width: geo.size.width, height: geo.size.height)
-            .onPreferenceChange(BarHeightKey.self) { v in
-                if abs(v - barH) > 0.5 { barH = v }
-            }
+                }
+            composer
+                .pixelBar()
         }
+        .pixelFrame()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AmbientBackground())
         .animation(.easeOut(duration: 0.18), value: panelOpen)
         .toolbar {
@@ -1273,9 +1264,48 @@ private struct WorkbenchRunRow: View {
 }
 
 
-private struct BarHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+
+/// 办公室画面 + 输入条的整体布局：第一个子视图是办公室（16:9，竖向最多拉长 12%），第二个是输入条（和办公室同宽）。
+/// 按提议的大小算出能放下的最大尺寸，输入条的高度直接量；报告的大小就是整块的大小，外面居中。
+private struct OfficeStackLayout: Layout {
+    private static let ratio = OfficeLayout.H / OfficeLayout.W
+
+    private struct Metrics { var w: CGFloat; var h: CGFloat; var bar: CGFloat }
+
+    private func metrics(_ proposal: ProposedViewSize, _ subviews: Subviews) -> Metrics {
+        let availW = max((proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? 1000) - 40, 0)
+        let availH = max((proposal.height.flatMap { $0.isFinite ? $0 : nil } ?? 640) - 24, 0)
+        let w0 = min(availW, 1500)
+        func barHeight(_ w: CGFloat) -> CGFloat { subviews[1].sizeThatFits(ProposedViewSize(width: w, height: nil)).height }
+        func fit(_ bar: CGFloat) -> (w: CGFloat, hFit: CGFloat) {
+            let hFit = availH - bar - 3
+            let w = hFit >= w0 * Self.ratio ? w0 : max(480, hFit / Self.ratio)
+            return (w, hFit)
+        }
+        // 输入条的高度和它的宽度有关（按钮换行）：量一次、定下宽度、再按这个宽度量一次
+        var bar = barHeight(w0)
+        let first = fit(bar)
+        bar = barHeight(first.w)
+        let f = fit(bar)
+        let hMin = f.w * Self.ratio
+        let h = max(hMin, min(f.hFit, hMin * 1.12))
+        return Metrics(w: f.w, h: h, bar: bar)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 2 else { return .zero }
+        let m = metrics(proposal, subviews)
+        return CGSize(width: m.w, height: m.h + m.bar)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        // bounds 就是 sizeThatFits 报告的整块大小：输入条按这个宽度量一次，剩下的高度给办公室
+        let bar = subviews[1].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil)).height
+        let sceneH = max(bounds.height - bar, 0)
+        subviews[0].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: sceneH))
+        subviews[1].place(at: CGPoint(x: bounds.minX, y: bounds.minY + sceneH), anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: bar))
+    }
 }
 
 // MARK: - 像素风的卡片 / 边框
@@ -1651,3 +1681,4 @@ private struct TaskDetailSheet: View {
         return n >= 60 ? "\(n / 60) 分 \(n % 60) 秒" : "\(n) 秒"
     }
 }
+

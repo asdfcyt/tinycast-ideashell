@@ -254,6 +254,9 @@ final class AppModel: ObservableObject {
     var loadStamps: [String: (key: String, at: Date)] = [:]
     /// 日历读完一次（或日记有改动）就 +1：右侧那天的时间河据此重读 Daily Note
     @Published var calendarLoadTick = 0
+    /// 日历右侧每一天的 Daily Note 缓存（day = 当时读到的内容；tick = 读的时候的 calendarLoadTick）：
+    /// 切走再切回来、切回看过的那天，直接用它画，后台悄悄校对，不再先清空再重读
+    var calendarDailyCache: [String: (day: DailyDay?, tick: Int, at: Date)] = [:]
 
     // 日历：法定节假日 / 调休
     @Changed var holidays: [String: HolidayEntry] = [:]

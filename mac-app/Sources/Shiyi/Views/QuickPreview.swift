@@ -137,32 +137,32 @@ private struct QuickPreviewRoot: View {
     let onPop: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let page = state.page {
-                HStack(spacing: 10) {
-                    Image(systemName: icon(page)).foregroundStyle(Brand.orange)
-                    Text(label(page)).font(.callout.weight(.semibold)).foregroundStyle(.secondary)
-                    Spacer()
-                    Button(action: onPop) { Label("打开", systemImage: "arrow.up.left.and.arrow.down.right") }
-                        .buttonStyle(.borderless)
-                        .help("弹出完整页面（回车）")
-                    Button(action: onClose) { Image(systemName: "xmark") }
-                        .buttonStyle(.borderless)
-                        .help("关闭（空格 / Esc）")
+        if let page = state.page {
+            // 和结审的预览窗口一样：一条 28pt 的细标题行，和下面的内容同一层底色，只有图标按钮，没有单独的灰色色块
+            Group {
+                switch page {
+                case let .note(r): NoteDetailView(noteId: r.id, fallbackTitle: r.fallbackTitle).id(r.id)
+                case let .task(t): TaskDetailView(task: t).id(t.id)
                 }
-                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 8)
-                .background(WindowDragArea())
-                Divider()
-                Group {
-                    switch page {
-                    case let .note(r): NoteDetailView(noteId: r.id, fallbackTitle: r.fallbackTitle).id(r.id)
-                    case let .task(t): TaskDetailView(task: t).id(t.id)
-                    }
-                }
-            } else {
-                Color.clear
             }
+            .safeAreaInset(edge: .top, spacing: 0) { header(page) }
+        } else {
+            Color.clear
         }
+    }
+
+    private func header(_ page: SheetPage) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon(page)).font(.system(size: 11, weight: .semibold)).foregroundStyle(Brand.orange)
+            Text(label(page)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            WinIconButton(icon: "arrow.up.left.and.arrow.down.right", help: "弹出完整页面（回车）", action: onPop)
+            WinIconButton(icon: "xmark", help: "关闭（空格 / Esc）", action: onClose)
+        }
+        .padding(.leading, 11).padding(.trailing, 4)
+        .frame(maxWidth: .infinity, minHeight: 28, maxHeight: 28)
+        .background(WindowDragArea())
+        .overlay(alignment: .bottom) { Divider().opacity(0.45) }
     }
 
     private func label(_ page: SheetPage) -> String {

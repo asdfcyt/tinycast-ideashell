@@ -513,9 +513,8 @@ final class WindowRef { weak var window: NSWindow? }
 /// 选中那一天的时间河：日记、笔记、待办按时间排在一条线上。单击选中，空格预览，双击弹出完整页面
 private struct CalendarDayPanel: View {
     @EnvironmentObject var model: AppModel
-    @State private var daily: DailyDay?
-    /// daily 是哪一天的
-    @State private var dailyFor = ""
+    /// 读回新的 Daily Note 后 +1，让面板重画（数据本身放在 model.calendarDailyCache 里，切页面不丢）
+    @State private var dailyRev = 0
 
     private var day: String { model.calendarDay }
 
@@ -530,15 +529,26 @@ private struct CalendarDayPanel: View {
 
     private func loadDaily() async {
         let d = day
-        guard model.hasIdeashell else { daily = nil; dailyFor = d; return }
-        let r = try? await model.daily.days(from: d, to: d)
-        guard d == day else { return }
-        daily = r?[d]
-        dailyFor = d
+        guard model.hasIdeashell else {
+            model.calendarDailyCache[d] = nil
+            dailyRev += 1
+            return
+        }
+        // 缓存里有、日历没有新读过、而且刚读过：不再请求；否则也是先用缓存画着，后台悄悄校对
+        if let c = model.calendarDailyCache[d], c.tick == model.calendarLoadTick, Date().timeIntervalSince(c.at) < 30 { return }
+        let tick = model.calendarLoadTick
+        // 读失败就留着旧的，不清空
+        guard let r = try? await model.daily.days(from: d, to: d) else { return }
+        let fresh = r[d]
+        let changed = model.calendarDailyCache[d]?.day != fresh
+        model.calendarDailyCache[d] = (fresh, tick, Date())
+        if changed, d == day { dailyRev += 1 }
     }
 
     private var bucket: DayBucket {
-        let entries = dailyFor == day ? (daily?.entries ?? []) : []
+        _ = dailyRev
+        let daily = model.calendarDailyCache[day]?.day
+        let entries = daily?.entries ?? []
         let dailyId = entries.isEmpty ? nil : daily?.noteId
         let notes = (model.calendarNotes[day] ?? [])
             .filter { $0.id != dailyId }

@@ -118,6 +118,11 @@ extension ComposerNSTextView {
                 ts.addAttributes([.font: mono, .backgroundColor: NSColor.black.withAlphaComponent(0.07)], range: line)
                 return
             }
+            // 结审证据 / 法规的结构行（摘录标记、图片引用）：写回时要原样保留，淡色小字显示，别当正文改
+            if StickyShelf.isStructureLine(text) {
+                ts.addAttributes([.font: NSFont.monospacedSystemFont(ofSize: max(baseSize - 3, 9), weight: .regular), .foregroundColor: MD.dim], range: line)
+                return
+            }
             if MD.rule.firstMatch(in: text, range: l) != nil {
                 color(line, MD.dim)
                 return
@@ -142,9 +147,22 @@ extension ComposerNSTextView {
                 syntax(at(NSRange(location: 0, length: m.range.length), in: line))
                 inlineStart = m.range.length
             } else if let m = MD.quote.firstMatch(in: text, range: l) {
-                color(at(m.range, in: line), MD.dim)
-                color(NSRange(location: line.location + m.range.length, length: line.length - m.range.length), .secondaryLabelColor)
-                hang = (text as NSString).substring(to: m.range.length).size(withAttributes: [.font: font0]).width
+                // 引用（结审证据 / 法规的摘录几乎全是引用行）：没有光标的行把 `>` 藏起来，只留缩进和略淡的文字；光标所在行才显示符号
+                let rest = NSRange(location: line.location + m.range.length, length: max(line.length - m.range.length, 0))
+                syntax(at(m.range, in: line))
+                color(rest, NSColor.labelColor.withAlphaComponent(0.78))
+                if active {
+                    hang = (text as NSString).substring(to: m.range.length).size(withAttributes: [.font: font0]).width
+                } else {
+                    let p = para.mutableCopy() as! NSMutableParagraphStyle
+                    p.firstLineHeadIndent = 10
+                    p.headIndent = 10
+                    ts.addAttribute(.paragraphStyle, value: p, range: line)
+                    // 空的引用行（`> ` 后面什么都没有）只当段落间隔，压成一道窄缝
+                    if text.dropFirst(m.range.length).trimmingCharacters(in: .whitespaces).isEmpty {
+                        ts.addAttribute(.font, value: NSFont.systemFont(ofSize: 4), range: line)
+                    }
+                }
                 inlineStart = m.range.length
             } else if let m = MD.task.firstMatch(in: text, range: l) {
                 let box = at(m.range(at: 4), in: line)

@@ -34,8 +34,12 @@ extension AppModel {
             var body = lines.joined(separator: "\n").trimmed
             let title = (c.title.isEmpty ? "" : c.title).mdPlain
             // 想法 / 线索：正文原样放进去，能写回（没有被去掉的摘录标记和图片引用时）。
-            // 证据 / 法规带摘录和图片，写回会丢结构：只读，标题放在最前面
-            let writable = (c.kind == "idea" || c.kind == "clue") && lines.count == raw.components(separatedBy: "\n").count && d != nil
+            // 证据 / 法规带摘录标记和图片引用：编辑时整段原文放进便签（标记行和图片行淡色显示，别删掉它们），这样写回不丢结构
+            var writable = (c.kind == "idea" || c.kind == "clue") && lines.count == raw.components(separatedBy: "\n").count && d != nil
+            if (c.kind == "evidence" || c.kind == "regulation"), let d, d.editable {
+                body = raw.trimmed
+                writable = true
+            }
             if !writable, !title.isEmpty, !body.hasPrefix("#") { body = "## \(title)\n\n\(body)" }
             let to: String
             switch c.kind {
