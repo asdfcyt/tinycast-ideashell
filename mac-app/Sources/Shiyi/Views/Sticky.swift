@@ -297,7 +297,7 @@ final class StickyController {
     /// 折叠后的窗口高度：只剩标题行（第一行文字显示在标题行中间）
     private static let collapsedH: CGFloat = 26
     /// 便签最窄宽度：再窄，底栏（类型 / 优先级 / 标签 / 听写 / 提交）就一行放不下了
-    private static let minW: CGFloat = 290
+    private static let minW: CGFloat = 240
 
     /// 存盘用的快照；折叠时 h 记展开时的高度
     private static func snapshot(_ id: UUID, _ m: StickyModel, _ f: NSRect) -> StickyNote {

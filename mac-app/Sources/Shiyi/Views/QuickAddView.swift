@@ -365,6 +365,13 @@ struct QuickAddView: View {
                     dictateButton
                     submitButton(a, k)
                 }
+                // 再窄一点：类型只留图标，仍然一行
+                HStack(spacing: 8) {
+                    kindControls(a, k, withProject: false, iconOnly: true)
+                    Spacer(minLength: 6)
+                    dictateButton
+                    submitButton(a, k)
+                }
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) { kindControls(a, k, withProject: false); Spacer(minLength: 0) }
                     HStack(spacing: 8) { Spacer(minLength: 0); dictateButton; submitButton(a, k) }
@@ -390,8 +397,8 @@ struct QuickAddView: View {
         }
     }
 
-    @ViewBuilder private func kindControls(_ a: CaptureAnalysis, _ k: CaptureKind, withProject: Bool = true) -> some View {
-        kindMenu(a, k)
+    @ViewBuilder private func kindControls(_ a: CaptureAnalysis, _ k: CaptureKind, withProject: Bool = true, iconOnly: Bool = false) -> some View {
+        kindMenu(a, k, iconOnly: iconOnly)
         if k == .todo { priorityMenu; tagMenu }
         if k.isSjz, withProject { sjzChip(k) }
         if k == .agent { agentModeMenu(a) }
@@ -756,7 +763,7 @@ struct QuickAddView: View {
     }
 
     /// 类型：默认自动识别，点开可以手动改
-    private func kindMenu(_ a: CaptureAnalysis, _ k: CaptureKind) -> some View {
+    private func kindMenu(_ a: CaptureAnalysis, _ k: CaptureKind, iconOnly: Bool = false) -> some View {
         Menu {
             ForEach(CaptureKind.available(sjz: model.hasSjz, agent: agentOn)) { c in
                 Button {
@@ -776,8 +783,10 @@ struct QuickAddView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: k.icon).font(.system(size: 12, weight: .semibold))
-                Text(k.rawValue).font(.callout.weight(.medium))
-                if note != nil {
+                if !iconOnly { Text(k.rawValue).font(.callout.weight(.medium)) }
+                if iconOnly {
+                    EmptyView()
+                } else if note != nil {
                     // 便签窄：只在自动识别时用一个小点表示「自动」，省出位置
                     if override == nil && !text.trimmed.isEmpty { Image(systemName: "sparkle").font(.system(size: 7.5, weight: .bold)).opacity(0.5) }
                 } else if override == nil && sticky != nil && a.forced == nil {
@@ -785,7 +794,7 @@ struct QuickAddView: View {
                 } else if override == nil && !text.trimmed.isEmpty {
                     Text("自动").font(.caption2).foregroundStyle(.secondary)
                 }
-                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.tertiary)
+                if !iconOnly { Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.tertiary) }
             }
             .padding(.horizontal, note != nil ? 9 : 10).padding(.vertical, 4)
             .background(note != nil ? Color.primary.opacity(0.08) : Brand.orange.opacity(0.14), in: Capsule())
