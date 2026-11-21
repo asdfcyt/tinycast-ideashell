@@ -163,7 +163,7 @@ struct SjzProjectDetailView: View {
             DayPickerButton(title: "截止", icon: "calendar", value: $newDue)
                 .help("截止日")
             Button("添加") { Task { await addTask() } }
-                .disabled(newTitle.trimmed.isEmpty || adding)
+                .disabled(newTitle.trimmed.isEmpty)
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -172,18 +172,14 @@ struct SjzProjectDetailView: View {
 
     private func addTask() async {
         let t = newTitle.trimmed
-        guard !t.isEmpty, !adding else { return }
-        adding = true
-        defer { adding = false }
-        do {
-            if !newStart.isEmpty, !newDue.isEmpty, newStart > newDue { model.showNotice("开始日不能晚于截止日"); return }
-            try await model.sjz.createTask(project: name, subject: t, startDate: newStart, dueDate: newDue)
-            newTitle = ""
-            newDue = ""
-            newStart = ""
-            model.showNotice("已添加到结审的任务")
-            await model.refreshSjzOverview(force: true)
-        } catch { model.showNotice(error.localizedDescription) }
+        guard !t.isEmpty else { return }
+        if !newStart.isEmpty, !newDue.isEmpty, newStart > newDue { model.showNotice("开始日不能晚于截止日"); return }
+        let start = newStart, due = newDue
+        // 先清空输入框、任务立刻出现在列表里；写进结审在后台完成，可以连续添加
+        newTitle = ""
+        newDue = ""
+        newStart = ""
+        await model.sjzAddTask(project: name, subject: t, startDate: start, dueDate: due)
     }
 
     private var statsRow: some View {

@@ -388,6 +388,8 @@ final class StickyController {
         let p = StickyPanel(contentRect: Self.visible(rect), styleMask: [.borderless, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
         p.isOpaque = false
         p.backgroundColor = .clear
+        // 便签纸是固定的浅色：窗口也固定浅色外观，否则深色模式下 NSTextView 的 labelColor 是白色，浅绿纸上几乎看不见
+        p.appearance = NSAppearance(named: .aqua)
         p.hasShadow = true
         p.hidesOnDeactivate = false
         p.isReleasedWhenClosed = false

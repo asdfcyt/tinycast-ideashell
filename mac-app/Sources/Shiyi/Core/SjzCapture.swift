@@ -143,7 +143,7 @@ extension AppModel {
     func applySjzTasks() {
         if let ov = overview {
             overview = mergeSjz(ov)
-        } else if hasSjz, sjzOverview != nil {
+        } else if hasSjz, sjzOverview != nil || !sjzLocalAdds.isEmpty {
             overview = mergeSjz(DidaOverview())
         }
     }
@@ -154,7 +154,13 @@ extension AppModel {
         o.upcoming.removeAll { SjzTasks.owns($0.id) }
         o.undated.removeAll { SjzTasks.owns($0.id) }
         o.projects = o.projects.filter { !$0.key.hasPrefix(SjzTasks.prefix) }
-        guard hasSjz, let tasks = sjzOverview?.next, !tasks.isEmpty else { return o }
+        guard hasSjz else { return o }
+        var tasks = sjzOverview?.next ?? []
+        // 刚新建、还没从结审读回来的任务：读回来之后（或超过一分钟）就不再单独保留
+        let known = Set(tasks.map { $0.project + "/" + $0.id })
+        sjzLocalAdds.removeAll { known.contains($0.task.project + "/" + $0.task.id) || (!$0.task.id.hasPrefix("tmp-") && Date().timeIntervalSince($0.at) > 60) }
+        tasks += sjzLocalAdds.map(\.task)
+        guard !tasks.isEmpty else { return o }
         let today = Day.today()
         for t in tasks {
             let d = SjzTasks.make(t)
@@ -165,6 +171,35 @@ extension AppModel {
         o.overdue.sort { ($0.date ?? "") < ($1.date ?? "") }
         o.upcoming.sort { ($0.date ?? "") < ($1.date ?? "") }
         return o
+    }
+
+    /// 新建结审任务：先立刻显示在界面上（待办 / 今天 / 专注里马上能看到），再后台写进结审；失败就撤掉并提示
+    @discardableResult
+    func sjzAddTask(project: String, subject: String, startDate: String, dueDate: String) async -> Bool {
+        let tmp = "tmp-" + UUID().uuidString
+        let title = sjzOverview?.projects.first { $0.name == project }?.title ?? project
+        let draft = SjzTaskLite(id: tmp, project: project, projectTitle: title, subject: subject, dueDate: dueDate,
+                                priority: "medium", detail: "", startDate: startDate.isEmpty ? nil : startDate, phase: nil)
+        sjzLocalAdds.append((draft, Date()))
+        applySjzTasks()
+        do {
+            let id = try await sjz.createTask(project: project, subject: subject, startDate: startDate, dueDate: dueDate)
+            sjzLocalAdds.removeAll { $0.task.id == tmp }
+            if !id.isEmpty {
+                let real = SjzTaskLite(id: id, project: project, projectTitle: title, subject: subject, dueDate: dueDate,
+                                       priority: "medium", detail: "", startDate: draft.startDate, phase: nil)
+                sjzLocalAdds.append((real, Date()))
+            }
+            applySjzTasks()
+            // 稍后再静默读回一次，把阶段等结审补上的字段同步回来
+            Task { try? await Task.sleep(nanoseconds: 2_000_000_000); await refreshSjzOverview(force: true) }
+            return true
+        } catch {
+            sjzLocalAdds.removeAll { $0.task.id == tmp }
+            applySjzTasks()
+            showNotice("添加失败：" + error.localizedDescription)
+            return false
+        }
     }
 
     // MARK: 提醒事件（轮询结审，弹到灵动岛）
@@ -529,6 +564,10 @@ enum SjzDaily {
         UserDefaults.standard.set(get(project, kind) + n, forKey: key(project, kind))
     }
     static func get(_ project: String, _ kind: String) -> Int { UserDefaults.standard.integer(forKey: key(project, kind)) }
+    /// 指定某一天的计数（洞察统计这段时间完成了多少结审任务）
+    static func get(_ project: String, _ kind: String, day: String) -> Int {
+        UserDefaults.standard.integer(forKey: "sjz.day.\(day).\(project).\(kind)")
+    }
 }
 
 /// 结审任务在拾忆待办里的身份：id 形如 `sjz:<项目>:<任务>`，改动直接写回结审，不经过滴答

@@ -34,8 +34,8 @@ struct MiniCalendar: View {
                 step("chevron.left", "上个月") { shift(-1) }
                 Button {
                     month = Day.startOfDay(Date())
-                    model.section = .calendar
                     model.selectCalendarDay(Day.today(), mode: .day)
+                    model.section = .calendar
                 } label: {
                     Circle().strokeBorder(Color.secondary, lineWidth: 1.4).frame(width: 8, height: 8)
                         .frame(width: 20, height: 20).contentShape(Rectangle())
@@ -83,8 +83,9 @@ struct MiniCalendar: View {
         .frame(height: 24)
         .contentShape(Rectangle())
         .onTapGesture {
-            model.section = .calendar
+            // 先选日期再切页面：这样进日历页时会保留这一天，而不是回到今天
             model.selectCalendarDay(day, mode: .day)
+            model.section = .calendar
         }
     }
 

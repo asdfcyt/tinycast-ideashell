@@ -18,6 +18,7 @@ private struct TodayContent: View {
     @State private var showPlan = false
     @State private var showQuickStart = false
     @State private var showAllInbox = false
+    @State private var showAllSjz = false
 
     private var today: String { Day.today() }
     /// 过滤 / 排序后的数据按版本缓存在 model 里（见 TodayData.swift），这里读多少遍都不再重算
@@ -179,10 +180,11 @@ private struct TodayContent: View {
         if model.hasDida || model.hasSjz {
             YesterdayCard(focus: focus, day: Day.add(today, days: -1), done: model.todayData().yesterdayDone, missed: model.todayData().yesterdayMissed)
         }
-        if model.hasDida {
+        if model.hasDida || model.hasSjz {
             if !olderOverdue.isEmpty { overdueSection }
             todaySection
-            if !undated.isEmpty { inboxSection }
+            if !sjzLater.isEmpty { sjzSection }
+            if !plainUndated.isEmpty { inboxSection }
         } else {
             Panel { Text("填写滴答清单 API 口令后显示待办").foregroundStyle(.secondary).padding(18) }
         }
@@ -243,7 +245,37 @@ private struct TodayContent: View {
         }
     }
 
+    /// 收集箱只放滴答的无日期任务；结审任务单独一块
+    private var plainUndated: [DidaTask] { undated.filter { !SjzTasks.owns($0.id) } }
+
+    /// 结审里还没排到今天的任务：无日期的，和日期在今天之后的
+    private var sjzLater: [DidaTask] {
+        guard let ov = model.overview else { return [] }
+        let t = today
+        return (ov.upcoming + ov.undated).filter { SjzTasks.owns($0.id) && ($0.date == nil || ($0.date ?? "") > t) }
+            .sorted { ($0.date ?? "9999") < ($1.date ?? "9999") }
+    }
+
+    private var sjzSection: some View {
+        let list = sjzLater
+        let shown = showAllSjz ? Array(list.prefix(30)) : Array(list.prefix(5))
+        return TaskSection(title: "结审待办", count: list.count) {
+            EmptyView()
+        } content: {
+            ForEach(Array(shown.enumerated()), id: \.element.id) { i, t in
+                TaskLine(task: t, undatedRow: t.date == nil, focus: focus)
+                if i < shown.count - 1 { Divider().padding(.leading, 46) }
+            }
+            if list.count > 5 {
+                Divider().padding(.leading, 46)
+                Button(showAllSjz ? "收起" : "展开全部 \(list.count) 条") { withAnimation(.easeOut(duration: 0.15)) { showAllSjz.toggle() } }
+                    .buttonStyle(.link).font(.callout).padding(.horizontal, 14).padding(.vertical, 9)
+            }
+        }
+    }
+
     private var inboxSection: some View {
+        let undated = plainUndated
         let shown = showAllInbox ? Array(undated.prefix(20)) : Array(undated.prefix(3))
         return TaskSection(title: "收集箱", count: undated.count) {
             EmptyView()
@@ -1373,6 +1405,9 @@ struct FocusTaskMenu<MenuLabel: View>: View {
         let today = (ov?.todayTasks() ?? []).sorted { ($0.time ?? "99:99") < ($1.time ?? "99:99") }
         let late = (ov?.overdue ?? []).sorted { ($0.date ?? "") < ($1.date ?? "") }
         let current = focus.run?.taskId ?? focus.task?.id
+        let todayStr = Day.today()
+        let sjzLater = ((ov?.upcoming ?? []) + (ov?.undated ?? [])).filter { SjzTasks.owns($0.id) && ($0.date == nil || ($0.date ?? "") > todayStr) }
+            .sorted { ($0.date ?? "9999") < ($1.date ?? "9999") }
         Menu {
             Button { focus.attach(nil) } label: {
                 Label("不关联待办", systemImage: current == nil ? "checkmark" : "circle.dashed")
@@ -1389,6 +1424,16 @@ struct FocusTaskMenu<MenuLabel: View>: View {
             if !late.isEmpty {
                 Section("逾期") {
                     ForEach(late.prefix(12)) { t in
+                        Button { focus.attach(t) } label: {
+                            if current == t.id { Label(t.cleanTitle, systemImage: "checkmark") } else { Text(t.cleanTitle) }
+                        }
+                    }
+                }
+            }
+            // 结审里还没排到今天的任务（无日期 / 以后到期）
+            if !sjzLater.isEmpty {
+                Section("结审") {
+                    ForEach(sjzLater.prefix(12)) { t in
                         Button { focus.attach(t) } label: {
                             if current == t.id { Label(t.cleanTitle, systemImage: "checkmark") } else { Text(t.cleanTitle) }
                         }

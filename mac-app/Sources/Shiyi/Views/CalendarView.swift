@@ -49,9 +49,19 @@ struct CalendarView: View {
             .searchable(text: $model.searchQuery, placement: .toolbar, prompt: "语义搜索笔记")
             .onSubmit(of: .search) { Task { await model.searchAndShow() } }
             .onChange(of: model.searchQuery) { _, new in if new.isEmpty { model.clearSearch() } }
-            .onAppear(perform: installKeys)
+            .onAppear {
+                model.calendarEnter()
+                installKeys()
+            }
             .onDisappear {
                 if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
+            }
+            // 过了午夜再回到拾忆：原来的「今天」已经变成昨天，重新对到今天
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                if model.calendarSeenToday != Day.today() {
+                    model.calendarSeenToday = Day.today()
+                    model.calendarToday()
+                }
             }
     }
 

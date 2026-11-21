@@ -1,18 +1,31 @@
 import Charts
 import SwiftUI
 
-/// 洞察：参考 Apple 健康 / 屏幕使用时间——浅灰底、白色圆角卡片、每张卡片「小标题 → 一个大数字 → 图表」，
-/// 一种数据一种颜色（笔记蓝、待办绿、专注橙、时段靛），图表只留必要的坐标；鼠标移到柱子上看当天的具体数字。
+/// 洞察：围绕「少花时间、提高效率、知道时间值多少钱」重做（思路来自《每周工作 4 小时》《要钱还是要生活》）。
+/// 结构：AI 洞察（可折叠）→ 时间价格 → 工作时间 → 时间花在哪（80/20）→ 效率 → 该消除的 → 记录节奏。
+/// 工作时间 = 结审里的任务 + 带「工作」标签的待办；其余是普通时间。
 struct InsightsView: View {
     @EnvironmentObject var model: AppModel
-    @State private var selectedDate: Date?
+    @AppStorage("tp.pay") private var pay = 0.0
+    @AppStorage("tp.paidHours") private var paidHours = 40.0
+    @AppStorage("tp.unpaidHours") private var unpaidHours = 0.0
+    @AppStorage("tp.jobCost") private var jobCost = 0.0
+    @AppStorage("tp.workTag") private var workTag = "工作"
+    @AppStorage("insights.aiFold") private var aiFold = false
+    @State private var showPriceForm = false
+    @State private var ledgerRev = 0
 
     private var noData: Bool { !model.hasIdeashell && !model.hasDida }
 
     private let noteColor = Color.blue
     private let doneColor = Color.green
-    private let focusColor = Color.orange
     private let hourColor = Color.indigo
+    private var workColor: Color { Brand.orange }
+    private let normalColor = Color.secondary
+
+    private var price: TimePrice {
+        TimePrice(monthlyPay: pay, paidHoursPerWeek: paidHours, unpaidHoursPerWeek: unpaidHours, monthlyJobCost: jobCost)
+    }
 
     var body: some View {
         ScrollView {
@@ -43,66 +56,43 @@ struct InsightsView: View {
                 .help("统计范围")
             }
         }
-        .task(id: model.reviewDays) { await model.loadReview(ifStale: true) }
+        .task(id: model.reviewDays) {
+            await model.loadReview(ifStale: true)
+            FocusLedger.shared.seedIfNeeded(model: model)
+            ledgerRev += 1
+        }
     }
 
     // MARK: - 内容
 
     @ViewBuilder private func content(_ r: ReviewData) -> some View {
+        let _ = ledgerRev
+        let stats = WorkStats.compute(days: r.days, entries: FocusLedger.shared.items)
+        let done = doneCounts(r)
+
         if let e = model.reviewError { ErrorBanner(text: e) { Task { await model.loadReview() } } }
         if let e = r.todoError { ErrorBanner(text: "待办读取失败：" + e) { Task { await model.loadReview() } } }
 
-        if r.totalNotes + r.totalDone == 0 {
-            EmptyHint(icon: "chart.bar", title: "这段时间还没有记录").frame(height: 240)
-        } else {
-            section("AI 洞察") { aiCard(r) }
+        section("AI 洞察") { aiCard(r) }
 
-            let notes = highlights(r)
-            if !notes.isEmpty {
-                section("发现") { highlightsCard(notes) }
-            }
+        section("时间价格") { priceCard() }
 
-            section("最近 \(r.days) 天") {
-                summaryCard(r)
-                activityCard(r)
-            }
+        section("最近 \(r.days) 天的工作时间") { workCard(stats) }
 
-            section("习惯") {
-                pair {
-                    if r.peakLabel != nil { hoursCard(r) }
-                    if r.weekdays.contains(where: { $0.total > 0 }) { weekdayCard(r) }
-                }
-            }
+        if !stats.projects.isEmpty {
+            section("时间花在哪") { whereCard(stats) }
+        }
 
-            if r.onTime + r.lateDone > 0 || !r.projects.isEmpty {
-                section("进展") {
-                    pair {
-                        if r.onTime + r.lateDone > 0 { completionCard(r) }
-                        if !r.projects.isEmpty { projectsCard(r) }
-                    }
-                }
-            }
+        section("效率") { efficiencyCard(r, stats, done) }
 
-            if r.donePriority.reduce(0, +) > 0 || r.focusTotalMin > 0 {
-                section("待办与专注") {
-                    pair {
-                        if r.donePriority.reduce(0, +) > 0 { priorityCard(r) }
-                        if r.focusTotalMin > 0 { focusHoursCard(r) }
-                    }
-                }
-            }
+        let stale = staleTasks()
+        section("该消除的") { eliminateCard(stale) }
 
-            if !r.topTags.isEmpty || r.focusTotalMin > 0 {
-                section("主题与专注") {
-                    pair {
-                        if !r.topTags.isEmpty { tagsCard(r) }
-                        if r.focusTotalMin > 0 { focusCard(r) }
-                    }
-                }
-            }
-            if r.truncated {
-                Text("某个时段笔记过多，统计可能不完整").font(.caption).foregroundStyle(.tertiary)
-            }
+        if r.totalNotes + r.totalDone > 0 {
+            section("记录节奏") { rhythmCard(r) }
+        }
+        if r.truncated {
+            Text("某个时段笔记过多，统计可能不完整").font(.caption).foregroundStyle(.tertiary)
         }
     }
 
@@ -113,129 +103,12 @@ struct InsightsView: View {
         }
     }
 
-    /// 两张卡片并排；只有一张时占满一行。卡片等高
-    private func pair<C: View>(@ViewBuilder content: () -> C) -> some View {
-        HStack(alignment: .top, spacing: 16) { content() }
+    // MARK: - 小件
+
+    private func fmtMin(_ m: Int) -> String {
+        if m < 60 { return "\(m) 分钟" }
+        return m % 60 == 0 ? "\(m / 60) 小时" : "\(m / 60) 小时 \(m % 60) 分"
     }
-
-    // MARK: - 概览
-
-    private func summaryCard(_ r: ReviewData) -> some View {
-        InsightCard {
-            HStack(spacing: 0) {
-                metric(icon: "doc.text.fill", tint: noteColor, value: "\(r.totalNotes)", unit: "条", label: "笔记",
-                       trend: trend(r.totalNotes, r.prev?.notes))
-                Divider().frame(height: 62)
-                metric(icon: "checkmark.circle.fill", tint: doneColor, value: "\(r.totalDone)", unit: "个", label: "完成待办",
-                       trend: trend(r.totalDone, r.prev?.done))
-                Divider().frame(height: 62)
-                metric(icon: "calendar", tint: hourColor, value: "\(r.activeDays)", unit: "/ \(r.days) 天", label: "有记录",
-                       trend: trend(r.activeDays, r.prev?.activeDays))
-                Divider().frame(height: 62)
-                metric(icon: "flame.fill", tint: .orange, value: "\(r.streak)", unit: "天", label: "连续记录",
-                       trend: r.longestStreak > 0 ? ("最长 \(r.longestStreak) 天", .secondary) : nil)
-            }
-        }
-    }
-
-    /// 和上一个同样长度的时间段比：↑ 12% / ↓ 8% / 持平
-    private func trend(_ cur: Int, _ prev: Int?) -> (String, Color)? {
-        guard let prev else { return nil }
-        if prev == 0 { return cur > 0 ? ("上期没有", .secondary) : nil }
-        let pct = Int((Double(cur - prev) / Double(prev) * 100).rounded())
-        if pct == 0 { return ("与上期持平", .secondary) }
-        return (pct > 0 ? "↑ \(pct)% 较上期" : "↓ \(-pct)% 较上期", pct > 0 ? .green : .orange)
-    }
-
-    private func metric(icon: String, tint: Color, value: String, unit: String, label: String, trend: (String, Color)?) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Label(label, systemImage: icon)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(tint)
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(value).font(.system(size: 30, weight: .semibold, design: .rounded)).monospacedDigit()
-                Text(unit).font(.callout).foregroundStyle(.secondary)
-            }
-            Text(trend?.0 ?? " ").font(.caption2.weight(.medium)).foregroundStyle(trend?.1 ?? .clear).lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-    }
-
-    // MARK: - 发现
-
-    private func highlights(_ r: ReviewData) -> [(icon: String, tint: Color, text: String)] {
-        var out: [(String, Color, String)] = []
-        if let b = r.bestDay, r.days > 1 {
-            out.append(("star.fill", .yellow, "最活跃的一天是 \(Day.label(b.day))：\(b.notes) 条笔记，完成 \(b.done) 个待办"))
-        }
-        if let w = r.weekdays.max(by: { $0.avg < $1.avg }), w.avg > 0, w.occurrences >= 2 {
-            out.append(("calendar.badge.clock", hourColor, "\(w.label)最活跃，平均每个\(w.label)约 \(String(format: "%.1f", w.avg)) 项"))
-        }
-        if let p = r.prev {
-            let changes: [(String, Int, Int)] = [("笔记", r.totalNotes, p.notes), ("完成的待办", r.totalDone, p.done)]
-            if let big = changes.filter({ $0.2 > 0 }).max(by: { abs($0.1 - $0.2) * 1000 / $0.2 < abs($1.1 - $1.2) * 1000 / $1.2 }), big.1 != big.2 {
-                let pct = Int((Double(abs(big.1 - big.2)) / Double(big.2) * 100).rounded())
-                out.append((big.1 > big.2 ? "arrow.up.right" : "arrow.down.right", big.1 > big.2 ? .green : .orange,
-                            "\(big.0)比上一个 \(r.days) 天\(big.1 > big.2 ? "多" : "少")了 \(pct)%（\(big.2) → \(big.1)）"))
-            }
-        }
-        if let p = r.projects.first {
-            var parts: [String] = []
-            if p.notes > 0 { parts.append("笔记 \(p.notes)") }
-            if p.done > 0 { parts.append("待办 \(p.done)") }
-            if p.focusMin > 0 { parts.append("专注 \(FocusParser.formatMinutes(p.focusMin))") }
-            out.append(("folder.fill", noteColor, "投入最多的项目是「\(p.keyword)」：" + parts.joined(separator: " · ")))
-        }
-        if r.focusStats.sessions > 0 {
-            out.append(("timer", focusColor, "专注了 \(r.focusStats.sessions) 次，平均 \(r.focusStats.avgMin) 分钟，最长一次 \(r.focusStats.longestMin) 分钟"))
-        }
-        if let t = r.topTags.first, t.count >= 2 {
-            out.append(("number", noteColor, "最常写的话题是 #\(t.tag)，出现 \(t.count) 次"))
-        }
-        if r.longestGap >= 3, r.days >= 7 {
-            out.append(("moon.zzz.fill", .secondary, "最长有 \(r.longestGap) 天没有记录，之后又重新捡了起来"))
-        }
-        if r.focusStats.sessions >= 3, let h = bestFocusStart(r) {
-            out.append(("scope", focusColor, "你最容易进入专注的时段是 \(h)–\(h + 2) 点"))
-        }
-        let high = r.donePriority[3]
-        if high > 0 {
-            out.append(("flag.fill", .red, "完成了 \(high) 个高优先级待办，占已完成的 \(Int((Double(high) / Double(max(r.totalDone, 1)) * 100).rounded()))%"))
-        }
-        return Array(out.prefix(7))
-    }
-
-    /// 专注分钟最多的连续 3 小时的起点
-    private func bestFocusStart(_ r: ReviewData) -> Int? {
-        guard r.focusHours.reduce(0, +) > 0 else { return nil }
-        var best = -1, at: Int?
-        for s in 0 ... 21 {
-            let sum = r.focusHours[s] + r.focusHours[s + 1] + r.focusHours[s + 2]
-            if sum > best { best = sum; at = s }
-        }
-        return at
-    }
-
-    private func highlightsCard(_ items: [(icon: String, tint: Color, text: String)]) -> some View {
-        InsightCard {
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    HStack(alignment: .center, spacing: 12) {
-                        Image(systemName: item.icon)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(item.tint)
-                            .frame(width: 28, height: 28)
-                            .background(item.tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        Text(item.text).font(.callout).fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 0)
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - 卡片头
 
     private func cardHeader(_ title: String, icon: String, tint: Color, trailing: String? = nil) -> some View {
         HStack(spacing: 6) {
@@ -247,73 +120,20 @@ struct InsightsView: View {
         .font(.subheadline.weight(.semibold))
     }
 
-    private func bigValue(_ value: String, _ unit: String? = nil, size: CGFloat = 28) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Text(value).font(.system(size: size, weight: .bold, design: .rounded)).monospacedDigit()
-            if let unit { Text(unit).font(.callout.weight(.medium)).foregroundStyle(.secondary) }
-        }
-    }
-
-    // MARK: - 每日活动
-
-    private func activityCard(_ r: ReviewData) -> some View {
-        let avg = Double(r.totalNotes + r.totalDone) / Double(max(r.days, 1))
-        let picked: DayCount? = selectedDate.flatMap { d in
-            let key = Day.string(d)
-            return r.counts.first { $0.day == key }
-        }
-        let step = r.days <= 8 ? 1 : Int((Double(r.days) / 6).rounded(.up))
-        return InsightCard {
-            VStack(alignment: .leading, spacing: 12) {
-                cardHeader("每日活动", icon: "chart.bar.fill", tint: noteColor, trailing: "笔记 + 完成待办")
-                if let p = picked {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        bigValue("\(p.total)", "项")
-                        Text(Day.label(p.day)).font(.callout).foregroundStyle(.secondary)
-                        Text("笔记 \(p.notes) · 待办 \(p.done)").font(.callout).foregroundStyle(.tertiary)
-                    }
-                } else {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        bigValue(String(format: "%.1f", avg), "项 / 天")
-                        Text("日均").font(.callout).foregroundStyle(.secondary)
-                    }
-                }
-                Chart {
-                    ForEach(r.counts) { c in
-                        let d = Day.parse(c.day) ?? Date()
-                        BarMark(x: .value("日期", d, unit: .day), y: .value("数量", c.notes))
-                            .foregroundStyle(by: .value("类型", "笔记"))
-                        BarMark(x: .value("日期", d, unit: .day), y: .value("数量", c.done))
-                            .foregroundStyle(by: .value("类型", "完成待办"))
-                    }
-                    if let d = selectedDate {
-                        RuleMark(x: .value("日期", d, unit: .day))
-                            .foregroundStyle(Color.secondary.opacity(0.35))
-                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                    }
-                }
-                .chartForegroundStyleScale(["笔记": noteColor, "完成待办": doneColor])
-                .chartLegend(position: .bottom, alignment: .leading, spacing: 8)
-                .chartXSelection(value: $selectedDate)
-                .chartXAxis { dayAxis(step: step) }
-                .chartYAxis {
-                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { _ in
-                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5)).foregroundStyle(Color.primary.opacity(0.1))
-                        AxisValueLabel().font(.caption2)
-                    }
-                }
-                .frame(height: 190)
-
-                if r.streak == 0, let b = r.breakDay {
-                    Text("最近一次有记录是 \(Day.label(b))").font(.caption).foregroundStyle(.secondary)
-                } else if let b = r.breakDay, r.streak > 0 {
-                    Text("连续记录 \(r.streak) 天，\(Day.label(b)) 那天断过").font(.caption).foregroundStyle(.secondary)
-                }
+    /// 大数字 + 小单位 + 一行说明，几张并排时各占一份
+    private func metric(_ label: String, value: String, unit: String? = nil, note: String? = nil, tint: Color = .primary) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value).font(.system(size: 26, weight: .semibold, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.6)
+                if let unit { Text(unit).font(.callout).foregroundStyle(.secondary).lineLimit(1) }
             }
+            Text(note ?? " ").font(.caption2).foregroundStyle(.tertiary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// 日期横轴：按天取点（不会挤在一起），短格式「10/9」
     private func dayAxis(step: Int) -> some AxisContent {
         AxisMarks(values: .stride(by: .day, count: step)) { v in
             AxisValueLabel(centered: true) {
@@ -322,272 +142,379 @@ struct InsightsView: View {
         }
     }
 
-    // MARK: - 记录时刻
-
-    private func hoursCard(_ r: ReviewData) -> some View {
-        InsightCard(height: 250) {
-            VStack(alignment: .leading, spacing: 10) {
-                cardHeader("记录时刻", icon: "clock.fill", tint: hourColor, trailing: "笔记 + 完成待办")
-                VStack(alignment: .leading, spacing: 2) {
-                    bigValue(r.peakLabel ?? "")
-                    Text("你最常在这个时段\(r.peakVerb)").font(.callout).foregroundStyle(.secondary)
-                }
-                Chart {
-                    if let s = r.peakStart {
-                        RectangleMark(xStart: .value("起", Double(s) - 0.5), xEnd: .value("止", Double(s) + 2.5))
-                            .foregroundStyle(hourColor.opacity(0.1))
-                    }
-                    ForEach(r.hoursSplit) { h in
-                        BarMark(x: .value("小时", h.hour), y: .value("数量", h.notes), width: .fixed(6))
-                            .foregroundStyle(by: .value("类型", "笔记"))
-                        BarMark(x: .value("小时", h.hour), y: .value("数量", h.done), width: .fixed(6))
-                            .foregroundStyle(by: .value("类型", "完成待办"))
-                    }
-                }
-                .chartForegroundStyleScale(["笔记": noteColor, "完成待办": doneColor])
-                .chartLegend(.hidden)
-                .chartXScale(domain: 0 ... 23)
-                .chartXAxis {
-                    AxisMarks(values: [0, 6, 12, 18]) { v in
-                        AxisValueLabel {
-                            if let h = v.as(Int.self) { Text("\(h)时").font(.caption2) }
-                        }
-                    }
-                }
-                .chartYAxis(.hidden)
-                .frame(maxHeight: .infinity)
-            }
-        }
+    private func shortDay(_ s: String) -> String {
+        let p = s.split(separator: "-")
+        guard p.count == 3, let m = Int(p[1]), let d = Int(p[2]) else { return s }
+        return "\(m)/\(d)"
     }
 
-    // MARK: - 星期分布
+    // MARK: - 时间价格
 
-    private func weekdayCard(_ r: ReviewData) -> some View {
-        let best = r.weekdays.max(by: { $0.avg < $1.avg })
-        let weekend = r.weekdays.filter { $0.index >= 5 }
-        let weekendAvg = weekend.map(\.avg).reduce(0, +) / 2
-        let weekdayAvg = r.weekdays.filter { $0.index < 5 }.map(\.avg).reduce(0, +) / 5
-        return InsightCard(height: 250) {
-            VStack(alignment: .leading, spacing: 10) {
-                cardHeader("星期分布", icon: "calendar.day.timeline.left", tint: hourColor, trailing: "平均每天")
-                VStack(alignment: .leading, spacing: 2) {
-                    bigValue(best?.label ?? "–")
-                    Text(weekendAvg > weekdayAvg * 1.2 ? "周末比工作日更活跃" : (weekdayAvg > weekendAvg * 1.2 ? "工作日比周末更活跃" : "工作日和周末差不多"))
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Chart(r.weekdays) { w in
-                    BarMark(x: .value("星期", w.short), y: .value("平均", w.avg))
-                        .foregroundStyle(w.index == best?.index ? hourColor : hourColor.opacity(0.28))
-                        .cornerRadius(4)
-                }
-                .chartXAxis { AxisMarks { _ in AxisValueLabel().font(.caption2) } }
-                .chartYAxis(.hidden)
-                .frame(maxHeight: .infinity)
-            }
-        }
-    }
-
-    // MARK: - 按时完成
-
-    private func completionCard(_ r: ReviewData) -> some View {
-        let total = r.onTime + r.lateDone
-        let ratio = Double(r.onTime) / Double(max(total, 1))
-        return InsightCard(height: 250) {
-            VStack(alignment: .leading, spacing: 10) {
-                cardHeader("按时完成", icon: "checkmark.circle.fill", tint: doneColor)
-                Spacer(minLength: 0)
-                HStack(spacing: 20) {
-                    ZStack {
-                        Circle().stroke(doneColor.opacity(0.15), lineWidth: 13)
-                        Circle()
-                            .trim(from: 0, to: ratio)
-                            .stroke(doneColor, style: StrokeStyle(lineWidth: 13, lineCap: .round))
-                            .rotationEffect(.degrees(-90))
-                        Text("\(Int((ratio * 100).rounded()))%")
-                            .font(.system(size: 22, weight: .bold, design: .rounded)).monospacedDigit()
+    private func priceCard() -> some View {
+        let p = price
+        return InsightCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 6) {
+                    Image(systemName: "yensign.circle.fill").foregroundStyle(workColor)
+                    Text("你的时间值多少钱").foregroundStyle(workColor)
+                    Spacer(minLength: 8)
+                    Button { showPriceForm = true } label: {
+                        Label(p.configured ? "调整" : "去填写", systemImage: "slider.horizontal.3").font(.caption)
                     }
-                    .frame(width: 104, height: 104)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        legendRow(color: doneColor, text: "按时", value: r.onTime)
-                        legendRow(color: Color.primary.opacity(0.25), text: "过了计划日", value: r.lateDone)
-                    }
-                    Spacer(minLength: 0)
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .popover(isPresented: $showPriceForm, arrowEdge: .bottom) { priceForm }
                 }
-                Spacer(minLength: 0)
-                if let o = model.overview, !o.overdue.isEmpty {
-                    Label("目前还有 \(o.overdue.count) 个逾期待办", systemImage: "exclamationmark.circle.fill")
-                        .font(.callout).foregroundStyle(.red)
+                .font(.subheadline.weight(.semibold))
+
+                if p.configured {
+                    HStack(alignment: .top, spacing: 16) {
+                        metric("真实时薪", value: TimePrice.money(p.realHourly), unit: "/ 小时",
+                               note: p.shrink > 0.005 ? "名义 \(TimePrice.money(p.nominalHourly))，被无薪时间和工作花费吃掉 \(Int((p.shrink * 100).rounded()))%" : "与名义时薪一致", tint: workColor)
+                        Divider().frame(height: 62)
+                        metric("每分钟", value: TimePrice.money(p.perMinute), unit: "/ 分钟", note: "刷 10 分钟手机 ≈ \(TimePrice.money(p.cost(minutes: 10)))")
+                        Divider().frame(height: 62)
+                        metric("一个番茄", value: TimePrice.money(p.cost(minutes: 25)), unit: "/ 25 分钟", note: "一小时 ≈ \(TimePrice.money(p.realHourly))")
+                    }
+                    Text("每月实际投入 \(Int(p.totalMonthlyHours.rounded())) 小时（含通勤 / 加班），到手 \(TimePrice.money(p.monthlyPay))\(jobCost > 0 ? "，工作花费 \(TimePrice.money(jobCost))" : "")")
+                        .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text("有计划日的 \(total) 个已完成待办").font(.caption).foregroundStyle(.secondary)
+                    Text("填上每月到手收入、每周工时、通勤加班和工作花费，算出你每小时、每分钟的真实价格。之后每一段专注、每一件待办都能换算成钱，才知道哪些事值得做、哪些该外包或砍掉。")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
     }
 
-    private func legendRow(color: Color, text: String, value: Int) -> some View {
-        HStack(spacing: 8) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(text).font(.callout).foregroundStyle(.secondary)
-            Text("\(value)").font(.callout.weight(.semibold)).monospacedDigit()
+    private var priceForm: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("时间价格").font(.headline)
+            priceField("每月到手收入", unit: "元", value: $pay)
+            priceField("每周有薪工时", unit: "小时", value: $paidHours)
+            priceField("每周通勤 / 加班等无薪工时", unit: "小时", value: $unpaidHours)
+            priceField("每月为工作付出的花费", unit: "元", value: $jobCost, hint: "交通、工作餐、置装、通勤租房溢价等")
+            HStack {
+                Text("「工作」标签").font(.callout)
+                Spacer()
+                TextField("工作", text: $workTag).textFieldStyle(.roundedBorder).frame(width: 110).multilineTextAlignment(.trailing)
+            }
+            Divider()
+            Text("真实时薪 = (收入 − 工作花费) ÷ (有薪工时 + 无薪工时)。结审里的任务一律算工作；其他待办带上「\(workTag.trimmed.isEmpty ? "工作" : workTag)」标签才算工作，其余是普通时间。数据只存在这台电脑上。")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(width: 340)
+    }
+
+    private func priceField(_ title: String, unit: String, value: Binding<Double>, hint: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(title).font(.callout)
+                Spacer(minLength: 4)
+                TextField("0", value: value, format: .number)
+                    .textFieldStyle(.roundedBorder).frame(width: 92).multilineTextAlignment(.trailing)
+                Text(unit).font(.caption).foregroundStyle(.secondary).frame(width: 30, alignment: .leading)
+            }
+            if let hint { Text(hint).font(.caption2).foregroundStyle(.tertiary) }
         }
     }
 
-    // MARK: - 话题
+    // MARK: - 工作时间
 
-    private func tagsCard(_ r: ReviewData) -> some View {
-        let tags = Array(r.topTags.prefix(5))
-        return InsightCard(height: 250) {
-            VStack(alignment: .leading, spacing: 10) {
-                cardHeader("话题", icon: "number", tint: noteColor, trailing: "按标签")
-                if let top = tags.first {
-                    VStack(alignment: .leading, spacing: 2) {
-                        bigValue("#" + top.tag)
-                        Text("出现 \(top.count) 次，最多").font(.callout).foregroundStyle(.secondary)
+    private func workCard(_ s: WorkStats) -> some View {
+        let p = price
+        let total = max(s.totalMin, 1)
+        let step = s.days <= 8 ? 1 : Int((Double(s.days) / 6).rounded(.up))
+        let paidMin = p.paidHoursPerWeek * 60 * Double(s.days) / 7
+        return InsightCard {
+            VStack(alignment: .leading, spacing: 14) {
+                cardHeader("专注时间", icon: "timer", tint: workColor, trailing: "工作 = 结审任务 + 「\(model.workTag)」标签")
+                if s.totalMin == 0 {
+                    Text("这段时间还没有专注记录。从现在起，每次专注都会记进来，并按工作 / 普通时间分开统计。")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    HStack(alignment: .top, spacing: 16) {
+                        metric("工作", value: fmtMin(s.workMin), note: p.configured ? "价值约 \(TimePrice.money(p.cost(minutes: s.workMin)))" : nil, tint: workColor)
+                        Divider().frame(height: 62)
+                        metric("普通时间", value: fmtMin(s.normalMin), note: p.configured ? "约 \(TimePrice.money(p.cost(minutes: s.normalMin)))" : nil)
                     }
-                }
-                Chart(tags) { t in
-                    BarMark(x: .value("次数", t.count), y: .value("标签", "#" + t.tag), height: .fixed(14))
-                        .foregroundStyle(noteColor.gradient)
-                        .cornerRadius(4)
-                        .annotation(position: .trailing, spacing: 4) {
-                            Text("\(t.count)").font(.caption2).foregroundStyle(.secondary)
+                    // 工作 / 普通时间的占比条
+                    GeometryReader { g in
+                        HStack(spacing: 2) {
+                            if s.workMin > 0 { Capsule().fill(workColor).frame(width: max(6, g.size.width * CGFloat(s.workMin) / CGFloat(total))) }
+                            if s.normalMin > 0 { Capsule().fill(normalColor.opacity(0.35)).frame(maxWidth: .infinity) }
                         }
-                }
-                .chartYScale(domain: tags.map { "#" + $0.tag })
-                .chartXAxis(.hidden)
-                .chartYAxis { AxisMarks { _ in AxisValueLabel().font(.caption) } }
-                .frame(maxHeight: .infinity)
-            }
-        }
-    }
-
-    // MARK: - 项目投入
-
-    private func projectsCard(_ r: ReviewData) -> some View {
-        InsightCard(height: 250) {
-            VStack(alignment: .leading, spacing: 10) {
-                cardHeader("项目投入", icon: "folder.fill", tint: noteColor, trailing: "笔记 + 待办")
-                if let top = r.projects.first {
-                    VStack(alignment: .leading, spacing: 2) {
-                        bigValue(top.keyword)
-                        Text(top.focusMin > 0 ? "投入最多 · 专注 \(FocusParser.formatMinutes(top.focusMin))" : "投入最多").font(.callout).foregroundStyle(.secondary)
                     }
-                }
-                Chart {
-                    ForEach(r.projects) { p in
-                        BarMark(x: .value("数量", p.notes), y: .value("项目", p.keyword), height: .fixed(14))
-                            .foregroundStyle(by: .value("类型", "笔记"))
-                        BarMark(x: .value("数量", p.done), y: .value("项目", p.keyword), height: .fixed(14))
-                            .foregroundStyle(by: .value("类型", "完成待办"))
-                            .annotation(position: .trailing, spacing: 4) {
-                                Text("\(p.total)").font(.caption2).foregroundStyle(.secondary)
+                    .frame(height: 8)
+
+                    Chart {
+                        ForEach(s.daily) { d in
+                            let x = Day.parse(d.day) ?? Date()
+                            BarMark(x: .value("日期", x, unit: .day), y: .value("分钟", d.work))
+                                .foregroundStyle(by: .value("类型", "工作"))
+                            BarMark(x: .value("日期", x, unit: .day), y: .value("分钟", d.normal))
+                                .foregroundStyle(by: .value("类型", "普通"))
+                        }
+                    }
+                    .chartForegroundStyleScale(["工作": workColor, "普通": normalColor.opacity(0.4)])
+                    .chartLegend(position: .bottom, alignment: .leading, spacing: 8)
+                    .chartXAxis { dayAxis(step: step) }
+                    .chartYAxis {
+                        AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { v in
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5)).foregroundStyle(Color.primary.opacity(0.1))
+                            AxisValueLabel {
+                                if let m = v.as(Int.self) { Text(m >= 60 ? "\(m / 60)h" : "\(m)m").font(.caption2) }
                             }
-                    }
-                }
-                .chartForegroundStyleScale(["笔记": noteColor, "完成待办": doneColor])
-                .chartLegend(.hidden)
-                .chartYScale(domain: r.projects.map(\.keyword))
-                .chartXAxis(.hidden)
-                .chartYAxis { AxisMarks { _ in AxisValueLabel().font(.caption) } }
-                .frame(maxHeight: .infinity)
-            }
-        }
-    }
-
-    // MARK: - 专注
-
-    private func focusCard(_ r: ReviewData) -> some View {
-        let h = r.focusTotalMin / 60, m = r.focusTotalMin % 60
-        let step = r.days <= 8 ? 1 : Int((Double(r.days) / 4).rounded(.up))
-        let fs = r.focusStats
-        return InsightCard(height: 250) {
-            VStack(alignment: .leading, spacing: 10) {
-                cardHeader("专注", icon: "timer", tint: focusColor, trailing: "来自手机备份")
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        if h > 0 { bigValue("\(h)", "小时") }
-                        bigValue("\(m)", "分钟")
-                        if let t = trend(r.focusTotalMin, r.prev?.focusMin) {
-                            Text(t.0).font(.caption2.weight(.medium)).foregroundStyle(t.1).padding(.leading, 4)
                         }
                     }
-                    Text(fs.sessions > 0 ? "\(fs.sessions) 次 · 平均 \(fs.avgMin) 分 · 最长 \(fs.longestMin) 分" : " ")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Chart(r.focus) { f in
-                    BarMark(x: .value("日期", Day.parse(f.day) ?? Date(), unit: .day), y: .value("分钟", f.minutes))
-                        .foregroundStyle(focusColor.gradient)
-                        .cornerRadius(3)
-                }
-                .chartXAxis { dayAxis(step: step) }
-                .chartYAxis(.hidden)
-                .frame(maxHeight: .infinity)
-            }
-        }
-    }
+                    .frame(height: 170)
 
-    // MARK: - 完成待办的优先级
-
-    private func priorityCard(_ r: ReviewData) -> some View {
-        let names = ["无", "低", "中", "高"]
-        let colors: [Color] = [.gray, .blue, .orange, .red]
-        let total = max(r.donePriority.reduce(0, +), 1)
-        let top = r.donePriority.enumerated().filter { $0.offset > 0 }.max(by: { $0.element < $1.element })
-        return InsightCard(height: 250) {
-            VStack(alignment: .leading, spacing: 10) {
-                cardHeader("完成的待办", icon: "flag.fill", tint: doneColor, trailing: "按优先级")
-                VStack(alignment: .leading, spacing: 2) {
-                    bigValue("\(r.donePriority[3] + r.donePriority[2])", "个重要待办")
-                    Text(top.map { $0.element > 0 ? "其中「\(names[$0.offset])」优先级最多" : "还没有设置优先级的待办" } ?? " ")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Chart(0 ..< 4, id: \.self) { i in
-                    BarMark(x: .value("优先级", names[3 - i]), y: .value("个数", r.donePriority[3 - i]))
-                        .foregroundStyle(colors[3 - i].gradient)
-                        .cornerRadius(4)
-                        .annotation(position: .top, spacing: 2) {
-                            Text("\(r.donePriority[3 - i])").font(.caption2).foregroundStyle(.secondary)
-                        }
-                }
-                .chartXAxis { AxisMarks { _ in AxisValueLabel().font(.caption2) } }
-                .chartYAxis(.hidden)
-                .frame(maxHeight: .infinity)
-                Text("共完成 \(total) 个").font(.caption).foregroundStyle(.tertiary)
-            }
-        }
-    }
-
-    // MARK: - 专注时段
-
-    private func focusHoursCard(_ r: ReviewData) -> some View {
-        let start = bestFocusStart(r)
-        return InsightCard(height: 250) {
-            VStack(alignment: .leading, spacing: 10) {
-                cardHeader("专注时段", icon: "scope", tint: focusColor, trailing: "按开始时间")
-                VStack(alignment: .leading, spacing: 2) {
-                    bigValue(start.map { "\($0)–\($0 + 2) 点" } ?? "–")
-                    Text("你最常在这个时段开始专注").font(.callout).foregroundStyle(.secondary)
-                }
-                Chart(0 ..< 24, id: \.self) { h in
-                    BarMark(x: .value("小时", h), y: .value("分钟", r.focusHours[h]), width: .fixed(6))
-                        .foregroundStyle(focusColor.gradient)
-                }
-                .chartXScale(domain: 0 ... 23)
-                .chartXAxis {
-                    AxisMarks(values: [0, 6, 12, 18]) { v in
-                        AxisValueLabel {
-                            if let h = v.as(Int.self) { Text("\(h)时").font(.caption2) }
+                    HStack(alignment: .top, spacing: 16) {
+                        metric("日均专注", value: fmtMin(s.totalMin / max(s.days, 1)), note: "共 \(s.sessions) 次，平均 \(s.avgSessionMin) 分钟")
+                        Divider().frame(height: 50)
+                        if p.configured, paidMin > 0 {
+                            let ratio = Double(s.workMin) / paidMin
+                            metric("专注占比", value: "\(Int((ratio * 100).rounded()))%", note: "工作专注 ÷ 有薪工时；有薪工时里真正产出的部分", tint: ratio >= 0.4 ? .green : .primary)
+                        } else {
+                            metric("专注占比", value: "–", note: "填写时间价格后显示")
                         }
                     }
                 }
-                .chartYAxis(.hidden)
-                .frame(maxHeight: .infinity)
             }
         }
     }
 
-    // MARK: - AI 洞察
+    // MARK: - 时间花在哪（80/20）
+
+    private func whereCard(_ s: WorkStats) -> some View {
+        let p = price
+        let rows = Array(s.projects.prefix(6))
+        let maxMin = max(rows.first?.minutes ?? 1, 1)
+        return InsightCard {
+            VStack(alignment: .leading, spacing: 14) {
+                cardHeader("按项目", icon: "chart.bar.doc.horizontal.fill", tint: noteColor, trailing: p.configured ? "时长 · 价值" : "时长")
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(rows) { it in projectRow(it, maxMin: maxMin, total: s.totalMin, price: p) }
+                }
+                if let share = s.paretoShare {
+                    Divider()
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "scope").foregroundStyle(workColor)
+                        Text("80/20：最费时间的前 \(s.paretoTop) 件事（共 \(s.tasks.count) 件）占了 \(Int((share * 100).rounded()))% 的专注时间。\(share >= 0.7 ? "时间高度集中，把这几件做好、其余能砍就砍。" : "时间比较分散，试试砍掉几件小事，把省下的时间给最重要的。")")
+                            .font(.callout).fixedSize(horizontal: false, vertical: true)
+                    }
+                } else if let top = s.tasks.first {
+                    Divider()
+                    Text("最费时间的是「\(top.name)」，\(fmtMin(top.minutes))\(p.configured ? "，约 \(TimePrice.money(p.cost(minutes: top.minutes)))" : "")。")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func projectRow(_ it: WorkStats.Item, maxMin: Int, total: Int, price p: TimePrice) -> some View {
+        let tint = it.work ? workColor : normalColor.opacity(0.5)
+        let share = Int((Double(it.minutes) / Double(max(total, 1)) * 100).rounded())
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Image(systemName: it.work ? "briefcase.fill" : "person.fill").font(.system(size: 11)).foregroundStyle(it.work ? workColor : Color.secondary)
+                Text(it.name).font(.callout.weight(.medium)).lineLimit(1)
+                Spacer(minLength: 8)
+                Text(fmtMin(it.minutes)).font(.callout).monospacedDigit()
+                Text("\(share)%").font(.caption).foregroundStyle(.tertiary).monospacedDigit().frame(width: 34, alignment: .trailing)
+                if p.configured {
+                    Text(TimePrice.money(p.cost(minutes: it.minutes))).font(.callout.weight(.semibold)).monospacedDigit()
+                        .foregroundStyle(it.work ? workColor : Color.secondary).frame(minWidth: 56, alignment: .trailing)
+                }
+            }
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.07))
+                    Capsule().fill(tint).frame(width: max(5, g.size.width * CGFloat(it.minutes) / CGFloat(max(maxMin, 1))))
+                }
+            }
+            .frame(height: 6)
+        }
+    }
+
+    // MARK: - 效率
+
+    private struct DoneCounts { var work = 0; var all = 0 }
+
+    /// 这段时间完成的待办：工作的（结审 + 带工作标签）和全部
+    private func doneCounts(_ r: ReviewData) -> DoneCounts {
+        let today = Day.today()
+        let first = Day.add(today, days: -(r.days - 1))
+        var c = DoneCounts()
+        c.all = r.totalDone
+        for t in model.reviewDoneTasks {
+            guard let when = t.completedDate else { continue }
+            let day = Day.string(when)
+            if day >= first, day <= today, model.isWorkTask(t) { c.work += 1 }
+        }
+        let projects = model.sjzOverview?.projects.map(\.name) ?? []
+        for i in 0 ..< r.days {
+            let d = Day.add(first, days: i)
+            for name in projects {
+                let n = SjzDaily.get(name, "done", day: d)
+                c.work += n
+                c.all += n
+            }
+        }
+        return c
+    }
+
+    private func efficiencyCard(_ r: ReviewData, _ s: WorkStats, _ done: DoneCounts) -> some View {
+        let p = price
+        let workHours = Double(s.workMin) / 60
+        let perHour: String? = s.workMin >= 30 && done.work > 0 ? String(format: "%.1f", Double(done.work) / workHours) : nil
+        let high = r.donePriority[3]
+        let highShare = r.totalDone > 0 ? Int((Double(high) / Double(r.totalDone) * 100).rounded()) : nil
+        return InsightCard {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 16) {
+                    metric("工作待办完成", value: "\(done.work)", unit: "个", note: "全部完成 \(done.all) 个")
+                    Divider().frame(height: 62)
+                    metric("每专注小时完成", value: perHour ?? "–", unit: perHour == nil ? nil : "个", note: perHour == nil ? "工作专注不足 30 分钟或还没完成" : "工作专注 \(fmtMin(s.workMin))")
+                    Divider().frame(height: 62)
+                    if p.configured, done.work > 0, s.workMin > 0 {
+                        metric("每个待办的时间成本", value: TimePrice.money(p.cost(minutes: s.workMin) / Double(done.work)), note: "工作专注价值 ÷ 完成数")
+                    } else {
+                        metric("每个待办的时间成本", value: "–", note: "需要时间价格和工作专注记录")
+                    }
+                }
+                HStack(alignment: .top, spacing: 16) {
+                    metric("高优先级占比", value: highShare.map { "\($0)%" } ?? "–", note: highShare == nil ? nil : "完成 \(r.totalDone) 个里有 \(high) 个高优先级。越高说明时间越花在重要的事上",
+                           tint: (highShare ?? 0) >= 30 ? .green : .primary)
+                    Divider().frame(height: 62)
+                    goldenCard(s)
+                }
+            }
+        }
+    }
+
+    private func goldenCard(_ s: WorkStats) -> some View {
+        let maxH = max(s.hours.max() ?? 1, 1)
+        return VStack(alignment: .leading, spacing: 5) {
+            Text("黄金时段").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text(s.goldenStart.map { "\($0)–\($0 + 2) 点" } ?? "–")
+                .font(.system(size: 26, weight: .semibold, design: .rounded)).monospacedDigit()
+            HStack(alignment: .bottom, spacing: 2) {
+                ForEach(0 ..< 24, id: \.self) { h in
+                    let inWin = s.goldenStart.map { h >= $0 && h <= $0 + 2 } ?? false
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(inWin ? workColor : Color.primary.opacity(0.16))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: max(2, 26 * CGFloat(s.hours[h]) / CGFloat(maxH)))
+                }
+            }
+            .frame(height: 26, alignment: .bottom)
+            Text(s.goldenStart == nil ? "专注记录还不够" : "把最难的事放在这个时段")
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - 该消除的
+
+    /// 逾期 7 天以上的待办，拖得最久的在前
+    private struct Stale: Identifiable {
+        let task: DidaTask
+        let days: Int
+        var id: String { task.id }
+    }
+
+    private func staleTasks() -> [Stale] {
+        guard let ov = model.overview else { return [] }
+        let today = Day.today()
+        return ov.overdue.compactMap { t -> Stale? in
+            guard let d = t.date else { return nil }
+            let n = Day.diff(d, today)
+            return n >= 7 ? Stale(task: t, days: n) : nil
+        }
+        .sorted { $0.days > $1.days }
+    }
+
+    private func eliminateCard(_ stale: [Stale]) -> some View {
+        let p = price
+        return InsightCard {
+            VStack(alignment: .leading, spacing: 12) {
+                cardHeader("逾期超过 7 天", icon: "scissors", tint: .red, trailing: stale.isEmpty ? nil : "共 \(stale.count) 件")
+                if stale.isEmpty {
+                    Text("没有拖了很久的待办，清爽。").font(.callout).foregroundStyle(.secondary)
+                } else {
+                    Text("拖了这么久还没做，多半不重要：删掉、推迟到明确的日子，或者交给别人。").font(.callout).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(stale.prefix(5))) { item in
+                            Button { model.openTask(item.task) } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: SjzTasks.owns(item.task.id) ? "briefcase.fill" : "circle.dashed")
+                                        .font(.system(size: 11)).foregroundStyle(SjzTasks.owns(item.task.id) ? workColor : Color.secondary)
+                                    Text(item.task.cleanTitle).font(.callout).lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    Text("逾期 \(item.days) 天").font(.caption.weight(.medium)).foregroundStyle(.red)
+                                }
+                                .padding(.vertical, 4)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    if stale.count > 5 {
+                        Button("在「待办」里查看全部 \(stale.count) 件") { model.section = .todos }.buttonStyle(.link).font(.callout)
+                    }
+                }
+                if p.configured {
+                    Divider()
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "lightbulb.fill").foregroundStyle(.yellow)
+                        Text("按你的真实时薪 \(TimePrice.money(p.realHourly))/小时：一件事如果花钱外包、或用工具自动化的成本低于这个数，就别自己做；做不做都行的，直接消除。给任务设更短的期限——任务会膨胀到占满你给它的时间（帕金森定律）。")
+                            .font(.callout).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 记录节奏
+
+    private func rhythmCard(_ r: ReviewData) -> some View {
+        InsightCard {
+            HStack(spacing: 0) {
+                rhythm(icon: "doc.text.fill", tint: noteColor, value: "\(r.totalNotes)", unit: "条", label: "笔记", trend: trend(r.totalNotes, r.prev?.notes))
+                Divider().frame(height: 62)
+                rhythm(icon: "checkmark.circle.fill", tint: doneColor, value: "\(r.totalDone)", unit: "个", label: "完成待办", trend: trend(r.totalDone, r.prev?.done))
+                Divider().frame(height: 62)
+                rhythm(icon: "calendar", tint: hourColor, value: "\(r.activeDays)", unit: "/ \(r.days) 天", label: "有记录", trend: trend(r.activeDays, r.prev?.activeDays))
+                Divider().frame(height: 62)
+                rhythm(icon: "flame.fill", tint: .orange, value: "\(r.streak)", unit: "天", label: "连续记录",
+                       trend: r.longestStreak > 0 ? ("最长 \(r.longestStreak) 天", .secondary) : nil)
+            }
+        }
+    }
+
+    private func rhythm(icon: String, tint: Color, value: String, unit: String, label: String, trend: (String, Color)?) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(label, systemImage: icon).font(.caption.weight(.semibold)).foregroundStyle(tint)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value).font(.system(size: 28, weight: .semibold, design: .rounded)).monospacedDigit()
+                Text(unit).font(.callout).foregroundStyle(.secondary)
+            }
+            Text(trend?.0 ?? " ").font(.caption2.weight(.medium)).foregroundStyle(trend?.1 ?? .clear).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+    }
+
+    /// 和上一个同样长度的时间段比：↑ 12% / ↓ 8% / 持平
+    private func trend(_ cur: Int, _ prev: Int?) -> (String, Color)? {
+        guard let prev else { return nil }
+        if prev == 0 { return cur > 0 ? ("上期没有", .secondary) : nil }
+        let pct = Int((Double(cur - prev) / Double(prev) * 100).rounded())
+        if pct == 0 { return ("与上期持平", .secondary) }
+        return (pct > 0 ? "↑ \(pct)% 较上期" : "↓ \(-pct)% 较上期", pct > 0 ? .green : .orange)
+    }
+
+    // MARK: - AI 洞察（可折叠）
 
     private func aiCard(_ r: ReviewData) -> some View {
         let ins = model.aiInsights[model.reviewDays]
@@ -595,32 +522,51 @@ struct InsightsView: View {
         return InsightCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 8) {
-                    Image(systemName: "sparkles").foregroundStyle(Brand.orange)
-                    Text("读一读你最近 \(r.days) 天写的东西").font(.subheadline.weight(.semibold))
+                    Button { withAnimation(.easeOut(duration: 0.18)) { aiFold.toggle() } } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+                                .rotationEffect(.degrees(aiFold ? 0 : 90))
+                            Image(systemName: "sparkles").foregroundStyle(Brand.orange)
+                            Text("读一读你最近 \(r.days) 天写的东西").font(.subheadline.weight(.semibold))
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(aiFold ? "展开" : "折叠")
                     Spacer(minLength: 8)
                     if busy { ProgressView().controlSize(.small) }
-                    Button { Task { await model.generateAIInsight() } } label: {
-                        Label(ins == nil ? "生成洞察" : "重新生成", systemImage: ins == nil ? "wand.and.stars" : "arrow.clockwise")
-                    }
-                    .buttonStyle(.bordered).controlSize(.small)
-                    .disabled(busy || !model.hasLlm)
-                }
-
-                if !model.hasLlm {
-                    HStack(spacing: 8) {
-                        Text("需要先配置 AI 模型").font(.callout).foregroundStyle(.secondary)
-                        Button("去设置") { SettingsWindow.show(.account) }.buttonStyle(.link)
+                    if !aiFold {
+                        Button { Task { await model.generateAIInsight() } } label: {
+                            Label(ins == nil ? "生成洞察" : "重新生成", systemImage: ins == nil ? "wand.and.stars" : "arrow.clockwise")
+                        }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .disabled(busy || !model.hasLlm)
                     }
                 }
-                if let e = model.aiInsightError { ErrorBanner(text: e) { Task { await model.generateAIInsight() } } }
 
-                if let ins {
-                    aiBody(ins)
-                } else if busy {
-                    Text("正在阅读笔记、Daily Note 和完成的待办，大约需要十几秒…").font(.callout).foregroundStyle(.secondary)
-                } else if model.hasLlm {
-                    Text("AI 会帮你看看：这段时间在关注什么、有哪些反复出现的主题、状态有什么变化、哪些想法值得回头再看，以及接下来可以怎么做。")
-                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if aiFold {
+                    if let ins {
+                        Text(ins.summary).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                    } else {
+                        Text(model.hasLlm ? "已折叠，点开可生成或查看" : "需要先配置 AI 模型").font(.callout).foregroundStyle(.tertiary)
+                    }
+                } else {
+                    if !model.hasLlm {
+                        HStack(spacing: 8) {
+                            Text("需要先配置 AI 模型").font(.callout).foregroundStyle(.secondary)
+                            Button("去设置") { SettingsWindow.show(.account) }.buttonStyle(.link)
+                        }
+                    }
+                    if let e = model.aiInsightError { ErrorBanner(text: e) { Task { await model.generateAIInsight() } } }
+
+                    if let ins {
+                        aiBody(ins)
+                    } else if busy {
+                        Text("正在阅读笔记、Daily Note 和完成的待办，大约需要十几秒…").font(.callout).foregroundStyle(.secondary)
+                    } else if model.hasLlm {
+                        Text("AI 会帮你看看：这段时间在关注什么、有哪些反复出现的主题、状态有什么变化、哪些想法值得回头再看，以及接下来可以怎么做。")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
         }
@@ -695,22 +641,9 @@ struct InsightsView: View {
         .buttonStyle(.plain)
         .help("打开这条笔记")
     }
-
-    // MARK: - 小工具
-
-    private func shortDay(_ s: String) -> String {
-        let p = s.split(separator: "-")
-        guard p.count == 3, let m = Int(p[1]), let d = Int(p[2]) else { return s }
-        return "\(m)/\(d)"
-    }
-
-    private func inPeak(_ hour: Int, _ start: Int?) -> Bool {
-        guard let s = start else { return false }
-        return hour >= s && hour <= s + 2
-    }
 }
 
-/// 洞察页的卡片：白色圆角底（深色模式下是系统的控件背景色）+ 极淡的描边和阴影。`height` 给了就固定高度（并排的卡片等高）
+/// 洞察页的卡片：玻璃圆角底。`height` 给了就固定高度
 private struct InsightCard<Content: View>: View {
     var height: CGFloat?
     @ViewBuilder var content: Content

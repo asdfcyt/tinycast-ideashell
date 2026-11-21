@@ -89,6 +89,13 @@ final class SjzSyncQueue {
     func enqueue(_ task: DidaTask, _ change: SjzTasks.Change, model: AppModel) {
         guard let p = SjzTasks.parse(task.id) else { return }
         self.model = model
+        // 还在往结审创建的任务（临时编号）：只改本机显示，不发给结审
+        if p.task.hasPrefix("tmp-") {
+            var e = Entry(project: p.project, taskId: p.task, title: task.cleanTitle)
+            e.apply(change)
+            patchLocal(e, task: task, model: model)
+            return
+        }
         loadIfNeeded()
         if case .complete = change { SjzDaily.add(p.project, "done", 1) }
         let key = p.project + "/" + p.task
@@ -103,6 +110,22 @@ final class SjzSyncQueue {
 
     /// 本机缓存里的结审任务先改好（界面马上是新的；之后后台刷新也不会闪回旧值）
     private func patchLocal(_ e: Entry, task: DidaTask, model: AppModel) {
+        // 刚新建、还在本机暂存里的任务：完成 / 删除就直接撤掉，改字段就改暂存里那份
+        if let k = model.sjzLocalAdds.firstIndex(where: { $0.task.project == e.project && $0.task.id == e.taskId }) {
+            if e.delete || e.fields["status"] == "completed" {
+                model.sjzLocalAdds.remove(at: k)
+            } else {
+                var t = model.sjzLocalAdds[k].task
+                if let v = e.fields["subject"] { t.subject = v }
+                if let v = e.fields["description"] { t.detail = v }
+                if let v = e.fields["dueDate"] { t.dueDate = v }
+                if let v = e.fields["priority"] { t.priority = v }
+                if let v = e.fields["startDate"] { t.startDate = v.isEmpty ? nil : v }
+                if let v = e.fields["phase"] { t.phase = v }
+                model.sjzLocalAdds[k].task = t
+            }
+            model.applySjzTasks()
+        }
         guard var ov = model.sjzOverview else { return }
         guard let i = ov.next.firstIndex(where: { $0.project == e.project && $0.id == e.taskId }) else {
             // 恢复为未完成：这条不在未完成列表里，先放回去

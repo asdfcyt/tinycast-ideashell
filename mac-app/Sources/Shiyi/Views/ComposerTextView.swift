@@ -130,7 +130,10 @@ struct ComposerTextView: NSViewRepresentable {
             }
         }
         let want = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua)
-        if tv.appearance?.name != want?.name { tv.appearance = want }
+        if tv.appearance?.name != want?.name {
+            tv.appearance = want
+            if tv.markdownStyle { tv.restyle() }
+        }
         if context.coordinator.focusTick != focusTick {
             context.coordinator.focusTick = focusTick
             DispatchQueue.main.async { tv.window?.makeFirstResponder(tv) }

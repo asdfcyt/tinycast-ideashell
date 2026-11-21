@@ -210,9 +210,9 @@ struct FocusView: View {
             // 搜索 / 新建
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.tertiary)
-                TextField(model.hasDida ? "搜索待办，或输入新建…" : "连接滴答清单后可搜索", text: $newTitle)
+                TextField(model.hasDida ? "搜索待办，或输入新建…" : (model.hasSjz ? "搜索待办…" : "连接滴答清单后可搜索"), text: $newTitle)
                     .textFieldStyle(.plain).font(.callout)
-                    .disabled(!model.hasDida)
+                    .disabled(!model.hasDida && !model.hasSjz)
                     .onSubmit {
                         if let t = found.first { pick(t) } else { addTask() }
                     }
@@ -242,7 +242,7 @@ struct FocusView: View {
                 focus.attach(nil)
             }
             if candidates.isEmpty {
-                Text(model.hasDida ? "没有可选的待办" : "连接滴答清单后可以关联待办")
+                Text(model.hasDida || model.hasSjz ? "没有可选的待办" : "连接滴答清单后可以关联待办")
                     .font(.caption).foregroundStyle(.tertiary).padding(.horizontal, 6).padding(.vertical, 6)
             }
             ForEach(candidates, id: \.0) { group in
@@ -329,11 +329,16 @@ struct FocusView: View {
         guard let ov = model.overview else { return [] }
         let today = Day.today()
         let todayList = ov.upcoming.filter { $0.date == today }.sorted { ($0.time ?? "99:99") < ($1.time ?? "99:99") }
+        // 结审任务单独一组（它们排在滴答任务后面，混在一起会被「前几个」截掉）；今天 / 逾期里的结审任务照常出现在对应分组
+        let sjz = (ov.overdue + ov.upcoming + ov.undated).filter { SjzTasks.owns($0.id) && $0.date != today && !(($0.date ?? "9999") < today) }
+            .sorted { ($0.date ?? "9999") < ($1.date ?? "9999") }
+        func plain(_ l: [DidaTask]) -> [DidaTask] { l.filter { !SjzTasks.owns($0.id) } }
         return [
-            ("今天", Array(todayList.prefix(6))),
-            ("逾期", Array(ov.overdue.prefix(4))),
-            ("接下来", Array(ov.upcoming.filter { ($0.date ?? "") > today }.prefix(3))),
-            ("无日期", Array(ov.undated.prefix(3))),
+            ("今天", Array(todayList.prefix(8))),
+            ("逾期", Array((plain(ov.overdue) + ov.overdue.filter { SjzTasks.owns($0.id) }).prefix(6))),
+            ("接下来", Array(plain(ov.upcoming).filter { ($0.date ?? "") > today }.prefix(3))),
+            ("结审", Array(sjz.prefix(8))),
+            ("无日期", Array(plain(ov.undated).prefix(3))),
         ].filter { !$0.1.isEmpty }
     }
 

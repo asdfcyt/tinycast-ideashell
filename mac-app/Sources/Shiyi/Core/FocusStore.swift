@@ -167,6 +167,8 @@ final class FocusStore: ObservableObject {
         }
         pending.append(PendingFocus(startMs: s.startMs, endMs: s.startMs + elapsed, taskId: s.taskId, title: s.title))
         savePending()
+        // 记进本机专注账本（洞察页的「时间价格」按它统计工作 / 普通时间）
+        FocusLedger.shared.record(startMs: s.startMs, endMs: s.startMs + elapsed, taskId: s.taskId, title: s.title)
         await flush()
         let mins = max(Int((Double(elapsed) / 60000).rounded()), 1)
         let synced = pending.isEmpty

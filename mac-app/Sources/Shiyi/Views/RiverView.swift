@@ -15,7 +15,7 @@ enum Brand {
 
 /*
  * 时间河（节点时刻表），复刻安卓端 RiverPane：没有卡片外壳，正文直接落在底色上，现在放在日历右侧显示选中的那一天。
- * 这一天的每一件事按时间从晚到早排开：竖线在左、时间居中、正文在右，每条记录是线上的一个节点。
+ * 这一天的每一件事按时间从早到晚排开（早的在上、晚的在下）：竖线在左、时间居中、正文在右，每条记录是线上的一个节点。
  * Daily Note 里的每一条（`- **时间** 文字`）拆成独立的一行。
  * 节点区分类型：日记 = 橙色实心圆，笔记 = 深色三角，待办 = 方块（空心 = 没做，红色 = 逾期，灰色实心 = 做完）。
  * 待办可以交互：点节点直接勾选完成（再点恢复）。单击一行选中，空格预览，双击弹出完整页面。
@@ -49,7 +49,7 @@ private enum RiverRow: Identifiable {
 // MARK: - 一天的行
 
 private enum RiverRows {
-    /// 当天的所有行：全天（没有具体时间）的待办排在最上面，其余按时间从晚到早
+    /// 当天的所有行：全天（没有具体时间）的待办排在最上面，其余按时间从早到晚（早的在上）
     static func make(_ day: DayBucket, today: String) -> [RiverRow] {
         var r: [RiverRow] = []
         for (i, e) in day.daily.enumerated() { r.append(.daily(e, noteId: day.dailyNoteId, index: i)) }
@@ -58,7 +58,7 @@ private enum RiverRows {
         return r.sorted {
             let a = $0.clock.isEmpty, b = $1.clock.isEmpty
             if a != b { return a }
-            return $0.clock > $1.clock
+            return $0.clock < $1.clock
         }
     }
 

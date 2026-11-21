@@ -121,6 +121,8 @@ final class AppModel: ObservableObject {
     @Published var quickAddInsert = ""
     /// 结审任务概览：只缓存在本机，不写入滴答清单 / 闪念贝壳
     @Changed var sjzOverview: SjzOverview? = AppModel.readCache("sjz-overview.json")
+    /// 刚在拾忆里新建、还没从结审读回来的任务（先显示在界面上，免得等网络）
+    var sjzLocalAdds: [(task: SjzTaskLite, at: Date)] = []
     @Published var sjzProjects: [SjzApi.Project] = []
     /// 岛上显示的保存目标（项目名）；设置里读到后缓存
     @Changed var sjzTargetTitle: String = ""
@@ -203,6 +205,9 @@ final class AppModel: ObservableObject {
     // 回顾
     @Published var reviewDays = 14
     @Published var review: ReviewData?
+    /// 洞察用：这段时间完成的滴答待办（算「工作待办完成数」）和它对应的范围
+    var reviewDoneTasks: [DidaTask] = []
+    var reviewDoneKey = ""
     @Changed var reviewLoading = false
     @Changed var reviewError: String?
 
@@ -211,6 +216,10 @@ final class AppModel: ObservableObject {
     @Published var calendarMode: CalendarMode = .month
     /// 日历里选中的那一天（日 / 周视图以它为准）
     @Published var calendarDay: String = Day.today()
+    /// 从别处（迷你日历 / 搜索 / 时间河等）特意跳到某一天再进日历页：这一次进入页面保留那一天，其余情况进日历都回到今天
+    var calendarKeepOnce = false
+    /// 上次进入日历页时的「今天」（跨天后回到前台要重新对到今天）
+    var calendarSeenToday = Day.today()
     @Changed var calendarTasks: [String: DidaTask] = [:]
     @Changed var calendarNotes: [String: [NoteInfo]] = [:]
     @Changed var calendarLoading = false
@@ -752,7 +761,7 @@ final class AppModel: ObservableObject {
     func loadReview(ifStale: Bool = false) async {
         guard hasIdeashell || hasDida else { return }
         let stampKey = "\(reviewDays)|\(Day.today())"
-        if ifStale, isFresh("review", key: stampKey), review != nil { return }
+        if ifStale, isFresh("review", key: stampKey), review != nil, reviewDoneKey == stampKey { return }
         guard beginLoad("review", ifStale: ifStale) else { return }
         defer { endLoad("review") }
         // 已经有这个范围的数据时在后台悄悄更新，不转圈
@@ -781,6 +790,8 @@ final class AppModel: ObservableObject {
             do { done = try await dida.completedInRange(from, today) }
             catch { todoError = error.localizedDescription }
         }
+        reviewDoneTasks = done
+        reviewDoneKey = stampKey
         review = ReviewData.compute(
             days: days,
             notes: notes,
@@ -866,6 +877,14 @@ final class AppModel: ObservableObject {
         Task { await loadCalendar(ifStale: true) }
     }
 
+    /// 进日历页：默认显示今天（特意跳转过来的除外）；已经在今天就什么都不做
+    func calendarEnter() {
+        defer { calendarKeepOnce = false; calendarSeenToday = Day.today() }
+        if calendarKeepOnce { return }
+        let monthOK = Day.cal.isDate(calendarMonth, equalTo: Date(), toGranularity: .month)
+        if calendarDay != Day.today() || !monthOK { calendarToday() }
+    }
+
     func calendarToday() {
         if calendarDay != Day.today() { calPane.clear(); calendarDraft = nil }
         calendarDay = Day.today()
@@ -875,6 +894,7 @@ final class AppModel: ObservableObject {
 
     /// 在日历里选一天（可同时切到某个视图）
     func selectCalendarDay(_ day: String, mode: CalendarMode? = nil) {
+        if section != .calendar { calendarKeepOnce = true }
         if day != calendarDay { calPane.clear(); calendarDraft = nil }
         calendarDay = day
         if let mode, mode != calendarMode {

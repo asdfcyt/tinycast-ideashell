@@ -236,7 +236,11 @@ struct MenuBarView: View {
     private func tasks(_ ov: DidaOverview) -> some View {
         let overdue = ov.overdue.sorted { ($0.date ?? "") < ($1.date ?? "") }
         let today = ov.todayTasks().sorted { ($0.time ?? "99:99") < ($1.time ?? "99:99") }
-        let inbox = showInbox ? ov.undated : []
+        let inbox = showInbox ? ov.undated.filter { !SjzTasks.owns($0.id) } : []
+        let todayStr = Day.today()
+        // 结审里还没排到今天的任务（无日期 / 以后到期），岛上和菜单栏都显示
+        let sjz = (ov.upcoming + ov.undated).filter { SjzTasks.owns($0.id) && ($0.date == nil || ($0.date ?? "") > todayStr) }
+            .sorted { ($0.date ?? "9999") < ($1.date ?? "9999") }
         return VStack(alignment: .leading, spacing: 0) {
             if let e = model.todosError { Text(e).font(.caption).foregroundStyle(.orange).padding(.horizontal, 12).padding(.vertical, 6) }
             HStack(spacing: 0) {
@@ -252,6 +256,11 @@ struct MenuBarView: View {
                 sectionLabel("逾期", overdue.count, .red)
                 ForEach(overdue.prefix(6)) { MenuTaskRow(task: $0, overdue: true) }
                 if overdue.count > 6 { more(overdue.count - 6) }
+            }
+            if !sjz.isEmpty {
+                sectionLabel("结审", sjz.count, .secondary)
+                ForEach(sjz.prefix(3)) { MenuTaskRow(task: $0, inbox: $0.date == nil) }
+                if sjz.count > 3 { more(sjz.count - 3) }
             }
             if !inbox.isEmpty {
                 sectionLabel("收集箱", inbox.count, .secondary)

@@ -39,9 +39,20 @@ extension ComposerNSTextView {
         guard markdownStyle else { return }
         let font0 = baseFont
         let baseSize = font0.pointSize
+        // 系统是深色、而输入框被固定成浅色（便签）时，带透明度 / 派生出来的动态色会按系统外观取值（变成白色），
+        // 所以这里先按输入框自己的外观把颜色取成固定值
+        let ap = effectiveAppearance
+        func res(_ c: NSColor) -> NSColor {
+            var o = c
+            ap.performAsCurrentDrawingAppearance { o = c.usingColorSpace(.sRGB) ?? c }
+            return o
+        }
+        let dimC = res(NSColor.tertiaryLabelColor)
+        let secC = res(NSColor.secondaryLabelColor)
+        let inkC = res(NSColor.labelColor)
         let para = NSMutableParagraphStyle()
         para.lineSpacing = 2.5
-        let base: [NSAttributedString.Key: Any] = [.font: font0, .foregroundColor: NSColor.labelColor, .paragraphStyle: para]
+        let base: [NSAttributedString.Key: Any] = [.font: font0, .foregroundColor: inkC, .paragraphStyle: para]
         defer { typingAttributes = base }
         guard let ts = textStorage, ts.length > 0, !hasMarkedText() else {
             if textStorage?.length == 0, !liveTables.isEmpty { liveTables = []; needsDisplay = true }
@@ -106,12 +117,12 @@ extension ComposerNSTextView {
             // 光标 / 选区碰到这一行：显示符号；否则隐藏
             let active = focused && (sel.location >= line.location && sel.location <= line.location + line.length
                 || (sel.length > 0 && NSIntersectionRange(line, sel).length > 0))
-            func syntax(_ r: NSRange) { if active { color(r, MD.dim) } else { hide(r) } }
+            func syntax(_ r: NSRange) { if active { color(r, dimC) } else { hide(r) } }
 
             // 代码块
             if text.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
                 inFence.toggle()
-                ts.addAttributes([.font: mono, .foregroundColor: MD.dim], range: line)
+                ts.addAttributes([.font: mono, .foregroundColor: dimC], range: line)
                 return
             }
             if inFence {
@@ -120,21 +131,21 @@ extension ComposerNSTextView {
             }
             // 结审证据 / 法规的结构行（摘录标记、图片引用）：写回时要原样保留，淡色小字显示，别当正文改
             if StickyShelf.isStructureLine(text) {
-                ts.addAttributes([.font: NSFont.monospacedSystemFont(ofSize: max(baseSize - 3, 9), weight: .regular), .foregroundColor: MD.dim], range: line)
+                ts.addAttributes([.font: NSFont.monospacedSystemFont(ofSize: max(baseSize - 3, 9), weight: .regular), .foregroundColor: dimC], range: line)
                 return
             }
             if MD.rule.firstMatch(in: text, range: l) != nil {
-                color(line, MD.dim)
+                color(line, dimC)
                 return
             }
 
             // 表格行：竖线变淡，分隔行（| --- |）整行淡掉并用等宽字
             if text.trimmingCharacters(in: .whitespaces).hasPrefix("|") {
                 if MD.tableSep.firstMatch(in: text, range: l) != nil {
-                    ts.addAttributes([.font: mono, .foregroundColor: MD.dim], range: line)
+                    ts.addAttributes([.font: mono, .foregroundColor: dimC], range: line)
                     return
                 }
-                for m in MD.pipe.matches(in: text, range: l) { color(at(m.range, in: line), MD.dim) }
+                for m in MD.pipe.matches(in: text, range: l) { color(at(m.range, in: line), dimC) }
             }
 
             // 块级
@@ -150,7 +161,7 @@ extension ComposerNSTextView {
                 // 引用（结审证据 / 法规的摘录几乎全是引用行）：没有光标的行把 `>` 藏起来，只留缩进和略淡的文字；光标所在行才显示符号
                 let rest = NSRange(location: line.location + m.range.length, length: max(line.length - m.range.length, 0))
                 syntax(at(m.range, in: line))
-                color(rest, NSColor.labelColor.withAlphaComponent(0.78))
+                color(rest, inkC.withAlphaComponent(0.78))
                 if active {
                     hang = (text as NSString).substring(to: m.range.length).size(withAttributes: [.font: font0]).width
                 } else {
@@ -167,13 +178,13 @@ extension ComposerNSTextView {
             } else if let m = MD.task.firstMatch(in: text, range: l) {
                 let box = at(m.range(at: 4), in: line)
                 let done = (text as NSString).substring(with: m.range(at: 5)).lowercased() == "x"
-                color(at(m.range(at: 2), in: line), MD.dim)
-                color(box, done ? NSColor.secondaryLabelColor : MD.accent)
+                color(at(m.range(at: 2), in: line), dimC)
+                color(box, done ? secC : MD.accent)
                 ts.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: baseSize, weight: .semibold), range: box)
                 let rest = NSRange(location: line.location + m.range.length, length: max(line.length - m.range.length, 0))
                 if done, rest.length > 0 {
                     ts.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: rest)
-                    color(rest, .secondaryLabelColor)
+                    color(rest, secC)
                 }
                 hang = (text as NSString).substring(to: m.range.length).size(withAttributes: [.font: font0]).width
                 inlineStart = m.range.length
@@ -212,7 +223,7 @@ extension ComposerNSTextView {
             for m in MD.strike.matches(in: text, range: body) {
                 let r = at(m.range, in: line)
                 ts.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: r)
-                color(at(m.range(at: 2), in: line), .secondaryLabelColor)
+                color(at(m.range(at: 2), in: line), secC)
                 syntax(NSRange(location: r.location, length: 2))
                 syntax(NSRange(location: r.location + r.length - 2, length: 2))
             }
