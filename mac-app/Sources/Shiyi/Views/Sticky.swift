@@ -288,6 +288,8 @@ final class StickyController {
 
     /// 折叠后的窗口高度：只剩标题行（第一行文字显示在标题行中间）
     private static let collapsedH: CGFloat = 26
+    /// 便签最窄宽度：再窄，底栏（类型 / 优先级 / 标签 / 听写 / 提交）就一行放不下了
+    private static let minW: CGFloat = 290
 
     /// 存盘用的快照；折叠时 h 记展开时的高度
     private static func snapshot(_ id: UUID, _ m: StickyModel, _ f: NSRect) -> StickyNote {
@@ -302,11 +304,11 @@ final class StickyController {
         let top = f.maxY
         if m.collapsed {
             if f.height > Self.collapsedH + 1 { m.expandedH = f.height }
-            p.minSize = NSSize(width: 220, height: Self.collapsedH)
+            p.minSize = NSSize(width: Self.minW, height: Self.collapsedH)
             p.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: Self.collapsedH)
             f.size.height = Self.collapsedH
         } else {
-            p.minSize = NSSize(width: 220, height: 190)
+            p.minSize = NSSize(width: Self.minW, height: 190)
             p.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
             f.size.height = max(CGFloat(m.expandedH), 190)
         }
@@ -385,6 +387,7 @@ final class StickyController {
         let m = StickyModel(n)
         var rect = n.rect
         if n.collapsed == true { rect.size.height = Self.collapsedH }
+        rect.size.width = max(rect.size.width, Self.minW)
         let p = StickyPanel(contentRect: Self.visible(rect), styleMask: [.borderless, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
         p.isOpaque = false
         p.backgroundColor = .clear
@@ -395,7 +398,7 @@ final class StickyController {
         p.isReleasedWhenClosed = false
         p.isMovableByWindowBackground = false
         p.animationBehavior = .utilityWindow
-        p.minSize = NSSize(width: 220, height: 190)
+        p.minSize = NSSize(width: Self.minW, height: 190)
         applyLevel(p, pinned: m.pinned)
         if m.collapsed { layoutCollapse(p, m) }
 

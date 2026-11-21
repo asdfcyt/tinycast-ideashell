@@ -926,13 +926,11 @@ struct QuickAddView: View {
 
     private func submitLabel(_ k: CaptureKind, _ a: CaptureAnalysis) -> String {
         if note != nil {
+            // 便签很窄：类型已经在左边的按钮上了，提交按钮只写一个动作
             switch k {
-            case .daily: return "记入日记"
-            case .evidence: return "存为证据"
-            case .regulation: return "存为法规"
             case .todo: return "添加"
-            case .note: return "保存"
-            default: return "记录"
+            case .daily: return "记入"
+            default: return "保存"
             }
         }
         switch k {
