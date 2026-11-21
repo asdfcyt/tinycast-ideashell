@@ -56,6 +56,8 @@ struct QuickAddView: View {
     @State private var defaultDate: String?
     @State private var defaultTime: String?
     @State private var priority = 0
+    /// 底栏「标签」菜单里选的标签（和输入框里写的 #标签 合并，只对待办）
+    @State private var pickedTags: [String] = []
     @State private var submitting = false
     @State private var error: String?
     @State private var okText: String?
@@ -390,7 +392,7 @@ struct QuickAddView: View {
 
     @ViewBuilder private func kindControls(_ a: CaptureAnalysis, _ k: CaptureKind, withProject: Bool = true) -> some View {
         kindMenu(a, k)
-        if k == .todo { priorityMenu }
+        if k == .todo { priorityMenu; tagMenu }
         if k.isSjz, withProject { sjzChip(k) }
         if k == .agent { agentModeMenu(a) }
     }
@@ -793,6 +795,59 @@ struct QuickAddView: View {
         .help("类型（自动识别；在输入框里按 Tab / Shift+Tab 快速切换）")
     }
 
+    /// 标签候选：「工作」标签排第一，其后是已有待办里用得最多的几个
+    private var tagChoices: [String] {
+        var count: [String: Int] = [:]
+        if let ov = model.overview {
+            for t in ov.overdue + ov.upcoming + ov.undated {
+                for raw in t.tags {
+                    let g = raw.trimmingCharacters(in: CharacterSet(charactersIn: "# ")).trimmed
+                    if !g.isEmpty { count[g, default: 0] += 1 }
+                }
+            }
+        }
+        let work = model.workTag
+        let others = count.keys.filter { $0 != work && $0 != "任务笔记" }.sorted { (count[$0] ?? 0, $1) > (count[$1] ?? 0, $0) }
+        return [work] + Array(others.prefix(6))
+    }
+
+    private func toggleTag(_ t: String) {
+        if let i = pickedTags.firstIndex(of: t) { pickedTags.remove(at: i) } else { pickedTags.append(t) }
+    }
+
+    /// 标签：一键选「工作」（带「工作」标签的待办计入工作时间），也能选已有的常用标签
+    private var tagMenu: some View {
+        let work = model.workTag
+        let hasWork = pickedTags.contains(work)
+        return Menu {
+            ForEach(tagChoices, id: \.self) { t in
+                Button { toggleTag(t) } label: {
+                    if pickedTags.contains(t) { Label(t == work ? "\(t)（计入工作时间）" : t, systemImage: "checkmark") }
+                    else { Text(t == work ? "\(t)（计入工作时间）" : t) }
+                }
+            }
+            if !pickedTags.isEmpty {
+                Divider()
+                Button("清除标签") { pickedTags = [] }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: pickedTags.isEmpty ? "number" : (hasWork ? "briefcase.fill" : "number"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(hasWork ? Brand.orangeDeep : Color.secondary)
+                if note == nil || !pickedTags.isEmpty {
+                    Text(pickedTags.isEmpty ? "标签" : (pickedTags.count == 1 ? pickedTags[0] : "\(pickedTags[0]) +\(pickedTags.count - 1)"))
+                        .font(.callout).lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(hasWork ? Brand.orange.opacity(0.14) : Color.primary.opacity(0.06), in: Capsule())
+            .foregroundStyle(hasWork ? Brand.orangeDeep : Color.secondary)
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .help("标签（选「\(work)」会计入工作时间；也可以在输入框里写 #标签）")
+    }
+
     private var priorityMenu: some View {
         Menu {
             Picker("优先级", selection: $priority) {
@@ -848,6 +903,9 @@ struct QuickAddView: View {
                 }
             }
             ForEach(a.tags, id: \.self) { chip("number", $0, tint: Brand.orange) }
+            if k == .todo {
+                ForEach(pickedTags.filter { t in !a.tags.contains { $0.trimmingCharacters(in: CharacterSet(charactersIn: "# ")) == t } }, id: \.self) { chip("number", $0, tint: Brand.orange) }
+            }
             if k == .daily { chip("clock", "追加到今天的 Daily Note", tint: .secondary) }
             if k == .note && a.tags.isEmpty { chip("doc.text", "新建一条笔记", tint: .secondary) }
             Spacer(minLength: 0)
@@ -1014,6 +1072,11 @@ struct QuickAddView: View {
         if k == .agent { submitAgent(a); return }
         // 先记到本机发件箱（立刻返回），写进滴答 / 闪念贝壳在后台做；失败会自动重试，真失败了再提示
         _ = CaptureOutbox.shared.takeSubmitted()   // 清掉之前遗留的，撤销只针对这一次
+        var a = a
+        if k == .todo, !pickedTags.isEmpty {
+            var seen = Set(a.tags.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "# ")) })
+            for t in pickedTags where seen.insert(t).inserted { a.tags.append(t) }
+        }
         do {
             // 选了「新建取证单」：保存证据时一并创建（见 SjzPinStrip.deferNew），提交后清掉
             let pendingNote = k == .evidence ? model.sjzPendingNote.trimmed : ""
@@ -1027,6 +1090,7 @@ struct QuickAddView: View {
             images = []
             override = nil
             priority = 0
+            pickedTags = []
             if let onSubmitted {
                 onSubmitted(msg)
             } else if let onDone {
