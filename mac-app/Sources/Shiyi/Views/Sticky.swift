@@ -432,8 +432,16 @@ final class StickyController {
         }
         let nc = NotificationCenter.default
         let tokens = [NSWindow.didMoveNotification, NSWindow.didResizeNotification].map { name in
-            nc.addObserver(forName: name, object: p, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.scheduleSave() }
+            nc.addObserver(forName: name, object: p, queue: .main) { [weak self, weak p] _ in
+                MainActor.assumeIsolated {
+                    // 无边框窗口缩放时系统不理 minSize（实测能拖得更窄）：窄过最窄宽度就立刻撑回去，免得底栏挤成两行
+                    if let p, p.frame.width < Self.minW - 0.5 {
+                        var f = p.frame
+                        f.size.width = Self.minW
+                        p.setFrame(f, display: true)
+                    }
+                    self?.scheduleSave()
+                }
             }
         }
         entries[n.id] = Entry(model: m, panel: p, tokens: tokens)
