@@ -11,6 +11,10 @@ struct InsightsView: View {
     @AppStorage("tp.unpaidHours") private var unpaidHours = 0.0
     @AppStorage("tp.jobCost") private var jobCost = 0.0
     @AppStorage("tp.workTag") private var workTag = "工作"
+    @AppStorage("tp.goalHours") private var goalHours = 4.0
+    @AppStorage("tp.workDays") private var workDays = 5.0
+    /// 统计范围（天）：0 = 全部。AI 洞察和笔记节奏最多读 30 天，其余按本机账本统计
+    @AppStorage("insights.scope") private var scope = 14
     @AppStorage("insights.aiFold") private var aiFold = false
     @State private var showPriceForm = false
     @State private var ledgerRev = 0
@@ -24,7 +28,7 @@ struct InsightsView: View {
     private let normalColor = Color.secondary
 
     private var price: TimePrice {
-        TimePrice(monthlyPay: pay, paidHoursPerWeek: paidHours, unpaidHoursPerWeek: unpaidHours, monthlyJobCost: jobCost)
+        TimePrice(monthlyPay: pay, paidHoursPerWeek: paidHours, unpaidHoursPerWeek: unpaidHours, monthlyJobCost: jobCost, goalHoursPerDay: goalHours, workDaysPerWeek: workDays)
     }
 
     var body: some View {
@@ -47,52 +51,75 @@ struct InsightsView: View {
         .background(AmbientBackground())
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Picker("范围", selection: $model.reviewDays) {
+                Picker("范围", selection: $scope) {
                     Text("7 天").tag(7)
                     Text("14 天").tag(14)
                     Text("30 天").tag(30)
+                    Text("90 天").tag(90)
+                    Text("全部").tag(0)
                 }
                 .pickerStyle(.segmented)
                 .help("统计范围")
             }
         }
-        .task(id: model.reviewDays) {
+        .task(id: scope) {
+            let review = scope == 0 ? 30 : min(scope, 30)
+            if model.reviewDays != review { model.reviewDays = review }
             await model.loadReview(ifStale: true)
             FocusLedger.shared.seedIfNeeded(model: model)
+            ledgerRev += 1
+            await model.refreshOutputLedger()
             ledgerRev += 1
         }
     }
 
     // MARK: - 内容
 
+    /// 统计范围的天数：「全部」= 从最早的记录到今天
+    private var scopeDays: Int {
+        if scope != 0 { return scope }
+        let today = Day.today()
+        let first = [FocusLedger.shared.items.first?.day, OutputLedger.shared.firstDay].compactMap { $0 }.min() ?? today
+        return max(Day.diff(first, today) + 1, 7)
+    }
+
     @ViewBuilder private func content(_ r: ReviewData) -> some View {
         let _ = ledgerRev
-        let stats = WorkStats.compute(days: r.days, entries: FocusLedger.shared.items)
-        let done = doneCounts(r)
-        let prev = WorkStats.compute(days: r.days, entries: FocusLedger.shared.items, ending: Day.add(Day.today(), days: -r.days))
-        let rate = price.effectiveHourly(workMin: stats.workMin, days: r.days)
-        let prevRate = price.effectiveHourly(workMin: prev.workMin, days: r.days)
+        let items = FocusLedger.shared.items
+        let days = scopeDays
+        let stats = WorkStats.compute(days: days, entries: items)
+        let perf = stats.perf(price: price)
+        let prevStats: WorkStats? = scope == 0 ? nil : WorkStats.compute(days: days, entries: items, ending: Day.add(Day.today(), days: -days))
+        let prevPerf = prevStats?.perf(price: price)
+        let rate = price.effectiveHourly(workMin: stats.workMin, days: days)
+        let prevRate = prevStats.flatMap { price.effectiveHourly(workMin: $0.workMin, days: days) }
 
         if let e = model.reviewError { ErrorBanner(text: e) { Task { await model.loadReview() } } }
         if let e = r.todoError { ErrorBanner(text: "待办读取失败：" + e) { Task { await model.loadReview() } } }
 
-        section("AI 洞察") { aiCard(r) }
+        section("我比以前快了吗") { heroCard(stats, perf: perf, prevPerf: prevPerf, rate: rate) }
 
         section("时间价格") { priceCard(stats, rate: rate, prevRate: prevRate) }
 
-        section("最近 \(r.days) 天的工作时间") { workCard(stats, rate: rate) }
+        section("时薪日历") { RateCalendar(price: price, items: items, tag: model.workTag, rev: ledgerRev) }
+
+        section("长期趋势") { longTermCard(items) }
+
+        section("AI 洞察") { aiCard(r) }
+
+        section(scope == 0 ? "全部时间的工作时间" : "最近 \(days) 天的工作时间") { workCard(stats, rate: rate) }
 
         if !stats.projects.isEmpty {
             section("时间花在哪") { whereCard(stats, rate: rate) }
         }
 
-        section("效率") { efficiencyCard(r, stats, done) }
+        section("效率细节") { efficiencyCard(stats, perf: perf) }
 
         let stale = staleTasks()
         section("该消除的") { eliminateCard(stale, rate: rate) }
 
         if r.totalNotes + r.totalDone > 0 {
-            section("记录节奏") { rhythmCard(r) }
+            section("记录节奏（最近 \(r.days) 天）") { rhythmCard(r) }
         }
         if r.truncated {
             Text("某个时段笔记过多，统计可能不完整").font(.caption).foregroundStyle(.tertiary)
@@ -149,6 +176,170 @@ struct InsightsView: View {
         let p = s.split(separator: "-")
         guard p.count == 3, let m = Int(p[1]), let d = Int(p[2]) else { return s }
         return "\(m)/\(d)"
+    }
+
+    // MARK: - 我比以前快了吗
+
+    private func change(_ cur: Double?, _ prev: Double?) -> (text: String, up: Bool)? {
+        guard let cur, let prev, prev > 0 else { return nil }
+        let d = Int(((cur / prev - 1) * 100).rounded())
+        if d == 0 { return ("与上期持平", true) }
+        return (d > 0 ? "比上期高 \(d)%" : "比上期低 \(-d)%", d > 0)
+    }
+
+    private func heroCard(_ s: WorkStats, perf: WorkPerf, prevPerf: WorkPerf?, rate: Double?) -> some View {
+        let p = price
+        let eff = change(perf.perHour, prevPerf?.perHour)
+        let timeCut: (text: String, up: Bool)? = prevPerf.flatMap { pp in
+            guard pp.workMin > 0 else { return nil }
+            let d = Int(((Double(perf.workMin) / Double(pp.workMin) - 1) * 100).rounded())
+            return d == 0 ? ("与上期持平", true) : (d < 0 ? "比上期少 \(-d)%" : "比上期多 \(d)%", d < 0)
+        }
+        let goal = p.goalHoursPerDay
+        return InsightCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        metric("工作效率", value: perf.perHour.map { String(format: "%.1f", $0) } ?? "–", unit: perf.perHour == nil ? nil : "项 / 小时",
+                               note: eff?.text ?? "每专注工作 1 小时完成的产出", tint: eff.map { $0.up ? .green : .orange } ?? workColor)
+                    }
+                    Divider().frame(height: 62)
+                    metric("工作用时", value: fmtMin(s.workMin), note: timeCut?.text ?? "日均 \(fmtMin(s.workMin / max(s.days, 1)))",
+                           tint: timeCut.map { $0.up ? .green : .orange } ?? .primary)
+                    Divider().frame(height: 62)
+                    if goal > 0 {
+                        metric("省下的时间", value: fmtMin(perf.savedMin), note: p.configured ? "≈ \(TimePrice.money(Double(perf.savedMin) / 60 * p.realHourly))（按在岗时薪）· 目标 \(trimmed(goal)) 小时 / 天" : "目标 \(trimmed(goal)) 小时 / 天",
+                               tint: perf.savedMin > 0 ? .green : .primary)
+                    } else {
+                        metric("省下的时间", value: "–", note: "在「调整」里填每天目标专注工作时长")
+                    }
+                }
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "lightbulb.fill").foregroundStyle(.yellow)
+                    Text(heroSentence(s, perf: perf, prevPerf: prevPerf)).font(.callout).fixedSize(horizontal: false, vertical: true)
+                }
+                Text("产出 = 完成的工作待办（结审任务 + 「\(model.workTag)」标签的待办），高优先级算 2 项；用时 = 这些工作的专注时间。省下的时间 = 工作日里，当天有产出、又比每天目标少花的那部分。")
+                    .font(.caption).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func trimmed(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v) }
+
+    private func heroSentence(_ s: WorkStats, perf: WorkPerf, prevPerf: WorkPerf?) -> String {
+        guard let cur = perf.perHour else {
+            return "还没有足够的数据：用专注去做工作任务，并把它们完成，这里就会开始算你的效率。"
+        }
+        if let prev = prevPerf?.perHour {
+            let expected = Double(perf.out) / prev
+            let actual = Double(perf.workMin) / 60
+            let diff = expected - actual
+            if diff >= 0.5 { return "按上期的效率，这期的产出要花 \(String(format: "%.1f", expected)) 小时，实际只花了 \(String(format: "%.1f", actual)) 小时——省下 \(String(format: "%.1f", diff)) 小时，可以拿去做自己想做的事。" }
+            if diff <= -0.5 { return "按上期的效率，这期的产出只需 \(String(format: "%.1f", expected)) 小时，实际花了 \(String(format: "%.1f", actual)) 小时，多花了 \(String(format: "%.1f", -diff)) 小时。看看「时间花在哪」里是不是被零碎的事拖住了。" }
+            return "效率和上期差不多。想再快一点：砍掉不重要的、把最难的放进黄金时段、给任务定更短的期限。"
+        }
+        return "现在平均每专注工作 1 小时完成 \(String(format: "%.1f", cur)) 项。下一个周期开始，就能和这个数比较，看有没有越来越快。"
+    }
+
+    // MARK: - 长期趋势
+
+    private struct MonthRow: Identifiable {
+        let id: String
+        let label: String
+        let workMin: Int
+        let rate: Double?
+        let perHour: Double?
+    }
+
+    private func monthRows(_ items: [FocusLedgerEntry]) -> [MonthRow] {
+        let today = Day.today()
+        guard let firstRecord = [items.first?.day, OutputLedger.shared.firstDay].compactMap({ $0 }).min() else { return [] }
+        let p = price
+        let cal = Day.cal
+        let curMonth = cal.date(from: cal.dateComponents([.year, .month], from: Date())) ?? Date()
+        var rows: [MonthRow] = []
+        for back in stride(from: 11, through: 0, by: -1) {
+            guard let ms = cal.date(byAdding: .month, value: -back, to: curMonth),
+                  let nextMs = cal.date(byAdding: .month, value: 1, to: ms),
+                  let lastDate = cal.date(byAdding: .day, value: -1, to: nextMs) else { continue }
+            let startDay = max(Day.string(ms), firstRecord)
+            let endDay = min(Day.string(lastDate), today)
+            guard startDay <= endDay else { continue }
+            let n = Day.diff(startDay, endDay) + 1
+            let st = WorkStats.compute(days: n, entries: items, ending: endDay)
+            let pf = st.perf(price: p)
+            let label = "\(cal.component(.month, from: ms))月"
+            rows.append(MonthRow(id: Day.string(ms), label: label, workMin: st.workMin, rate: p.effectiveHourly(workMin: st.workMin, days: n), perHour: pf.perHour))
+        }
+        return rows
+    }
+
+    private func longTermCard(_ items: [FocusLedgerEntry]) -> some View {
+        let p = price
+        let rows = monthRows(items)
+        let today = Day.today()
+        let first = [items.first?.day, OutputLedger.shared.firstDay].compactMap { $0 }.min() ?? today
+        let totalDays = max(Day.diff(first, today) + 1, 1)
+        let all = WorkStats.compute(days: totalDays, entries: items)
+        let ap = all.perf(price: p)
+        let rateRows = rows.filter { $0.rate != nil }
+        let perRows = rows.filter { $0.perHour != nil }
+        return InsightCard {
+            VStack(alignment: .leading, spacing: 16) {
+                cardHeader("不随上面的范围变化 · 最近 12 个月", icon: "chart.line.uptrend.xyaxis", tint: hourColor, trailing: "从 \(shortDay(first)) 起")
+                HStack(alignment: .top, spacing: 16) {
+                    metric("累计专注工作", value: fmtMin(all.workMin), note: "共 \(all.sessions) 次专注")
+                    Divider().frame(height: 62)
+                    metric("累计完成", value: "\(ap.count)", unit: "个", note: "工作待办；全部 \(ap.all) 个")
+                    Divider().frame(height: 62)
+                    metric("累计省下", value: fmtMin(ap.savedMin), note: p.configured ? "≈ \(TimePrice.money(Double(ap.savedMin) / 60 * p.realHourly))" : nil, tint: ap.savedMin > 0 ? .green : .primary)
+                }
+                if rateRows.count >= 1 || perRows.count >= 1 {
+                    HStack(alignment: .top, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("有效时薪（元 / 小时）").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            if rateRows.isEmpty {
+                                Text("填写时间价格后显示").font(.caption).foregroundStyle(.tertiary).frame(height: 120, alignment: .center)
+                            } else {
+                                Chart(rateRows) { r in
+                                    BarMark(x: .value("月", r.label), y: .value("有效时薪", r.rate ?? 0))
+                                        .foregroundStyle(workColor.gradient)
+                                        .annotation(position: .top) { Text(TimePrice.money(r.rate ?? 0)).font(.system(size: 9)).foregroundStyle(.secondary) }
+                                }
+                                .chartYAxis(.hidden)
+                                .frame(height: 120)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("每工作小时完成（项）").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            if perRows.isEmpty {
+                                Text("完成工作待办后显示").font(.caption).foregroundStyle(.tertiary).frame(height: 120, alignment: .center)
+                            } else {
+                                Chart(perRows) { r in
+                                    LineMark(x: .value("月", r.label), y: .value("效率", r.perHour ?? 0))
+                                        .foregroundStyle(Color.green).interpolationMethod(.catmullRom)
+                                    PointMark(x: .value("月", r.label), y: .value("效率", r.perHour ?? 0))
+                                        .foregroundStyle(Color.green)
+                                        .annotation(position: .top) { Text(String(format: "%.1f", r.perHour ?? 0)).font(.system(size: 9)).foregroundStyle(.secondary) }
+                                }
+                                .chartYAxis(.hidden)
+                                .frame(height: 120)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if let a = rateRows.first, let b = rateRows.last, a.id != b.id, let ra = a.rate, let rb = b.rate, ra > 0 {
+                        let d = Int(((rb / ra - 1) * 100).rounded())
+                        Text("有效时薪从 \(a.label)的 \(TimePrice.money(ra)) 到 \(b.label)的 \(TimePrice.money(rb))，\(d >= 0 ? "高了" : "低了") \(abs(d))%。")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                } else {
+                    Text("数据还不够画趋势：持续用专注做工作任务、完成待办，一两个月后这里会显示你是不是越来越快。")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 
     // MARK: - 时间价格
@@ -228,6 +419,8 @@ struct InsightsView: View {
             priceField("每周有薪工时", unit: "小时", value: $paidHours)
             priceField("每周通勤 / 加班等无薪工时", unit: "小时", value: $unpaidHours)
             priceField("每月为工作付出的花费", unit: "元", value: $jobCost, hint: "交通、工作餐、置装、通勤租房溢价等")
+            priceField("每周工作几天", unit: "天", value: $workDays, hint: "周一起算；决定哪些天算工作日、时薪日历里每天分到多少收入")
+            priceField("每天目标专注工作", unit: "小时", value: $goalHours, hint: "比它少花、又把事做完，省下的时间就记在「省下的时间」里")
             HStack {
                 Text("「工作」标签").font(.callout)
                 Spacer()
@@ -373,55 +566,23 @@ struct InsightsView: View {
 
     // MARK: - 效率
 
-    private struct DoneCounts { var work = 0; var all = 0 }
-
-    /// 这段时间完成的待办：工作的（结审 + 带工作标签）和全部
-    private func doneCounts(_ r: ReviewData) -> DoneCounts {
-        let today = Day.today()
-        let first = Day.add(today, days: -(r.days - 1))
-        var c = DoneCounts()
-        c.all = r.totalDone
-        for t in model.reviewDoneTasks {
-            guard let when = t.completedDate else { continue }
-            let day = Day.string(when)
-            if day >= first, day <= today, model.isWorkTask(t) { c.work += 1 }
-        }
-        let projects = model.sjzOverview?.projects.map(\.name) ?? []
-        for i in 0 ..< r.days {
-            let d = Day.add(first, days: i)
-            for name in projects {
-                let n = SjzDaily.get(name, "done", day: d)
-                c.work += n
-                c.all += n
-            }
-        }
-        return c
-    }
-
-    private func efficiencyCard(_ r: ReviewData, _ s: WorkStats, _ done: DoneCounts) -> some View {
-        let workHours = Double(s.workMin) / 60
-        let perHour: String? = s.workMin >= 30 && done.work > 0 ? String(format: "%.1f", Double(done.work) / workHours) : nil
-        let high = r.donePriority[3]
-        let highShare = r.totalDone > 0 ? Int((Double(high) / Double(r.totalDone) * 100).rounded()) : nil
+    private func efficiencyCard(_ s: WorkStats, perf: WorkPerf) -> some View {
+        let highShare = perf.count > 0 ? Int((Double(perf.high) / Double(perf.count) * 100).rounded()) : nil
         return InsightCard {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(alignment: .top, spacing: 16) {
-                    metric("工作待办完成", value: "\(done.work)", unit: "个", note: "全部完成 \(done.all) 个")
+                    metric("工作待办完成", value: "\(perf.count)", unit: "个", note: "全部完成 \(perf.all) 个；高优先级算 2 份产出")
                     Divider().frame(height: 62)
-                    metric("每专注小时完成", value: perHour ?? "–", unit: perHour == nil ? nil : "个", note: perHour == nil ? "工作专注不足 30 分钟或还没完成" : "工作专注 \(fmtMin(s.workMin))")
-                    Divider().frame(height: 62)
-                    if done.work > 0, s.workMin > 0 {
-                        metric("每个待办用时", value: fmtMin(s.workMin / done.work), note: "工作专注 ÷ 完成数，越短越高效")
+                    if perf.count > 0, perf.workMin > 0 {
+                        metric("每个待办用时", value: fmtMin(perf.workMin / perf.count), note: "工作专注 ÷ 完成数，越短越高效")
                     } else {
                         metric("每个待办用时", value: "–", note: "需要工作专注记录和已完成的工作待办")
                     }
-                }
-                HStack(alignment: .top, spacing: 16) {
-                    metric("高优先级占比", value: highShare.map { "\($0)%" } ?? "–", note: highShare == nil ? nil : "完成 \(r.totalDone) 个里有 \(high) 个高优先级。越高说明时间越花在重要的事上",
-                           tint: (highShare ?? 0) >= 30 ? .green : .primary)
                     Divider().frame(height: 62)
-                    goldenCard(s)
+                    metric("高优先级占比", value: highShare.map { "\($0)%" } ?? "–", note: highShare == nil ? nil : "完成的工作里有 \(perf.high) 个高优先级",
+                           tint: (highShare ?? 0) >= 30 ? .green : .primary)
                 }
+                goldenCard(s)
             }
         }
     }
@@ -688,5 +849,213 @@ private struct InsightCard<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .frame(height: height)
             .glassCard(radius: 18)
+    }
+}
+
+
+// MARK: - 时薪日历
+
+/// 每天一格：当天有效时薪 = 当天分到的净收入 ÷ 当天专注工作的时间。颜色越深越值钱；休息日只显示工作时长
+private struct RateCalendar: View {
+    @EnvironmentObject var model: AppModel
+    let price: TimePrice
+    let items: [FocusLedgerEntry]
+    let tag: String
+    let rev: Int
+    @State private var month = Date()
+    @State private var selected: String?
+
+    private struct Cell {
+        let day: String
+        let inMonth: Bool
+        let workMin: Int
+        let rate: Double?
+        let out: Int
+    }
+
+    private let workColor = Brand.orange
+    private let minMin = 15
+
+    private var monthStart: Date { Day.cal.date(from: Day.cal.dateComponents([.year, .month], from: month)) ?? month }
+
+    private func cells() -> [Cell] {
+        let _ = rev
+        var work: [String: Int] = [:]
+        for e in items where e.work { work[e.day, default: 0] += e.minutes }
+        let mStart = monthStart
+        let grid = AppModel.calendarGrid(for: mStart)
+        let today = Day.today()
+        let ms = Day.string(mStart)
+        let me = Day.string(Day.cal.date(byAdding: .day, value: -1, to: Day.cal.date(byAdding: .month, value: 1, to: mStart) ?? mStart) ?? mStart)
+        var out: [Cell] = grid.map { d in
+            let inM = d >= ms && d <= me
+            let m = work[d] ?? 0
+            var rate: Double?
+            if inM, d <= today, price.configured, price.isWorkday(d), m >= minMin { rate = price.dailyNet / (Double(m) / 60) }
+            return Cell(day: d, inMonth: inM, workMin: m, rate: rate, out: OutputLedger.shared.out(d).weighted)
+        }
+        // 最后一整行都不在本月就不画
+        while out.count > 35, !out.suffix(7).contains(where: { $0.inMonth }) { out.removeLast(7) }
+        return out
+    }
+
+    private func money(_ v: Double) -> String {
+        v >= 10000 ? String(format: "¥%.1f万", v / 10000) : (v >= 1000 ? String(format: "¥%.1fk", v / 1000) : "¥" + String(format: "%.0f", v))
+    }
+
+    private func hours(_ m: Int) -> String {
+        m < 60 ? "\(m)分" : (m % 60 == 0 ? "\(m / 60)h" : String(format: "%.1fh", Double(m) / 60))
+    }
+
+    var body: some View {
+        let cs = cells()
+        let rates = cs.compactMap(\.rate).sorted()
+        let ref = rates.isEmpty ? 1 : max(rates[min(Int(Double(rates.count) * 0.9), rates.count - 1)], 1)
+        let today = Day.today()
+        let monthCells = cs.filter { $0.inMonth && $0.day <= today }
+        let monthWork = monthCells.reduce(0) { $0 + $1.workMin }
+        let elapsed = monthCells.count
+        let monthRate = price.configured && monthWork >= 30 ? price.periodNet(days: elapsed) / (Double(monthWork) / 60) : nil
+        let monthOut = monthCells.reduce(0) { $0 + $1.out }
+        let best = cs.compactMap { c in c.rate.map { (c.day, $0) } }.max { $0.1 < $1.1 }
+        let weekdays = ["一", "二", "三", "四", "五", "六", "日"]
+        return InsightCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Text(monthTitle).font(.headline)
+                    Spacer(minLength: 8)
+                    Button { shift(-1) } label: { Image(systemName: "chevron.left") }.buttonStyle(.borderless)
+                    Button("本月") { month = Date(); selected = nil }.buttonStyle(.bordered).controlSize(.small)
+                    Button { shift(1) } label: { Image(systemName: "chevron.right") }.buttonStyle(.borderless)
+                }
+
+                if !price.configured {
+                    Text("先在上面的「时间价格」里填好每月收入，日历才能算出每天的时薪。下面显示的是每天的工作时长。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                HStack(alignment: .top, spacing: 16) {
+                    stat("本月有效时薪", monthRate.map { money($0) + " / 小时" } ?? "–")
+                    stat("工作时长", hours(monthWork))
+                    stat("完成产出", "\(monthOut) 项")
+                    stat("最高的一天", best.map { "\(shortDay($0.0)) \(money($0.1))" } ?? "–")
+                }
+
+                VStack(spacing: 4) {
+                    HStack(spacing: 4) {
+                        ForEach(weekdays, id: \.self) { w in
+                            Text(w).font(.caption2.weight(.medium)).foregroundStyle(.tertiary).frame(maxWidth: .infinity)
+                        }
+                    }
+                    ForEach(0 ..< cs.count / 7, id: \.self) { row in
+                        HStack(spacing: 4) {
+                            ForEach(0 ..< 7, id: \.self) { col in cell(cs[row * 7 + col], ref: ref, today: today) }
+                        }
+                    }
+                }
+
+                if let sel = selected { detail(sel) }
+            }
+        }
+    }
+
+    private func stat(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 17, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func cell(_ c: Cell, ref: Double, today: String) -> some View {
+        let isToday = c.day == today
+        let sel = selected == c.day
+        let strength = c.rate.map { min($0 / ref, 1) } ?? 0
+        let n = Int(c.day.suffix(2)) ?? 0
+        return Button {
+            selected = selected == c.day ? nil : c.day
+        } label: {
+            VStack(spacing: 2) {
+                HStack {
+                    Text("\(n)").font(.system(size: 10, weight: isToday ? .bold : .regular)).foregroundStyle(isToday ? workColor : Color.secondary)
+                    Spacer(minLength: 0)
+                    if c.out > 0 { Image(systemName: "checkmark").font(.system(size: 8, weight: .bold)).foregroundStyle(.green) }
+                }
+                Spacer(minLength: 0)
+                if let r = c.rate {
+                    Text(money(r)).font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                    Text(hours(c.workMin)).font(.system(size: 9)).foregroundStyle(.secondary)
+                } else if c.workMin > 0 {
+                    Text(hours(c.workMin)).font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(price.isWorkday(c.day) ? "太短" : "休息日").font(.system(size: 9)).foregroundStyle(.tertiary)
+                } else {
+                    Text(" ").font(.system(size: 13))
+                    Text(" ").font(.system(size: 9))
+                }
+            }
+            .padding(.horizontal, 6).padding(.vertical, 5)
+            .frame(maxWidth: .infinity).frame(height: 58)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(c.rate != nil ? workColor.opacity(0.12 + 0.5 * strength) : Color.primary.opacity(c.inMonth ? 0.05 : 0.0))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(sel ? Color.accentColor : (isToday ? workColor.opacity(0.6) : Color.clear), lineWidth: sel ? 2 : 1)
+            )
+            .opacity(c.inMonth ? 1 : 0.0)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!c.inMonth)
+    }
+
+    private func detail(_ day: String) -> some View {
+        let list = items.filter { $0.day == day }.sorted { $0.startMs < $1.startMs }
+        let o = OutputLedger.shared.out(day)
+        let wm = list.filter(\.work).reduce(0) { $0 + $1.minutes }
+        return VStack(alignment: .leading, spacing: 6) {
+            Divider()
+            HStack {
+                Text(Day.label(day)).font(.callout.weight(.semibold))
+                Spacer()
+                Text("完成工作 \(o.count) 个 · 工作专注 \(hours(wm))").font(.caption).foregroundStyle(.secondary)
+            }
+            if list.isEmpty {
+                Text("这天没有专注记录").font(.caption).foregroundStyle(.tertiary)
+            } else {
+                ForEach(Array(list.prefix(10).enumerated()), id: \.offset) { _, e in
+                    HStack(spacing: 8) {
+                        Image(systemName: e.work ? "briefcase.fill" : "person.fill").font(.system(size: 10)).foregroundStyle(e.work ? workColor : Color.secondary)
+                        Text(clock(e.startDate)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                        Text(e.title.isEmpty ? "自由专注" : e.title).font(.callout).lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(hours(e.minutes)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                }
+                if list.count > 10 { Text("还有 \(list.count - 10) 次").font(.caption).foregroundStyle(.tertiary) }
+            }
+        }
+    }
+
+    private func clock(_ d: Date) -> String {
+        let c = Day.cal.dateComponents([.hour, .minute], from: d)
+        return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
+    }
+
+    private func shortDay(_ s: String) -> String {
+        let p = s.split(separator: "-")
+        guard p.count == 3, let m = Int(p[1]), let d = Int(p[2]) else { return s }
+        return "\(m)/\(d)"
+    }
+
+    private var monthTitle: String {
+        let c = Day.cal.dateComponents([.year, .month], from: month)
+        return "\(c.year ?? 0) 年 \(c.month ?? 0) 月"
+    }
+
+    private func shift(_ n: Int) {
+        month = Day.cal.date(byAdding: .month, value: n, to: month) ?? month
+        selected = nil
     }
 }

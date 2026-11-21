@@ -14,6 +14,10 @@ struct TimePrice: Equatable {
     var paidHoursPerWeek: Double = 40
     var unpaidHoursPerWeek: Double = 0
     var monthlyJobCost: Double = 0
+    /// 每天想花在工作上的专注时长（小时）：比它少花的部分，就是省下来的时间
+    var goalHoursPerDay: Double = 4
+    /// 每周工作几天（周一起算）：决定哪些天算工作日、每个工作日分到多少收入
+    var workDaysPerWeek: Double = 5
 
     static let weeksPerMonth = 52.0 / 12.0
 
@@ -25,6 +29,15 @@ struct TimePrice: Equatable {
     var nominalHourly: Double { paidMonthlyHours > 0 ? monthlyPay / paidMonthlyHours : 0 }
     /// 在岗时薪（底价）：扣掉为工作付出的花费，再把无薪的通勤 / 加班算进工时。按「坐在岗位上的时间」算，摸鱼的时间也算在里面
     var realHourly: Double { totalMonthlyHours > 0 ? max(monthlyPay - max(monthlyJobCost, 0), 0) / totalMonthlyHours : 0 }
+
+    var monthlyNet: Double { max(monthlyPay - max(monthlyJobCost, 0), 0) }
+    /// 每个工作日分到的净收入
+    var dailyNet: Double { workDaysPerWeek > 0 ? monthlyNet / (workDaysPerWeek * Self.weeksPerMonth) : 0 }
+    func isWorkday(_ day: String) -> Bool {
+        guard let d = Day.parse(day) else { return false }
+        let wd = Day.cal.component(.weekday, from: d)   // 1 = 周日
+        return (wd + 5) % 7 < Int(workDaysPerWeek.rounded())
+    }
 
     /// 一段时间（天数）里的净收入：月收入 − 工作花费，按天折算
     func periodNet(days: Int) -> Double { max(monthlyPay - max(monthlyJobCost, 0), 0) * Double(days) * 12 / 365 }
@@ -266,5 +279,142 @@ struct WorkStats {
             }
         }
         return out
+    }
+}
+
+
+// MARK: - 产出账本
+
+/// 每天完成了多少工作产出。滴答只能读到一小段历史，所以每次打开洞察都把读到的存进本机，越用越长。
+/// 产出 = 完成的工作待办数，高优先级算两个。
+struct DayOut: Codable, Equatable {
+    /// 滴答里完成的工作待办（带「工作」标签）
+    var dn = 0
+    /// 其中高优先级的
+    var dh = 0
+    /// 滴答里完成的全部待办
+    var da = 0
+    /// 结审里完成的任务（一律是工作）
+    var sn = 0
+
+    var weighted: Int { dn + dh + sn }
+    var count: Int { dn + sn }
+    var all: Int { da + sn }
+}
+
+@MainActor
+final class OutputLedger {
+    static let shared = OutputLedger()
+
+    private struct Store: Codable {
+        var days: [String: DayOut] = [:]
+        var backfilled = false
+    }
+
+    private(set) var days: [String: DayOut] = [:]
+    private(set) var backfilled = false
+    private static let file = "output-ledger.json"
+
+    private init() {
+        if let s = LocalStore.read(Self.file), let d = s.data(using: .utf8), let st = try? JSONDecoder().decode(Store.self, from: d) {
+            days = st.days
+            backfilled = st.backfilled
+        }
+    }
+
+    /// 记过产出的最早一天（更早的日子没有数据，算效率时要排除）
+    var firstDay: String? { days.keys.min() }
+
+    private func save() {
+        let st = Store(days: days, backfilled: backfilled)
+        if let d = try? JSONEncoder().encode(st), let s = String(data: d, encoding: .utf8) { LocalStore.write(Self.file, s) }
+    }
+
+    func out(_ day: String) -> DayOut { days[day] ?? DayOut() }
+
+    /// 用刚读到的 [from, to] 完成记录覆盖这段时间；结审的计数是本机实时记的，只增不减
+    func update(from: String, to: String, done: [DidaTask], model: AppModel, markBackfilled: Bool) {
+        var fresh: [String: DayOut] = [:]
+        var d = from
+        while d <= to {
+            fresh[d] = DayOut()
+            d = Day.add(d, days: 1)
+        }
+        for t in done {
+            guard let when = t.completedDate else { continue }
+            let day = Day.string(when)
+            guard fresh[day] != nil else { continue }
+            fresh[day]!.da += 1
+            if model.isWorkTask(t) {
+                fresh[day]!.dn += 1
+                if t.priority >= 5 { fresh[day]!.dh += 1 }
+            }
+        }
+        let projects = model.sjzOverview?.projects.map(\.name) ?? []
+        for (day, var o) in fresh {
+            let n = projects.reduce(0) { $0 + SjzDaily.get($1, "done", day: day) }
+            o.sn = max(n, days[day]?.sn ?? 0)
+            days[day] = o
+        }
+        if markBackfilled { backfilled = true }
+        save()
+    }
+
+    func sum(from: String, to: String) -> DayOut {
+        var t = DayOut()
+        for (d, o) in days where d >= from && d <= to {
+            t.dn += o.dn; t.dh += o.dh; t.da += o.da; t.sn += o.sn
+        }
+        return t
+    }
+}
+
+extension AppModel {
+    /// 把完成记录补进产出账本：第一次读最近 90 天，之后每次读最近 30 天
+    func refreshOutputLedger() async {
+        guard hasDida || hasSjz else { return }
+        let led = OutputLedger.shared
+        let today = Day.today()
+        let span = led.backfilled ? 30 : 90
+        let from = Day.add(today, days: -(span - 1))
+        var done: [DidaTask] = []
+        if hasDida {
+            guard let r = try? await dida.completedInRange(from, today) else { return }
+            done = r
+        }
+        led.update(from: from, to: today, done: done, model: self, markBackfilled: true)
+    }
+}
+
+// MARK: - 效率
+
+struct WorkPerf {
+    /// 有产出记录的那些天里的工作专注分钟
+    var workMin = 0
+    /// 加权产出（完成的工作待办，高优先级算两个）
+    var out = 0
+    var count = 0
+    var high = 0
+    var all = 0
+    /// 比目标工作时长少花的分钟（只算工作日、当天有产出、也开了专注的日子）
+    var savedMin = 0
+
+    /// 每工作小时完成几项
+    var perHour: Double? { workMin >= 30 && out > 0 ? Double(out) / (Double(workMin) / 60) : nil }
+}
+
+extension WorkStats {
+    @MainActor func perf(price: TimePrice) -> WorkPerf {
+        var p = WorkPerf()
+        let led = OutputLedger.shared
+        guard let start = led.firstDay else { return p }
+        let goal = Int((price.goalHoursPerDay * 60).rounded())
+        for d in daily where d.day >= start {
+            let o = led.out(d.day)
+            p.workMin += d.work
+            p.out += o.weighted; p.count += o.count; p.high += o.dh; p.all += o.all
+            if goal > 0, o.weighted > 0, d.work > 0, d.work < goal, price.isWorkday(d.day) { p.savedMin += goal - d.work }
+        }
+        return p
     }
 }

@@ -930,7 +930,9 @@ struct QuickAddView: View {
             case .daily: return "记入日记"
             case .evidence: return "存为证据"
             case .regulation: return "存为法规"
-            default: break
+            case .todo: return "添加"
+            case .note: return "保存"
+            default: return "记录"
             }
         }
         switch k {
