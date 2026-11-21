@@ -146,7 +146,15 @@ private final class StickyPanel: NSPanel {
         super.becomeKey()
         onKey?()
     }
+}
 
+/// 无边框窗口拖边缘缩放时，系统不会照 minSize 限制（实测能拖到比最窄宽度还窄），这里自己夹住：
+/// 宽度不小于 minSize，高度夹在 minSize / maxSize 之间（折叠时高度固定）
+extension StickyPanel: NSWindowDelegate {
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        NSSize(width: max(frameSize.width, sender.minSize.width),
+               height: min(max(frameSize.height, sender.minSize.height), sender.maxSize.height))
+    }
 }
 
 /// 顶部的拖动区：按住拖动整个窗口（SwiftUI 内容上窗口自带的「拖背景移动」不生效，自己处理）
@@ -399,6 +407,7 @@ final class StickyController {
         p.isMovableByWindowBackground = false
         p.animationBehavior = .utilityWindow
         p.minSize = NSSize(width: Self.minW, height: 190)
+        p.delegate = p
         applyLevel(p, pinned: m.pinned)
         if m.collapsed { layoutCollapse(p, m) }
 
