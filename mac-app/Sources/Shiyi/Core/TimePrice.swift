@@ -2,7 +2,7 @@ import Foundation
 
 /*
  * 洞察页「时间价格」的数据层。思路来自《每周工作 4 小时》（ELI 有效时薪、80/20 时间审计）和《要钱还是要生活》（真实时薪）：
- * - 时间价格：真实时薪 = (每月到手收入 − 为工作付出的花费) ÷ (有薪工时 + 通勤 / 加班等无薪工时)，设置只存本机；
+ * - 时间价格：有效时薪（ELI）= 净收入 ÷ 实际专注工作的时间（做得越快越值钱）；在岗时薪 = 净收入 ÷ (有薪 + 无薪工时)，是坐在岗位上的底价，两者之差就是浪费；设置只存本机；
  * - 工作时间：结审里的任务一律算工作；其他待办带「工作」标签才算工作；其余是普通时间；
  * - 专注账本：每次专注结束都记一笔（本机），洞察按它统计时间花在哪、值多少钱。
  */
@@ -17,19 +17,25 @@ struct TimePrice: Equatable {
 
     static let weeksPerMonth = 52.0 / 12.0
 
-    var configured: Bool { monthlyPay > 0 && paidHoursPerWeek > 0 }
+    var configured: Bool { monthlyPay > 0 }
     private var paidMonthlyHours: Double { paidHoursPerWeek * Self.weeksPerMonth }
     var totalMonthlyHours: Double { (paidHoursPerWeek + max(unpaidHoursPerWeek, 0)) * Self.weeksPerMonth }
 
     /// 名义时薪：月收入 ÷ 有薪工时
     var nominalHourly: Double { paidMonthlyHours > 0 ? monthlyPay / paidMonthlyHours : 0 }
-    /// 真实时薪：扣掉为工作付出的花费，再把无薪的通勤 / 加班算进工时
+    /// 在岗时薪（底价）：扣掉为工作付出的花费，再把无薪的通勤 / 加班算进工时。按「坐在岗位上的时间」算，摸鱼的时间也算在里面
     var realHourly: Double { totalMonthlyHours > 0 ? max(monthlyPay - max(monthlyJobCost, 0), 0) / totalMonthlyHours : 0 }
-    var perMinute: Double { realHourly / 60 }
-    /// 真实时薪比名义时薪缩水了多少（0~1）
-    var shrink: Double { nominalHourly > 0 ? min(max(1 - realHourly / nominalHourly, 0), 1) : 0 }
 
-    func cost(minutes: Int) -> Double { Double(minutes) / 60 * realHourly }
+    /// 一段时间（天数）里的净收入：月收入 − 工作花费，按天折算
+    func periodNet(days: Int) -> Double { max(monthlyPay - max(monthlyJobCost, 0), 0) * Double(days) * 12 / 365 }
+    /// 一段时间里「在岗」的分钟数（按每周有薪工时折算）
+    func onDutyMinutes(days: Int) -> Double { max(paidHoursPerWeek, 0) * 60 * Double(days) / 7 }
+
+    /// 有效时薪（《每周工作 4 小时》的 ELI）：净收入 ÷ 真正专注工作的时间。同样的收入，花的时间越少越值钱。工作专注不足 30 分钟时算不出来
+    func effectiveHourly(workMin: Int, days: Int) -> Double? {
+        guard configured, workMin >= 30 else { return nil }
+        return periodNet(days: days) / (Double(workMin) / 60)
+    }
 
     static func money(_ v: Double) -> String {
         let a = abs(v)
@@ -208,8 +214,9 @@ struct WorkStats {
     var totalMin: Int { workMin + normalMin }
     var avgSessionMin: Int { sessions > 0 ? Int((Double(totalMin) / Double(sessions)).rounded()) : 0 }
 
-    static func compute(days: Int, entries: [FocusLedgerEntry]) -> WorkStats {
-        let today = Day.today()
+    /// `ending`：统计区间的最后一天（默认今天；算上一期时传上一期的最后一天）
+    static func compute(days: Int, entries: [FocusLedgerEntry], ending: String? = nil) -> WorkStats {
+        let today = ending ?? Day.today()
         let first = Day.add(today, days: -(days - 1))
         var out = WorkStats(days: days)
         out.daily = (0 ..< days).map { DayMin(day: Day.add(first, days: $0)) }

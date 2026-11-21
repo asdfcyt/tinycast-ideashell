@@ -69,24 +69,27 @@ struct InsightsView: View {
         let _ = ledgerRev
         let stats = WorkStats.compute(days: r.days, entries: FocusLedger.shared.items)
         let done = doneCounts(r)
+        let prev = WorkStats.compute(days: r.days, entries: FocusLedger.shared.items, ending: Day.add(Day.today(), days: -r.days))
+        let rate = price.effectiveHourly(workMin: stats.workMin, days: r.days)
+        let prevRate = price.effectiveHourly(workMin: prev.workMin, days: r.days)
 
         if let e = model.reviewError { ErrorBanner(text: e) { Task { await model.loadReview() } } }
         if let e = r.todoError { ErrorBanner(text: "待办读取失败：" + e) { Task { await model.loadReview() } } }
 
         section("AI 洞察") { aiCard(r) }
 
-        section("时间价格") { priceCard() }
+        section("时间价格") { priceCard(stats, rate: rate, prevRate: prevRate) }
 
-        section("最近 \(r.days) 天的工作时间") { workCard(stats) }
+        section("最近 \(r.days) 天的工作时间") { workCard(stats, rate: rate) }
 
         if !stats.projects.isEmpty {
-            section("时间花在哪") { whereCard(stats) }
+            section("时间花在哪") { whereCard(stats, rate: rate) }
         }
 
         section("效率") { efficiencyCard(r, stats, done) }
 
         let stale = staleTasks()
-        section("该消除的") { eliminateCard(stale) }
+        section("该消除的") { eliminateCard(stale, rate: rate) }
 
         if r.totalNotes + r.totalDone > 0 {
             section("记录节奏") { rhythmCard(r) }
@@ -150,8 +153,24 @@ struct InsightsView: View {
 
     // MARK: - 时间价格
 
-    private func priceCard() -> some View {
+    /// 把一段分钟数按有效时薪折成钱
+    private func worth(_ minutes: Int, _ rate: Double?) -> String? {
+        rate.map { TimePrice.money($0 * Double(minutes) / 60) }
+    }
+
+    private func rateNote(_ p: TimePrice, _ s: WorkStats, rate: Double, prevRate: Double?) -> String {
+        var t = "净收入 \(TimePrice.money(p.periodNet(days: s.days))) ÷ 专注工作 \(fmtMin(s.workMin))"
+        if let pr = prevRate, pr > 0 {
+            let d = Int(((rate / pr - 1) * 100).rounded())
+            t += d == 0 ? "，与上期持平" : "，较上期\(d > 0 ? "高" : "低") \(abs(d))%"
+        }
+        return t
+    }
+
+    private func priceCard(_ s: WorkStats, rate: Double?, prevRate: Double?) -> some View {
         let p = price
+        let onDuty = p.onDutyMinutes(days: s.days)
+        let idleMin = max(Int(onDuty) - s.workMin, 0)
         return InsightCard {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 6) {
@@ -168,17 +187,34 @@ struct InsightsView: View {
 
                 if p.configured {
                     HStack(alignment: .top, spacing: 16) {
-                        metric("真实时薪", value: TimePrice.money(p.realHourly), unit: "/ 小时",
-                               note: p.shrink > 0.005 ? "名义 \(TimePrice.money(p.nominalHourly))，被无薪时间和工作花费吃掉 \(Int((p.shrink * 100).rounded()))%" : "与名义时薪一致", tint: workColor)
+                        if let rate {
+                            let trend = rateNote(p, s, rate: rate, prevRate: prevRate)
+                            metric("有效时薪", value: TimePrice.money(rate), unit: "/ 小时", note: trend, tint: workColor)
+                        } else {
+                            metric("有效时薪", value: "–", note: "最近 \(s.days) 天的工作专注不足 30 分钟，用结审任务或「\(model.workTag)」标签的任务专注后才能算", tint: workColor)
+                        }
                         Divider().frame(height: 62)
-                        metric("每分钟", value: TimePrice.money(p.perMinute), unit: "/ 分钟", note: "刷 10 分钟手机 ≈ \(TimePrice.money(p.cost(minutes: 10)))")
+                        metric("在岗时薪", value: TimePrice.money(p.realHourly), unit: "/ 小时",
+                               note: "按在岗 \(Int(p.totalMonthlyHours.rounded())) 小时 / 月算的底价（含通勤 / 加班，扣工作花费）")
                         Divider().frame(height: 62)
-                        metric("一个番茄", value: TimePrice.money(p.cost(minutes: 25)), unit: "/ 25 分钟", note: "一小时 ≈ \(TimePrice.money(p.realHourly))")
+                        if let rate {
+                            metric("每分钟", value: TimePrice.money(rate / 60), unit: "/ 分钟", note: "一个番茄 25 分钟 ≈ \(TimePrice.money(rate * 25 / 60))；刷 10 分钟手机 ≈ \(TimePrice.money(rate / 6))")
+                        } else {
+                            metric("每分钟", value: TimePrice.money(p.realHourly / 60), unit: "/ 分钟", note: "按在岗时薪折算")
+                        }
                     }
-                    Text("每月实际投入 \(Int(p.totalMonthlyHours.rounded())) 小时（含通勤 / 加班），到手 \(TimePrice.money(p.monthlyPay))\(jobCost > 0 ? "，工作花费 \(TimePrice.money(jobCost))" : "")")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if onDuty > 0 {
+                        let ratio = Double(s.workMin) / onDuty
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "lightbulb.fill").foregroundStyle(.yellow)
+                            Text("最近 \(s.days) 天在岗约 \(fmtMin(Int(onDuty)))，真正专注工作 \(fmtMin(s.workMin))（\(Int((ratio * 100).rounded()))%），其余 \(fmtMin(idleMin)) 没有专注产出，按底价折合 \(TimePrice.money(Double(idleMin) / 60 * p.realHourly))。有效时薪的关键：同样的活，花的时间越少，这个数就越高。")
+                                .font(.callout).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Text("只统计专注记录里的工作时间（结审任务 + 「\(model.workTag)」标签）；没开专注的工作不会算进去。")
+                        .font(.caption).foregroundStyle(.tertiary)
                 } else {
-                    Text("填上每月到手收入、每周工时、通勤加班和工作花费，算出你每小时、每分钟的真实价格。之后每一段专注、每一件待办都能换算成钱，才知道哪些事值得做、哪些该外包或砍掉。")
+                    Text("填上每月到手收入、每周工时和工作花费：有效时薪 = 净收入 ÷ 你真正专注工作的时间，做同样的事花得越少、时间越值钱；在岗时薪是按坐在岗位上的时间算的底价，两者的差距就是时间的浪费。")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -198,7 +234,7 @@ struct InsightsView: View {
                 TextField("工作", text: $workTag).textFieldStyle(.roundedBorder).frame(width: 110).multilineTextAlignment(.trailing)
             }
             Divider()
-            Text("真实时薪 = (收入 − 工作花费) ÷ (有薪工时 + 无薪工时)。结审里的任务一律算工作；其他待办带上「\(workTag.trimmed.isEmpty ? "工作" : workTag)」标签才算工作，其余是普通时间。数据只存在这台电脑上。")
+            Text("有效时薪 = (收入 − 工作花费) ÷ 实际专注工作的时间；在岗时薪 = 同样的净收入 ÷ (有薪 + 无薪工时)。结审里的任务一律算工作；其他待办带上「\(workTag.trimmed.isEmpty ? "工作" : workTag)」标签才算工作，其余是普通时间。数据只存在这台电脑上。")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)
@@ -220,7 +256,7 @@ struct InsightsView: View {
 
     // MARK: - 工作时间
 
-    private func workCard(_ s: WorkStats) -> some View {
+    private func workCard(_ s: WorkStats, rate: Double?) -> some View {
         let p = price
         let total = max(s.totalMin, 1)
         let step = s.days <= 8 ? 1 : Int((Double(s.days) / 6).rounded(.up))
@@ -233,9 +269,9 @@ struct InsightsView: View {
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 } else {
                     HStack(alignment: .top, spacing: 16) {
-                        metric("工作", value: fmtMin(s.workMin), note: p.configured ? "价值约 \(TimePrice.money(p.cost(minutes: s.workMin)))" : nil, tint: workColor)
+                        metric("工作", value: fmtMin(s.workMin), note: rate != nil ? "对应本期净收入 \(TimePrice.money(p.periodNet(days: s.days)))" : nil, tint: workColor)
                         Divider().frame(height: 62)
-                        metric("普通时间", value: fmtMin(s.normalMin), note: p.configured ? "约 \(TimePrice.money(p.cost(minutes: s.normalMin)))" : nil)
+                        metric("普通时间", value: fmtMin(s.normalMin), note: worth(s.normalMin, rate).map { "按有效时薪折算 \($0)" })
                     }
                     // 工作 / 普通时间的占比条
                     GeometryReader { g in
@@ -273,7 +309,7 @@ struct InsightsView: View {
                         Divider().frame(height: 50)
                         if p.configured, paidMin > 0 {
                             let ratio = Double(s.workMin) / paidMin
-                            metric("专注占比", value: "\(Int((ratio * 100).rounded()))%", note: "工作专注 ÷ 有薪工时；有薪工时里真正产出的部分", tint: ratio >= 0.4 ? .green : .primary)
+                            metric("专注占比", value: "\(Int((ratio * 100).rounded()))%", note: "工作专注 ÷ 在岗时间，越高越不浪费", tint: ratio >= 0.4 ? .green : .primary)
                         } else {
                             metric("专注占比", value: "–", note: "填写时间价格后显示")
                         }
@@ -285,15 +321,14 @@ struct InsightsView: View {
 
     // MARK: - 时间花在哪（80/20）
 
-    private func whereCard(_ s: WorkStats) -> some View {
-        let p = price
+    private func whereCard(_ s: WorkStats, rate: Double?) -> some View {
         let rows = Array(s.projects.prefix(6))
         let maxMin = max(rows.first?.minutes ?? 1, 1)
         return InsightCard {
             VStack(alignment: .leading, spacing: 14) {
-                cardHeader("按项目", icon: "chart.bar.doc.horizontal.fill", tint: noteColor, trailing: p.configured ? "时长 · 价值" : "时长")
+                cardHeader("按项目", icon: "chart.bar.doc.horizontal.fill", tint: noteColor, trailing: rate != nil ? "时长 · 价值" : "时长")
                 VStack(alignment: .leading, spacing: 12) {
-                    ForEach(rows) { it in projectRow(it, maxMin: maxMin, total: s.totalMin, price: p) }
+                    ForEach(rows) { it in projectRow(it, maxMin: maxMin, total: s.totalMin, rate: rate) }
                 }
                 if let share = s.paretoShare {
                     Divider()
@@ -304,14 +339,14 @@ struct InsightsView: View {
                     }
                 } else if let top = s.tasks.first {
                     Divider()
-                    Text("最费时间的是「\(top.name)」，\(fmtMin(top.minutes))\(p.configured ? "，约 \(TimePrice.money(p.cost(minutes: top.minutes)))" : "")。")
+                    Text("最费时间的是「\(top.name)」，\(fmtMin(top.minutes))\(worth(top.minutes, rate).map { "，约 \($0)" } ?? "")。")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
     }
 
-    private func projectRow(_ it: WorkStats.Item, maxMin: Int, total: Int, price p: TimePrice) -> some View {
+    private func projectRow(_ it: WorkStats.Item, maxMin: Int, total: Int, rate: Double?) -> some View {
         let tint = it.work ? workColor : normalColor.opacity(0.5)
         let share = Int((Double(it.minutes) / Double(max(total, 1)) * 100).rounded())
         return VStack(alignment: .leading, spacing: 5) {
@@ -321,8 +356,8 @@ struct InsightsView: View {
                 Spacer(minLength: 8)
                 Text(fmtMin(it.minutes)).font(.callout).monospacedDigit()
                 Text("\(share)%").font(.caption).foregroundStyle(.tertiary).monospacedDigit().frame(width: 34, alignment: .trailing)
-                if p.configured {
-                    Text(TimePrice.money(p.cost(minutes: it.minutes))).font(.callout.weight(.semibold)).monospacedDigit()
+                if let w = worth(it.minutes, rate) {
+                    Text(w).font(.callout.weight(.semibold)).monospacedDigit()
                         .foregroundStyle(it.work ? workColor : Color.secondary).frame(minWidth: 56, alignment: .trailing)
                 }
             }
@@ -364,7 +399,6 @@ struct InsightsView: View {
     }
 
     private func efficiencyCard(_ r: ReviewData, _ s: WorkStats, _ done: DoneCounts) -> some View {
-        let p = price
         let workHours = Double(s.workMin) / 60
         let perHour: String? = s.workMin >= 30 && done.work > 0 ? String(format: "%.1f", Double(done.work) / workHours) : nil
         let high = r.donePriority[3]
@@ -376,10 +410,10 @@ struct InsightsView: View {
                     Divider().frame(height: 62)
                     metric("每专注小时完成", value: perHour ?? "–", unit: perHour == nil ? nil : "个", note: perHour == nil ? "工作专注不足 30 分钟或还没完成" : "工作专注 \(fmtMin(s.workMin))")
                     Divider().frame(height: 62)
-                    if p.configured, done.work > 0, s.workMin > 0 {
-                        metric("每个待办的时间成本", value: TimePrice.money(p.cost(minutes: s.workMin) / Double(done.work)), note: "工作专注价值 ÷ 完成数")
+                    if done.work > 0, s.workMin > 0 {
+                        metric("每个待办用时", value: fmtMin(s.workMin / done.work), note: "工作专注 ÷ 完成数，越短越高效")
                     } else {
-                        metric("每个待办的时间成本", value: "–", note: "需要时间价格和工作专注记录")
+                        metric("每个待办用时", value: "–", note: "需要工作专注记录和已完成的工作待办")
                     }
                 }
                 HStack(alignment: .top, spacing: 16) {
@@ -434,7 +468,7 @@ struct InsightsView: View {
         .sorted { $0.days > $1.days }
     }
 
-    private func eliminateCard(_ stale: [Stale]) -> some View {
+    private func eliminateCard(_ stale: [Stale], rate: Double?) -> some View {
         let p = price
         return InsightCard {
             VStack(alignment: .leading, spacing: 12) {
@@ -467,7 +501,7 @@ struct InsightsView: View {
                     Divider()
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "lightbulb.fill").foregroundStyle(.yellow)
-                        Text("按你的真实时薪 \(TimePrice.money(p.realHourly))/小时：一件事如果花钱外包、或用工具自动化的成本低于这个数，就别自己做；做不做都行的，直接消除。给任务设更短的期限——任务会膨胀到占满你给它的时间（帕金森定律）。")
+                        Text("按你的\(rate != nil ? "有效" : "在岗")时薪 \(TimePrice.money(rate ?? p.realHourly))/小时：一件事如果花钱外包、或用工具自动化的成本低于这个数，就别自己做；做不做都行的，直接消除。给任务设更短的期限——任务会膨胀到占满你给它的时间（帕金森定律）。")
                             .font(.callout).fixedSize(horizontal: false, vertical: true)
                     }
                 }
