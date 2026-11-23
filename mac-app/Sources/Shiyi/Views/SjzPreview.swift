@@ -416,6 +416,8 @@ enum SjzDetailStore {
         var files: [SjzFile]
         /// 资料清单的 dueAt / sentAt / recalledAt（yyyy-MM-dd）
         var times: [String: String] = [:]
+        /// 引用了这份证据 / 法规的文书
+        var usedBy: [SjzUsedDoc] = []
     }
 
     private static var cache: [String: Detail] = [:]
@@ -435,9 +437,9 @@ enum SjzDetailStore {
         let k = key(project, id)
         if let t = inflight[k] { return await t.value }
         let t = Task { () -> Detail? in
-            let d: (content: String, editable: Bool, images: [String: Data], files: [SjzFile], times: [String: String])
+            let d: (content: String, editable: Bool, images: [String: Data], files: [SjzFile], times: [String: String], usedBy: [SjzUsedDoc])
             do { d = try await api.captureDetail(project: project, id: id); lastError[k] = nil } catch { lastError[k] = error.localizedDescription; return nil }
-            return Detail(content: d.content, editable: d.editable, images: d.images.compactMapValues { NSImage(data: $0) }, files: d.files, times: d.times)
+            return Detail(content: d.content, editable: d.editable, images: d.images.compactMapValues { NSImage(data: $0) }, files: d.files, times: d.times, usedBy: d.usedBy)
         }
         inflight[k] = t
         let r = await t.value

@@ -302,11 +302,11 @@ struct SjzApi {
     }
 
     /// 正文、是否可编辑，以及正文里引用的图片（`imgN` → 图片数据）
-    func captureDetail(project: String, id: String) async throws -> (content: String, editable: Bool, images: [String: Data], files: [SjzFile], times: [String: String]) {
+    func captureDetail(project: String, id: String) async throws -> (content: String, editable: Bool, images: [String: Data], files: [SjzFile], times: [String: String], usedBy: [SjzUsedDoc]) {
         // 工作小结（id 形如 summary:logs/xx.md）：读小结正文，只读、没有图片和原件
         if id.hasPrefix(SjzSummary.idPrefix) {
             let r = try await call("get_summary", ["project": project, "path": String(id.dropFirst(SjzSummary.idPrefix.count))])
-            return ((r["content"] as? String) ?? "", false, [:], [], [:])
+            return ((r["content"] as? String) ?? "", false, [:], [], [:], [])
         }
         let r = try await call("get_capture", ["project": project, "id": id])
         var imgs: [String: Data] = [:]
@@ -316,7 +316,7 @@ struct SjzApi {
             return SjzFile(rel: rel, name: (f["name"] as? String) ?? rel, ext: (f["ext"] as? String) ?? "", abs: abs, size: (f["size"] as? Int) ?? 0, role: (f["role"] as? String) ?? "original")
         }
         let times = ((r["times"] as? JSON) ?? [:]).compactMapValues { $0 as? String }
-        return ((r["content"] as? String) ?? "", (r["editable"] as? Bool) ?? false, imgs, files, times)
+        return ((r["content"] as? String) ?? "", (r["editable"] as? Bool) ?? false, imgs, files, times, Self.parseUsedBy(r["usedBy"]))
     }
 
     /// 二次编辑写回：title / source / content / status / linkNote
@@ -432,6 +432,76 @@ struct SjzApi {
         let r = try await call(regulation ? "save_regulation" : "save_evidence", a)
         return (r["message"] as? String) ?? "已保存"
     }
+
+    /// 同 `save`，但先让结审查重：文件已经上传过时服务端不保存，返回已有的那一份，等用户决定。
+    /// onDuplicate：nil = 先问（默认）/ link = 关联已有 / new = 仍然上传新的 / replace = 覆盖同名原件
+    func saveChecked(regulation: Bool, project: String?, items: [JSON], title: String, source: String, url: String?, snapshot: Bool, onDuplicate: String? = nil) async throws -> SjzSaveResult {
+        var a: JSON = ["items": items, "title": title, "source": source, "snapshot": snapshot]
+        if let project, !project.isEmpty { a["project"] = project }
+        if let url, !url.isEmpty { a["url"] = url }
+        if let onDuplicate { a["onDuplicate"] = onDuplicate }
+        let r = try await call(regulation ? "save_regulation" : "save_evidence", a)
+        let dups = ((r["duplicates"] as? [JSON]) ?? []).map { d in
+            SjzDupHit(name: (d["name"] as? String) ?? "", kind: (d["kind"] as? String) ?? "same", original: (d["original"] as? String) ?? "",
+                      ledgerId: (d["ledgerId"] as? String) ?? "", title: (d["title"] as? String) ?? "", path: (d["path"] as? String) ?? "",
+                      at: (d["at"] as? String) ?? "", noteNo: (d["noteNo"] as? String) ?? "",
+                      usedBy: Self.parseUsedBy(d["usedBy"]))
+        }
+        let ask = (r["duplicate"] as? Bool) == true && (r["saved"] as? Bool) == false && r["action"] == nil
+        return SjzSaveResult(message: (r["message"] as? String) ?? "已保存", duplicates: dups, needsDecision: ask)
+    }
+
+    static func parseUsedBy(_ any: Any?) -> [SjzUsedDoc] {
+        ((any as? [JSON]) ?? []).map {
+            SjzUsedDoc(kind: ($0["kind"] as? String) ?? "doc", ref: ($0["ref"] as? String) ?? "", label: ($0["label"] as? String) ?? "",
+                       docNo: ($0["docNo"] as? String) ?? "", status: ($0["status"] as? String) ?? "")
+        }
+    }
+
+    /// 把一份证据 / 法规形成取证单：新建取证单，把这份材料放进证据材料 / 法规依据
+    func evidenceToNote(project: String, id: String, title: String? = nil) async throws -> String {
+        var a: JSON = ["project": project, "id": id]
+        if let title, !title.isEmpty { a["title"] = title }
+        let r = try await call("evidence_to_note", a)
+        return (r["message"] as? String) ?? "已形成取证单"
+    }
+}
+
+/// 哪份文书引用了某份证据 / 法规
+struct SjzUsedDoc: Hashable, Identifiable {
+    /// doc = 文书 / suspicious = 疑点 / task = 任务
+    let kind: String
+    /// 文书、疑点为项目内相对路径，任务为任务 ID
+    let ref: String
+    let label: String
+    let docNo: String
+    let status: String
+    var id: String { kind + ":" + ref }
+    var kindLabel: String { ["doc": "文书", "suspicious": "疑点", "task": "任务"][kind] ?? kind }
+    var display: String { label.hasPrefix(docNo) || docNo.isEmpty ? label : docNo + " " + label }
+}
+
+/// 上传时发现已经有的同一份（或同名）文件
+struct SjzDupHit: Identifiable, Hashable {
+    let name: String
+    /// same = 内容完全一样 / sameName = 同名但内容不同（可能是新版本）
+    let kind: String
+    let original: String
+    let ledgerId: String
+    let title: String
+    let path: String
+    let at: String
+    let noteNo: String
+    let usedBy: [SjzUsedDoc]
+    var id: String { name + "|" + original }
+    var isSame: Bool { kind == "same" }
+}
+
+struct SjzSaveResult {
+    var message: String
+    var duplicates: [SjzDupHit] = []
+    /// 服务端发现重复、没有保存，等用户决定
+    var needsDecision = false
 }
 
 struct SjzPin: Equatable {

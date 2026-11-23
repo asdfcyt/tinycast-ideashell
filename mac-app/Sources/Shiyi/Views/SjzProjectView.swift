@@ -675,6 +675,10 @@ struct SjzCaptureEditor: View {
     @State private var fileSel = ""
     @State private var jumpPage: Int?
     @State private var stale = false
+    /// 引用了这份证据 / 法规的文书
+    @State private var usedBy: [SjzUsedDoc] = []
+    /// 刚刚形成的取证单提示（有值就不再显示「形成取证单」）
+    @State private var madeNote = ""
 
     /// 正文拆成「文字段 / 图片段」混排编辑：图片整行引用 `![说明][imgN]` 单独成块
     struct Seg: Identifiable, Equatable {
@@ -844,6 +848,48 @@ struct SjzCaptureEditor: View {
                     Spacer()
                 }
             }
+            if canLink, loaded {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Text("关联文书").font(.caption).foregroundStyle(.secondary)
+                        Text("\(usedBy.count)").font(.caption).foregroundStyle(.tertiary)
+                        Spacer()
+                        if capture.noteNo.isEmpty, madeNote.isEmpty {
+                            Button { Task { await makeNote() } } label: { Label("形成取证单", systemImage: "doc.badge.plus") }
+                                .buttonStyle(.borderless).font(.caption).disabled(busy)
+                                .help("新建一份取证单，并把这份\(capture.kindLabel)放进去")
+                        } else if !madeNote.isEmpty {
+                            Text(madeNote).font(.caption).foregroundStyle(Brand.orange)
+                        }
+                    }
+                    if usedBy.isEmpty {
+                        Text("还没有文书引用这份\(capture.kindLabel)").font(.caption).foregroundStyle(.tertiary)
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                ForEach(Array(usedBy.enumerated()), id: \.element.id) { i, u in
+                                    Button { openUsed(u) } label: {
+                                        HStack(spacing: 10) {
+                                            Text(u.kindLabel).font(.caption).foregroundStyle(.secondary).frame(width: 28, alignment: .leading)
+                                            Text(u.display).font(.callout).lineLimit(1).truncationMode(.tail)
+                                            Spacer(minLength: 8)
+                                            if !u.status.isEmpty { Text(u.status).font(.caption2).foregroundStyle(.tertiary) }
+                                            Image(systemName: "arrow.up.right.square").font(.system(size: 10)).foregroundStyle(.secondary)
+                                        }
+                                        .padding(.horizontal, 10).padding(.vertical, 6)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain).help("在结审里打开")
+                                    if i < usedBy.count - 1 { Divider().padding(.leading, 40).opacity(0.6) }
+                                }
+                            }
+                        }
+                        .frame(maxHeight: min(CGFloat(usedBy.count) * 34, 136))
+                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                }
+            }
             if canClueLink {
                 HStack(alignment: .top, spacing: 8) {
                     Text("关联线索").font(.caption).foregroundStyle(.secondary).padding(.top, 5)
@@ -1008,10 +1054,38 @@ struct SjzCaptureEditor: View {
         }
     }
 
+    /// 在结审里打开引用了这份材料的文书
+    private func openUsed(_ u: SjzUsedDoc) {
+        if u.kind == "task" {
+            model.openSjzApp(project: project, to: "/tasks?task=" + (u.ref.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? u.ref))
+        } else {
+            model.openSjzDoc(project: project, path: u.ref)
+        }
+    }
+
+    /// 把这份证据 / 法规形成取证单
+    private func makeNote() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            let m = try await model.sjz.evidenceToNote(project: project, id: capture.id)
+            madeNote = "已形成取证单"
+            message = m
+            model.showNotice(m)
+            SjzDetailStore.forget(project: project, id: capture.id)
+            if let d = await SjzDetailStore.load(api: model.sjz, project: project, id: capture.id) { apply(d, first: false) }
+            NotificationCenter.default.post(name: .sjzCapturesChanged, object: nil)
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
     private func apply(_ d: SjzDetailStore.Detail, first: Bool) {
         segs = Self.parse(d.content); original = Self.join(segs); editable = d.editable
         images = d.images
         files = d.files
+        usedBy = d.usedBy
         if isDatalist, first {
             times0 = d.times
             dueAt = d.times["dueAt"] ?? ""; sentAt = d.times["sentAt"] ?? ""; recalledAt = d.times["recalledAt"] ?? ""

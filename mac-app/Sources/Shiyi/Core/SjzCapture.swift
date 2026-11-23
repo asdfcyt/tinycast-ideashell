@@ -465,11 +465,57 @@ extension AppModel {
             }
         }
         do {
-            let msg = try await sjz.save(regulation: target == .regulation, project: project, items: items, title: title,
-                                         source: source, url: link, snapshot: link != nil)
-            return msg + place
+            // 先让结审查重：已经上传过同一份文件，就不再重复上传，问用户怎么处理
+            var res = try await sjz.saveChecked(regulation: target == .regulation, project: project, items: items, title: title,
+                                                source: source, url: link, snapshot: link != nil)
+            if res.needsDecision {
+                guard let mode = askDuplicate(res.duplicates, regulation: target == .regulation) else { return "已取消，没有重复上传" }
+                res = try await sjz.saveChecked(regulation: target == .regulation, project: project, items: items, title: title,
+                                                source: source, url: link, snapshot: link != nil, onDuplicate: mode)
+            }
+            return res.message + place
         } catch let McpError.tool(m) where m.contains("法规名称") {
             throw SjzError.needRegulation
+        }
+    }
+
+    /// 上传的文件结审里已经有了：弹出选择。返回 onDuplicate 的取值（link / new / replace），取消返回 nil
+    func askDuplicate(_ hits: [SjzDupHit], regulation: Bool) -> String? {
+        let what = regulation ? "法规" : "证据"
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        let allSame = hits.allSatisfy(\.isSame)
+        alert.messageText = hits.count == 1 ? (allSame ? "这份文件已经上传过了" : "结审里已有同名文件") : "这 \(hits.count) 份文件结审里已经有了"
+        var lines: [String] = []
+        for h in hits.prefix(4) {
+            var who = h.ledgerId.isEmpty ? "「\(h.title)」" : "\(h.ledgerId)「\(h.title)」"
+            if h.title.isEmpty { who = h.ledgerId.isEmpty ? h.original : h.ledgerId }
+            var l = h.isSame ? "• 「\(h.name)」→ 已有 \(who)" : "• 「\(h.name)」→ 与 \(who) 同名但内容不同（可能是新版本）"
+            if !h.at.isEmpty { l += "，\(h.at.prefix(10)) 上传" }
+            if !h.usedBy.isEmpty {
+                l += "\n   已被 " + h.usedBy.prefix(3).map(\.display).joined(separator: "、") + (h.usedBy.count > 3 ? " 等 \(h.usedBy.count) 份文书" : "") + " 引用"
+            }
+            lines.append(l)
+        }
+        if hits.count > 4 { lines.append("…… 另有 \(hits.count - 4) 份") }
+        let pinned: String = {
+            if !sjzPin.evidencePath.isEmpty { return "已有文件会关联到钉住的" + what + "「\(sjzPin.evidenceLabel)」" }
+            if !sjzPin.noteLabel.isEmpty { return "已有文件会关联到钉住的取证单「\(sjzPin.noteLabel)」" }
+            if !sjzPin.clueLabel.isEmpty { return "已有文件会关联到钉住的线索「\(sjzPin.clueLabel)」" }
+            return "现在没有钉住取证单或线索，关联就是直接使用已有文件、不再新增上传"
+        }()
+        alert.informativeText = lines.joined(separator: "\n") + "\n\n" + pinned
+        alert.addButton(withTitle: "关联已有文件")
+        alert.addButton(withTitle: "仍然上传新的")
+        let canReplace = hits.contains { !$0.isSame }
+        if canReplace { alert.addButton(withTitle: "覆盖原文件") }
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: return "link"
+        case .alertSecondButtonReturn: return "new"
+        case .alertThirdButtonReturn: return canReplace ? "replace" : nil
+        default: return nil
         }
     }
 
