@@ -31,7 +31,6 @@ struct AIHotSidebar: View {
                     .padding(.horizontal, 4).padding(.vertical, 8)
                 }
             }
-            Divider()
             HStack(spacing: 8) {
                 Link("AIHOT", destination: URL(string: "https://aihot.news")!).font(.caption).help("数据来源：AIHOT")
                 Spacer(minLength: 4)

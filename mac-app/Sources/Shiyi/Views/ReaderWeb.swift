@@ -113,6 +113,16 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         webView.load(URLRequest(url: u))
     }
 
+    /// 订阅源自带全文：直接加载这段 HTML（`base` 用来解析图片等相对地址），套同一套通用重排
+    func openHTML(_ html: String, base: URL) {
+        generic = true
+        url = base
+        root = nil
+        pendingRoot = true
+        canGoBack = false
+        webView.loadHTMLString(html, baseURL: base)
+    }
+
     /// 去财新登录页（登录完会回到 `back`）
     func openLogin(back: URL? = nil) {
         let target = back ?? webView.url ?? URL(string: "https://weekly.caixin.com/")!
@@ -212,6 +222,8 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
           var isAI = isAIHOT || (!!R.generic && !isCX && !isLWhost);
           function findRoot() {
             if (isAIHOT) { return document.querySelector('main article'); }
+            var feedDoc = document.querySelector('article[data-sy-feed]');
+            if (feedDoc) { return feedDoc; }
             var best = null, bl = 0, as = document.querySelectorAll('article');
             for (var i = 0; i < as.length; i++) {
               var l = (as[i].innerText || '').length;
@@ -219,7 +231,19 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             }
             if (best && bl > 300) { return best; }
             var m = document.querySelector('main, [role="main"]');
-            return (m && (m.innerText || '').length > 300) ? m : null;
+            if (m && (m.innerText || '').length > 300) { return m; }
+            // 没有 <article> / <main> 的页面：按段落文字密度找最像正文的容器（思路同 Readability）
+            var score = new Map(), ps = document.querySelectorAll('p');
+            for (var j = 0; j < ps.length; j++) {
+              var t = (ps[j].innerText || '').trim().length;
+              if (t < 40) { continue; }
+              var pa = ps[j].parentElement, gp = pa && pa.parentElement;
+              if (pa && pa !== document.body) { score.set(pa, (score.get(pa) || 0) + t); }
+              if (gp && gp !== document.body && gp !== document.documentElement) { score.set(gp, (score.get(gp) || 0) + t * 0.5); }
+            }
+            var top = null, ts = 0;
+            score.forEach(function (v, k) { if (v > ts) { ts = v; top = k; } });
+            return (top && ts > 300) ? top : null;
           }
           var isLW = /(^|\.)lifeweek\.com\.cn$/.test(location.hostname) && /^\/article\/\d+/.test(location.pathname);
           var content = isAI ? findRoot() : isLW ? document.querySelector('.acticle-content') : document.getElementById('the_content');

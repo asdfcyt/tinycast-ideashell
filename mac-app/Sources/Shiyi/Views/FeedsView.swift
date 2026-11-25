@@ -11,7 +11,6 @@ struct FeedsSidebar: View {
         VStack(spacing: 0) {
             header
                 .padding(.horizontal, 14).padding(.vertical, 12)
-            Divider()
             if store.sources.isEmpty {
                 empty
             } else {
@@ -31,7 +30,6 @@ struct FeedsSidebar: View {
                     }
                 }
             }
-            Divider()
             footer.padding(.horizontal, 14).padding(.vertical, 8)
         }
     }
@@ -120,6 +118,7 @@ struct FeedsSidebar: View {
         .contextMenu {
             Button(it.read ? "标为未读" : "标为已读") { store.setRead(it.id, !it.read) }
             Button(it.starred ? "取消星标" : "加星标") { store.toggleStar(it.id) }
+            Button("稍后读（存成待办）") { Task { await AppModel.current?.saveReadLater(title: it.title, link: it.link) } }
             if let u = URL(string: it.link) { Button("在浏览器中打开") { NSWorkspace.shared.open(u) } }
         }
     }
@@ -154,7 +153,8 @@ struct FeedsSidebar: View {
 struct FeedDetail: View {
     @ObservedObject var store: FeedStore
     let itemID: String?
-    let open: (URL) -> Void
+    /// 参数：文章、是否强制打开原文页
+    let open: (FeedItem, Bool) -> Void
 
     var body: some View {
         if let it = store.item(itemID) {
@@ -170,21 +170,34 @@ struct FeedDetail: View {
                     } else {
                         Text("这条订阅没有带摘要，点「阅读原文」查看。").font(.callout).foregroundStyle(.tertiary)
                     }
+                    if it.full == true {
+                        Label("订阅源带了全文，点「阅读全文」直接在拾忆里读", systemImage: "checkmark.seal").font(.caption).foregroundStyle(.secondary)
+                    }
                     HStack(spacing: 10) {
                         if let u = URL(string: it.link) {
-                            Button { open(u) } label: { Label("阅读原文", systemImage: "doc.text") }
+                            Button { open(it, false) } label: { Label(it.full == true ? "阅读全文" : "阅读原文", systemImage: "doc.text") }
                                 .buttonStyle(.borderedProminent).tint(Brand.orange)
+                            if it.full == true {
+                                Button { open(it, true) } label: { Label("原文页面", systemImage: "globe") }
+                                    .buttonStyle(.bordered)
+                            }
                             Button { NSWorkspace.shared.open(u) } label: { Label("浏览器打开", systemImage: "safari") }
                                 .buttonStyle(.bordered)
                         }
+                    }
+                    .padding(.top, 4)
+                    HStack(spacing: 10) {
                         Button { store.toggleStar(it.id) } label: {
                             Label(it.starred ? "取消星标" : "星标", systemImage: it.starred ? "star.fill" : "star")
                         }
                         .buttonStyle(.bordered)
                         Button { clip(it) } label: { Label("摘到便签", systemImage: "note.text.badge.plus") }
                             .buttonStyle(.bordered)
+                        Button { Task { await AppModel.current?.saveReadLater(title: it.title, link: it.link) } } label: {
+                            Label("稍后读", systemImage: "clock.badge.checkmark")
+                        }
+                        .buttonStyle(.bordered).help("存成一条待办，之后慢慢读")
                     }
-                    .padding(.top, 4)
                 }
                 .frame(maxWidth: 720, alignment: .leading)
                 .padding(.horizontal, 32).padding(.vertical, 28)
@@ -299,5 +312,26 @@ enum FeedFormat {
         f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = "yyyy-MM-dd HH:mm"
         return f.string(from: d)
+    }
+}
+
+extension AppModel {
+    /// 「稍后读」：把文章存成一条没有日期的待办（标题 + 链接），有滴答清单就进滴答，否则进闪念贝壳
+    func saveReadLater(title: String, link: String) async {
+        let name = "稍后读：" + title
+        do {
+            if hasDida {
+                _ = try await dida.createTask(title: name, date: nil, time: nil, priority: 0, content: link, tags: ["稍后读"])
+            } else if hasIdeashell {
+                try await ideashell.createTodo(name + " " + link, date: nil, time: nil)
+            } else {
+                showNotice("先到「设置」填写滴答清单 / 闪念贝壳的凭证")
+                return
+            }
+            showNotice("已存成待办：" + title)
+            await loadOverview(silent: true)
+        } catch {
+            showNotice("保存失败：" + error.localizedDescription)
+        }
     }
 }

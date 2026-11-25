@@ -66,12 +66,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key><string>Shiyi</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.9</string>
-    <key>CFBundleVersion</key><string>10</string>
+    <key>CFBundleShortVersionString</key><string>0.2.0</string>
+    <key>CFBundleVersion</key><string>11</string>
     <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
     <key>NSAppleEventsUsageDescription</key><string>休息时遥控「音乐」或 Spotify 的播放、暂停和切歌。</string>
     <key>NSMicrophoneUsageDescription</key><string>语音输入：按下快捷键说话，整理成待办 / 日记 / 笔记。</string>
     <key>NSSpeechRecognitionUsageDescription</key><string>把你说的话转成文字（优先在本机识别）。</string>

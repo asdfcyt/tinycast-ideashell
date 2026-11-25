@@ -26,6 +26,8 @@ struct FeedItem: Codable, Identifiable, Hashable {
     var date: Date
     var read = false
     var starred = false
+    /// 订阅源里带了全文（在拾忆里直接读）
+    var full: Bool? = nil
 }
 
 enum FeedSel: Hashable {
@@ -111,6 +113,23 @@ enum FeedParser {
             if let d = f.date(from: s) { return d }
         }
         return nil
+    }
+
+    // MARK: 全文
+
+    /// 去掉脚本 / 样式 / 内嵌框架 / 事件属性，只留排版用的 HTML
+    static func sanitize(_ html: String, limit: Int = 150_000) -> String {
+        var s = html
+        s = s.replacingOccurrences(of: "<(script|style|iframe|object|embed|form|noscript)\\b[^>]*>[\\s\\S]*?</\\1>", with: "", options: [.regularExpression, .caseInsensitive])
+        s = s.replacingOccurrences(of: "<(script|style|iframe|object|embed|link|meta)\\b[^>]*/?>", with: "", options: [.regularExpression, .caseInsensitive])
+        s = s.replacingOccurrences(of: "\\son[a-z]+\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s>]+)", with: "", options: [.regularExpression, .caseInsensitive])
+        s = s.replacingOccurrences(of: "javascript:", with: "", options: .caseInsensitive)
+        return s.count > limit ? String(s.prefix(limit)) : s
+    }
+
+    /// 这段 HTML 像不像全文（有标签、有一定长度），摘要型的 description 不算
+    static func looksFull(_ html: String) -> Bool {
+        html.count > 900 && html.range(of: "<p[\\s>]|<br|<h[1-6][\\s>]", options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     // MARK: 文本
@@ -225,7 +244,6 @@ final class FeedStore: ObservableObject {
     @Published var refreshing = false
 
     static let presets: [FeedPreset] = [
-        FeedPreset(title: "AIHOT 精选", url: "https://aihot.news/feed.xml"),
         FeedPreset(title: "阮一峰的网络日志", url: "https://www.ruanyifeng.com/blog/atom.xml"),
         FeedPreset(title: "少数派", url: "https://sspai.com/feed"),
         FeedPreset(title: "IT之家", url: "https://www.ithome.com/rss/"),
@@ -244,12 +262,26 @@ final class FeedStore: ObservableObject {
     private var saveTask: Task<Void, Never>?
     private var timer: Timer?
     private var started = false
+    /// 订阅源自带的全文（HTML），单独存一个文件，免得每次标已读都重写一大坨
+    private var contents: [String: String] = [:]
+    private var contentsDirty = false
+    private static let contentFile = "feeds-content.json"
 
     init() {
         if let text = LocalStore.read(Self.file), let d = text.data(using: .utf8),
            let disk = try? JSONDecoder().decode(Disk.self, from: d) {
             sources = disk.sources
             items = disk.items
+        }
+        // 早先版本把财新 / 三联 / AIHOT 当订阅源放进来过，现在它们归「今日信息」，这里清掉
+        if sources.contains(where: { $0.url.hasPrefix("builtin:") }) {
+            let gone = Set(sources.filter { $0.url.hasPrefix("builtin:") }.map(\.id))
+            sources.removeAll { gone.contains($0.id) }
+            items.removeAll { gone.contains($0.feed) }
+        }
+        if let text = LocalStore.read(Self.contentFile), let d = text.data(using: .utf8),
+           let c = try? JSONDecoder().decode([String: String].self, from: d) {
+            contents = c
         }
     }
 
@@ -265,6 +297,11 @@ final class FeedStore: ObservableObject {
     }
 
     // MARK: 查询
+
+    /// 今天发布 / 新到的文章（「今日信息」聚合用）
+    func todayItems() -> [FeedItem] {
+        items.filter { Calendar.current.isDateInToday($0.date) }.sorted { $0.date > $1.date }
+    }
 
     func source(_ id: String) -> FeedSource? { sources.first { $0.id == id } }
 
@@ -299,6 +336,16 @@ final class FeedStore: ObservableObject {
         return items.first { $0.id == id }
     }
 
+    /// 带全文的文章：拼成一页干净的 HTML，交给内置阅读器排版
+    func document(for item: FeedItem) -> String? {
+        guard let body = contents[item.id], !body.isEmpty else { return nil }
+        func esc(_ s: String) -> String {
+            s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+        }
+        let by = [source(item.feed)?.title ?? "", FeedFormat.full(item.date)].filter { !$0.isEmpty }.joined(separator: " · ")
+        return "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>\(esc(item.title))</title></head><body><article data-sy-feed=\"1\"><h1>\(esc(item.title))</h1><p class=\"sy-meta\">\(esc(by))</p>\(body)</article></body></html>"
+    }
+
     // MARK: 修改
 
     func setRead(_ id: String, _ v: Bool) {
@@ -327,6 +374,7 @@ final class FeedStore: ObservableObject {
     func remove(_ id: String) {
         sources.removeAll { $0.id == id }
         items.removeAll { $0.feed == id && !$0.starred }
+        for k in contents.keys where k.hasPrefix(id + "|") && !(items.first { $0.id == k }?.starred ?? false) { contents[k] = nil; contentsDirty = true }
         if case .feed(let cur) = selection, cur == id { selection = .unread }
         scheduleSave()
     }
@@ -406,19 +454,25 @@ final class FeedStore: ObservableObject {
             let id = feed + "|" + key
             let body = !p.summary.isEmpty ? p.summary : p.content
             let summary = FeedParser.plain(body)
+            let fullHTML = !p.content.isEmpty ? p.content : (FeedParser.looksFull(p.summary) ? p.summary : "")
             if var old = existing[id] {
                 old.title = p.title.isEmpty ? old.title : p.title
                 if !summary.isEmpty { old.summary = summary }
+                if !fullHTML.isEmpty { contents[id] = FeedParser.sanitize(fullHTML); contentsDirty = true; old.full = true }
                 existing[id] = old
             } else {
-                existing[id] = FeedItem(id: id, feed: feed, title: p.title.isEmpty ? "（无标题）" : FeedParser.plain(p.title, limit: 200),
-                                        link: p.link, summary: summary, date: p.date ?? now)
+                var it = FeedItem(id: id, feed: feed, title: p.title.isEmpty ? "（无标题）" : FeedParser.plain(p.title, limit: 200),
+                                  link: p.link, summary: summary, date: p.date ?? now)
+                if !fullHTML.isEmpty { contents[id] = FeedParser.sanitize(fullHTML); contentsDirty = true; it.full = true }
+                existing[id] = it
             }
         }
         // 每个订阅源最多留最近 N 条（星标的一直留着）
         let sorted = existing.values.sorted { $0.date > $1.date }
         var kept: [FeedItem] = []
         for it in sorted where kept.count < Self.perFeedLimit || it.starred { kept.append(it) }
+        let keepIDs = Set(kept.map(\.id))
+        for it in sorted where !keepIDs.contains(it.id) && contents[it.id] != nil { contents[it.id] = nil; contentsDirty = true }
         items = items.filter { $0.feed != feed } + kept
     }
 
@@ -531,6 +585,12 @@ final class FeedStore: ObservableObject {
             let disk = Disk(sources: self.sources, items: self.items)
             if let d = try? JSONEncoder().encode(disk), let text = String(data: d, encoding: .utf8) {
                 LocalStore.write(Self.file, text)
+            }
+            if self.contentsDirty {
+                self.contentsDirty = false
+                if let d = try? JSONEncoder().encode(self.contents), let text = String(data: d, encoding: .utf8) {
+                    LocalStore.write(Self.contentFile, text)
+                }
             }
         }
     }

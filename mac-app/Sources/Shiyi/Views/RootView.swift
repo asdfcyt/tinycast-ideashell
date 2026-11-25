@@ -29,8 +29,18 @@ struct RootView: View {
                 .toolbar {
                     // 加号在标题栏最前面
                     ToolbarItem(placement: .navigation) {
-                        Button { model.openQuickAddHere() } label: { Image(systemName: "plus") }
-                            .help(model.section == .calendar ? "添加待办（⌘N）" : "万能输入（⌘N）")
+                        if model.section == .reading {
+                            // 信息页：这里换成「今日信息」，把所有订阅里今天的新内容聚在一起
+                            Button {
+                                let on = UserDefaults.standard.string(forKey: "reader.source") == "today"
+                                UserDefaults.standard.set("today", forKey: "reader.source")
+                                if on { Task { await TodayStore.shared.reload(force: true) } }
+                            } label: { Image(systemName: "sun.max") }
+                                .help("今日信息：聚合财新、三联、AI 日报和订阅里今天的新内容")
+                        } else {
+                            Button { model.openQuickAddHere() } label: { Image(systemName: "plus") }
+                                .help(model.section == .calendar ? "添加待办（⌘N）" : "万能输入（⌘N）")
+                        }
                     }
                     // 刷新放在右边；搜索框由页面自己的 .searchable 放在最右边
                     ToolbarItemGroup(placement: .primaryAction) {

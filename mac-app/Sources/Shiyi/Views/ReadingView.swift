@@ -1,13 +1,14 @@
 import SwiftUI
 
 enum ReadingSource: String, CaseIterable {
-    case caixin, aihot, lifeweek, feeds
+    case caixin, aihot, lifeweek, feeds, today
     var title: String {
         switch self {
         case .caixin: "财新周刊"
         case .aihot: "AI 日报"
         case .lifeweek: "三联"
         case .feeds: "订阅"
+        case .today: "今日信息"
         }
     }
     var icon: String {
@@ -16,6 +17,7 @@ enum ReadingSource: String, CaseIterable {
         case .aihot: "sparkles"
         case .lifeweek: "book.closed"
         case .feeds: "antenna.radiowaves.left.and.right"
+        case .today: "sun.max"
         }
     }
 }
@@ -29,6 +31,8 @@ struct ReadingView: View {
     @ObservedObject private var lifeweek = LifeweekStore.shared
     @ObservedObject private var feeds = FeedStore.shared
     @State private var feedPick: String?
+    @ObservedObject private var todayStore = TodayStore.shared
+    @State private var todayPick: String?
     @State private var showAddFeed = false
     @ObservedObject private var reader = ReaderController.shared
     @AppStorage("reader.source") private var sourceRaw = ReadingSource.caixin.rawValue
@@ -49,10 +53,10 @@ struct ReadingView: View {
                 case .aihot: AIHotSidebar(store: aihot, tab: $aiTab, pick: $aiPick)
                 case .lifeweek: lifeweekSidebar
                 case .feeds: FeedsSidebar(store: feeds, pick: $feedPick, showAdd: $showAddFeed)
+                case .today: TodaySidebar(store: todayStore, pick: $todayPick)
                 }
             }
             .frame(width: 292)
-            Divider()
             detail
         }
         .background(AmbientBackground())
@@ -74,9 +78,23 @@ struct ReadingView: View {
         .onChange(of: aiPick) { _, _ in webShown = false }
         .onChange(of: feedPick) { _, id in
             webShown = false
-            if let id { feeds.setRead(id, true) }
+            guard let id else { return }
+            feeds.setRead(id, true)
+            // 点进来就直接读：带全文的用订阅里的全文，其余打开原文页并自动重排；财新 / 三联用各自的专用排版
+            if let it = feeds.item(id) { openFeedItem(it, original: false) }
         }
         .onChange(of: feeds.selection) { _, _ in webShown = false }
+        .onChange(of: todayPick) { _, id in
+            webShown = false
+            guard let id, let e = todayStore.groups.flatMap(\.entries).first(where: { $0.id == id }) else { return }
+            todayStore.markRead(e)
+            switch e.kind {
+            case .rss:
+                if let it = feeds.item(e.raw) { openFeedItem(it, original: false) }
+            case .web:
+                if let u = URL(string: e.raw) { openWeb(u) }   // 财新 / 三联 / AIHOT 各用自己的专用排版
+            }
+        }
         .sheet(isPresented: $showAddFeed) {
             AddFeedSheet(store: feeds) { showAddFeed = false }
         }
@@ -88,7 +106,6 @@ struct ReadingView: View {
         VStack(spacing: 0) {
             lifeweekHeader
                 .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
-            Divider()
             if let e = lifeweek.error, lifeweek.sections.isEmpty {
                 VStack(spacing: 10) {
                     Text(e).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -109,7 +126,6 @@ struct ReadingView: View {
                     .padding(.horizontal, 4).padding(.bottom, 12)
                 }
             }
-            Divider()
             HStack(spacing: 6) {
                 Circle().fill(reader.lifeweekLoggedIn ? Color.green : Color.secondary.opacity(0.5)).frame(width: 7, height: 7)
                 Text(reader.lifeweekLoggedIn ? "已登录三联" : "未登录三联（全文需数字刊账号）").font(.caption).foregroundStyle(.secondary)
@@ -182,8 +198,13 @@ struct ReadingView: View {
         AppModel.current?.showNotice("在页面右上角点「登录/注册」，登录后再点左边目录里的文章")
     }
 
-    private func openFeedWeb(_ u: URL) {
-        reader.open(u, generic: true)
+    private func openFeedItem(_ it: FeedItem, original: Bool) {
+        guard let u = URL(string: it.link) else { return }
+        if !original, it.full == true, let doc = feeds.document(for: it) {
+            reader.openHTML(doc, base: u)
+        } else {
+            reader.open(u, generic: true)
+        }
         webShown = true
     }
 
@@ -198,7 +219,6 @@ struct ReadingView: View {
         VStack(spacing: 0) {
             issueHeader
                 .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
-            Divider()
             if let e = store.error, store.sections.isEmpty {
                 VStack(spacing: 10) {
                     Text(e).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -219,7 +239,6 @@ struct ReadingView: View {
                     .padding(.horizontal, 4).padding(.bottom, 12)
                 }
             }
-            Divider()
             account.padding(.horizontal, 14).padding(.vertical, 9)
         }
     }
@@ -306,7 +325,7 @@ struct ReadingView: View {
         if source == .aihot && !webShown {
             AIHotDetail(store: aihot, tab: aiTab, pick: aiPick, open: openWeb)
         } else if source == .feeds && !webShown {
-            FeedDetail(store: feeds, itemID: feedPick, open: openFeedWeb)
+            FeedDetail(store: feeds, itemID: feedPick, open: { openFeedItem($0, original: $1) })
         } else if !webShown {
             VStack(spacing: 10) {
                 Image(systemName: "newspaper").font(.system(size: 38)).foregroundStyle(.tertiary)
@@ -315,7 +334,7 @@ struct ReadingView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             VStack(spacing: 0) {
-                if (source == .caixin || source == .lifeweek) && reader.article && reader.locked { lockedBanner; Divider() }
+                if source != .aihot && source != .feeds && reader.article && reader.locked { lockedBanner }
                 ReaderWebView(controller: reader)
             }
         }
@@ -325,7 +344,7 @@ struct ReadingView: View {
     @ToolbarContentBuilder private var sourceToolbar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             Picker("来源", selection: $sourceRaw) {
-                ForEach(ReadingSource.allCases, id: \.rawValue) {
+                ForEach(ReadingSource.allCases.filter { $0 != .today }, id: \.rawValue) {
                     Label($0.title, systemImage: $0.icon).labelStyle(.iconOnly).tag($0.rawValue)
                 }
             }

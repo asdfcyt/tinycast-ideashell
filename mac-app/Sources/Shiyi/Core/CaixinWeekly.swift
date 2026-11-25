@@ -110,6 +110,24 @@ final class WeeklyStore: ObservableObject {
         }
     }
 
+    /// 最新一期的全部文章（给「订阅」时间线用；不改动目录页当前选中的期）
+    func latestArticles() async -> (label: String, items: [(title: String, link: String, summary: String)])? {
+        await loadIfNeeded()
+        guard let top = issues.first else { return nil }
+        var secs = cache[top.no] ?? []
+        if secs.isEmpty, let html = try? await Self.fetch(top.url) {
+            secs = Self.parseSections(html)
+            if !secs.isEmpty { cache[top.no] = secs }
+        }
+        var items: [(title: String, link: String, summary: String)] = []
+        for sec in secs {
+            for a in sec.articles { items.append((title: a.title, link: a.url.absoluteString, summary: a.summary.isEmpty ? sec.name : a.summary)) }
+        }
+        if items.isEmpty { return nil }
+        let label: String = top.label + "　" + top.title
+        return (label: label, items: items)
+    }
+
     enum WeeklyError: LocalizedError {
         case http(Int), parse
         var errorDescription: String? {

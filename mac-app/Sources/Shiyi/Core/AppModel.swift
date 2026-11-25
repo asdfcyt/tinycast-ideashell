@@ -359,6 +359,7 @@ final class AppModel: ObservableObject {
         restoreHistoryCaches()
         loadAIInsights()
         Task { await refreshAll(startup: true) }
+        FeedStore.shared.start()
         Task { await loadHolidays() }
         startSjzEvents()
         CaptureParser.sjzOn = hasSjz
