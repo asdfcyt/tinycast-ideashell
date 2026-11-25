@@ -36,6 +36,12 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
     @Published var leading: Double { didSet { save(leading, "leading") } }
     /// 正文栏宽（px）
     @Published var width: Double { didSet { save(width, "width") } }
+    /// 左右页边距（px）
+    @Published var pad: Double { didSet { save(pad, "pad") } }
+    /// 当前页是从订阅（RSS）打开的：任何站点都尝试通用重排
+    var generic = false {
+        didSet { if oldValue != generic { installScript() } }
+    }
     /// 段首空两格（页面自带的全角空格会先去掉，由样式统一排）
     @Published var indent: Bool { didSet { save(indent, "indent") } }
     /// 两端对齐
@@ -51,7 +57,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
 
     /// 恢复出厂的排版
     func resetTypography() {
-        size = 19; font = "song"; leading = 1.95; width = 680; indent = true; justify = true
+        size = 19; font = "song"; leading = 1.95; width = 680; pad = 28; indent = true; justify = true
     }
 
     private static let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
@@ -66,6 +72,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         leading = l >= 1.4 ? l : 1.95
         let w = ud.double(forKey: "reader.width")
         width = w >= 480 ? w : 680
+        pad = ud.object(forKey: "reader.pad") as? Double ?? 28
         indent = ud.object(forKey: "reader.indent") as? Bool ?? true
         justify = ud.object(forKey: "reader.justify") as? Bool ?? true
         let uc = WKUserContentController()
@@ -96,7 +103,9 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         canGoBack = webView.canGoBack && root != nil && cur !== root
     }
 
-    func open(_ u: URL) {
+    /// `generic`：从订阅（RSS）打开的页面，对任何站点都尝试通用重排
+    func open(_ u: URL, generic: Bool = false) {
+        self.generic = generic
         url = u
         root = nil
         pendingRoot = true
@@ -167,7 +176,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
     }
 
     private var settingsJSON: String {
-        let d: [String: Any] = ["size": size, "theme": theme, "font": font, "leading": leading, "width": width, "indent": indent, "justify": justify]
+        let d: [String: Any] = ["size": size, "theme": theme, "font": font, "leading": leading, "width": width, "pad": pad, "indent": indent, "justify": justify, "generic": generic]
         let data = (try? JSONSerialization.data(withJSONObject: d)) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
     }
@@ -196,9 +205,24 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             hei: '"PingFang SC","Source Han Sans SC","Noto Sans CJK SC",sans-serif',
             kai: '"Kaiti SC","STKaiti","KaiTi",serif'
           };
-          var isAI = location.hostname === 'aihot.news';
+          var isAIHOT = location.hostname === 'aihot.news';
+          var isCX = /(^|\.)caixin\.com$/.test(location.hostname);
+          var isLWhost = /(^|\.)lifeweek\.com\.cn$/.test(location.hostname);
+          // 从订阅（RSS）打开的任何站点：找页面里最像正文的那块（<article> / <main>），套同一套重排
+          var isAI = isAIHOT || (!!R.generic && !isCX && !isLWhost);
+          function findRoot() {
+            if (isAIHOT) { return document.querySelector('main article'); }
+            var best = null, bl = 0, as = document.querySelectorAll('article');
+            for (var i = 0; i < as.length; i++) {
+              var l = (as[i].innerText || '').length;
+              if (l > bl) { best = as[i]; bl = l; }
+            }
+            if (best && bl > 300) { return best; }
+            var m = document.querySelector('main, [role="main"]');
+            return (m && (m.innerText || '').length > 300) ? m : null;
+          }
           var isLW = /(^|\.)lifeweek\.com\.cn$/.test(location.hostname) && /^\/article\/\d+/.test(location.pathname);
-          var content = isAI ? document.querySelector('main article') : isLW ? document.querySelector('.acticle-content') : document.getElementById('the_content');
+          var content = isAI ? findRoot() : isLW ? document.querySelector('.acticle-content') : document.getElementById('the_content');
           var isArticle = (isAI || isLW) ? !!content : (/^\/\d{4}-\d{2}-\d{2}\/\d+\.html/.test(location.pathname) && !!content);
           function post(o) {
             try { window.webkit.messageHandlers.reader.postMessage(o); } catch (e) {}
@@ -227,16 +251,25 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             selTimer = setTimeout(function () { post({ sel: String(window.getSelection()).slice(0, 6000) }); }, 120);
           });
           // AIHOT 的条目页 / 日报页：只留 <article>，藏掉导航栏、侧栏、底部工具条
+          // 让正文容器及其祖先都跟着窗口宽度走：去掉站点自己写的固定宽度 / 左右边距 / 浮动，否则窗口一变就左右错位
+          function fluid(A) {
+            var H = 'html.sy-r ';
+            return [
+              H + '.sy-anc{display:block !important;width:auto !important;min-width:0 !important;max-width:none !important;margin:0 !important;padding:0 !important;float:none !important;position:static !important;height:auto !important;min-height:0 !important;overflow:visible !important;transform:none !important;border:0 !important}',
+              A + ' div,' + A + ' section,' + A + ' figure,' + A + ' p,' + A + ' blockquote{width:auto !important;min-width:0 !important;max-width:100% !important;margin-left:0 !important;margin-right:0 !important;padding-left:0 !important;padding-right:0 !important;float:none !important;position:static !important}',
+              A + ' img{margin-left:auto !important;margin-right:auto !important}'
+            ].join('\n');
+          }
           function cssAI() {
             var c = T[R.theme] || T.paper, bg = c[0], fg = c[1], ac = c[2], H = 'html.sy-r ';
             var ff = F[R.font] || F.song, A = H + '.sy-root';
             var txt = A + ' p,' + A + ' li,' + A + ' blockquote,' + A + ' td,' + A + ' th,' + A + ' dd,' + A + ' dt';
             return [
-              H + ',html.sy-r body{background:' + bg + ' !important;color:' + fg + ' !important;min-width:0 !important;margin:0 !important}',
+              H + ',html.sy-r body{background:' + bg + ' !important;color:' + fg + ' !important;min-width:0 !important;margin:0 !important;overflow-x:hidden !important}',
               H + '.sy-hide{display:none !important}',
               // 站点自己的手机顶栏（「‹ 精选」）、侧栏、底部工具条：用样式藏，不怕页面重渲染时把标记冲掉
               H + 'aside,' + H + 'header[data-phone-bar],' + H + 'nav[aria-label="阅读工具"],' + H + 'nav[aria-label="主导航"]{display:none !important}',
-              A + '{display:block !important;max-width:' + R.width + 'px !important;margin:0 auto !important;padding:40px 28px 90px !important;box-sizing:border-box;color:' + fg + ' !important}',
+              A + '{display:block !important;max-width:' + R.width + 'px !important;margin:0 auto !important;padding:40px ' + R.pad + 'px 90px !important;box-sizing:border-box;color:' + fg + ' !important}',
               A + ' *{background:none !important;box-shadow:none !important;-webkit-user-select:text !important;user-select:text !important;text-autospace:ideograph-alpha ideograph-numeric;line-break:strict;overflow-wrap:break-word}',
               A + ' *:not(a):not(code):not(pre){color:' + fg + ' !important}',
               A + ' h1,' + A + ' h2,' + A + ' h3,' + A + ' h4{font-family:' + (R.font === 'kai' ? F.kai : F.hei) + ' !important;font-weight:700 !important;line-height:1.4 !important;margin:1.5em 0 .6em !important}',
@@ -250,6 +283,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
               A + ' pre{padding:12px 14px !important;overflow-x:auto}',
               A + ' code{padding:1px 5px}',
               A + ' img{max-width:100% !important;height:auto !important;border-radius:6px}',
+              fluid(A),
               A + ' nav,' + A + ' button{font-size:13px !important;opacity:.75}'
             ].join('\n');
           }
@@ -259,11 +293,12 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             var ff = F[R.font] || F.song, A = H + '.sy-root';
             var body = A + ' p,' + A + ' p *,' + A + ' li,' + A + ' section,' + A + ' section *,' + A + ' blockquote';
             return [
-              H + ',html.sy-r body{background:' + bg + ' !important;color:' + fg + ' !important;min-width:0 !important;margin:0 !important}',
+              H + ',html.sy-r body{background:' + bg + ' !important;color:' + fg + ' !important;min-width:0 !important;margin:0 !important;overflow-x:hidden !important}',
               H + '.sy-hide,' + H + 'header.header,' + H + '.footer-wrap,' + H + '.comment-wrap,' + H + '.left-side-box,' + H + '.big-screen,' + H + '.backtop,' + H + '.article-title,' + H + '.el-breadcrumb{display:none !important}',
               A + ' .audio-play-box,' + A + ' .tag-list,' + A + ' .prev-next-box,' + A + ' .buy-box .buy-vip,' + A + ' .buy-box .login,' + A + ' .buy-box .read_tips{display:none !important}',
-              A + '{display:block !important;max-width:' + R.width + 'px !important;width:auto !important;margin:0 auto !important;padding:40px 28px 90px !important;box-sizing:border-box;background:none !important;float:none !important}',
+              A + '{display:block !important;max-width:' + R.width + 'px !important;width:auto !important;margin:0 auto !important;padding:40px ' + R.pad + 'px 90px !important;box-sizing:border-box;background:none !important;float:none !important}',
               A + ' *{box-sizing:border-box;background:none !important;box-shadow:none !important;color:' + fg + ' !important;font-family:' + ff + ' !important;-webkit-user-select:text !important;user-select:text !important;text-autospace:ideograph-alpha ideograph-numeric;line-break:strict;overflow-wrap:break-word}',
+              fluid(A),
               A + ' .header{display:block !important;height:auto !important;padding:0 !important;margin:0 0 6px !important}',
               A + ' .header .title{font:700 ' + (R.size * 1.55) + 'px/1.4 ' + (R.font === 'kai' ? F.kai : F.hei) + ' !important;margin:0 0 10px !important;display:block !important;-webkit-line-clamp:unset !important;overflow:visible !important;height:auto !important}',
               A + ' .header .desc{font-size:' + (R.size * 1.05) + 'px !important;line-height:1.6 !important;opacity:.8;margin:0 0 10px !important;display:block !important;-webkit-line-clamp:unset !important;overflow:visible !important;height:auto !important}',
@@ -286,10 +321,10 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             var c = T[R.theme] || T.paper, bg = c[0], fg = c[1], ac = c[2], H = 'html.sy-r ';
             var ff = F[R.font] || F.song, M = H + '#Main_Content_Val';
             return [
-              H + ',html.sy-r body{background:' + bg + ' !important;color:' + fg + ' !important;min-width:0 !important;margin:0 !important}',
+              H + ',html.sy-r body{background:' + bg + ' !important;color:' + fg + ' !important;min-width:0 !important;margin:0 !important;overflow-x:hidden !important}',
               H + '.sy-hide{display:none !important}',
               H + ',html.sy-r *{-webkit-user-select:text !important;user-select:text !important}',
-              H + '#the_content{display:block !important;float:none !important;width:auto !important;max-width:' + R.width + 'px !important;margin:0 auto !important;padding:40px 28px 90px !important;background:transparent !important;box-sizing:border-box}',
+              H + '#the_content{display:block !important;float:none !important;width:auto !important;max-width:' + R.width + 'px !important;margin:0 auto !important;padding:40px ' + R.pad + 'px 90px !important;background:transparent !important;box-sizing:border-box}',
               H + '#the_content *{box-sizing:border-box}',
               H + '#conTit h1{font:700 ' + (R.size * 1.55) + 'px/1.4 ' + (R.font === 'kai' ? F.kai : F.hei) + ' !important;color:' + fg + ' !important;margin:0 0 14px !important;padding:0 !important;height:auto !important;text-autospace:ideograph-alpha ideograph-numeric;line-break:strict}',
               H + '#artInfo,' + H + '#artInfo a{font-size:13px !important;color:' + fg + ' !important;opacity:.6}',
@@ -304,6 +339,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
               M + ' b,' + M + ' strong{font-weight:700 !important}',
               M + ' a{color:' + ac + ' !important;text-decoration:none}',
               H + '#the_content img{max-width:100% !important;height:auto !important;border-radius:6px}',
+              fluid(H + '#the_content'),
               H + '.media,' + H + '.media_pic{width:auto !important;float:none !important;margin:12px 0 !important}',
               H + '.media_pic dd{font-size:13px !important;line-height:1.6 !important;opacity:.65;color:' + fg + ' !important}',
               H + '.pip,' + H + '.pip_ad,' + H + '.bd_block,' + H + '.icon_key,' + H + '.article_topic,' + H + '.moreReport,' + H + '.content-tag,' + H + '.lanmu_textend,' + H + '#pay-layer-ad,' + H + '#pay-layer-pro-ad{display:none !important}',
@@ -323,14 +359,18 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             for (var j = 0; j < rs.length; j++) { rs[j].classList.remove('sy-root'); }
             var hs = document.querySelectorAll('.sy-hide');
             for (var i = 0; i < hs.length; i++) { hs[i].classList.remove('sy-hide'); }
+            var as = document.querySelectorAll('.sy-anc');
+            for (var q = 0; q < as.length; q++) { as[q].classList.remove('sy-anc'); }
             var st = document.getElementById('sy-reader-style');
             if (st) { st.textContent = ''; }
           }
           if (isAI) {
             // AIHOT 是单页应用：站内跳转不会重新加载页面，隔一会儿看一眼当前是不是条目页
-            var curArt = null;
-            setInterval(function () {
-              var a = document.querySelector('main article');
+            var curArt = null, ticks = 0;
+            var timer = setInterval(function () {
+              ticks++;
+              if (!isAIHOT && ticks > 14) { clearInterval(timer); return; }
+              var a = findRoot();
               if (a && a !== curArt) { curArt = a; content = a; unapply(); apply(); report(); }
               else if (!a && curArt) { curArt = null; unapply(); post({ article: false }); }
             }, 900);
@@ -366,6 +406,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             while (cur && cur !== document.body) {
               var p = cur.parentElement;
               if (!p) { break; }
+              if (p !== document.body) { p.classList.add('sy-anc'); }
               for (var i = 0; i < p.children.length; i++) {
                 var s = p.children[i];
                 if (s !== cur && !/^(SCRIPT|STYLE|LINK|META)$/.test(s.tagName)) { s.classList.add('sy-hide'); }

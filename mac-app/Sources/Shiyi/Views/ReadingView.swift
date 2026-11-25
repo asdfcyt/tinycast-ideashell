@@ -1,12 +1,13 @@
 import SwiftUI
 
 enum ReadingSource: String, CaseIterable {
-    case caixin, aihot, lifeweek
+    case caixin, aihot, lifeweek, feeds
     var title: String {
         switch self {
         case .caixin: "财新周刊"
         case .aihot: "AI 日报"
         case .lifeweek: "三联"
+        case .feeds: "订阅"
         }
     }
     var icon: String {
@@ -14,6 +15,7 @@ enum ReadingSource: String, CaseIterable {
         case .caixin: "newspaper"
         case .aihot: "sparkles"
         case .lifeweek: "book.closed"
+        case .feeds: "antenna.radiowaves.left.and.right"
         }
     }
 }
@@ -25,6 +27,9 @@ struct ReadingView: View {
     @ObservedObject private var store = WeeklyStore.shared
     @ObservedObject private var aihot = AIHotStore.shared
     @ObservedObject private var lifeweek = LifeweekStore.shared
+    @ObservedObject private var feeds = FeedStore.shared
+    @State private var feedPick: String?
+    @State private var showAddFeed = false
     @ObservedObject private var reader = ReaderController.shared
     @AppStorage("reader.source") private var sourceRaw = ReadingSource.caixin.rawValue
     @State private var selected: String?
@@ -43,6 +48,7 @@ struct ReadingView: View {
                 case .caixin: sidebar
                 case .aihot: AIHotSidebar(store: aihot, tab: $aiTab, pick: $aiPick)
                 case .lifeweek: lifeweekSidebar
+                case .feeds: FeedsSidebar(store: feeds, pick: $feedPick, showAdd: $showAddFeed)
                 }
             }
             .frame(width: 292)
@@ -55,6 +61,7 @@ struct ReadingView: View {
         .task {
             await store.loadIfNeeded()
             await aihot.loadIfNeeded()
+            feeds.start()
             if source == .lifeweek { await lifeweek.loadIfNeeded() }
             await reader.refreshLogin()
         }
@@ -65,6 +72,14 @@ struct ReadingView: View {
         }
         .onChange(of: aiTab) { _, _ in webShown = false }
         .onChange(of: aiPick) { _, _ in webShown = false }
+        .onChange(of: feedPick) { _, id in
+            webShown = false
+            if let id { feeds.setRead(id, true) }
+        }
+        .onChange(of: feeds.selection) { _, _ in webShown = false }
+        .sheet(isPresented: $showAddFeed) {
+            AddFeedSheet(store: feeds) { showAddFeed = false }
+        }
     }
 
     // MARK: 三联：期号 + 目录（官网公开的目录数据），文章在右边的内嵌浏览器里用你自己的账号登录阅读
@@ -165,6 +180,11 @@ struct ReadingView: View {
         // 官网的登录在页面右上角「登录/注册」；手机版登录是另一套会话，读不了官网文章，所以走官网首页
         openWeb(URL(string: "https://www.lifeweek.com.cn/")!)
         AppModel.current?.showNotice("在页面右上角点「登录/注册」，登录后再点左边目录里的文章")
+    }
+
+    private func openFeedWeb(_ u: URL) {
+        reader.open(u, generic: true)
+        webShown = true
     }
 
     private func openWeb(_ u: URL) {
@@ -285,6 +305,8 @@ struct ReadingView: View {
     @ViewBuilder private var detail: some View {
         if source == .aihot && !webShown {
             AIHotDetail(store: aihot, tab: aiTab, pick: aiPick, open: openWeb)
+        } else if source == .feeds && !webShown {
+            FeedDetail(store: feeds, itemID: feedPick, open: openFeedWeb)
         } else if !webShown {
             VStack(spacing: 10) {
                 Image(systemName: "newspaper").font(.system(size: 38)).foregroundStyle(.tertiary)
@@ -293,7 +315,7 @@ struct ReadingView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             VStack(spacing: 0) {
-                if source != .aihot && reader.article && reader.locked { lockedBanner; Divider() }
+                if (source == .caixin || source == .lifeweek) && reader.article && reader.locked { lockedBanner; Divider() }
                 ReaderWebView(controller: reader)
             }
         }
@@ -319,8 +341,8 @@ struct ReadingView: View {
                 // 唯一的返回键：先退回网页上一页；没有上一页了，AI 日报就回到日报 / 精选列表
                 if reader.canGoBack {
                     toolButton("chevron.left", "返回") { reader.goBack() }
-                } else if source == .aihot {
-                    toolButton("chevron.left", "回到日报 / 精选") { webShown = false }
+                } else if source == .aihot || source == .feeds {
+                    toolButton("chevron.left", source == .feeds ? "回到文章摘要" : "回到日报 / 精选") { webShown = false }
                 }
                 if reader.loading { ProgressView().controlSize(.small) }
                 if reader.article {
@@ -362,7 +384,8 @@ struct ReadingView: View {
             .pickerStyle(.segmented).labelsHidden()
             slider("字号", value: $reader.size, range: 14 ... 30, step: 1, text: "\(Int(reader.size))")
             slider("行距", value: $reader.leading, range: 1.5 ... 2.5, step: 0.05, text: String(format: "%.2f", reader.leading))
-            slider("栏宽", value: $reader.width, range: 520 ... 960, step: 20, text: "\(Int(reader.width))")
+            slider("栏宽", value: $reader.width, range: 520 ... 1200, step: 20, text: "\(Int(reader.width))")
+            slider("边距", value: $reader.pad, range: 0 ... 200, step: 4, text: "\(Int(reader.pad))")
             Toggle("段首空两格", isOn: $reader.indent)
             Toggle("两端对齐", isOn: $reader.justify)
             HStack {
