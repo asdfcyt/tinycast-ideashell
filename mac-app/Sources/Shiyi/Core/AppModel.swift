@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 
 enum AppSection: String, CaseIterable, Identifiable {
-    case today, focus, workbench, todos, calendar, insights, settings
+    case today, focus, workbench, todos, calendar, insights, reading, settings
 
     var id: String { rawValue }
 
@@ -15,6 +15,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .focus: return "行动"
         case .workbench: return "调度"
         case .insights: return "洞察"
+        case .reading: return "阅读"
         case .settings: return "设置"
         }
     }
@@ -27,6 +28,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .focus: return "target"
         case .workbench: return "wand.and.stars"
         case .insights: return "chart.bar.xaxis"
+        case .reading: return "newspaper"
         case .settings: return "gearshape"
         }
     }
@@ -398,6 +400,7 @@ final class AppModel: ObservableObject {
         case .calendar: await loadCalendar(ifStale: startup)
         case .focus: await focus.settle(); await focus.refresh()
         case .insights: await loadReview(ifStale: startup)
+        case .reading: if !startup { await WeeklyStore.shared.reload() }
         default: break
         }
     }

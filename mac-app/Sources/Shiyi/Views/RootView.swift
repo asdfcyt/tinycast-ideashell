@@ -79,6 +79,7 @@ struct RootView: View {
         case .todos: TodosView()
         case .calendar: CalendarView()
         case .insights: InsightsView()
+        case .reading: ReadingView()
         case .focus: ProjectsView()
         case .workbench: AIWorkbenchView()
         case .settings: EmptyView()
