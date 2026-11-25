@@ -20,6 +20,8 @@ struct SjzProjectDetailView: View {
     @State private var capDays = 0
     /// 空格快速预览的那一项；鼠标停在哪一条上，空格就预览哪一条
     @State private var hoverCap: SjzCapture?
+    /// 「在拾忆中定位」找到的那一条：背景闪一下
+    @State private var flashId: String?
     @State private var keyMonitor: Any?
     /// 等用户确认删除的那一项
     @State private var deleting: SjzCapture?
@@ -40,6 +42,10 @@ struct SjzProjectDetailView: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in page(proxy) }
+    }
+
+    private func page(_ proxy: ScrollViewProxy) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
@@ -65,8 +71,10 @@ struct SjzProjectDetailView: View {
             async let caps: Void = loadCaptures()
             async let ov: Void = model.refreshSjzOverview()
             _ = await (caps, ov)
+            await locateIfNeeded(proxy)
             docs = try? await model.sjz.documents(project: name)
         }
+        .onChange(of: model.sjzLocate) { _, _ in Task { await locateIfNeeded(proxy) } }
         // 停留在这个页面时每几秒静默重读一次；切回拾忆窗口、结审有写入时立刻重读
         .task(id: "poll-" + name) {
             while !Task.isCancelled {
@@ -113,6 +121,26 @@ struct SjzProjectDetailView: View {
             }
             return ev
         }
+    }
+
+    /// 从预览窗口「在拾忆中定位」过来：清掉筛选、展开它所在的分组、滚到这条并闪一下
+    private func locateIfNeeded(_ proxy: ScrollViewProxy) async {
+        guard let loc = model.sjzLocate, loc.hasPrefix(name + "|") else { return }
+        model.sjzLocate = nil
+        let id = String(loc.dropFirst(name.count + 1))
+        for _ in 0 ..< 20 {
+            if captures.contains(where: { $0.id == id }) { break }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        guard let c = captures.first(where: { $0.id == id }) else { model.showNotice("在这个项目的记录里没有找到这一条"); return }
+        capKind = ""; capQuery = ""; capDays = 0
+        if !c.parentId.isEmpty { openGroups.insert(c.parentId) }
+        else if let clue = c.clueIds.first(where: { cid in captures.contains { $0.id == cid } }), c.kind == "idea" { openGroups.insert(clue) }
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        flashId = c.id
+        withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo("cap-" + c.id, anchor: .center) }
+        try? await Task.sleep(nanoseconds: 2_400_000_000)
+        withAnimation { if flashId == c.id { flashId = nil } }
     }
 
     private func prefetch(_ c: SjzCapture) {
@@ -551,6 +579,8 @@ extension SjzProjectDetailView {
                        toggle: { if openGroups.contains(c.id) { openGroups.remove(c.id) } else { openGroups.insert(c.id) } },
                        related: c.kind == "clue" || c.kind == "datalist" ? Self.relatedTo(c, in: captures) : [],
                        all: captures, preview: { model.openSjzPreview(project: name, capture: $0) }) { model.openSjzEditor(project: name, capture: c) }
+        .background(flashId == c.id ? Brand.orange.opacity(0.2) : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .id("cap-" + c.id)
         .onHover { inside in
             if inside { hoverCap = c; prefetch(c) } else if hoverCap?.id == c.id { hoverCap = nil }
         }

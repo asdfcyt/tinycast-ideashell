@@ -56,7 +56,7 @@ struct ReadingView: View {
                 case .aihot: AIHotSidebar(store: aihot, tab: $aiTab, pick: $aiPick)
                 case .lifeweek: lifeweekSidebar
                 case .feeds: FeedsSidebar(store: feeds, pick: $feedPick, showAdd: $showAddFeed)
-                case .today: TodaySidebar(store: todayStore, pick: $todayPick)
+                case .today: TodaySidebar(store: todayStore, pick: $todayPick, onDigest: { webShown = false })
                 }
             }
             .frame(width: 292)
@@ -379,6 +379,8 @@ struct ReadingView: View {
     @ViewBuilder private var detail: some View {
         if source == .aihot && !webShown {
             AIHotDetail(store: aihot, tab: aiTab, pick: aiPick, open: openWeb)
+        } else if source == .today && !webShown {
+            TodayDigestView(store: todayStore) { todayPick = $0 }
         } else if source == .feeds && !webShown {
             FeedDetail(store: feeds, itemID: feedPick, open: { openFeedItem($0, original: $1) })
         } else if !webShown {

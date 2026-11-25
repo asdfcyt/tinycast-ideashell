@@ -364,9 +364,17 @@ struct ReaderAIBar: View {
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background { glass(RoundedRectangle(cornerRadius: 18, style: .continuous)) }
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.12), radius: 14, y: 4)
+        .shadow(color: .black.opacity(0.08), radius: 12, y: 3)
+    }
+
+    /// 亮一些的玻璃底：磨砂材质上再叠一层跟随系统外观的底色，不被页面颜色染灰
+    private func glass<S: Shape>(_ shape: S) -> some View {
+        ZStack {
+            shape.fill(.ultraThinMaterial)
+            shape.fill(Color(nsColor: .textBackgroundColor).opacity(0.82))
+        }
     }
 
     // MARK: 输入胶囊
@@ -390,9 +398,9 @@ struct ReaderAIBar: View {
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 9)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.14), radius: 16, y: 5)
+        .background { glass(Capsule()) }
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.10), radius: 14, y: 4)
     }
 
     private func quick(_ icon: String, _ text: String, _ help: String, _ action: @escaping () -> Void) -> some View {

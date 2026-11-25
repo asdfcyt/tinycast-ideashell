@@ -616,6 +616,13 @@ struct SjzQuickLook: View {
                     if hasOriginal, let f = currentFile {
                         WinIconButton(icon: "arrow.up.forward.app", help: "用默认应用打开") { NSWorkspace.shared.open(f.url) }
                     }
+                    if !capture.isSummary {
+                        WinIconButton(icon: "note.text.badge.plus", help: "在便签中打开") { [model, project, capture] in model.openSjzAsSticky(project: project, capture: capture) }
+                        WinIconButton(icon: "magnifyingglass", help: "在拾忆中定位") { [model, project, capture, onClose] in
+                            model.locateSjzCapture(project: project, id: capture.id)
+                            DispatchQueue.main.async { onClose() }   // 不在按钮自己的点击回调里关掉它所在的窗口
+                        }
+                    }
                     WinIconButton(icon: "note.text", help: "在结审中打开") { [model, project, capture] in model.openSjzCapture(project: project, capture) }
                 }
             }

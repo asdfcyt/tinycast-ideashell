@@ -52,6 +52,15 @@ extension AppModel {
         }
     }
 
+    /// 预览窗口里的「在拾忆中定位」：回到主窗口的项目页，滚到这条记录并闪一下
+    func locateSjzCapture(project: String, id: String) {
+        MainWindow.show()
+        closeSheets()
+        sjzLocate = project + "|" + id
+        selectedProject = SjzTasks.prefix + project
+        section = .focus
+    }
+
     // MARK: 钉住
 
     /// 这条记录现在是不是钉着的（岛和万能输入都往它里面保存）

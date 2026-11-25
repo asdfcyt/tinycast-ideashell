@@ -12,6 +12,8 @@ struct TodayEntry: Identifiable, Hashable {
     let title: String
     let sub: String
     let kind: Kind
+    /// 导语 / 摘要（给 AI 速览用，列表里不显示）
+    var brief = ""
 }
 
 struct TodayGroup: Identifiable, Hashable {
@@ -28,8 +30,8 @@ final class TodayStore: ObservableObject {
 
     @Published private(set) var groups: [TodayGroup] = []
     @Published private(set) var loading = false
-    /// 展开的分组（周刊文章多，默认收起）
-    @Published var expanded: Set<String> = ["aihot", "rss"]
+    /// 展开的分组（默认全部收起，进来先看 AI 速览）
+    @Published var expanded: Set<String> = []
     private var loadedOnce = false
 
     private init() {}
@@ -84,14 +86,14 @@ final class TodayStore: ObservableObject {
         let aiEntries: [TodayEntry] = ai.compactMap { it in
             guard let u = (it.aihot ?? it.original)?.absoluteString else { return nil }
             let sub = [it.source, it.category].filter { !$0.isEmpty }.joined(separator: " · ")
-            return TodayEntry(id: "aihot|" + u, raw: u, title: it.title, sub: sub.isEmpty ? it.summary : sub, kind: .web)
+            return TodayEntry(id: "aihot|" + u, raw: u, title: it.title, sub: sub.isEmpty ? it.summary : sub, kind: .web, brief: it.summary)
         }
         if !aiEntries.isEmpty { out.append(TodayGroup(id: "aihot", name: "AI 日报", icon: "sparkles", note: note, entries: aiEntries)) }
 
         // RSS 订阅：今天的新文章
         let rss: [TodayEntry] = FeedStore.shared.todayItems().map {
             TodayEntry(id: "rss|" + $0.id, raw: $0.id, title: $0.title,
-                       sub: FeedStore.shared.source($0.feed)?.title ?? "", kind: .rss)
+                       sub: FeedStore.shared.source($0.feed)?.title ?? "", kind: .rss, brief: $0.summary)
         }
         if !rss.isEmpty { out.append(TodayGroup(id: "rss", name: "订阅", icon: "antenna.radiowaves.left.and.right", note: "今天 \(rss.count) 篇", entries: rss)) }
         publish()
@@ -111,7 +113,7 @@ final class TodayStore: ObservableObject {
                                _ r: (label: String, items: [(title: String, link: String, summary: String)])) -> TodayGroup {
         var entries: [TodayEntry] = []
         for it in r.items {
-            entries.append(TodayEntry(id: id + "|" + it.link, raw: it.link, title: it.title, sub: it.summary, kind: .web))
+            entries.append(TodayEntry(id: id + "|" + it.link, raw: it.link, title: it.title, sub: it.summary, kind: .web, brief: it.summary))
         }
         return TodayGroup(id: id, name: name, icon: icon, note: r.label + " · 共 \(entries.count) 篇", entries: entries)
     }
