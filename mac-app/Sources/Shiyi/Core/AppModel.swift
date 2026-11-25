@@ -95,6 +95,8 @@ final class AppModel: ObservableObject {
     }
     @Published var sheetStack: [SheetPage] = []
     @Published var selectedProject: String?
+    /// 从「稍后读」待办跳回信息页时，要打开的文章链接（信息页接手后清掉）
+    @Published var pendingArticle: String?
 
     // 凭证（设置页编辑用）
     @Published var ideashellKeyInput: String

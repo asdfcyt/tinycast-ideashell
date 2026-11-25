@@ -7,7 +7,7 @@ import Translation
  * 阅读器里的「翻译」和「AI」。
  * · 翻译：默认用设置里的 AI 模型翻译（质量好、懂上下文）；也可选 macOS 自带的 Translation（本机离线，文字不出这台 Mac）。
  *   版式参考「沉浸式翻译」——译文跟在原文每一段下面。译文按文章存在本机，翻过的段落下次打开直接带出，不再重翻。
- * · AI：会把当前文章的文字发给设置里的 AI 服务，所以只在你点了按钮之后才发，
+ * · AI：底部悬浮条，会把当前文章的文字发给设置里的 AI 服务，所以只在你点了按钮之后才发，
  *   财新 / 三联这类付费内容首次使用前会先说明并要你确认；正文不保存，只存译文和摘要。
  * · AI 摘要：做成卡片放在文章最上面，存在本机，下次打开这篇文章还在。
  */
@@ -114,7 +114,74 @@ enum ReaderAIGate {
     }
 }
 
-// MARK: - AI 翻译（分块并行，结果边到边贴回页面）
+// MARK: - AI 翻译（流式：边生成边贴回页面）
+
+/// 把模型流式吐出的「[编号] 译文」逐行解析出来
+private struct TrStream {
+    var buf = ""
+    var cur: Int?
+    var text = ""
+
+    /// 喂入新片段；返回这次刚刚写完整的段落（编号从 1 开始）
+    mutating func feed(_ s: String) -> [(Int, String)] {
+        buf += s
+        var out: [(Int, String)] = []
+        while let nl = buf.firstIndex(of: "\n") {
+            let line = String(buf[..<nl])
+            buf.removeSubrange(...nl)
+            if let c = consume(line) { out.append(c) }
+        }
+        return out
+    }
+
+    mutating func finish() -> [(Int, String)] {
+        var out: [(Int, String)] = []
+        if !buf.isEmpty {
+            let line = buf
+            buf = ""
+            if let c = consume(line) { out.append(c) }
+        }
+        if let c = commit() { out.append(c) }
+        return out
+    }
+
+    private mutating func consume(_ line: String) -> (Int, String)? {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        if t.isEmpty { return nil }
+        if let m = Self.marker(t) {
+            let prev = commit()
+            cur = m.0
+            text = m.1
+            return prev
+        }
+        if cur != nil { text += (text.isEmpty ? "" : " ") + t }
+        return nil
+    }
+
+    private mutating func commit() -> (Int, String)? {
+        defer { cur = nil; text = "" }
+        guard let c = cur else { return nil }
+        let t = text.trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? nil : (c, t)
+    }
+
+    /// 正在生成、还没写完的那一段（给页面做「打字」效果）
+    func live() -> (Int, String)? {
+        let t = buf.trimmingCharacters(in: .whitespaces)
+        if let m = Self.marker(t) { return m.1.isEmpty ? nil : m }
+        guard let c = cur else { return nil }
+        var s = text
+        if !t.isEmpty && !t.hasPrefix("[") { s += (s.isEmpty ? "" : " ") + t }
+        s = s.trimmingCharacters(in: .whitespaces)
+        return s.isEmpty ? nil : (c, s)
+    }
+
+    static func marker(_ t: String) -> (Int, String)? {
+        guard t.hasPrefix("["), let close = t.firstIndex(of: "]"),
+              let n = Int(t[t.index(after: t.startIndex) ..< close]) else { return nil }
+        return (n, String(t[t.index(after: close)...]).trimmingCharacters(in: .whitespaces))
+    }
+}
 
 extension ReaderController {
     func translateWithAI(_ todo: [(Int, String)]) async {
@@ -124,174 +191,266 @@ extension ReaderController {
         }
         guard ReaderAIGate.confirm(url, action: "翻译") else { translateFinished(nil); return }
         let llm = model.llm
+        let gen = trGen
+        // 第一块切小一点：很快就能看到开头的译文；后面的块大一些，少发几次请求
         var chunks: [[(Int, String)]] = []
         var cur: [(Int, String)] = []
         var size = 0
         for it in todo {
-            if !cur.isEmpty && (size + it.1.count > 2800 || cur.count >= 20) { chunks.append(cur); cur = []; size = 0 }
+            let maxChars = chunks.isEmpty ? 900 : 2800
+            let maxCount = chunks.isEmpty ? 6 : 20
+            if !cur.isEmpty && (size + it.1.count > maxChars || cur.count >= maxCount) { chunks.append(cur); cur = []; size = 0 }
             cur.append(it)
             size += it.1.count
         }
         if !cur.isEmpty { chunks.append(cur) }
 
+        let emit: @Sendable ([(Int, String)], [(Int, String)]) async -> Void = { [weak self] part, fin in
+            await MainActor.run { self?.applyStreamed(part, fin, gen: gen) }
+        }
         var failed: String?
         var next = 0
-        await withTaskGroup(of: ([(Int, String)], String?).self) { group in
+        await withTaskGroup(of: String?.self) { group in
             func add() {
                 guard next < chunks.count else { return }
                 let c = chunks[next]
                 next += 1
-                group.addTask { await ReaderController.translateChunk(c, llm) }
+                group.addTask { await ReaderController.translateChunk(c, llm, emit: emit) }
             }
             for _ in 0 ..< min(3, chunks.count) { add() }
-            for await (res, err) in group {
+            for await err in group {
                 if let err { failed = err }
-                if !res.isEmpty { putTranslations(res) }
                 add()
             }
         }
+        guard gen == trGen else { return }
         translateFinished(failed.map { "部分段落没翻成功：" + $0 })
     }
 
-    nonisolated static func translateChunk(_ chunk: [(Int, String)], _ llm: LlmClient) async -> ([(Int, String)], String?) {
-        let arr = chunk.map(\.1)
-        guard let data = try? JSONSerialization.data(withJSONObject: arr), let user = String(data: data, encoding: .utf8) else { return ([], "内容无法编码") }
-        let system = "你是专业译者。把用户给的 JSON 数组里的每一段外文翻译成流畅、准确、符合中文阅读习惯的简体中文；保留专有名词、数字和代码，人名和术语首次出现可括注原文；只翻译，不解释。只输出 JSON 对象 {\"t\":[...]}，t 的长度和顺序必须和输入完全一致。"
-        do {
-            let text = try await llm.chatJSON(system: system, user: user)
-            if let obj = LlmClient.extractJSON(text), let t = obj["t"] as? [String], t.count == chunk.count {
-                return (zip(chunk, t).map { ($0.0, $1) }, nil)
-            }
-            // 条数对不上：拆成两半各翻各的
-            if chunk.count > 1 {
-                let mid = chunk.count / 2
-                let a = await translateChunk(Array(chunk[..<mid]), llm)
-                let b = await translateChunk(Array(chunk[mid...]), llm)
-                return (a.0 + b.0, a.1 ?? b.1)
-            }
-            return ([], "AI 返回的格式不对")
-        } catch {
-            return ([], error.localizedDescription)
+    /// 流式译文贴回页面：part 是还在生成的半段（只显示），fin 是已经写完的段落（显示并存起来）
+    func applyStreamed(_ part: [(Int, String)], _ fin: [(Int, String)], gen: Int) {
+        guard gen == trGen else { return }
+        putTranslations(part, store: false)
+        putTranslations(fin)
+    }
+
+    /// 翻一块：流式读取，边生成边通过 emit 交出去；返回错误信息（没有错误为 nil）
+    nonisolated static func translateChunk(_ chunk: [(Int, String)], _ llm: LlmClient, retry: Bool = true,
+                                           emit: @escaping @Sendable ([(Int, String)], [(Int, String)]) async -> Void) async -> String? {
+        let user = chunk.enumerated().map { "[\($0.offset + 1)] \($0.element.1)" }.joined(separator: "\n")
+        let system = "你是专业译者。用户给出若干编号段落，格式为「[编号] 原文」。把每一段翻译成流畅、准确、符合中文阅读习惯的简体中文；保留专有名词、数字和代码，人名和术语首次出现可括注原文；只翻译，不解释。严格按输入顺序逐段输出，格式与输入一致：「[编号] 译文」，一段占一行，不要漏段、不要合并、不要输出任何其他内容。"
+        var parser = TrStream()
+        var doneIdx = Set<Int>()
+        var lastFlush = Date.distantPast
+        func map(_ l: [(Int, String)]) -> [(Int, String)] {
+            l.compactMap { n, t in (1 ... chunk.count).contains(n) ? (chunk[n - 1].0, t) : nil }
         }
+        do {
+            for try await d in llm.streamText(system: system, user: user) {
+                let fin = map(parser.feed(d))
+                var part: [(Int, String)] = []
+                if Date().timeIntervalSince(lastFlush) > 0.08, let live = parser.live() {
+                    part = map([live])
+                    lastFlush = Date()
+                }
+                if !fin.isEmpty || !part.isEmpty {
+                    fin.forEach { doneIdx.insert($0.0) }
+                    await emit(part, fin)
+                }
+            }
+            let rest = map(parser.finish())
+            if !rest.isEmpty {
+                rest.forEach { doneIdx.insert($0.0) }
+                await emit([], rest)
+            }
+        } catch {
+            if Task.isCancelled { return nil }
+            return error.localizedDescription
+        }
+        // 漏掉的段落再单独请求一次
+        let missing = chunk.filter { !doneIdx.contains($0.0) }
+        if missing.isEmpty { return nil }
+        if retry { return await translateChunk(missing, llm, retry: false, emit: emit) }
+        return "AI 返回的格式不对"
     }
 }
 
-// MARK: - AI 面板
+// MARK: - AI 悬浮条（底部一条玻璃胶囊；回答在它上面展开成卡片，流式输出）
 
-struct ReaderAIPanel: View {
+private struct AIHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+struct ReaderAIBar: View {
     @ObservedObject var reader: ReaderController
+    var close: () -> Void
     @State private var answer = ""
+    @State private var title = "AI 阅读助手"
+    @State private var status = ""
     @State private var busy = false
     @State private var error: String?
     @State private var question = ""
-    @State private var ack = false
-    @State private var note = ""
-
-    private var paid: Bool { ReaderAIGate.isPaid(reader.url) }
-    private var ackKey: String { ReaderAIGate.ackKey(reader.url) }
-    private var model: AppModel? { AppModel.current }
-    private var serviceHost: String { URL(string: model?.llmBaseUrl ?? "")?.host ?? "你设置的 AI 服务" }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("AI 阅读助手", systemImage: "sparkles").font(.system(size: 14, weight: .bold))
-                Spacer()
-                if busy { ProgressView().controlSize(.small) }
-            }
-            if model?.hasLlm != true {
-                Text("还没有设置 AI 模型：到「设置」里填 API Key 之后就能用。").font(.callout).foregroundStyle(.secondary)
-            } else if paid && !ack {
-                paidNotice
-            } else {
-                controls
-            }
-        }
-        .padding(16).frame(width: 360)
-        .onAppear { ack = UserDefaults.standard.bool(forKey: ackKey) }
-    }
-
-    // 付费内容：先说清楚发生什么，再确认
-    private var paidNotice: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("先说明一下", systemImage: "exclamationmark.shield").font(.callout.weight(.semibold)).foregroundStyle(Brand.orange)
-            Text("这是付费订阅内容。点 AI 之后，当前文章的文字会发送到 \(serviceHost)（你在设置里配置的服务），用来生成回答；拾忆不保存正文，也不会自动发送。")
-                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text("文章受版权保护，仅限你个人阅读辅助，请勿转发或公开 AI 生成的全文复述。这个操作只读取你已经打开的页面，不会向网站发起额外请求。")
-                .font(.caption).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
-            Button("我知道了，继续") {
-                UserDefaults.standard.set(true, forKey: ackKey)
-                ack = true
-            }
-            .buttonStyle(.borderedProminent).tint(Brand.orange).controlSize(.small)
-        }
-    }
-
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if reader.locked {
-                Text("当前只有预览、没有全文，AI 只能基于预览回答。").font(.caption).foregroundStyle(.orange)
-            }
-            HStack(spacing: 8) {
-                chip(reader.hasSummary ? "重新摘要" : "摘要要点", "text.alignleft") { await ask(.summary) }
-                chip("白话讲讲", "text.bubble") { await ask(.plain) }
-                chip("解释选中", "highlighter") { await ask(.explain) }
-            }
-            HStack(spacing: 8) {
-                TextField("针对这篇文章提问…", text: $question).textFieldStyle(.roundedBorder).onSubmit { send() }
-                Button { send() } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 18)) }
-                    .buttonStyle(.plain).foregroundStyle(Brand.orange)
-                    .disabled(busy || question.trimmed.isEmpty)
-            }
-            if let e = error { Text(e).font(.caption).foregroundStyle(.red) }
-            if !note.isEmpty {
-                HStack(spacing: 10) {
-                    Label(note, systemImage: "checkmark.circle").font(.caption).foregroundStyle(.secondary)
-                    if reader.hasSummary { Button("移除摘要") { reader.removeSummary(); note = "" }.buttonStyle(.link).font(.caption) }
-                }
-            }
-            if !answer.isEmpty {
-                // ScrollView 在气泡里没有固有高度，会缩成 0：短答案直接铺开，长答案给固定高度再滚动
-                let body = Text((try? AttributedString(markdown: answer, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(answer))
-                    .font(.system(size: 13.5)).lineSpacing(4).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                if answer.count > 320 {
-                    ScrollView { body }.frame(height: 300)
-                } else {
-                    body
-                }
-                HStack(spacing: 14) {
-                    Button("复制") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(answer, forType: .string)
-                        AppModel.current?.showNotice("已复制")
-                    }
-                    Button("摘到便签") { clip() }
-                    Spacer()
-                }
-                .buttonStyle(.link).font(.caption)
-            }
-            Text("文字会发送到 \(serviceHost)，不保存正文。").font(.caption2).foregroundStyle(.tertiary)
-        }
-    }
-
-    private func chip(_ title: String, _ icon: String, _ action: @escaping () async -> Void) -> some View {
-        Button { Task { await action() } } label: { Label(title, systemImage: icon).font(.caption) }
-            .buttonStyle(.bordered).controlSize(.small).disabled(busy)
-    }
+    @State private var job: Task<Void, Never>?
+    @State private var contentH: CGFloat = 0
+    @FocusState private var focused: Bool
 
     private enum Kind { case summary, plain, explain, ask(String) }
+    private var model: AppModel? { AppModel.current }
+    private var hasCard: Bool { !answer.isEmpty || error != nil || busy }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if hasCard { card.transition(.move(edge: .bottom).combined(with: .opacity)) }
+            capsule
+        }
+        .frame(maxWidth: 660)
+        .padding(.horizontal, 20).padding(.bottom, 18)
+        .animation(.spring(duration: 0.3), value: hasCard)
+        .onChange(of: reader.url) { _, _ in reset() }
+        .onAppear { focused = true }
+        .onDisappear { job?.cancel() }
+        .onExitCommand { if hasCard { dismissCard() } else { close() } }
+    }
+
+    // MARK: 回答卡片
+
+    private var rendered: AttributedString {
+        (try? AttributedString(markdown: answer, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(answer)
+    }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles").font(.system(size: 11, weight: .semibold)).foregroundStyle(Brand.orange)
+                Text(title).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Button { dismissCard() } label: { Image(systemName: "xmark").font(.system(size: 10, weight: .bold)) }
+                    .buttonStyle(.plain).foregroundStyle(.tertiary).help("收起")
+            }
+            if let e = error {
+                Text(e).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            } else if answer.isEmpty {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(status).font(.callout).foregroundStyle(.secondary)
+                }
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(rendered).font(.system(size: 14)).lineSpacing(5).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(GeometryReader { Color.clear.preference(key: AIHeightKey.self, value: $0.size.height) })
+                            Color.clear.frame(height: 1).id("end")
+                        }
+                    }
+                    .frame(height: min(max(contentH, 20), 300))
+                    .onPreferenceChange(AIHeightKey.self) { contentH = $0 }
+                    .onChange(of: answer) { _, _ in if busy { proxy.scrollTo("end", anchor: .bottom) } }
+                }
+                if !busy {
+                    HStack(spacing: 14) {
+                        Button("复制") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(answer, forType: .string)
+                            AppModel.current?.showNotice("已复制")
+                        }
+                        Button("摘到便签") { clip() }
+                        Spacer()
+                    }
+                    .buttonStyle(.link).font(.caption)
+                }
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.12), radius: 14, y: 4)
+    }
+
+    // MARK: 输入胶囊
+
+    private var capsule: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "sparkles").font(.system(size: 14, weight: .semibold)).foregroundStyle(Brand.orange)
+            TextField("问问这篇文章…", text: $question)
+                .textFieldStyle(.plain).font(.system(size: 14)).focused($focused)
+                .onSubmit { send() }
+            if busy {
+                Button { stop() } label: { Image(systemName: "stop.circle.fill").font(.system(size: 19)) }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("停止")
+            } else {
+                quick("text.alignleft", reader.hasSummary ? "重新摘要" : "摘要", "把要点放在文章最上面") { ask(.summary) }
+                quick("text.bubble", "白话", "用大白话讲给我听") { ask(.plain) }
+                quick("highlighter", "解释", "解释文章里选中的文字") { ask(.explain) }
+                Button { send() } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 20)) }
+                    .buttonStyle(.plain).foregroundStyle(question.trimmed.isEmpty ? Color.secondary.opacity(0.35) : Brand.orange)
+                    .disabled(question.trimmed.isEmpty)
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 9)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.14), radius: 16, y: 5)
+    }
+
+    private func quick(_ icon: String, _ text: String, _ help: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(text, systemImage: icon).font(.system(size: 12)).foregroundStyle(.secondary)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(Color.primary.opacity(0.06), in: Capsule())
+        }
+        .buttonStyle(.plain).help(help)
+    }
+
+    // MARK: 动作
 
     private func send() {
         let q = question.trimmed
         guard !q.isEmpty else { return }
-        Task { await ask(.ask(q)) }
+        question = ""
+        ask(.ask(q))
     }
 
-    private func ask(_ kind: Kind) async {
-        guard let llm = model?.llm, !busy else { return }
+    private func ask(_ kind: Kind) {
+        guard !busy else { return }
+        guard let m = model, m.hasLlm else {
+            title = "AI 阅读助手"
+            answer = ""
+            error = "还没有设置 AI 模型：到「设置」里填 API Key 之后就能用。"
+            return
+        }
+        let llm = m.llm
+        job = Task { await run(kind, llm) }
+    }
+
+    private func stop() {
+        job?.cancel()
+        busy = false
+    }
+
+    private func dismissCard() {
+        job?.cancel()
+        busy = false
+        answer = ""
         error = nil
+    }
+
+    private func reset() {
+        dismissCard()
+    }
+
+    @MainActor private func run(_ kind: Kind, _ llm: LlmClient) async {
+        error = nil
+        answer = ""
+        switch kind {
+        case .summary: title = "摘要要点"; status = "正在通读这篇文章…"
+        case .plain: title = "白话讲讲"; status = "正在组织语言…"
+        case .explain: title = "解释选中"; status = "正在理解这段文字…"
+        case .ask(let q): title = q; status = "正在查阅这篇文章…"
+        }
+        guard ReaderAIGate.confirm(reader.url, action: "回答") else { return }
         busy = true
         defer { busy = false }
         let text = await reader.articleText()
@@ -313,18 +472,25 @@ struct ReaderAIPanel: View {
             user += "\n\n问题：\(q)"
         }
         do {
-            let text = try await llm.chatText(system: system, user: user)
-            if case .summary = kind, reader.article, let s = Self.parseSummary(text) {
-                // 摘要放到文章最上面的卡片里，面板里只留一句提示
-                reader.showSummary(s)
-                answer = ""
-                note = "摘要已放在文章最上面。"
-            } else {
-                note = ""
-                answer = text
+            var acc = ""
+            var isSummary = false
+            if case .summary = kind { isSummary = true }
+            for try await d in llm.streamText(system: system, user: user) {
+                acc += d
+                if !isSummary { answer = acc }   // 摘要要等写完才能排成卡片，其它回答边写边显示
+            }
+            guard !Task.isCancelled else { return }
+            if isSummary {
+                if reader.article, let s = Self.parseSummary(acc) {
+                    reader.showSummary(s)
+                    answer = ""
+                    AppModel.current?.showNotice("摘要已放在文章最上面")
+                } else {
+                    answer = acc
+                }
             }
         } catch {
-            self.error = error.localizedDescription
+            if !Task.isCancelled { self.error = error.localizedDescription }
         }
     }
 

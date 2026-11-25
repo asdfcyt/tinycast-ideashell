@@ -61,6 +61,8 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
     var collected: [String] = []
     var pendingItems: [(Int, String)] = []
     private var hasTranslation = false
+    /// 每次换文章 / 收起译文加一：还在路上的流式译文据此丢弃
+    var trGen = 0
     private var restoring = false
     private static let modeKey = "reader.trMode"
 
@@ -88,6 +90,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
 
     /// 只是把页面上的译文收起来（已存的译文还在，下次打开这篇文章会自动带出）
     func clearTranslation() {
+        trGen += 1
         translateMode = .off
         translating = false
         hasTranslation = false
@@ -143,7 +146,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
     }
 
     func putTranslations(_ items: [(Int, String)], store: Bool = true) {
-        guard !items.isEmpty else { return }
+        guard !items.isEmpty, translateMode != .off else { return }
         if store {
             let pairs = items.compactMap { i, t in i < collected.count ? (collected[i], t) : nil }
             ReaderCache.shared.setTranslations(url, pairs)
@@ -166,7 +169,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         let obj: [String: Any] = ["lead": s.lead, "points": s.points]
         guard let d = try? JSONSerialization.data(withJSONObject: obj), let js = String(data: d, encoding: .utf8) else { return }
         hasSummary = true
-        webView.evaluateJavaScript("window.__syReader && window.__syReader.putSummary(\(js))", completionHandler: nil)
+        webView.evaluateJavaScript("window.__syReader && window.__syReader.putSummary(\(js), \(store))", completionHandler: nil)
     }
 
     func removeSummary() {
@@ -582,21 +585,21 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             if (!st) { st = document.createElement('style'); st.id = 'sy-sum-style'; document.head.appendChild(st); }
             var X = 'html .sy-ai.sy-ai.sy-ai', C = X + ' .sy-ai-c';
             st.textContent = [
-              X + '{display:block !important;position:relative;margin:0 0 34px !important;padding:20px 26px 14px !important;border-radius:16px !important;background:' + ac + '14 !important;border:1px solid ' + ac + '33 !important;box-sizing:border-box;width:auto !important;max-width:100% !important;text-indent:0 !important;text-align:left !important}',
+              X + '{display:block !important;position:relative;margin:0 0 22px !important;padding:13px 20px 6px !important;border-radius:14px !important;background:' + ac + '14 !important;border:1px solid ' + ac + '33 !important;box-sizing:border-box;width:auto !important;max-width:100% !important;text-indent:0 !important;text-align:left !important}',
               C + '{font-family:' + F.hei + ' !important;color:' + ac + ' !important;text-indent:0 !important}',
-              C + '.sy-ai-h{display:flex !important;align-items:center;justify-content:space-between;margin:0 0 12px !important;padding:0 !important;font-size:12px !important;font-weight:700 !important;letter-spacing:.18em;width:auto !important}',
-              C + '.sy-ai-x{cursor:pointer;opacity:.55;font-size:16px !important;line-height:1;padding:0 2px !important;margin:0 !important;width:auto !important;letter-spacing:0}',
-              C + '.sy-ai-lead{font-family:' + ff + ' !important;color:' + fg + ' !important;font-size:' + (R.size * 1.06) + 'px !important;line-height:1.75 !important;font-weight:700 !important;margin:0 0 14px !important;padding:0 !important;width:auto !important}',
-              C + '.sy-ai-row{display:flex !important;align-items:baseline;gap:12px;margin:0 !important;padding:8px 0 !important;border-top:1px dashed ' + ac + '40 !important;width:auto !important}',
-              C + '.sy-ai-n{font-family:' + F.hei + ' !important;color:' + ac + ' !important;font-size:' + (R.size * 0.8) + 'px !important;font-weight:700 !important;min-width:1.5em;margin:0 !important;padding:0 !important;width:auto !important}',
-              C + '.sy-ai-p{font-family:' + ff + ' !important;color:' + fg + ' !important;opacity:.9;font-size:' + (R.size * 0.9) + 'px !important;line-height:1.8 !important;margin:0 !important;padding:0 !important;width:auto !important}'
+              C + '.sy-ai-h{display:flex !important;align-items:center;justify-content:space-between;margin:0 0 6px !important;padding:0 !important;font-size:11px !important;font-weight:700 !important;letter-spacing:.16em;width:auto !important}',
+              C + '.sy-ai-x{cursor:pointer;opacity:.55;font-size:15px !important;line-height:1;padding:0 2px !important;margin:0 !important;width:auto !important;letter-spacing:0}',
+              C + '.sy-ai-lead{font-family:' + ff + ' !important;color:' + fg + ' !important;font-size:' + (R.size * 1.0) + 'px !important;line-height:1.55 !important;font-weight:700 !important;margin:0 0 8px !important;padding:0 !important;width:auto !important}',
+              C + '.sy-ai-row{display:flex !important;align-items:baseline;gap:10px;margin:0 !important;padding:5px 0 !important;border-top:1px dashed ' + ac + '40 !important;width:auto !important}',
+              C + '.sy-ai-n{font-family:' + F.hei + ' !important;color:' + ac + ' !important;font-size:' + (R.size * 0.74) + 'px !important;font-weight:700 !important;min-width:1.4em;margin:0 !important;padding:0 !important;width:auto !important}',
+              C + '.sy-ai-p{font-family:' + ff + ' !important;color:' + fg + ' !important;opacity:.9;font-size:' + (R.size * 0.88) + 'px !important;line-height:1.6 !important;margin:0 !important;padding:0 !important;width:auto !important}'
             ].join('\n');
           }
           R.clearSummary = function () {
             var o = document.querySelectorAll('.sy-ai');
             for (var i = 0; i < o.length; i++) { o[i].remove(); }
           };
-          R.putSummary = function (s) {
+          R.putSummary = function (s, jump) {
             var root = trRoot();
             if (!root || !s) { return; }
             R.clearSummary();
@@ -618,6 +621,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             }
             root.insertBefore(card, root.firstChild);
             sumStyle();
+            if (jump) { window.scrollTo({ top: 0, behavior: 'smooth' }); }
           };
           R.text = function () {
             var root = trRoot();
@@ -854,6 +858,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         article = false
         locked = false
         selection = ""
+        trGen += 1
         translateMode = .off
         translating = false
         hasTranslation = false

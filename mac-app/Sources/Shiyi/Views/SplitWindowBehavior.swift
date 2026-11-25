@@ -23,6 +23,7 @@ struct SplitWindowBehavior: ViewModifier {
         content
             .background(WindowGrabber { w in
                 if window !== w { window = w }
+                Self.hideTitlebarLine(w)
                 DispatchQueue.main.async { checkWidth() }
             })
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { n in
@@ -30,6 +31,18 @@ struct SplitWindowBehavior: ViewModifier {
                 checkWidth()
             }
             .onChange(of: visibility) { _, new in visibilityChanged(shown: new != .detailOnly) }
+    }
+
+    /// 去掉标题栏下面那条横线（杂志风格，不要任何分隔线）
+    private static func hideTitlebarLine(_ w: NSWindow?) {
+        guard let w else { return }
+        w.titlebarSeparatorStyle = .none
+        func walk(_ vc: NSViewController?) {
+            guard let vc else { return }
+            if let sp = vc as? NSSplitViewController { sp.splitViewItems.forEach { $0.titlebarSeparatorStyle = .none } }
+            vc.children.forEach(walk)
+        }
+        walk(w.contentViewController)
     }
 
     private func checkWidth() {

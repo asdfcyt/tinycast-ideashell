@@ -56,6 +56,57 @@ struct LlmClient: Sendable {
         return content
     }
 
+    /// 流式对话：模型一边生成，一边把新生成的文字片段交出来（SSE）
+    func streamText(system: String, user: String, timeout: TimeInterval = 120) -> AsyncThrowingStream<String, Error> {
+        AsyncThrowingStream { cont in
+            let task = Task {
+                do {
+                    guard !key.trimmed.isEmpty else { throw LlmError(message: "还没有填写 AI 模型的 API Key") }
+                    let base = baseURL.trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                    guard let url = URL(string: base + "/chat/completions"), url.scheme?.hasPrefix("http") == true else {
+                        throw LlmError(message: "AI 模型的接口地址不正确，请检查设置")
+                    }
+                    let body: [String: Any] = [
+                        "model": model.trimmed, "temperature": 0.2, "stream": true,
+                        "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
+                    ]
+                    var req = URLRequest(url: url, timeoutInterval: timeout)
+                    req.httpMethod = "POST"
+                    req.setValue("Bearer " + key.trimmed, forHTTPHeaderField: "Authorization")
+                    req.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+                    req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                    req.httpBody = try JSONSerialization.data(withJSONObject: body)
+                    let (bytes, resp) = try await URLSession.shared.bytes(for: req)
+                    let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                    guard (200 ... 299).contains(code) else {
+                        var data = Data()
+                        for try await b in bytes { data.append(b); if data.count > 600 { break } }
+                        throw LlmError(message: Self.describe(code, data))
+                    }
+                    for try await line in bytes.lines {
+                        guard line.hasPrefix("data:") else { continue }
+                        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                        if payload == "[DONE]" { break }
+                        guard let d = payload.data(using: .utf8),
+                              let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                              let choice = (obj["choices"] as? [[String: Any]])?.first,
+                              let delta = choice["delta"] as? [String: Any],
+                              let s = delta["content"] as? String, !s.isEmpty else { continue }
+                        cont.yield(s)
+                    }
+                    cont.finish()
+                } catch let e as URLError where e.code == .timedOut {
+                    cont.finish(throwing: LlmError(message: "AI 响应超时，请稍后再试"))
+                } catch is URLError {
+                    cont.finish(throwing: LlmError(message: "网络不可用，连不上 AI 服务"))
+                } catch {
+                    cont.finish(throwing: error)
+                }
+            }
+            cont.onTermination = { _ in task.cancel() }
+        }
+    }
+
     private func send(_ url: URL, system: String, user: String, json: Bool, timeout: TimeInterval) async throws -> (code: Int, body: Data) {
         var body: [String: Any] = [
             "model": model.trimmed,

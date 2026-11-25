@@ -98,6 +98,10 @@ struct TaskDetailView: View {
             priorityChip
             listChip
             projectChip
+            if let link = AppModel.readLaterLink(current) {
+                Button { model.openArticle(link) } label: { chipLabel(icon: "book", text: "阅读", tint: Brand.orange) }
+                    .buttonStyle(.plain).help("跳到「信息」里这篇文章继续读")
+            }
             if let r = current.repeatFlag { chip(icon: "repeat", text: Self.repeatText(r), tint: .secondary) }
         }
     }

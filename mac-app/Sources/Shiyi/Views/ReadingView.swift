@@ -26,6 +26,7 @@ enum ReadingSource: String, CaseIterable {
 /// 财新周刊 / 三联生活周刊：左边是入口，右边是内嵌浏览器——用你自己的账号登录后读全文（财新另有重排版）；
 /// AI 日报：AIHOT 的公开接口，原生渲染日报和精选，原文再到浏览器里打开。
 struct ReadingView: View {
+    @EnvironmentObject private var model: AppModel
     @ObservedObject private var store = WeeklyStore.shared
     @ObservedObject private var aihot = AIHotStore.shared
     @ObservedObject private var lifeweek = LifeweekStore.shared
@@ -73,6 +74,8 @@ struct ReadingView: View {
             if source == .lifeweek { await lifeweek.loadIfNeeded() }
             await reader.refreshLogin()
         }
+        .onAppear { consumePendingArticle() }
+        .onChange(of: model.pendingArticle) { _, _ in consumePendingArticle() }
         .onChange(of: sourceRaw) { _, _ in
             webShown = false
             selected = nil
@@ -219,6 +222,45 @@ struct ReadingView: View {
         webShown = true
     }
 
+    /// 从「稍后读」待办跳回来：切到文章所在的来源、选中它在列表里的位置，再用平时的排版打开
+    private func consumePendingArticle() {
+        guard let link = model.pendingArticle, let u = URL(string: link) else { return }
+        model.pendingArticle = nil
+        Task { @MainActor in
+            let host = u.host ?? ""
+            let feedItem = feeds.items.first { $0.link == link }
+            let target: ReadingSource
+            if feedItem != nil { target = .feeds }
+            else if host.hasSuffix("caixin.com") { target = .caixin }
+            else if host.hasSuffix("lifeweek.com.cn") { target = .lifeweek }
+            else if host.hasSuffix("aihot.news") { target = .aihot }
+            else { target = .feeds }
+            if sourceRaw != target.rawValue {
+                sourceRaw = target.rawValue
+                try? await Task.sleep(nanoseconds: 250_000_000)   // 等换来源时的重置做完，再打开文章
+            }
+            switch target {
+            case .caixin:
+                if let a = store.sections.flatMap(\.articles).first(where: { $0.id == link }) { open(a) } else { openWeb(u) }
+            case .lifeweek:
+                if let a = lifeweek.sections.flatMap(\.articles).first(where: { $0.url == u }) { selected = "lw\(a.id)" }
+                openWeb(u)
+            case .aihot:
+                openWeb(u)
+            default:
+                if let it = feedItem {
+                    feeds.selection = .feed(it.feed)
+                    try? await Task.sleep(nanoseconds: 120_000_000)
+                    if feedPick == it.id { feeds.setRead(it.id, true); openFeedItem(it, original: false) }
+                    else { feedPick = it.id }   // 选中后由 onChange 打开
+                } else {
+                    reader.open(u, generic: true)
+                    webShown = true
+                }
+            }
+        }
+    }
+
     private func openWeb(_ u: URL) {
         marks.markRead(u.absoluteString)
         reader.open(u)
@@ -349,6 +391,12 @@ struct ReadingView: View {
             VStack(spacing: 0) {
                 if source != .aihot && source != .feeds && reader.article && reader.locked { lockedBanner }
                 ReaderWebView(controller: reader)
+                    .overlay(alignment: .bottom) {
+                        if showAI && reader.article {
+                            ReaderAIBar(reader: reader) { withAnimation(.spring(duration: 0.3)) { showAI = false } }
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
             }
         }
     }
@@ -397,9 +445,10 @@ struct ReadingView: View {
                         else { Image(systemName: "character.bubble").symbolVariant(reader.translateMode == .off ? .none : .fill) }
                     }
                     .help("翻译：AI 翻译成中文，译文跟在原文下面，翻过的自动保留")
-                    Button { showAI.toggle() } label: { Image(systemName: "sparkles") }
-                        .help("AI：摘要、白话解读、解释选中、提问")
-                        .popover(isPresented: $showAI, arrowEdge: .bottom) { ReaderAIPanel(reader: reader) }
+                    Button { withAnimation(.spring(duration: 0.3)) { showAI.toggle() } } label: {
+                        Image(systemName: "sparkles").foregroundStyle(showAI ? Brand.orange : Color.primary)
+                    }
+                    .help("AI：摘要、白话解读、解释选中、提问")
                     Menu {
                         Picker("外观", selection: $reader.theme) {
                             Text("纸张").tag("paper")

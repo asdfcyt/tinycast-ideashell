@@ -316,6 +316,22 @@ enum FeedFormat {
 }
 
 extension AppModel {
+    /// 「稍后读」待办里存的文章链接（不是稍后读待办就返回 nil）
+    static func readLaterLink(_ t: DidaTask) -> String? {
+        guard t.tags.contains("稍后读") || t.title.hasPrefix("稍后读：") else { return nil }
+        for text in [t.content, t.title] {
+            if let r = text.range(of: "https?://[^\\s<>\"）)]+", options: .regularExpression) { return String(text[r]) }
+        }
+        return nil
+    }
+
+    /// 回到信息页，打开这篇文章（所在来源、列表位置、阅读排版都和平时点开一样）
+    func openArticle(_ link: String) {
+        closeSheets()
+        pendingArticle = link
+        section = .reading
+    }
+
     /// 「稍后读」：把文章存成一条没有日期的待办（标题 + 链接），有滴答清单就进滴答，否则进闪念贝壳
     func saveReadLater(title: String, link: String) async {
         let name = "稍后读：" + title
