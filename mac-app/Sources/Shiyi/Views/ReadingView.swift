@@ -96,10 +96,14 @@ struct ReadingView: View {
             }
             Divider()
             HStack(spacing: 6) {
-                Image(systemName: "person.crop.circle").foregroundStyle(.secondary)
-                Text("全文需《三联生活周刊》数字刊账号").font(.caption).foregroundStyle(.secondary)
+                Circle().fill(reader.lifeweekLoggedIn ? Color.green : Color.secondary.opacity(0.5)).frame(width: 7, height: 7)
+                Text(reader.lifeweekLoggedIn ? "已登录三联" : "未登录三联（全文需数字刊账号）").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("登录") { openLifeweekLogin() }.buttonStyle(.link).font(.caption)
+                if reader.lifeweekLoggedIn {
+                    Button("退出") { Task { await reader.logoutLifeweek() } }.buttonStyle(.link).font(.caption)
+                } else {
+                    Button("登录") { openLifeweekLogin() }.buttonStyle(.link).font(.caption)
+                }
             }
             .padding(.horizontal, 14).padding(.vertical, 9)
         }
@@ -158,7 +162,9 @@ struct ReadingView: View {
     }
 
     private func openLifeweekLogin() {
-        openWeb(URL(string: "https://www.lifeweek.com.cn/h5/port/tologin.do")!)
+        // 官网的登录在页面右上角「登录/注册」；手机版登录是另一套会话，读不了官网文章，所以走官网首页
+        openWeb(URL(string: "https://www.lifeweek.com.cn/")!)
+        AppModel.current?.showNotice("在页面右上角点「登录/注册」，登录后再点左边目录里的文章")
     }
 
     private func openWeb(_ u: URL) {
@@ -380,11 +386,11 @@ struct ReadingView: View {
         HStack(spacing: 8) {
             Image(systemName: "lock.fill").foregroundStyle(Brand.orange)
             Text(source == .lifeweek
-                 ? "只显示了预览：登录有《三联生活周刊》数字刊权限的账号后可读全文"
+                 ? (reader.lifeweekLoggedIn ? "只显示了预览：这个账号没有《三联生活周刊》数字刊权限，或登录已过期" : "只显示了预览：登录有《三联生活周刊》数字刊权限的账号后可读全文")
                  : (reader.loggedIn ? "只显示了预览：这个账号没有《财新周刊》阅读权限，或登录已过期" : "只显示了预览：登录有《财新周刊》权限的账号后可读全文"))
                 .font(.callout).foregroundStyle(.secondary)
             Spacer(minLength: 6)
-            Button(source == .lifeweek ? "登录" : (reader.loggedIn ? "重新登录" : "登录")) {
+            Button(source == .lifeweek ? (reader.lifeweekLoggedIn ? "重新登录" : "登录") : (reader.loggedIn ? "重新登录" : "登录")) {
                 if source == .lifeweek { openLifeweekLogin() } else { reader.openLogin() }
             }
                 .buttonStyle(.bordered).controlSize(.small)

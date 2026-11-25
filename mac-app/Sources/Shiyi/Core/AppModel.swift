@@ -15,7 +15,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .focus: return "行动"
         case .workbench: return "调度"
         case .insights: return "洞察"
-        case .reading: return "阅读"
+        case .reading: return "信息"
         case .settings: return "设置"
         }
     }

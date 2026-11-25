@@ -23,6 +23,8 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
     /// 文章页只给了预览（没登录 / 没订阅周刊）
     @Published var locked = false
     @Published var loggedIn = false
+    /// 三联是否已登录：从页面上读（右上角是「登录」还是别的），上次的结果记在本机
+    @Published var lifeweekLoggedIn = UserDefaults.standard.bool(forKey: "reader.lifeweekLogin")
     @Published var onLogin = false
     // 阅读排版（都存在本机，改了立刻作用到当前页）
     @Published var size: Double { didSet { save(size, "size") } }
@@ -114,11 +116,24 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
 
     /// 退出登录：清掉本机上财新的登录状态
     func logout() async {
-        let store = webView.configuration.websiteDataStore
-        let records = await store.dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes())
-        await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: records.filter { $0.displayName.contains("caixin") })
+        await clearSite("caixin")
         await refreshLogin()
         if article { webView.reload() }
+    }
+
+    /// 退出三联：清掉本机上三联（含中读登录）的登录状态
+    func logoutLifeweek() async {
+        await clearSite("lifeweek")
+        await clearSite("zdline")
+        lifeweekLoggedIn = false
+        UserDefaults.standard.set(false, forKey: "reader.lifeweekLogin")
+        if article { webView.reload() }
+    }
+
+    private func clearSite(_ key: String) async {
+        let store = webView.configuration.websiteDataStore
+        let records = await store.dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes())
+        await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), for: records.filter { $0.displayName.contains(key) })
     }
 
     func refreshLogin() async {
@@ -182,11 +197,23 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             kai: '"Kaiti SC","STKaiti","KaiTi",serif'
           };
           var isAI = location.hostname === 'aihot.news';
-          var isLW = /(^|\.)lifeweek\.com\.cn$/.test(location.hostname) && /^\/h5\/article\/detail\.do/.test(location.pathname);
-          var content = isAI ? document.querySelector('main article') : isLW ? document.querySelector('.area6') : document.getElementById('the_content');
+          var isLW = /(^|\.)lifeweek\.com\.cn$/.test(location.hostname) && /^\/article\/\d+/.test(location.pathname);
+          var content = isAI ? document.querySelector('main article') : isLW ? document.querySelector('.acticle-content') : document.getElementById('the_content');
           var isArticle = (isAI || isLW) ? !!content : (/^\/\d{4}-\d{2}-\d{2}\/\d+\.html/.test(location.pathname) && !!content);
           function post(o) {
             try { window.webkit.messageHandlers.reader.postMessage(o); } catch (e) {}
+          }
+          // 三联：看页面右上角是不是还写着「登录」，来判断有没有登录（只读这一处文字）
+          if (/(^|\.)lifeweek\.com\.cn$/.test(location.hostname) && !/tologin|login/i.test(location.pathname)) {
+            var lwProbe = function () {
+              var a = document.querySelector('.area4 .txC a, .z_hd .txC a');
+              var h = document.querySelector('header.header');
+              var out = null;
+              if (a) { out = /登录/.test(a.textContent || '') || /tologin/.test(a.getAttribute('href') || ''); }
+              else if (h && (h.textContent || '').indexOf('首页') >= 0) { out = /登录/.test(h.textContent || ''); }
+              if (out !== null) { post({ lwOut: out }); }
+            };
+            setTimeout(lwProbe, 800); setTimeout(lwProbe, 2500); setTimeout(lwProbe, 6000); setTimeout(lwProbe, 11000);
           }
           // 不少站点会拦截右键 / 选择 / 复制：在最前面（捕获阶段）截住，让自带菜单和选择能用
           ['contextmenu', 'selectstart', 'copy', 'cut', 'dragstart'].forEach(function (t) {
@@ -226,26 +253,31 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
               A + ' nav,' + A + ' button{font-size:13px !important;opacity:.75}'
             ].join('\n');
           }
-          // 三联中读手机版文章页：只留 .area6（标题、作者行、导语、正文）
+          // 三联官网文章页：只留 .acticle-content（标题、作者行、导语、正文）；页头 / 页脚 / 留言 / 侧边工具条都藏掉
           function cssLW() {
             var c = T[R.theme] || T.paper, bg = c[0], fg = c[1], ac = c[2], H = 'html.sy-r ';
-            var ff = F[R.font] || F.song, A = H + '.area6', B = A + ' .bd';
+            var ff = F[R.font] || F.song, A = H + '.sy-root';
+            var body = A + ' p,' + A + ' p *,' + A + ' li,' + A + ' section,' + A + ' section *,' + A + ' blockquote';
             return [
               H + ',html.sy-r body{background:' + bg + ' !important;color:' + fg + ' !important;min-width:0 !important;margin:0 !important}',
-              H + '.sy-hide,' + H + '.header,' + H + '.area4,' + H + '.mask2{display:none !important}',
-              A + '{display:block !important;max-width:' + R.width + 'px !important;margin:0 auto !important;padding:40px 28px 90px !important;box-sizing:border-box;background:none !important;width:auto !important;float:none !important}',
-              A + ' *{box-sizing:border-box;-webkit-user-select:text !important;user-select:text !important}',
-              A + ' .cap1{font:700 ' + (R.size * 1.55) + 'px/1.4 ' + (R.font === 'kai' ? F.kai : F.hei) + ' !important;color:' + fg + ' !important;margin:0 0 12px !important;text-align:left !important}',
-              A + ' .p_sj,' + A + ' .p_sj *{font-size:13px !important;color:' + fg + ' !important;opacity:.65;background:none !important}',
-              A + ' .d_zy{font-size:' + (R.size * 0.9) + 'px !important;line-height:1.7 !important;color:' + fg + ' !important;opacity:.78;margin:6px 0 18px !important;padding:0 0 0 12px !important;border-left:3px solid ' + ac + ' !important;background:none !important}',
-              B + ',' + B + ' *{font-family:' + ff + ' !important;font-size:' + R.size + 'px !important;line-height:' + R.leading + ' !important;color:' + fg + ' !important;background:none !important;letter-spacing:normal !important;text-autospace:ideograph-alpha ideograph-numeric;line-break:strict;overflow-wrap:break-word;text-wrap:pretty}',
-              B + ' p{margin:0 0 ' + (R.indent ? '.55em' : '.95em') + ' !important}',
-              B + ' p:not([style*="center"]){text-indent:' + (R.indent ? '2em' : '0') + ' !important;text-align:' + (R.justify ? 'justify' : 'left') + '}',
-              B + ' section{margin-left:0 !important;margin-right:0 !important}',
-              B + ' strong,' + B + ' b{font-weight:700 !important}',
-              B + ' a{color:' + ac + ' !important;text-decoration:none}',
-              B + ' img{max-width:100% !important;height:auto !important;border-radius:6px}',
-              B + ' blockquote{border-left:3px solid ' + ac + ';margin:1em 0;padding:0 0 0 14px}'
+              H + '.sy-hide,' + H + 'header.header,' + H + '.footer-wrap,' + H + '.comment-wrap,' + H + '.left-side-box,' + H + '.big-screen,' + H + '.backtop,' + H + '.article-title,' + H + '.el-breadcrumb{display:none !important}',
+              A + ' .audio-play-box,' + A + ' .tag-list,' + A + ' .prev-next-box,' + A + ' .buy-box .buy-vip,' + A + ' .buy-box .login,' + A + ' .buy-box .read_tips{display:none !important}',
+              A + '{display:block !important;max-width:' + R.width + 'px !important;width:auto !important;margin:0 auto !important;padding:40px 28px 90px !important;box-sizing:border-box;background:none !important;float:none !important}',
+              A + ' *{box-sizing:border-box;background:none !important;box-shadow:none !important;color:' + fg + ' !important;font-family:' + ff + ' !important;-webkit-user-select:text !important;user-select:text !important;text-autospace:ideograph-alpha ideograph-numeric;line-break:strict;overflow-wrap:break-word}',
+              A + ' .header{display:block !important;height:auto !important;padding:0 !important;margin:0 0 6px !important}',
+              A + ' .header .title{font:700 ' + (R.size * 1.55) + 'px/1.4 ' + (R.font === 'kai' ? F.kai : F.hei) + ' !important;margin:0 0 10px !important;display:block !important;-webkit-line-clamp:unset !important;overflow:visible !important;height:auto !important}',
+              A + ' .header .desc{font-size:' + (R.size * 1.05) + 'px !important;line-height:1.6 !important;opacity:.8;margin:0 0 10px !important;display:block !important;-webkit-line-clamp:unset !important;overflow:visible !important;height:auto !important}',
+              A + ' .header .source,' + A + ' .header .source *,' + A + ' .header .author,' + A + ' .header .author *{font-size:13px !important;line-height:1.6 !important;opacity:.62;text-indent:0 !important}',
+              A + ' .daodu{font-size:' + (R.size * 0.92) + 'px !important;line-height:1.8 !important;opacity:.85;margin:16px 0 22px !important;padding:0 0 0 12px !important;border-left:3px solid ' + ac + ' !important}',
+              body + '{font-size:' + R.size + 'px !important;line-height:' + R.leading + ' !important;letter-spacing:normal !important}',
+              A + ' p{margin:0 0 ' + (R.indent ? '.55em' : '.95em') + ' !important}',
+              A + ' p:not([style*="center"]){text-indent:' + (R.indent ? '2em' : '0') + ' !important;text-align:' + (R.justify ? 'justify' : 'left') + ';text-justify:inter-character;text-wrap:pretty}',
+              A + ' .header p,' + A + ' .header p *{text-indent:0 !important;font-size:13px !important}',
+              A + ' strong,' + A + ' b{font-weight:700 !important}',
+              A + ' a{color:' + ac + ' !important;text-decoration:none}',
+              A + ' img{max-width:100% !important;height:auto !important;border-radius:6px}',
+              A + ' .buy-box{margin:28px 0 0 !important;text-align:center;opacity:.7}',
+              A + ' .buy-box .text-num{font-size:14px !important}'
             ].join('\n');
           }
           function css() {
@@ -329,7 +361,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             if (!st) { st = document.createElement('style'); st.id = 'sy-reader-style'; document.head.appendChild(st); }
             st.textContent = css();
             document.documentElement.classList.add('sy-r');
-            if (isAI && content) { content.classList.add('sy-root'); }
+            if ((isAI || isLW) && content) { content.classList.add('sy-root'); }
             var cur = content;
             while (cur && cur !== document.body) {
               var p = cur.parentElement;
@@ -344,10 +376,9 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
           }
           function report() {
             if (isLW) {
-              var bd = document.querySelector('.area6 .bd');
-              var chars = bd ? (bd.innerText || '').replace(/\s/g, '').length : 0;
-              var txt = (content && content.innerText) || '';
-              post({ article: true, chars: chars, locked: /本文仅开放给|您还没有订阅|订阅用户/.test(txt) && chars < 1500 });
+              var chars = ((content && content.innerText) || '').replace(/\s/g, '').length;
+              var bb = document.querySelector('.sy-root .buy-box .text-num');
+              post({ article: true, chars: chars, locked: !!(bb && (bb.textContent || '').trim().length) });
               return;
             }
             if (isAI) {
@@ -374,6 +405,13 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
     func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let d = message.body as? [String: Any] else { return }
         if let s = d["sel"] as? String { selection = s; return }
+        if let out = d["lwOut"] as? Bool {
+            if lifeweekLoggedIn == out {
+                lifeweekLoggedIn = !out
+                UserDefaults.standard.set(!out, forKey: "reader.lifeweekLogin")
+            }
+            return
+        }
         let a = (d["article"] as? Bool) ?? false
         let l = (d["locked"] as? Bool) ?? false
         if article != a { article = a }

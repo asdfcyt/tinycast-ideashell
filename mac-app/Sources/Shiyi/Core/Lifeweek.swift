@@ -93,7 +93,7 @@ final class LifeweekStore: ObservableObject {
                 let name = (sec["lanmu"] as? String) ?? ""
                 let arts: [LWArticle] = ((sec["list"] as? [[String: Any]]) ?? []).compactMap { a in
                     guard let id = (a["id"] as? NSNumber)?.intValue, let title = a["title"] as? String,
-                          let url = URL(string: "\(Self.base)/h5/article/detail.do?artId=\(id)") else { return nil }
+                          let url = URL(string: "\(Self.base)/article/\(id)?origin=6") else { return nil }
                     return LWArticle(id: id, title: title, views: (a["viewNum"] as? NSNumber)?.intValue ?? 0, url: url)
                 }
                 return arts.isEmpty ? nil : LWSection(name: name, articles: arts)
