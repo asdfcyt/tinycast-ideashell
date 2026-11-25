@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum ReadingSource: String, CaseIterable {
-    case caixin, aihot, lifeweek, feeds, today
+    case caixin, lifeweek, aihot, feeds, today
     var title: String {
         switch self {
         case .caixin: "财新周刊"
@@ -38,6 +38,7 @@ struct ReadingView: View {
     @AppStorage("reader.source") private var sourceRaw = ReadingSource.caixin.rawValue
     @State private var selected: String?
     @State private var showTypography = false
+    @State private var showAI = false
     /// 右边是不是正显示内嵌浏览器（不是的话显示占位 / AIHOT 的原生内容）
     @State private var webShown = false
     @State private var aiTab: AIHotTab = .daily
@@ -60,6 +61,7 @@ struct ReadingView: View {
             detail
         }
         .background(AmbientBackground())
+        .background { ReaderTranslateHostCompat(reader: reader) }
         .toolbar { sourceToolbar }
         .toolbar { readerToolbar }
         .task {
@@ -349,7 +351,6 @@ struct ReadingView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .help("切换来源：财新周刊 / AI 日报 / 三联")
         }
     }
 
@@ -370,6 +371,21 @@ struct ReadingView: View {
                     Button { showTypography.toggle() } label: { Image(systemName: "textformat") }
                         .help("排版：字体、行距、栏宽、段首缩进")
                         .popover(isPresented: $showTypography, arrowEdge: .bottom) { typographyPanel }
+                    Menu {
+                        Button { reader.setTranslate(.both) } label: { Text((reader.translateMode == .both ? "✓ " : "") + "翻译成中文（双语对照）") }
+                        Button { reader.setTranslate(.only) } label: { Text((reader.translateMode == .only ? "✓ " : "") + "只看译文") }
+                        if reader.translateMode != .off {
+                            Divider()
+                            Button("恢复原文") { reader.setTranslate(.off) }
+                        }
+                    } label: {
+                        if reader.translating { ProgressView().controlSize(.small) }
+                        else { Image(systemName: "character.bubble").symbolVariant(reader.translateMode == .off ? .none : .fill) }
+                    }
+                    .help("翻译：本机离线翻译成中文，译文跟在原文下面")
+                    Button { showAI.toggle() } label: { Image(systemName: "sparkles") }
+                        .help("AI：摘要、白话解读、解释选中、提问")
+                        .popover(isPresented: $showAI, arrowEdge: .bottom) { ReaderAIPanel(reader: reader) }
                     Menu {
                         Picker("外观", selection: $reader.theme) {
                             Text("纸张").tag("paper")
@@ -424,16 +440,18 @@ struct ReadingView: View {
         }
     }
 
+    private var isLifeweekPage: Bool { reader.url?.host?.hasSuffix("lifeweek.com.cn") == true }
+
     private var lockedBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "lock.fill").foregroundStyle(Brand.orange)
-            Text(source == .lifeweek
+            Text(isLifeweekPage
                  ? (reader.lifeweekLoggedIn ? "只显示了预览：这个账号没有《三联生活周刊》数字刊权限，或登录已过期" : "只显示了预览：登录有《三联生活周刊》数字刊权限的账号后可读全文")
                  : (reader.loggedIn ? "只显示了预览：这个账号没有《财新周刊》阅读权限，或登录已过期" : "只显示了预览：登录有《财新周刊》权限的账号后可读全文"))
                 .font(.callout).foregroundStyle(.secondary)
             Spacer(minLength: 6)
-            Button(source == .lifeweek ? (reader.lifeweekLoggedIn ? "重新登录" : "登录") : (reader.loggedIn ? "重新登录" : "登录")) {
-                if source == .lifeweek { openLifeweekLogin() } else { reader.openLogin() }
+            Button(isLifeweekPage ? (reader.lifeweekLoggedIn ? "重新登录" : "登录") : (reader.loggedIn ? "重新登录" : "登录")) {
+                if isLifeweekPage { openLifeweekLogin() } else { reader.openLogin() }
             }
                 .buttonStyle(.bordered).controlSize(.small)
         }

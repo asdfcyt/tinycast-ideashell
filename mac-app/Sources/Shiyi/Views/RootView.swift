@@ -21,7 +21,7 @@ struct RootView: View {
             // 右边的内容栏是 SwiftUI 自己套的一层宿主视图，页面里任何一处刷新（每秒的专注计时）都会让它把整页再量一遍：
             // 用同一个「不量内容」的容器包住，量尺寸时直接用提议的大小（见 App.swift 的 CheapMeasureLayout）
             CheapMeasureLayout { detail }
-                .navigationTitle(model.section.title)
+                .navigationTitle(model.section == .reading ? "" : model.section.title)
                 .overlay(alignment: .bottom) { NoticeToast().padding(.bottom, 64) }
                 .sheet(isPresented: $model.showQuickAdd) {
                     QuickAddView(onDone: { model.showQuickAdd = false }).environmentObject(model).dismissOnOutsideClick()

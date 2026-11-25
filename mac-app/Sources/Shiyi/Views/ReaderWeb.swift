@@ -47,6 +47,72 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
     /// 两端对齐
     @Published var justify: Bool { didSet { save(justify, "justify") } }
 
+    // MARK: 翻译 / AI
+
+    enum TranslateMode { case off, both, only }
+    @Published var translateMode: TranslateMode = .off
+    @Published var translating = false
+    /// 每次要求「重新翻译」加一，翻译宿主视图据此启动
+    @Published var translateTick = 0
+    /// 已收集、等待翻译的原文段落
+    var pendingTexts: [String] = []
+    private var hasTranslation = false
+
+    /// 菜单选了翻译：第一次去翻，翻完之后只是切换「双语 / 仅译文」
+    func setTranslate(_ mode: TranslateMode) {
+        if mode == .off { clearTranslation(); return }
+        translateMode = mode
+        if hasTranslation {
+            webView.evaluateJavaScript("window.__syReader && window.__syReader.trMode(\(mode == .only))", completionHandler: nil)
+        } else if !translating {
+            translating = true
+            translateTick += 1
+        }
+    }
+
+    func clearTranslation() {
+        translateMode = .off
+        translating = false
+        hasTranslation = false
+        pendingTexts = []
+        webView.evaluateJavaScript("window.__syReader && window.__syReader.clearTr()", completionHandler: nil)
+    }
+
+    /// 页面里需要翻译的外文段落（已是中文的跳过）
+    func collectTexts() async -> [String] {
+        let r = try? await webView.evaluateJavaScript("window.__syReader ? window.__syReader.collect() : '[]'")
+        guard let s = r as? String, let d = s.data(using: .utf8), let arr = try? JSONDecoder().decode([String].self, from: d) else { return [] }
+        return arr
+    }
+
+    func putTranslations(_ items: [(Int, String)]) {
+        guard !items.isEmpty else { return }
+        let arr = items.map { [$0.0, $0.1] as [Any] }
+        guard let d = try? JSONSerialization.data(withJSONObject: arr), let js = String(data: d, encoding: .utf8) else { return }
+        hasTranslation = true
+        webView.evaluateJavaScript("window.__syReader && window.__syReader.putTr(\(js)); window.__syReader && window.__syReader.trMode(\(translateMode == .only))", completionHandler: nil)
+    }
+
+    func translateFinished(_ message: String?) {
+        translating = false
+        if let message { AppModel.current?.showNotice(message) }
+        if !hasTranslation { translateMode = .off }
+    }
+
+    /// 当前文章的正文文字（给 AI 用；只在点了 AI 之后读一次，不保存）
+    func articleText(limit: Int = 12000) async -> String {
+        let r = try? await webView.evaluateJavaScript("window.__syReader ? window.__syReader.text() : ''")
+        let s = ((r as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.count > limit ? String(s.prefix(limit)) : s
+    }
+
+    func currentSelection() async -> String {
+        let r = try? await webView.evaluateJavaScript("window.getSelection().toString()")
+        return ((r as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var pageTitle: String { webView.title ?? "" }
+
     /// 页面里当前选中的文字（右键菜单用）
     private(set) var selection = ""
 
@@ -372,10 +438,82 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
               H + '#chargeWall{margin-top:18px}'
             ].join('\n');
           }
+          // ── 翻译（沉浸式：译文跟在原文下面）与正文提取 ──
+          function trRoot() { return content || document.querySelector('.sy-root'); }
+          function trBlocks(root) {
+            var els = root.querySelectorAll('h1,h2,h3,h4,p,li,blockquote'), out = [];
+            for (var i = 0; i < els.length; i++) {
+              var e = els[i];
+              if (e.closest('.sy-tr')) { continue; }
+              if ((e.tagName === 'BLOCKQUOTE' || e.tagName === 'LI') && e.querySelector('p')) { continue; }
+              out.push(e);
+            }
+            return out;
+          }
+          function trStyle() {
+            var c = T[R.theme] || T.paper, ac = c[2];
+            var st = document.getElementById('sy-tr-style');
+            if (!st) { st = document.createElement('style'); st.id = 'sy-tr-style'; document.head.appendChild(st); }
+            var X = 'html .sy-tr.sy-tr.sy-tr.sy-tr';
+            st.textContent = [
+              X + '{display:block !important;font-family:' + F.hei + ' !important;font-size:' + (R.size * 0.88) + 'px !important;line-height:1.75 !important;color:' + ac + ' !important;margin:.15em 0 1.15em !important;padding:0 0 0 12px !important;border-left:2px solid ' + ac + '55 !important;text-indent:0 !important;text-align:left !important;font-weight:400 !important;letter-spacing:normal !important}',
+              X + '.sy-trh{font-size:' + (R.size * 1.05) + 'px !important;font-weight:700 !important;margin-bottom:.9em !important}',
+              'html.sy-tr-only [data-sy-t]{display:none !important}'
+            ].join('\n');
+          }
+          R.collect = function () {
+            var root = trRoot();
+            if (!root) { return '[]'; }
+            R.clearTr();
+            var bs = trBlocks(root), out = [];
+            for (var i = 0; i < bs.length; i++) {
+              var t = (bs[i].innerText || '').replace(/\s+/g, ' ').trim();
+              var han = (t.match(/[\u4e00-\u9fff]/g) || []).length;
+              if (t.length < 3 || han / t.length > 0.3 || !/[A-Za-z\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(t)) { continue; }
+              bs[i].setAttribute('data-sy-i', String(out.length));
+              out.push(t.slice(0, 1800));
+            }
+            return JSON.stringify(out);
+          };
+          R.putTr = function (arr) {
+            for (var k = 0; k < arr.length; k++) {
+              var e = document.querySelector('[data-sy-i="' + arr[k][0] + '"]');
+              if (!e || !arr[k][1]) { continue; }
+              var d = e.nextElementSibling;
+              if (!(d && d.classList && d.classList.contains('sy-tr') && d.getAttribute('data-for') === String(arr[k][0]))) {
+                d = document.createElement('div');
+                d.className = 'sy-tr' + (/^H[1-4]$/.test(e.tagName) ? ' sy-trh' : '');
+                d.setAttribute('data-for', String(arr[k][0]));
+                e.insertAdjacentElement('afterend', d);
+              }
+              d.textContent = arr[k][1];
+              e.setAttribute('data-sy-t', '1');
+            }
+            trStyle();
+          };
+          R.trMode = function (only) { document.documentElement.classList.toggle('sy-tr-only', !!only); };
+          R.clearTr = function () {
+            var ds = document.querySelectorAll('.sy-tr');
+            for (var i = 0; i < ds.length; i++) { ds[i].remove(); }
+            var es = document.querySelectorAll('[data-sy-i]');
+            for (var j = 0; j < es.length; j++) { es[j].removeAttribute('data-sy-i'); es[j].removeAttribute('data-sy-t'); }
+            document.documentElement.classList.remove('sy-tr-only');
+          };
+          R.text = function () {
+            var root = trRoot();
+            if (!root) { return ''; }
+            var bs = trBlocks(root), out = [];
+            for (var i = 0; i < bs.length; i++) {
+              var t = (bs[i].innerText || '').trim();
+              if (t) { out.push(t); }
+            }
+            return out.join('\n');
+          };
           R.set = function (o) {
             for (var k in o) { R[k] = o[k]; }
             var s = document.getElementById('sy-reader-style');
             if (s) { s.textContent = css(); }
+            if (document.getElementById('sy-tr-style')) { trStyle(); }
           };
           function unapply() {
             document.documentElement.classList.remove('sy-r');
@@ -593,6 +731,9 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         article = false
         locked = false
         selection = ""
+        translateMode = .off
+        translating = false
+        hasTranslation = false
         if let u = webView.url { url = u; onLogin = u.host == "u.caixin.com" }
     }
 

@@ -39,6 +39,23 @@ struct LlmClient: Sendable {
         return content
     }
 
+    /// 普通对话：返回模型回复的文字（不要求 JSON）
+    func chatText(system: String, user: String, timeout: TimeInterval = 90) async throws -> String {
+        guard !key.trimmed.isEmpty else { throw LlmError(message: "还没有填写 AI 模型的 API Key") }
+        let base = baseURL.trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: base + "/chat/completions"), url.scheme?.hasPrefix("http") == true else {
+            throw LlmError(message: "AI 模型的接口地址不正确，请检查设置")
+        }
+        let reply = try await send(url, system: system, user: user, json: false, timeout: timeout)
+        guard (200 ... 299).contains(reply.code) else { throw LlmError(message: Self.describe(reply.code, reply.body)) }
+        guard let root = try? JSONSerialization.jsonObject(with: reply.body) as? [String: Any],
+              let choice = (root["choices"] as? [[String: Any]])?.first,
+              let msg = choice["message"] as? [String: Any],
+              let content = (msg["content"] as? String)?.trimmed, !content.isEmpty
+        else { throw LlmError(message: "AI 没有返回内容") }
+        return content
+    }
+
     private func send(_ url: URL, system: String, user: String, json: Bool, timeout: TimeInterval) async throws -> (code: Int, body: Data) {
         var body: [String: Any] = [
             "model": model.trimmed,
