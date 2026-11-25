@@ -30,6 +30,7 @@ struct ReadingView: View {
     @ObservedObject private var aihot = AIHotStore.shared
     @ObservedObject private var lifeweek = LifeweekStore.shared
     @ObservedObject private var feeds = FeedStore.shared
+    @ObservedObject private var marks = ArticleMarks.shared
     @State private var feedPick: String?
     @ObservedObject private var todayStore = TodayStore.shared
     @State private var todayPick: String?
@@ -58,6 +59,7 @@ struct ReadingView: View {
                 }
             }
             .frame(width: 292)
+            Divider()
             detail
         }
         .background(AmbientBackground())
@@ -181,17 +183,24 @@ struct ReadingView: View {
 
     private func lifeweekRow(_ a: LWArticle) -> some View {
         let on = selected == "lw\(a.id)"
+        let done = marks.isRead(a.url)
         return Button {
             selected = "lw\(a.id)"
             openWeb(a.url)
         } label: {
             Text(a.title).font(.system(size: 13.5, weight: .medium)).lineLimit(2)
+                .foregroundStyle(done && !on ? Color.secondary : Color.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(on ? Brand.orange.opacity(0.14) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu { ArticleMenu(title: a.title, link: a.url.absoluteString, summary: sectionName(of: a)) }
+    }
+
+    private func sectionName(of a: LWArticle) -> String {
+        lifeweek.sections.first { $0.articles.contains(a) }?.name ?? ""
     }
 
     private func openLifeweekLogin() {
@@ -211,6 +220,7 @@ struct ReadingView: View {
     }
 
     private func openWeb(_ u: URL) {
+        marks.markRead(u.absoluteString)
         reader.open(u)
         webShown = true
     }
@@ -299,6 +309,7 @@ struct ReadingView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu { ArticleMenu(title: a.title, link: a.id, summary: a.summary) }
     }
 
     private var account: some View {
@@ -372,17 +383,20 @@ struct ReadingView: View {
                         .help("排版：字体、行距、栏宽、段首缩进")
                         .popover(isPresented: $showTypography, arrowEdge: .bottom) { typographyPanel }
                     Menu {
-                        Button { reader.setTranslate(.both) } label: { Text((reader.translateMode == .both ? "✓ " : "") + "翻译成中文（双语对照）") }
-                        Button { reader.setTranslate(.only) } label: { Text((reader.translateMode == .only ? "✓ " : "") + "只看译文") }
+                        Button { reader.setTranslate(.both, engine: .ai) } label: { Text((reader.translateMode == .both ? "✓ " : "") + "AI 翻译（双语对照）") }
+                        Button { reader.setTranslate(.only, engine: .ai) } label: { Text((reader.translateMode == .only ? "✓ " : "") + "AI 翻译（只看译文）") }
+                        Divider()
+                        Button { reader.setTranslate(.both, engine: .local) } label: { Text("本机翻译") }
                         if reader.translateMode != .off {
                             Divider()
+                            Button("重新翻译") { reader.retranslate() }
                             Button("恢复原文") { reader.setTranslate(.off) }
                         }
                     } label: {
                         if reader.translating { ProgressView().controlSize(.small) }
                         else { Image(systemName: "character.bubble").symbolVariant(reader.translateMode == .off ? .none : .fill) }
                     }
-                    .help("翻译：本机离线翻译成中文，译文跟在原文下面")
+                    .help("翻译：AI 翻译成中文，译文跟在原文下面，翻过的自动保留")
                     Button { showAI.toggle() } label: { Image(systemName: "sparkles") }
                         .help("AI：摘要、白话解读、解释选中、提问")
                         .popover(isPresented: $showAI, arrowEdge: .bottom) { ReaderAIPanel(reader: reader) }

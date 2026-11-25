@@ -1,9 +1,11 @@
+import AppKit
 import SwiftUI
 
 /// 今日信息的左栏：按来源分组的当天内容
 struct TodaySidebar: View {
     @ObservedObject var store: TodayStore
     @Binding var pick: String?
+    @ObservedObject private var marks = ArticleMarks.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -96,5 +98,15 @@ struct TodaySidebar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if e.kind == .web {
+                ArticleMenu(title: e.title, link: e.raw, summary: e.sub)
+            } else if let it = FeedStore.shared.item(e.raw) {
+                Button(it.read ? "标为未读" : "标为已读") { FeedStore.shared.setRead(it.id, !it.read); store.objectWillChange.send() }
+                Button(it.starred ? "取消星标" : "加星标") { FeedStore.shared.toggleStar(it.id) }
+                Button("稍后读（存成待办）") { Task { await AppModel.current?.saveReadLater(title: it.title, link: it.link) } }
+                if let u = URL(string: it.link) { Button("在浏览器中打开") { NSWorkspace.shared.open(u) } }
+            }
+        }
     }
 }

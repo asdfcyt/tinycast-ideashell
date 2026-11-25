@@ -346,6 +346,32 @@ final class FeedStore: ObservableObject {
         return "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>\(esc(item.title))</title></head><body><article data-sy-feed=\"1\"><h1>\(esc(item.title))</h1><p class=\"sy-meta\">\(esc(by))</p>\(body)</article></body></html>"
     }
 
+    // MARK: 收藏（财新 / 三联 / AIHOT 等非订阅文章的星标，放进「收藏」这个本地来源，在订阅里的「星标」中看）
+
+    private static let localID = "local-starred"
+
+    func isStarred(link: String) -> Bool {
+        items.contains { $0.link == link && $0.starred }
+    }
+
+    func toggleExternalStar(title: String, link: String, summary: String = "") {
+        if let i = items.firstIndex(where: { $0.link == link && $0.starred }) {
+            if items[i].feed == Self.localID { items.remove(at: i) } else { items[i].starred = false }
+            scheduleSave()
+            return
+        }
+        if !sources.contains(where: { $0.id == Self.localID }) {
+            sources.append(FeedSource(id: Self.localID, url: "local:starred", title: "收藏"))
+        }
+        var it = FeedItem(id: Self.localID + "|" + link, feed: Self.localID, title: title, link: link,
+                          summary: FeedParser.plain(summary), date: Date())
+        it.read = true
+        it.starred = true
+        items.removeAll { $0.id == it.id }
+        items.append(it)
+        scheduleSave()
+    }
+
     // MARK: 修改
 
     func setRead(_ id: String, _ v: Bool) {
@@ -409,7 +435,7 @@ final class FeedStore: ObservableObject {
         guard !refreshing, !sources.isEmpty else { return }
         refreshing = true
         defer { refreshing = false }
-        let list = sources
+        let list = sources.filter { !$0.url.hasPrefix("local:") }
         await withTaskGroup(of: (String, FetchResult).self) { group in
             for s in list {
                 group.addTask { (s.id, await Self.fetch(s)) }
@@ -420,7 +446,7 @@ final class FeedStore: ObservableObject {
     }
 
     func refresh(_ id: String) async {
-        guard let s = source(id) else { return }
+        guard let s = source(id), !s.url.hasPrefix("local:") else { return }
         refreshing = true
         defer { refreshing = false }
         apply(await Self.fetch(s), to: id)
@@ -499,7 +525,7 @@ final class FeedStore: ObservableObject {
             s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")
                 .replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
         }
-        let lines = sources.map { "    <outline type=\"rss\" text=\"\(esc($0.title))\" title=\"\(esc($0.title))\" xmlUrl=\"\(esc($0.url))\" htmlUrl=\"\(esc($0.site))\"/>" }
+        let lines = sources.filter { !$0.url.hasPrefix("local:") }.map { "    <outline type=\"rss\" text=\"\(esc($0.title))\" title=\"\(esc($0.title))\" xmlUrl=\"\(esc($0.url))\" htmlUrl=\"\(esc($0.site))\"/>" }
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<opml version=\"2.0\">\n  <head><title>拾忆订阅</title></head>\n  <body>\n" + lines.joined(separator: "\n") + "\n  </body>\n</opml>\n"
     }
 

@@ -8,6 +8,7 @@ struct AIHotSidebar: View {
     @ObservedObject var store: AIHotStore
     @Binding var tab: AIHotTab
     @Binding var pick: AIHotItem?
+    @ObservedObject private var marks = ArticleMarks.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -65,9 +66,11 @@ struct AIHotSidebar: View {
 
     private func pickRow(_ p: AIHotItem) -> some View {
         let on = pick?.id == p.id
+        let done = marks.isRead(p.aihot ?? p.original)
         return Button { pick = p } label: {
             VStack(alignment: .leading, spacing: 3) {
                 Text(p.title).font(.system(size: 13.5, weight: .medium)).lineLimit(2)
+                    .foregroundStyle(done && !on ? Color.secondary : Color.primary)
                 Text([p.category, p.source, AIHotFormat.time(p.published)].filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.tertiary).lineLimit(1)
             }
@@ -77,6 +80,9 @@ struct AIHotSidebar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if let u = p.aihot ?? p.original { ArticleMenu(title: p.title, link: u.absoluteString, summary: p.summary) }
+        }
     }
 }
 
@@ -159,6 +165,9 @@ struct AIHotDetail: View {
                         .padding(.vertical, 6).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        if let u = f.aihot ?? f.original { ArticleMenu(title: f.title, link: u.absoluteString, summary: f.summary) }
+                    }
                 }
             }
         }
@@ -204,6 +213,9 @@ struct AIHotDetail: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+        .contextMenu {
+            if let u = i.aihot ?? i.original { ArticleMenu(title: i.title, link: u.absoluteString, summary: i.summary) }
+        }
     }
 
     private func clip(_ i: AIHotItem) {

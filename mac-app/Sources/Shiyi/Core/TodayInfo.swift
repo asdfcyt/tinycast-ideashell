@@ -30,27 +30,21 @@ final class TodayStore: ObservableObject {
     @Published private(set) var loading = false
     /// 展开的分组（周刊文章多，默认收起）
     @Published var expanded: Set<String> = ["aihot", "rss"]
-    @Published private(set) var read: Set<String>
-
-    private static let readKey = "today.readEntries"
     private var loadedOnce = false
 
-    private init() {
-        read = Set(UserDefaults.standard.stringArray(forKey: Self.readKey) ?? [])
-    }
+    private init() {}
 
     func isRead(_ e: TodayEntry) -> Bool {
-        e.kind == .rss ? (FeedStore.shared.item(e.raw)?.read ?? false) : read.contains(e.raw)
+        e.kind == .rss ? (FeedStore.shared.item(e.raw)?.read ?? false) : ArticleMarks.shared.isRead(e.raw)
     }
 
     func markRead(_ e: TodayEntry) {
         if e.kind == .rss {
             FeedStore.shared.setRead(e.raw, true)
             objectWillChange.send()
-        } else if read.insert(e.raw).inserted {
-            let list = Array(read)
-            if list.count > 3000 { read = Set(list.suffix(3000)) }
-            UserDefaults.standard.set(Array(read), forKey: Self.readKey)
+        } else {
+            ArticleMarks.shared.markRead(e.raw)
+            objectWillChange.send()
         }
     }
 

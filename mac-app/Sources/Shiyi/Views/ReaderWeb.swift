@@ -47,35 +47,92 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
     /// 两端对齐
     @Published var justify: Bool { didSet { save(justify, "justify") } }
 
-    // MARK: 翻译 / AI
+    // MARK: 翻译 / AI 摘要
 
     enum TranslateMode { case off, both, only }
+    enum TranslateEngine { case ai, local }
     @Published var translateMode: TranslateMode = .off
     @Published var translating = false
-    /// 每次要求「重新翻译」加一，翻译宿主视图据此启动
+    /// 每次要求「本机翻译」加一，翻译宿主视图据此启动
     @Published var translateTick = 0
-    /// 已收集、等待翻译的原文段落
-    var pendingTexts: [String] = []
+    /// 页面上现在有没有 AI 摘要卡片
+    @Published var hasSummary = false
+    /// 本次页面里收集到的外文段落（序号对应页面上的标记），和其中还没有缓存、要去翻的那部分
+    var collected: [String] = []
+    var pendingItems: [(Int, String)] = []
     private var hasTranslation = false
+    private var restoring = false
+    private static let modeKey = "reader.trMode"
 
-    /// 菜单选了翻译：第一次去翻，翻完之后只是切换「双语 / 仅译文」
-    func setTranslate(_ mode: TranslateMode) {
+    /// 菜单选了翻译：译文按文章存在本机，翻过的段落不再重翻；已经有译文时只是切换「双语 / 仅译文」
+    func setTranslate(_ mode: TranslateMode, engine: TranslateEngine = .ai) {
         if mode == .off { clearTranslation(); return }
+        UserDefaults.standard.set(mode == .only ? "only" : "both", forKey: Self.modeKey)
         translateMode = mode
         if hasTranslation {
             webView.evaluateJavaScript("window.__syReader && window.__syReader.trMode(\(mode == .only))", completionHandler: nil)
-        } else if !translating {
-            translating = true
-            translateTick += 1
+            return
         }
+        guard !translating else { return }
+        translating = true
+        Task { await beginTranslate(engine) }
     }
 
+    /// 丢掉这篇文章已存的译文，重新翻
+    func retranslate(engine: TranslateEngine = .ai) {
+        let mode = translateMode == .off ? TranslateMode.both : translateMode
+        ReaderCache.shared.clearTranslations(url)
+        clearTranslation()
+        setTranslate(mode, engine: engine)
+    }
+
+    /// 只是把页面上的译文收起来（已存的译文还在，下次打开这篇文章会自动带出）
     func clearTranslation() {
         translateMode = .off
         translating = false
         hasTranslation = false
-        pendingTexts = []
+        pendingItems = []
         webView.evaluateJavaScript("window.__syReader && window.__syReader.clearTr()", completionHandler: nil)
+    }
+
+    private func beginTranslate(_ engine: TranslateEngine) async {
+        let texts = await collectTexts()
+        collected = texts
+        guard !texts.isEmpty else { translateFinished("这一页没有需要翻译的外文"); return }
+        var cached: [(Int, String)] = []
+        var todo: [(Int, String)] = []
+        for (i, t) in texts.enumerated() {
+            if let c = ReaderCache.shared.translation(url, t) { cached.append((i, c)) } else { todo.append((i, t)) }
+        }
+        putTranslations(cached, store: false)
+        guard !todo.isEmpty else { translateFinished(nil); return }
+        pendingItems = todo
+        switch engine {
+        case .ai: await translateWithAI(todo)
+        case .local: translateTick += 1
+        }
+    }
+
+    /// 打开一篇翻过 / 摘要过的文章：把存下的译文和摘要直接带出来
+    func restoreFromCache() {
+        guard !translating, !restoring else { return }
+        let cache = ReaderCache.shared
+        let sum = cache.summary(url)
+        let wantTr = translateMode == .off && cache.hasTranslation(url)
+        guard sum != nil || wantTr else { return }
+        restoring = true
+        Task {
+            defer { restoring = false }
+            if let sum, !hasSummary { showSummary(sum, store: false) }
+            guard wantTr else { return }
+            let texts = await collectTexts()
+            collected = texts
+            var items: [(Int, String)] = []
+            for (i, t) in texts.enumerated() { if let c = cache.translation(url, t) { items.append((i, c)) } }
+            guard !items.isEmpty else { return }
+            translateMode = UserDefaults.standard.string(forKey: Self.modeKey) == "only" ? .only : .both
+            putTranslations(items, store: false)
+        }
     }
 
     /// 页面里需要翻译的外文段落（已是中文的跳过）
@@ -85,8 +142,12 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         return arr
     }
 
-    func putTranslations(_ items: [(Int, String)]) {
+    func putTranslations(_ items: [(Int, String)], store: Bool = true) {
         guard !items.isEmpty else { return }
+        if store {
+            let pairs = items.compactMap { i, t in i < collected.count ? (collected[i], t) : nil }
+            ReaderCache.shared.setTranslations(url, pairs)
+        }
         let arr = items.map { [$0.0, $0.1] as [Any] }
         guard let d = try? JSONSerialization.data(withJSONObject: arr), let js = String(data: d, encoding: .utf8) else { return }
         hasTranslation = true
@@ -97,6 +158,21 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         translating = false
         if let message { AppModel.current?.showNotice(message) }
         if !hasTranslation { translateMode = .off }
+    }
+
+    /// 把 AI 摘要做成一张卡片放在文章最上面
+    func showSummary(_ s: ReaderCache.Summary, store: Bool = true) {
+        if store { ReaderCache.shared.setSummary(url, s) }
+        let obj: [String: Any] = ["lead": s.lead, "points": s.points]
+        guard let d = try? JSONSerialization.data(withJSONObject: obj), let js = String(data: d, encoding: .utf8) else { return }
+        hasSummary = true
+        webView.evaluateJavaScript("window.__syReader && window.__syReader.putSummary(\(js))", completionHandler: nil)
+    }
+
+    func removeSummary() {
+        ReaderCache.shared.setSummary(url, nil)
+        hasSummary = false
+        webView.evaluateJavaScript("window.__syReader && window.__syReader.clearSummary()", completionHandler: nil)
     }
 
     /// 当前文章的正文文字（给 AI 用；只在点了 AI 之后读一次，不保存）
@@ -499,6 +575,50 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             for (var j = 0; j < es.length; j++) { es[j].removeAttribute('data-sy-i'); es[j].removeAttribute('data-sy-t'); }
             document.documentElement.classList.remove('sy-tr-only');
           };
+          function sumStyle() {
+            var c = T[R.theme] || T.paper, fg = c[1], ac = c[2];
+            var ff = F[R.font] || F.song;
+            var st = document.getElementById('sy-sum-style');
+            if (!st) { st = document.createElement('style'); st.id = 'sy-sum-style'; document.head.appendChild(st); }
+            var X = 'html .sy-ai.sy-ai.sy-ai', C = X + ' .sy-ai-c';
+            st.textContent = [
+              X + '{display:block !important;position:relative;margin:0 0 34px !important;padding:20px 26px 14px !important;border-radius:16px !important;background:' + ac + '14 !important;border:1px solid ' + ac + '33 !important;box-sizing:border-box;width:auto !important;max-width:100% !important;text-indent:0 !important;text-align:left !important}',
+              C + '{font-family:' + F.hei + ' !important;color:' + ac + ' !important;text-indent:0 !important}',
+              C + '.sy-ai-h{display:flex !important;align-items:center;justify-content:space-between;margin:0 0 12px !important;padding:0 !important;font-size:12px !important;font-weight:700 !important;letter-spacing:.18em;width:auto !important}',
+              C + '.sy-ai-x{cursor:pointer;opacity:.55;font-size:16px !important;line-height:1;padding:0 2px !important;margin:0 !important;width:auto !important;letter-spacing:0}',
+              C + '.sy-ai-lead{font-family:' + ff + ' !important;color:' + fg + ' !important;font-size:' + (R.size * 1.06) + 'px !important;line-height:1.75 !important;font-weight:700 !important;margin:0 0 14px !important;padding:0 !important;width:auto !important}',
+              C + '.sy-ai-row{display:flex !important;align-items:baseline;gap:12px;margin:0 !important;padding:8px 0 !important;border-top:1px dashed ' + ac + '40 !important;width:auto !important}',
+              C + '.sy-ai-n{font-family:' + F.hei + ' !important;color:' + ac + ' !important;font-size:' + (R.size * 0.8) + 'px !important;font-weight:700 !important;min-width:1.5em;margin:0 !important;padding:0 !important;width:auto !important}',
+              C + '.sy-ai-p{font-family:' + ff + ' !important;color:' + fg + ' !important;opacity:.9;font-size:' + (R.size * 0.9) + 'px !important;line-height:1.8 !important;margin:0 !important;padding:0 !important;width:auto !important}'
+            ].join('\n');
+          }
+          R.clearSummary = function () {
+            var o = document.querySelectorAll('.sy-ai');
+            for (var i = 0; i < o.length; i++) { o[i].remove(); }
+          };
+          R.putSummary = function (s) {
+            var root = trRoot();
+            if (!root || !s) { return; }
+            R.clearSummary();
+            function el(tag, cls, text) { var e = document.createElement(tag); e.className = cls; if (text) { e.textContent = text; } return e; }
+            var card = el('div', 'sy-ai'), head = el('div', 'sy-ai-c sy-ai-h');
+            head.appendChild(el('span', 'sy-ai-c', '\u2726  AI \u6458\u8981'));
+            var x = el('span', 'sy-ai-c sy-ai-x', '\u00d7');
+            x.title = '\u79fb\u9664\u6458\u8981';
+            x.onclick = function () { post({ sumClose: true }); };
+            head.appendChild(x);
+            card.appendChild(head);
+            if (s.lead) { card.appendChild(el('div', 'sy-ai-c sy-ai-lead', s.lead)); }
+            var pts = s.points || [];
+            for (var i = 0; i < pts.length; i++) {
+              var row = el('div', 'sy-ai-c sy-ai-row');
+              row.appendChild(el('span', 'sy-ai-c sy-ai-n', String(i + 1).padStart(2, '0')));
+              row.appendChild(el('span', 'sy-ai-c sy-ai-p', pts[i]));
+              card.appendChild(row);
+            }
+            root.insertBefore(card, root.firstChild);
+            sumStyle();
+          };
           R.text = function () {
             var root = trRoot();
             if (!root) { return ''; }
@@ -514,6 +634,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             var s = document.getElementById('sy-reader-style');
             if (s) { s.textContent = css(); }
             if (document.getElementById('sy-tr-style')) { trStyle(); }
+            if (document.getElementById('sy-sum-style')) { sumStyle(); }
           };
           function unapply() {
             document.documentElement.classList.remove('sy-r');
@@ -608,6 +729,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
     func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let d = message.body as? [String: Any] else { return }
         if let s = d["sel"] as? String { selection = s; return }
+        if d["sumClose"] != nil { removeSummary(); return }
         if let out = d["lwOut"] as? Bool {
             if lifeweekLoggedIn == out {
                 lifeweekLoggedIn = !out
@@ -619,6 +741,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         let l = (d["locked"] as? Bool) ?? false
         if article != a { article = a }
         if locked != l { locked = l }
+        if a { restoreFromCache() }
     }
 
     // MARK: 右键菜单
@@ -734,6 +857,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         translateMode = .off
         translating = false
         hasTranslation = false
+        hasSummary = false
         if let u = webView.url { url = u; onLogin = u.host == "u.caixin.com" }
     }
 

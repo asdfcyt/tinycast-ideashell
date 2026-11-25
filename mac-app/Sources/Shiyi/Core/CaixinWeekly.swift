@@ -41,27 +41,16 @@ final class WeeklyStore: ObservableObject {
     @Published var sections: [WeeklySection] = []
     @Published var loading = false
     @Published var error: String?
-    /// 读过的文章（按网址记在本机）
-    @Published private(set) var read: Set<String>
 
     private var cache: [Int: [WeeklySection]] = [:]
-    private static let readKey = "reader.readArticles"
     private static let home = URL(string: "https://weekly.caixin.com/")!
     private static let ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
 
-    private init() {
-        read = Set(UserDefaults.standard.stringArray(forKey: Self.readKey) ?? [])
-    }
+    private init() {}
 
-    func isRead(_ a: WeeklyArticle) -> Bool { read.contains(a.id) }
-
-    func markRead(_ a: WeeklyArticle) {
-        guard read.insert(a.id).inserted else { return }
-        // 只留最近 2000 条，免得越记越大
-        let list = Array(read)
-        if list.count > 2000 { read = Set(list.suffix(2000)) }
-        UserDefaults.standard.set(Array(read), forKey: Self.readKey)
-    }
+    /// 读过的文章记在 `ArticleMarks`（三个来源共用）
+    func isRead(_ a: WeeklyArticle) -> Bool { ArticleMarks.shared.isRead(a.id) }
+    func markRead(_ a: WeeklyArticle) { ArticleMarks.shared.markRead(a.id) }
 
     // MARK: 取目录
 

@@ -5,9 +5,11 @@ import Translation
 
 /*
  * 阅读器里的「翻译」和「AI」。
- * · 翻译：用 macOS 自带的 Translation（本机离线翻译，文字不出这台 Mac，免费）；版式参考「沉浸式翻译」——译文跟在原文每一段下面。
- * · AI：用设置里填的 AI 模型（OpenAI 兼容接口）。会把当前文章的文字发给这个服务，所以只在你点了按钮之后才发，
- *   财新 / 三联这类付费内容首次使用前会先说明并要你确认；正文不保存。
+ * · 翻译：默认用设置里的 AI 模型翻译（质量好、懂上下文）；也可选 macOS 自带的 Translation（本机离线，文字不出这台 Mac）。
+ *   版式参考「沉浸式翻译」——译文跟在原文每一段下面。译文按文章存在本机，翻过的段落下次打开直接带出，不再重翻。
+ * · AI：会把当前文章的文字发给设置里的 AI 服务，所以只在你点了按钮之后才发，
+ *   财新 / 三联这类付费内容首次使用前会先说明并要你确认；正文不保存，只存译文和摘要。
+ * · AI 摘要：做成卡片放在文章最上面，存在本机，下次打开这篇文章还在。
  */
 
 // MARK: - 翻译（挂在页面里的隐形宿主：Translation 的会话只能从 SwiftUI 视图里拿到）
@@ -24,36 +26,30 @@ struct ReaderTranslateHost: View {
     }
 
     private func start() {
-        Task {
-            let texts = await reader.collectTexts()
-            guard !texts.isEmpty else {
-                reader.translateFinished("这一页没有需要翻译的外文")
-                return
-            }
-            // 先自己判断原文语言：已经是中文就不用翻；判断不出来再交给系统
-            let sample = String(texts.joined(separator: " ").prefix(2000))
-            let rec = NLLanguageRecognizer()
-            rec.processString(sample)
-            let code = rec.dominantLanguage?.rawValue
-            if let code, code.hasPrefix("zh") {
-                reader.translateFinished("这一页已经是中文")
-                return
-            }
-            reader.pendingTexts = texts
-            let src = code.map { Locale.Language(identifier: $0) }
-            let target = Locale.Language(identifier: "zh-Hans")
-            if config != nil, config?.source == src { config?.invalidate(); return }
-            var cfg = TranslationSession.Configuration(source: src, target: target)
-            // macOS 26.4 起可选「高保真」策略：读文章不赶时间，译文质量优先
-            if #available(macOS 26.4, *) { cfg = .init(source: src, target: target, preferredStrategy: .highFidelity) }
-            config = cfg
+        let items = reader.pendingItems
+        guard !items.isEmpty else { reader.translateFinished(nil); return }
+        // 先自己判断原文语言：已经是中文就不用翻；判断不出来再交给系统
+        let sample = String(items.map(\.1).joined(separator: " ").prefix(2000))
+        let rec = NLLanguageRecognizer()
+        rec.processString(sample)
+        let code = rec.dominantLanguage?.rawValue
+        if let code, code.hasPrefix("zh") {
+            reader.translateFinished("这一页已经是中文")
+            return
         }
+        let src = code.map { Locale.Language(identifier: $0) }
+        let target = Locale.Language(identifier: "zh-Hans")
+        if config != nil, config?.source == src { config?.invalidate(); return }
+        var cfg = TranslationSession.Configuration(source: src, target: target)
+        // macOS 26.4 起可选「高保真」策略：读文章不赶时间，译文质量优先
+        if #available(macOS 26.4, *) { cfg = .init(source: src, target: target, preferredStrategy: .highFidelity) }
+        config = cfg
     }
 
     private func run(_ session: TranslationSession) async {
-        let texts = await MainActor.run { reader.pendingTexts }
-        guard !texts.isEmpty else { return }
-        let reqs = texts.enumerated().map { TranslationSession.Request(sourceText: $1, clientIdentifier: String($0)) }
+        let items = await MainActor.run { reader.pendingItems }
+        guard !items.isEmpty else { return }
+        let reqs = items.map { TranslationSession.Request(sourceText: $0.1, clientIdentifier: String($0.0)) }
         var buf: [(Int, String)] = []
         do {
             // 边译边显示：每译好几段就贴回页面一次
@@ -90,6 +86,96 @@ struct ReaderTranslateHostCompat: View {
     }
 }
 
+// MARK: - 付费内容的确认（翻译和 AI 共用）
+
+enum ReaderAIGate {
+    static func isPaid(_ url: URL?) -> Bool {
+        let h = url?.host ?? ""
+        return h.hasSuffix("caixin.com") || h.hasSuffix("lifeweek.com.cn")
+    }
+
+    static func ackKey(_ url: URL?) -> String {
+        "reader.ai.ack." + ((url?.host ?? "").hasSuffix("caixin.com") ? "caixin" : "lifeweek")
+    }
+
+    /// 财新 / 三联：第一次把正文交给 AI 之前说明并确认；其它站点直接放行
+    @MainActor static func confirm(_ url: URL?, action: String) -> Bool {
+        guard isPaid(url) else { return true }
+        if UserDefaults.standard.bool(forKey: ackKey(url)) { return true }
+        let host = URL(string: AppModel.current?.llmBaseUrl ?? "")?.host ?? "你设置的 AI 服务"
+        let a = NSAlert()
+        a.messageText = "把这篇付费文章交给 AI \(action)？"
+        a.informativeText = "这是付费订阅内容。继续后，当前文章的文字会发送到 \(host)（你在设置里配置的服务）；拾忆不保存正文，也不会自动发送。文章受版权保护，仅限你个人阅读辅助，请勿转发或公开 AI 生成的全文。"
+        a.addButton(withTitle: "继续")
+        a.addButton(withTitle: "取消")
+        guard a.runModal() == .alertFirstButtonReturn else { return false }
+        UserDefaults.standard.set(true, forKey: ackKey(url))
+        return true
+    }
+}
+
+// MARK: - AI 翻译（分块并行，结果边到边贴回页面）
+
+extension ReaderController {
+    func translateWithAI(_ todo: [(Int, String)]) async {
+        guard let model = AppModel.current, model.hasLlm else {
+            translateFinished("先到「设置」里填写 AI 模型的 API Key（或在菜单里选「本机翻译」）")
+            return
+        }
+        guard ReaderAIGate.confirm(url, action: "翻译") else { translateFinished(nil); return }
+        let llm = model.llm
+        var chunks: [[(Int, String)]] = []
+        var cur: [(Int, String)] = []
+        var size = 0
+        for it in todo {
+            if !cur.isEmpty && (size + it.1.count > 2800 || cur.count >= 20) { chunks.append(cur); cur = []; size = 0 }
+            cur.append(it)
+            size += it.1.count
+        }
+        if !cur.isEmpty { chunks.append(cur) }
+
+        var failed: String?
+        var next = 0
+        await withTaskGroup(of: ([(Int, String)], String?).self) { group in
+            func add() {
+                guard next < chunks.count else { return }
+                let c = chunks[next]
+                next += 1
+                group.addTask { await ReaderController.translateChunk(c, llm) }
+            }
+            for _ in 0 ..< min(3, chunks.count) { add() }
+            for await (res, err) in group {
+                if let err { failed = err }
+                if !res.isEmpty { putTranslations(res) }
+                add()
+            }
+        }
+        translateFinished(failed.map { "部分段落没翻成功：" + $0 })
+    }
+
+    nonisolated static func translateChunk(_ chunk: [(Int, String)], _ llm: LlmClient) async -> ([(Int, String)], String?) {
+        let arr = chunk.map(\.1)
+        guard let data = try? JSONSerialization.data(withJSONObject: arr), let user = String(data: data, encoding: .utf8) else { return ([], "内容无法编码") }
+        let system = "你是专业译者。把用户给的 JSON 数组里的每一段外文翻译成流畅、准确、符合中文阅读习惯的简体中文；保留专有名词、数字和代码，人名和术语首次出现可括注原文；只翻译，不解释。只输出 JSON 对象 {\"t\":[...]}，t 的长度和顺序必须和输入完全一致。"
+        do {
+            let text = try await llm.chatJSON(system: system, user: user)
+            if let obj = LlmClient.extractJSON(text), let t = obj["t"] as? [String], t.count == chunk.count {
+                return (zip(chunk, t).map { ($0.0, $1) }, nil)
+            }
+            // 条数对不上：拆成两半各翻各的
+            if chunk.count > 1 {
+                let mid = chunk.count / 2
+                let a = await translateChunk(Array(chunk[..<mid]), llm)
+                let b = await translateChunk(Array(chunk[mid...]), llm)
+                return (a.0 + b.0, a.1 ?? b.1)
+            }
+            return ([], "AI 返回的格式不对")
+        } catch {
+            return ([], error.localizedDescription)
+        }
+    }
+}
+
 // MARK: - AI 面板
 
 struct ReaderAIPanel: View {
@@ -99,10 +185,10 @@ struct ReaderAIPanel: View {
     @State private var error: String?
     @State private var question = ""
     @State private var ack = false
+    @State private var note = ""
 
-    private var host: String { reader.url?.host ?? "" }
-    private var paid: Bool { host.hasSuffix("caixin.com") || host.hasSuffix("lifeweek.com.cn") }
-    private var ackKey: String { "reader.ai.ack." + (host.hasSuffix("caixin.com") ? "caixin" : "lifeweek") }
+    private var paid: Bool { ReaderAIGate.isPaid(reader.url) }
+    private var ackKey: String { ReaderAIGate.ackKey(reader.url) }
     private var model: AppModel? { AppModel.current }
     private var serviceHost: String { URL(string: model?.llmBaseUrl ?? "")?.host ?? "你设置的 AI 服务" }
 
@@ -147,7 +233,7 @@ struct ReaderAIPanel: View {
                 Text("当前只有预览、没有全文，AI 只能基于预览回答。").font(.caption).foregroundStyle(.orange)
             }
             HStack(spacing: 8) {
-                chip("摘要要点", "text.alignleft") { await ask(.summary) }
+                chip(reader.hasSummary ? "重新摘要" : "摘要要点", "text.alignleft") { await ask(.summary) }
                 chip("白话讲讲", "text.bubble") { await ask(.plain) }
                 chip("解释选中", "highlighter") { await ask(.explain) }
             }
@@ -158,6 +244,12 @@ struct ReaderAIPanel: View {
                     .disabled(busy || question.trimmed.isEmpty)
             }
             if let e = error { Text(e).font(.caption).foregroundStyle(.red) }
+            if !note.isEmpty {
+                HStack(spacing: 10) {
+                    Label(note, systemImage: "checkmark.circle").font(.caption).foregroundStyle(.secondary)
+                    if reader.hasSummary { Button("移除摘要") { reader.removeSummary(); note = "" }.buttonStyle(.link).font(.caption) }
+                }
+            }
             if !answer.isEmpty {
                 // ScrollView 在气泡里没有固有高度，会缩成 0：短答案直接铺开，长答案给固定高度再滚动
                 let body = Text((try? AttributedString(markdown: answer, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(answer))
@@ -208,7 +300,7 @@ struct ReaderAIPanel: View {
         var user = "标题：\(reader.pageTitle)\n\n正文：\n\(text)"
         switch kind {
         case .summary:
-            system += "先用一句话说清文章的核心结论，再列 3 到 5 条要点（每条一句话）。不要大段复述原文。"
+            system += "严格按这个格式输出，不要任何其他内容：第一行是一句话核心结论（不超过 60 字，不加序号和符号）；之后每行以「- 」开头，共 3 到 5 条要点，每条不超过 40 字。"
         case .plain:
             system += "用通俗的大白话把这篇文章讲给不熟悉这个领域的人听，必要时解释专业词，控制在 300 字内。"
         case .explain:
@@ -221,10 +313,41 @@ struct ReaderAIPanel: View {
             user += "\n\n问题：\(q)"
         }
         do {
-            answer = try await llm.chatText(system: system, user: user)
+            let text = try await llm.chatText(system: system, user: user)
+            if case .summary = kind, reader.article, let s = Self.parseSummary(text) {
+                // 摘要放到文章最上面的卡片里，面板里只留一句提示
+                reader.showSummary(s)
+                answer = ""
+                note = "摘要已放在文章最上面。"
+            } else {
+                note = ""
+                answer = text
+            }
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// 「一句话结论 + 若干条 - 要点」→ 摘要卡片的内容
+    private static func parseSummary(_ text: String) -> ReaderCache.Summary? {
+        func clean(_ s: String) -> String {
+            var t = s.trimmingCharacters(in: .whitespaces)
+            for p in ["- ", "• ", "· ", "* ", "#"] where t.hasPrefix(p) { t = String(t.dropFirst(p.count)).trimmingCharacters(in: .whitespaces) }
+            if let r = t.range(of: "^[0-9]+[.、)）]\\s*", options: .regularExpression) { t.removeSubrange(r) }
+            return t.replacingOccurrences(of: "**", with: "").trimmingCharacters(in: .whitespaces)
+        }
+        var lead = ""
+        var points: [String] = []
+        for raw in text.components(separatedBy: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { continue }
+            let isPoint = ["- ", "• ", "· ", "* "].contains { line.hasPrefix($0) } || line.range(of: "^[0-9]+[.、)）]", options: .regularExpression) != nil
+            let c = clean(line)
+            if c.isEmpty { continue }
+            if isPoint { points.append(c) } else if lead.isEmpty { lead = c } else { points.append(c) }
+        }
+        if lead.isEmpty, !points.isEmpty { lead = points.removeFirst() }
+        return lead.isEmpty ? nil : ReaderCache.Summary(lead: lead, points: Array(points.prefix(6)))
     }
 
     private func clip() {
