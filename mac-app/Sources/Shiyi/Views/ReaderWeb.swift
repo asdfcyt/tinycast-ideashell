@@ -78,15 +78,27 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         webView.customUserAgent = Self.ua
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        webView.allowsBackForwardNavigationGestures = true
+        webView.allowsBackForwardNavigationGestures = false
         ucc.add(self, name: "reader")
         installScript()
     }
 
     // MARK: 操作
 
+    /// 每次从目录 / 列表点进来的那一页算「起点」：返回键只在起点之后的页面之间退，不会退回别的来源打开过的页面
+    private var root: WKBackForwardListItem?
+    private var pendingRoot = false
+
+    private func updateBack() {
+        let cur = webView.backForwardList.currentItem
+        canGoBack = webView.canGoBack && root != nil && cur !== root
+    }
+
     func open(_ u: URL) {
         url = u
+        root = nil
+        pendingRoot = true
+        canGoBack = false
         webView.load(URLRequest(url: u))
     }
 
@@ -97,7 +109,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         if let u = URL(string: "https://u.caixin.com/web/login?url=" + enc) { open(u) }
     }
 
-    func goBack() { if webView.canGoBack { webView.goBack() } }
+    func goBack() { if canGoBack { webView.goBack() } }
     func openInBrowser() { if let u = webView.url { NSWorkspace.shared.open(u) } }
 
     /// 退出登录：清掉本机上财新的登录状态
@@ -170,8 +182,9 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             kai: '"Kaiti SC","STKaiti","KaiTi",serif'
           };
           var isAI = location.hostname === 'aihot.news';
-          var content = isAI ? document.querySelector('main article') : document.getElementById('the_content');
-          var isArticle = isAI ? !!content : (/^\/\d{4}-\d{2}-\d{2}\/\d+\.html/.test(location.pathname) && !!content);
+          var isLW = /(^|\.)lifeweek\.com\.cn$/.test(location.hostname) && /^\/h5\/article\/detail\.do/.test(location.pathname);
+          var content = isAI ? document.querySelector('main article') : isLW ? document.querySelector('.area6') : document.getElementById('the_content');
+          var isArticle = (isAI || isLW) ? !!content : (/^\/\d{4}-\d{2}-\d{2}\/\d+\.html/.test(location.pathname) && !!content);
           function post(o) {
             try { window.webkit.messageHandlers.reader.postMessage(o); } catch (e) {}
           }
@@ -194,6 +207,8 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             return [
               H + ',html.sy-r body{background:' + bg + ' !important;color:' + fg + ' !important;min-width:0 !important;margin:0 !important}',
               H + '.sy-hide{display:none !important}',
+              // 站点自己的手机顶栏（「‹ 精选」）、侧栏、底部工具条：用样式藏，不怕页面重渲染时把标记冲掉
+              H + 'aside,' + H + 'header[data-phone-bar],' + H + 'nav[aria-label="阅读工具"],' + H + 'nav[aria-label="主导航"]{display:none !important}',
               A + '{display:block !important;max-width:' + R.width + 'px !important;margin:0 auto !important;padding:40px 28px 90px !important;box-sizing:border-box;color:' + fg + ' !important}',
               A + ' *{background:none !important;box-shadow:none !important;-webkit-user-select:text !important;user-select:text !important;text-autospace:ideograph-alpha ideograph-numeric;line-break:strict;overflow-wrap:break-word}',
               A + ' *:not(a):not(code):not(pre){color:' + fg + ' !important}',
@@ -211,8 +226,31 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
               A + ' nav,' + A + ' button{font-size:13px !important;opacity:.75}'
             ].join('\n');
           }
+          // 三联中读手机版文章页：只留 .area6（标题、作者行、导语、正文）
+          function cssLW() {
+            var c = T[R.theme] || T.paper, bg = c[0], fg = c[1], ac = c[2], H = 'html.sy-r ';
+            var ff = F[R.font] || F.song, A = H + '.area6', B = A + ' .bd';
+            return [
+              H + ',html.sy-r body{background:' + bg + ' !important;color:' + fg + ' !important;min-width:0 !important;margin:0 !important}',
+              H + '.sy-hide,' + H + '.header,' + H + '.area4,' + H + '.mask2{display:none !important}',
+              A + '{display:block !important;max-width:' + R.width + 'px !important;margin:0 auto !important;padding:40px 28px 90px !important;box-sizing:border-box;background:none !important;width:auto !important;float:none !important}',
+              A + ' *{box-sizing:border-box;-webkit-user-select:text !important;user-select:text !important}',
+              A + ' .cap1{font:700 ' + (R.size * 1.55) + 'px/1.4 ' + (R.font === 'kai' ? F.kai : F.hei) + ' !important;color:' + fg + ' !important;margin:0 0 12px !important;text-align:left !important}',
+              A + ' .p_sj,' + A + ' .p_sj *{font-size:13px !important;color:' + fg + ' !important;opacity:.65;background:none !important}',
+              A + ' .d_zy{font-size:' + (R.size * 0.9) + 'px !important;line-height:1.7 !important;color:' + fg + ' !important;opacity:.78;margin:6px 0 18px !important;padding:0 0 0 12px !important;border-left:3px solid ' + ac + ' !important;background:none !important}',
+              B + ',' + B + ' *{font-family:' + ff + ' !important;font-size:' + R.size + 'px !important;line-height:' + R.leading + ' !important;color:' + fg + ' !important;background:none !important;letter-spacing:normal !important;text-autospace:ideograph-alpha ideograph-numeric;line-break:strict;overflow-wrap:break-word;text-wrap:pretty}',
+              B + ' p{margin:0 0 ' + (R.indent ? '.55em' : '.95em') + ' !important}',
+              B + ' p:not([style*="center"]){text-indent:' + (R.indent ? '2em' : '0') + ' !important;text-align:' + (R.justify ? 'justify' : 'left') + '}',
+              B + ' section{margin-left:0 !important;margin-right:0 !important}',
+              B + ' strong,' + B + ' b{font-weight:700 !important}',
+              B + ' a{color:' + ac + ' !important;text-decoration:none}',
+              B + ' img{max-width:100% !important;height:auto !important;border-radius:6px}',
+              B + ' blockquote{border-left:3px solid ' + ac + ';margin:1em 0;padding:0 0 0 14px}'
+            ].join('\n');
+          }
           function css() {
             if (isAI) { return cssAI(); }
+            if (isLW) { return cssLW(); }
             var c = T[R.theme] || T.paper, bg = c[0], fg = c[1], ac = c[2], H = 'html.sy-r ';
             var ff = F[R.font] || F.song, M = H + '#Main_Content_Val';
             return [
@@ -302,9 +340,16 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
               }
               cur = p;
             }
-            if (!isAI) { normalize(); }
+            if (!isAI && !isLW) { normalize(); }
           }
           function report() {
+            if (isLW) {
+              var bd = document.querySelector('.area6 .bd');
+              var chars = bd ? (bd.innerText || '').replace(/\s/g, '').length : 0;
+              var txt = (content && content.innerText) || '';
+              post({ article: true, chars: chars, locked: /本文仅开放给|您还没有订阅|订阅用户/.test(txt) && chars < 1500 });
+              return;
+            }
             if (isAI) {
               post({ article: true, chars: ((content && content.innerText) || '').replace(/\s/g, '').length, locked: false });
               return;
@@ -371,7 +416,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             menu.insertItem(.separator(), at: 2)
         } else if menu.items.isEmpty {
             // 空白处：浏览和阅读设置
-            if webView.canGoBack { _ = add("返回", "chevron.left", #selector(menuBack)) }
+            if canGoBack { _ = add("返回", "chevron.left", #selector(menuBack)) }
             _ = add("刷新", "arrow.clockwise", #selector(menuReload))
             menu.addItem(.separator())
             if article {
@@ -448,21 +493,29 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
         if let u = webView.url { url = u; onLogin = u.host == "u.caixin.com" }
     }
 
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        if pendingRoot, let item = webView.backForwardList.currentItem {
+            root = item
+            pendingRoot = false
+        }
+        updateBack()
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loading = false
-        canGoBack = webView.canGoBack
+        updateBack()
         if let u = webView.url { url = u; onLogin = u.host == "u.caixin.com" }
         Task { await refreshLogin() }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         loading = false
-        canGoBack = webView.canGoBack
+        updateBack()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         loading = false
-        canGoBack = webView.canGoBack
+        updateBack()
     }
 
     // MARK: WKUIDelegate

@@ -11,19 +11,6 @@ struct AIHotSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Picker("", selection: $tab) {
-                    Text("AI 日报").tag(AIHotTab.daily)
-                    Text("本周精选").tag(AIHotTab.picks)
-                }
-                .pickerStyle(.segmented).labelsHidden()
-                Button { Task { await store.reload() } } label: {
-                    if store.loading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
-                }
-                .buttonStyle(.plain).foregroundStyle(.secondary).help("刷新").disabled(store.loading)
-            }
-            .padding(.horizontal, 14).padding(.vertical, 12)
-            Divider()
             if let e = store.error, store.entries.isEmpty {
                 VStack(spacing: 10) {
                     Text(e).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -45,12 +32,20 @@ struct AIHotSidebar: View {
                 }
             }
             Divider()
-            HStack(spacing: 4) {
-                Text("数据来源").font(.caption).foregroundStyle(.tertiary)
-                Link("AIHOT", destination: URL(string: "https://aihot.news")!).font(.caption)
-                Spacer()
+            HStack(spacing: 8) {
+                Link("AIHOT", destination: URL(string: "https://aihot.news")!).font(.caption).help("数据来源：AIHOT")
+                Spacer(minLength: 4)
+                Picker("", selection: $tab) {
+                    Text("AI 日报").tag(AIHotTab.daily)
+                    Text("本周精选").tag(AIHotTab.picks)
+                }
+                .pickerStyle(.segmented).labelsHidden().controlSize(.small).frame(width: 150)
+                Button { Task { await store.reload() } } label: {
+                    if store.loading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary).help("刷新").disabled(store.loading)
             }
-            .padding(.horizontal, 14).padding(.vertical, 9)
+            .padding(.horizontal, 14).padding(.vertical, 8)
         }
     }
 

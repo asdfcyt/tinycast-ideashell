@@ -9,6 +9,13 @@ enum ReadingSource: String, CaseIterable {
         case .lifeweek: "三联"
         }
     }
+    var icon: String {
+        switch self {
+        case .caixin: "newspaper"
+        case .aihot: "sparkles"
+        case .lifeweek: "book.closed"
+        }
+    }
 }
 
 /// 阅读：三个来源。
@@ -17,6 +24,7 @@ enum ReadingSource: String, CaseIterable {
 struct ReadingView: View {
     @ObservedObject private var store = WeeklyStore.shared
     @ObservedObject private var aihot = AIHotStore.shared
+    @ObservedObject private var lifeweek = LifeweekStore.shared
     @ObservedObject private var reader = ReaderController.shared
     @AppStorage("reader.source") private var sourceRaw = ReadingSource.caixin.rawValue
     @State private var selected: String?
@@ -31,12 +39,6 @@ struct ReadingView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                Picker("", selection: $sourceRaw) {
-                    ForEach(ReadingSource.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
-                }
-                .pickerStyle(.segmented).labelsHidden()
-                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 10)
-                Divider()
                 switch source {
                 case .caixin: sidebar
                 case .aihot: AIHotSidebar(store: aihot, tab: $aiTab, pick: $aiPick)
@@ -48,51 +50,115 @@ struct ReadingView: View {
             detail
         }
         .background(AmbientBackground())
+        .toolbar { sourceToolbar }
         .toolbar { readerToolbar }
         .task {
             await store.loadIfNeeded()
             await aihot.loadIfNeeded()
+            if source == .lifeweek { await lifeweek.loadIfNeeded() }
             await reader.refreshLogin()
         }
         .onChange(of: sourceRaw) { _, _ in
             webShown = false
             selected = nil
-            if source == .lifeweek { openLifeweek("https://www.lifeweek.com.cn/") }
+            if source == .lifeweek { Task { await lifeweek.loadIfNeeded() } }
         }
         .onChange(of: aiTab) { _, _ in webShown = false }
         .onChange(of: aiPick) { _, _ in webShown = false }
     }
 
-    // MARK: 三联：入口列表（官网是单页应用、内容属会员，不做目录，只给入口）
+    // MARK: 三联：期号 + 目录（官网公开的目录数据），文章在右边的内嵌浏览器里用你自己的账号登录阅读
 
     private var lifeweekSidebar: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach([("首页", "house", "https://www.lifeweek.com.cn/"),
-                     ("杂志（历年各期）", "books.vertical", "https://www.lifeweek.com.cn/magazine"),
-                     ("中读课程", "headphones", "https://www.lifeweek.com.cn/zhongdu")], id: \.0) { item in
-                Button { openLifeweek(item.2) } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: item.1).frame(width: 18).foregroundStyle(Brand.orange)
-                        Text(item.0).font(.system(size: 13.5, weight: .medium))
-                        Spacer()
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 8)
-                    .contentShape(Rectangle())
+        VStack(spacing: 0) {
+            lifeweekHeader
+                .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
+            Divider()
+            if let e = lifeweek.error, lifeweek.sections.isEmpty {
+                VStack(spacing: 10) {
+                    Text(e).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("重试") { Task { await lifeweek.reload() } }
                 }
-                .buttonStyle(.plain)
+                .padding(20).frame(maxHeight: .infinity)
+            } else if lifeweek.sections.isEmpty {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(lifeweek.sections) { sec in
+                            Text(sec.name).font(.caption.weight(.bold)).foregroundStyle(Brand.orange)
+                                .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 4)
+                            ForEach(sec.articles) { a in lifeweekRow(a) }
+                        }
+                    }
+                    .padding(.horizontal, 4).padding(.bottom, 12)
+                }
             }
-            Spacer()
-            Text("三联生活周刊的内容属会员，也没有开放接口：这里用内置浏览器打开官网，在页面右上角「登录/注册」后即可阅读，登录状态只留在本机。")
-                .font(.caption).foregroundStyle(.tertiary).lineSpacing(3)
-                .padding(.horizontal, 10).padding(.bottom, 12)
+            Divider()
+            HStack(spacing: 6) {
+                Image(systemName: "person.crop.circle").foregroundStyle(.secondary)
+                Text("全文需《三联生活周刊》数字刊账号").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("登录") { openLifeweekLogin() }.buttonStyle(.link).font(.caption)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
         }
-        .padding(.horizontal, 4).padding(.top, 10)
     }
 
-    private func openLifeweek(_ s: String) {
-        guard let u = URL(string: s) else { return }
-        reader.open(u)
-        webShown = true
+    private var lifeweekHeader: some View {
+        HStack(spacing: 10) {
+            AsyncImage(url: lifeweek.current?.cover) { img in
+                img.resizable().scaledToFill()
+            } placeholder: {
+                Color.primary.opacity(0.06)
+            }
+            .frame(width: 42, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Menu {
+                    ForEach(lifeweek.issues) { i in
+                        Button {
+                            Task { await lifeweek.select(i) }
+                        } label: {
+                            Text((i.id == lifeweek.current?.id ? "✓ " : "") + i.label + "　" + i.name)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(lifeweek.current.map { "\($0.label)　\($0.name)" } ?? "三联生活周刊").font(.system(size: 14, weight: .bold))
+                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 8, weight: .bold)).foregroundStyle(.secondary)
+                    }
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                Text(lifeweek.current.map { "总第 \($0.total) 期 · \($0.date)" } ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Button { Task { await lifeweek.reload() } } label: {
+                if lifeweek.loading { ProgressView().controlSize(.small) } else { Image(systemName: "arrow.clockwise") }
+            }
+            .buttonStyle(.plain).foregroundStyle(.secondary).help("刷新目录").disabled(lifeweek.loading)
+        }
+    }
+
+    private func lifeweekRow(_ a: LWArticle) -> some View {
+        let on = selected == "lw\(a.id)"
+        return Button {
+            selected = "lw\(a.id)"
+            openWeb(a.url)
+        } label: {
+            Text(a.title).font(.system(size: 13.5, weight: .medium)).lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(on ? Brand.orange.opacity(0.14) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func openLifeweekLogin() {
+        openWeb(URL(string: "https://www.lifeweek.com.cn/h5/port/tologin.do")!)
     }
 
     private func openWeb(_ u: URL) {
@@ -221,9 +287,22 @@ struct ReadingView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             VStack(spacing: 0) {
-                if source == .caixin && reader.article && reader.locked { lockedBanner; Divider() }
+                if source != .aihot && reader.article && reader.locked { lockedBanner; Divider() }
                 ReaderWebView(controller: reader)
             }
+        }
+    }
+
+    /// 来源切换：图标放在标题栏最前面（加号旁边）
+    @ToolbarContentBuilder private var sourceToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Picker("来源", selection: $sourceRaw) {
+                ForEach(ReadingSource.allCases, id: \.rawValue) {
+                    Label($0.title, systemImage: $0.icon).labelStyle(.iconOnly).tag($0.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .help("切换来源：财新周刊 / AI 日报 / 三联")
         }
     }
 
@@ -231,11 +310,11 @@ struct ReadingView: View {
     @ToolbarContentBuilder private var readerToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             if webShown {
-                if source == .aihot {
-                    toolButton("list.bullet.rectangle", "回到日报 / 精选") { webShown = false }
-                }
+                // 唯一的返回键：先退回网页上一页；没有上一页了，AI 日报就回到日报 / 精选列表
                 if reader.canGoBack {
                     toolButton("chevron.left", "返回") { reader.goBack() }
+                } else if source == .aihot {
+                    toolButton("chevron.left", "回到日报 / 精选") { webShown = false }
                 }
                 if reader.loading { ProgressView().controlSize(.small) }
                 if reader.article {
@@ -300,10 +379,14 @@ struct ReadingView: View {
     private var lockedBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "lock.fill").foregroundStyle(Brand.orange)
-            Text(reader.loggedIn ? "只显示了预览：这个账号没有《财新周刊》阅读权限，或登录已过期" : "只显示了预览：登录有《财新周刊》权限的账号后可读全文")
+            Text(source == .lifeweek
+                 ? "只显示了预览：登录有《三联生活周刊》数字刊权限的账号后可读全文"
+                 : (reader.loggedIn ? "只显示了预览：这个账号没有《财新周刊》阅读权限，或登录已过期" : "只显示了预览：登录有《财新周刊》权限的账号后可读全文"))
                 .font(.callout).foregroundStyle(.secondary)
             Spacer(minLength: 6)
-            Button(reader.loggedIn ? "重新登录" : "登录") { reader.openLogin() }
+            Button(source == .lifeweek ? "登录" : (reader.loggedIn ? "重新登录" : "登录")) {
+                if source == .lifeweek { openLifeweekLogin() } else { reader.openLogin() }
+            }
                 .buttonStyle(.bordered).controlSize(.small)
         }
         .padding(.horizontal, 14).padding(.vertical, 7)
