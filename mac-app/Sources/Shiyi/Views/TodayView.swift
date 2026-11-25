@@ -397,6 +397,7 @@ private struct TodayContent: View {
 
     @ViewBuilder private var railTop: some View {
         DashboardCard(focus: focus, loaded: loaded, remaining: remaining, todoDone: todayDone.count, todoTotal: todoTotal)
+        HourlyRateCard(focus: focus)
         if model.hasSjz { AuditProjectCard() }
     }
 
@@ -1535,6 +1536,103 @@ private struct DashboardCard: View {
                 .animation(.easeOut(duration: 0.7), value: progress)
         }
         .frame(width: d, height: d)
+    }
+}
+
+// MARK: - 侧栏：时薪
+
+/// 洞察里「你的时间值多少钱」的精简版：最近 7 天的有效时薪（较上一个 7 天的变化）、在岗时薪、每天的工作专注，点一下进洞察
+private struct HourlyRateCard: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject var focus: FocusStore
+    @AppStorage("tp.pay") private var pay = 0.0
+    @AppStorage("tp.paidHours") private var paidHours = 40.0
+    @AppStorage("tp.unpaidHours") private var unpaidHours = 0.0
+    @AppStorage("tp.jobCost") private var jobCost = 0.0
+    @AppStorage("tp.goalHours") private var goalHours = 4.0
+    @AppStorage("tp.workDays") private var workDays = 5.0
+
+    private let days = 7
+
+    var body: some View {
+        let price = TimePrice(monthlyPay: pay, paidHoursPerWeek: paidHours, unpaidHoursPerWeek: unpaidHours, monthlyJobCost: jobCost, goalHoursPerDay: goalHours, workDaysPerWeek: workDays)
+        let items = FocusLedger.shared.items
+        let stats = WorkStats.compute(days: days, entries: items)
+        let prev = WorkStats.compute(days: days, entries: items, ending: Day.add(Day.today(), days: -days))
+        let rate = price.effectiveHourly(workMin: stats.workMin, days: days)
+        let prevRate = price.effectiveHourly(workMin: prev.workMin, days: days)
+        let todayMin = stats.daily.last?.work ?? 0
+        let _ = focus.summary
+        Panel(radius: 18) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 6) {
+                    Image(systemName: "yensign.circle.fill").foregroundStyle(Brand.orange)
+                    Text("时薪").foregroundStyle(Brand.orange)
+                    Spacer(minLength: 6)
+                    Text("近 \(days) 天").font(.caption).foregroundStyle(.tertiary)
+                }
+                .font(.subheadline.weight(.semibold))
+
+                if price.configured {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(rate.map { TimePrice.money($0) } ?? "–").font(.system(size: 26, weight: .bold)).monospacedDigit()
+                        Text("/ 小时").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        if let rate, let pr = prevRate, pr > 0 { trend(rate, pr) }
+                        Spacer(minLength: 6)
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text(TimePrice.money(price.realHourly)).font(.system(size: 14, weight: .semibold)).monospacedDigit()
+                            Text("在岗底价").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                    bars(stats)
+                    Text(summary(price, stats, rate: rate, todayMin: todayMin))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("填上每月收入和每周工时，就能算出你的时间值多少钱")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(16)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { model.section = .insights }
+        .help("在洞察里查看详细的时间价格")
+    }
+
+    private func trend(_ rate: Double, _ prev: Double) -> some View {
+        let d = Int(((rate / prev - 1) * 100).rounded())
+        let color: Color = d > 0 ? .green : (d < 0 ? .red : .secondary)
+        return HStack(spacing: 1) {
+            if d != 0 { Image(systemName: d > 0 ? "arrow.up" : "arrow.down").font(.system(size: 9, weight: .bold)) }
+            Text(d == 0 ? "持平" : "\(abs(d))%").font(.caption.weight(.semibold)).monospacedDigit()
+        }
+        .foregroundStyle(color)
+        .help("较上一个 \(days) 天")
+    }
+
+    /// 每天的工作专注：今天用主色，其余淡一点
+    private func bars(_ s: WorkStats) -> some View {
+        let peak = max(s.daily.map(\.work).max() ?? 0, 30)
+        return HStack(alignment: .bottom, spacing: 5) {
+            ForEach(Array(s.daily.enumerated()), id: \.offset) { i, d in
+                let last = i == s.daily.count - 1
+                Capsule()
+                    .fill(last ? Brand.orange : Brand.orange.opacity(0.35))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: max(3, 28 * CGFloat(d.work) / CGFloat(peak)))
+                    .help("\(d.day)：专注工作 \(DashboardCard.fmt(d.work))")
+            }
+        }
+        .frame(height: 28, alignment: .bottom)
+    }
+
+    private func summary(_ p: TimePrice, _ s: WorkStats, rate: Double?, todayMin: Int) -> String {
+        guard let rate else { return "最近 \(days) 天专注工作不足 30 分钟，还算不出有效时薪" }
+        let onDuty = p.onDutyMinutes(days: days)
+        var t = "专注工作 \(DashboardCard.fmt(s.workMin))"
+        if onDuty > 0 { t += "，占在岗的 \(Int((Double(s.workMin) / onDuty * 100).rounded()))%" }
+        if todayMin > 0 { t += "；今天 \(DashboardCard.fmt(todayMin)) ≈ \(TimePrice.money(rate * Double(todayMin) / 60))" }
+        return t
     }
 }
 

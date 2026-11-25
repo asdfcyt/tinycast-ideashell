@@ -55,7 +55,7 @@ extension ComposerNSTextView {
         let base: [NSAttributedString.Key: Any] = [.font: font0, .foregroundColor: inkC, .paragraphStyle: para]
         defer { typingAttributes = base }
         guard let ts = textStorage, ts.length > 0, !hasMarkedText() else {
-            if textStorage?.length == 0, !liveTables.isEmpty { liveTables = []; needsDisplay = true }
+            if textStorage?.length == 0, !liveTables.isEmpty || !liveImages.isEmpty { liveTables = []; liveImages = []; needsDisplay = true }
             return
         }
 
@@ -101,6 +101,7 @@ extension ComposerNSTextView {
         }
 
         var inFence = false
+        var liveImgs: [LiveImage] = []
         ns.enumerateSubstrings(in: full, options: [.byLines, .substringNotRequired]) { _, line, _, _ in
             // 渲染成表格的行：文字折叠成细线（第一行撑出表格的高度）
             if let t = tableLine[line.location] {
@@ -127,6 +128,18 @@ extension ComposerNSTextView {
             }
             if inFence {
                 ts.addAttributes([.font: mono, .backgroundColor: NSColor.black.withAlphaComponent(0.07)], range: line)
+                return
+            }
+            // 图片引用行：有图、且光标不在这行时，文字折叠掉，在原位置画出图片（见 MarkdownImageLive.swift）
+            if !active, let key = self.imageKey(of: text), let img = self.lineImages[key] {
+                let size = self.imageDisplaySize(img)
+                let p = NSMutableParagraphStyle()
+                p.lineSpacing = 0
+                p.paragraphSpacing = 0
+                p.minimumLineHeight = size.height + Self.imageGap
+                p.maximumLineHeight = size.height + Self.imageGap
+                ts.addAttributes([.font: NSFont.systemFont(ofSize: 0.1), .foregroundColor: NSColor.clear, .paragraphStyle: p], range: ns.lineRange(for: line))
+                liveImgs.append(LiveImage(line: line, image: img, size: size))
                 return
             }
             // 结审证据 / 法规的结构行（摘录标记、图片引用）：写回时要原样保留，淡色小字显示，别当正文改
@@ -241,6 +254,8 @@ extension ComposerNSTextView {
             }
         }
         ts.endEditing()
+        liveImages = liveImgs
+        needsDisplay = true
     }
 
     // MARK: 点方框勾选

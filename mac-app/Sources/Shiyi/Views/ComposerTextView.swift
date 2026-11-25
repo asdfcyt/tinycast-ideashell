@@ -34,6 +34,8 @@ struct ComposerTextView: NSViewRepresentable {
     var allowsImages = false
     /// Markdown 边写边预览（便签用）：标题 / 粗体 / 列表等当场上样式，点方框勾选，回车续列表
     var markdown = false
+    /// 便签里图片引用行（`![说明][img1]`）对应的图片：有图就在原位置画出来
+    var lineImages: [String: NSImage] = [:]
     var fontSize: CGFloat = 16
     /// 窗口一出现就抢焦点（一个页面里有好几个输入框时关掉）
     var autoFocus = true
@@ -65,6 +67,7 @@ struct ComposerTextView: NSViewRepresentable {
         // 开启图文混排才用富文本（附件需要）；粘贴一律按纯文字处理，不会带进字体颜色
         tv.allowsImages = allowsImages
         tv.markdownStyle = markdown
+        tv.lineImages = lineImages
         tv.grabsFocus = autoFocus
         tv.isRichText = allowsImages || markdown
         tv.importsGraphics = false
@@ -133,6 +136,14 @@ struct ComposerTextView: NSViewRepresentable {
         if tv.appearance?.name != want?.name {
             tv.appearance = want
             if tv.markdownStyle { tv.restyle() }
+        }
+        if tv.markdownStyle {
+            if tv.setLineImages(lineImages) {
+                DispatchQueue.main.async { [weak coordinator = context.coordinator, weak tv] in
+                    guard let coordinator, let tv else { return }
+                    coordinator.sync(from: tv)
+                }
+            }
         }
         if context.coordinator.focusTick != focusTick {
             context.coordinator.focusTick = focusTick
@@ -211,10 +222,14 @@ final class ComposerNSTextView: NSTextView {
     /// 便签里渲染成真表格的块 / 排版缓存（见 MarkdownTableLive.swift）
     var liveTables: [LiveTable] = []
     var tableCache: [String: LiveTableLayout] = [:]
+    /// 便签里 `![说明][imgN]` 引用行对应的图片（imgN → 图片）和渲染好的图片块（见 MarkdownImageLive.swift）
+    var lineImages: [String: NSImage] = [:]
+    var liveImages: [LiveImage] = []
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         drawLiveTables(dirtyRect)
+        drawLiveImages(dirtyRect)
     }
 
     static let maxImages = 9
@@ -245,6 +260,7 @@ final class ComposerNSTextView: NSTextView {
     override func mouseDown(with event: NSEvent) {
         if toggleTaskIfClicked(event) { return }
         if expandTableIfClicked(event) { return }
+        if expandImageIfClicked(event) { return }
         super.mouseDown(with: event)
     }
 

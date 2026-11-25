@@ -382,7 +382,7 @@ struct InsightsView: View {
                             let trend = rateNote(p, s, rate: rate, prevRate: prevRate)
                             metric("有效时薪", value: TimePrice.money(rate), unit: "/ 小时", note: trend, tint: workColor)
                         } else {
-                            metric("有效时薪", value: "–", note: "最近 \(s.days) 天的工作专注不足 30 分钟，用结审任务或「\(model.workTag)」标签的任务专注后才能算", tint: workColor)
+                            metric("有效时薪", value: "–", note: "最近 \(s.days) 天的工作时间不足 30 分钟，用结审任务或「\(model.workTag)」标签的任务专注、或在结审便签里工作后才能算", tint: workColor)
                         }
                         Divider().frame(height: 62)
                         metric("在岗时薪", value: TimePrice.money(p.realHourly), unit: "/ 小时",
@@ -402,7 +402,7 @@ struct InsightsView: View {
                                 .font(.callout).fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    Text("只统计专注记录里的工作时间（结审任务 + 「\(model.workTag)」标签）；没开专注的工作不会算进去。")
+                    Text("统计专注记录里的工作时间（结审任务 + 「\(model.workTag)」标签），再加上结审便签在前台的时间（\(fmtMin(s.stickyMin))，没点专注时便签标题栏的计时自动记入）；在其他地方做的工作不会算进去。")
                         .font(.caption).foregroundStyle(.tertiary)
                 } else {
                     Text("填上每月到手收入、每周工时和工作花费：有效时薪 = 净收入 ÷ 你真正专注工作的时间，做同样的事花得越少、时间越值钱；在岗时薪是按坐在岗位上的时间算的底价，两者的差距就是时间的浪费。")
@@ -458,7 +458,7 @@ struct InsightsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 cardHeader("专注时间", icon: "timer", tint: workColor, trailing: "工作 = 结审任务 + 「\(model.workTag)」标签")
                 if s.totalMin == 0 {
-                    Text("这段时间还没有专注记录。从现在起，每次专注都会记进来，并按工作 / 普通时间分开统计。")
+                    Text("这段时间还没有专注记录。从现在起，每次专注、以及在结审便签里工作的时间都会记进来，并按工作 / 普通时间分开统计。")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 } else {
                     HStack(alignment: .top, spacing: 16) {
@@ -1029,6 +1029,7 @@ private struct RateCalendar: View {
                         Image(systemName: e.work ? "briefcase.fill" : "person.fill").font(.system(size: 10)).foregroundStyle(e.work ? workColor : Color.secondary)
                         Text(clock(e.startDate)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
                         Text(e.title.isEmpty ? "自由专注" : e.title).font(.callout).lineLimit(1)
+                        if e.isSticky { Text("便签").font(.system(size: 9.5, weight: .medium)).foregroundStyle(.secondary).padding(.horizontal, 4).padding(.vertical, 1).background(Color.primary.opacity(0.07), in: Capsule()) }
                         Spacer(minLength: 8)
                         Text(hours(e.minutes)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     }

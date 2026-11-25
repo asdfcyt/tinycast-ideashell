@@ -34,6 +34,8 @@ struct StickyNote: Codable, Identifiable {
     var closed: Bool?
     /// 已折叠：只显示标题行和第一行文字（h 记的是展开时的高度）
     var collapsed: Bool?
+    /// 这张便签（结审类）累计在前台的秒数
+    var workSecs: Int?
 
     var rect: NSRect { NSRect(x: x, y: y, width: w, height: h) }
 }
@@ -98,11 +100,38 @@ enum StickyPalette {
     static let keepKey = "sticky.deleteAfterConvert"
 }
 
+/// 结审便签的前台计时状态。单独一个对象：每秒变一次，只有标题栏那一小块订阅它，整张便签（含输入框）不会跟着重画
+@MainActor
+final class StickyTimer: ObservableObject {
+    /// 累计在前台的秒数
+    @Published var secs: Int
+    /// 此刻是不是在计时
+    @Published var counting = false
+    /// 是不是结审类（只有结审类才计时）
+    @Published var isSjz = false
+    /// 手动暂停（点标题栏的计时）
+    @Published var paused = false
+    /// 不满 1 秒的零头
+    var carry = 0.0
+
+    init(secs: Int) { self.secs = secs }
+
+    static func format(_ s: Int) -> String {
+        let h = s / 3600, m = s % 3600 / 60, sec = s % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
+    }
+}
+
 @MainActor
 final class StickyModel: ObservableObject, Identifiable {
     let id: UUID
     let createdAt: Date
-    @Published var text: String { didSet { if oldValue != text { onEdit?() } } }
+    let timer: StickyTimer
+    /// 正文里图片引用行（`![说明][img1]`）对应的图片：从结审记录打开的便签，打开后到结审里取
+    @Published var images: [String: NSImage] = [:]
+    /// 最近一次和这张便签有互动（拿到焦点 / 输入 / 鼠标放在上面）的时间
+    var lastTouch = Date()
+    @Published var text: String { didSet { if oldValue != text { lastTouch = Date(); onEdit?() } } }
     @Published var color: Int { didSet { onEdit?() } }
     @Published var pinned: Bool { didSet { onEdit?(); onPinChanged?() } }
     /// 折叠：窗口缩成一条，只留第一行
@@ -133,6 +162,14 @@ final class StickyModel: ObservableObject, Identifiable {
         pinned = n.pinned
         collapsed = n.collapsed ?? false
         expandedH = n.h
+        timer = StickyTimer(secs: n.workSecs ?? 0)
+        timer.isSjz = n.source?.kind == "sjz"
+    }
+
+    /// 万能输入识别 / 选中的类型变了：结审类才计时。从笔记打开的便签不算，从结审记录打开的一定算
+    func setKind(_ k: CaptureKind) {
+        let v = source.map { $0.kind == "sjz" } ?? k.isSjz
+        if timer.isSjz != v { timer.isSjz = v }
     }
 }
 
@@ -229,8 +266,144 @@ final class StickyController {
         }
         applyHotkey()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.saveNow() }
+            MainActor.assumeIsolated {
+                self?.closeSegment()
+                self?.saveNow()
+            }
         }
+        startClock()
+    }
+
+    // MARK: 前台计时
+
+    /*
+     * 结审便签的前台计时（没特意点「专注」时，也能知道这段时间花在了哪）：
+     * 一张便签同时满足下面几条才计时——
+     *   · 是结审类（想法 / 证据 / 法规 / 线索，或从结审记录打开的）
+     *   · 没折叠、看得见（在当前桌面）
+     *   · 最近 5 分钟内跟它有过互动：拿到焦点、输入，或鼠标放在它上面（鼠标下面的窗口就是它）
+     *   · 键鼠没空闲超过 2 分钟（睡眠 / 锁屏 / 走开都会停）
+     *   · 没有正在进行的专注（专注已经在记，不重复）
+     * 同时有好几张满足时，只有最近互动的那张计时。计的时间写进专注账本（来源 = 便签），洞察的有效时薪自动包含它。
+     */
+    private static let interactSecs = 300.0
+    private static let idleLimit = 120.0
+    private static let gapMs: Int64 = 120_000
+
+    /// 正在记账的一段：同一张便签，中间停顿不超过 2 分钟就算同一段，账本里是一条
+    private struct Segment {
+        let id: UUID
+        weak var model: StickyModel?
+        let startMs: Int64
+        var countedMs: Int64
+        var lastMs: Int64
+    }
+
+    private var clockTimer: Timer?
+    private var lastTick = Date()
+    private var segment: Segment?
+    private var ticksSinceWrite = 0
+
+    private func startClock() {
+        clockTimer?.invalidate()
+        lastTick = Date()
+        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        t.tolerance = 0.2
+        RunLoop.main.add(t, forMode: .common)
+        clockTimer = t
+    }
+
+    private static func ms(_ d: Date) -> Int64 { Int64(d.timeIntervalSince1970 * 1000) }
+
+    private func tick() {
+        let now = Date()
+        // 睡眠醒来这一下间隔很大：最多按 2.5 秒算，睡着的时间不计
+        let dt = min(now.timeIntervalSince(lastTick), 2.5)
+        lastTick = now
+        guard let model, !entries.isEmpty else { closeStaleSegment(now); return }
+
+        let focusing = model.focus.run.map { !$0.kind.isBreak && !$0.paused } ?? false
+        let idle = SedentaryReminder.idleSeconds()
+        let mouse = NSEvent.mouseLocation
+        let sjzOK = model.hasSjz
+
+        var best: UUID?
+        var bestTouch = Date.distantPast
+        for (id, e) in entries {
+            let m = e.model, p = e.panel
+            let ready = sjzOK && m.timer.isSjz && !m.timer.paused && !m.collapsed && p.isVisible && p.isOnActiveSpace
+            guard ready else { setCounting(m, false); continue }
+            if p.isKeyWindow || NSWindow.windowNumber(at: mouse, belowWindowWithWindowNumber: 0) == p.windowNumber { m.lastTouch = now }
+            if now.timeIntervalSince(m.lastTouch) <= Self.interactSecs, m.lastTouch >= bestTouch { best = id; bestTouch = m.lastTouch }
+            else { setCounting(m, false) }
+        }
+
+        guard let id = best, let e = entries[id], idle < Self.idleLimit, !focusing else {
+            for oe in entries.values { setCounting(oe.model, false) }
+            closeStaleSegment(now)
+            return
+        }
+        // 只有最近互动的那张亮；其余满足条件的也熄灭
+        for (oid, oe) in entries where oid != id { setCounting(oe.model, false) }
+        let m = e.model
+        setCounting(m, true)
+        m.timer.carry += dt
+        let whole = Int(m.timer.carry)
+        if whole > 0 { m.timer.carry -= Double(whole); m.timer.secs += whole }
+
+        let nowMs = Self.ms(now), dms = Int64(dt * 1000)
+        if var s = segment, s.id == id, nowMs - s.lastMs <= Self.gapMs {
+            s.countedMs += dms
+            s.lastMs = nowMs
+            segment = s
+        } else {
+            closeSegment()
+            segment = Segment(id: id, model: m, startMs: nowMs - dms, countedMs: dms, lastMs: nowMs)
+        }
+        ticksSinceWrite += 1
+        if ticksSinceWrite >= 30 {
+            ticksSinceWrite = 0
+            writeSegment()
+            scheduleSave()
+        }
+    }
+
+    private func setCounting(_ m: StickyModel, _ on: Bool) {
+        if m.timer.counting != on { m.timer.counting = on }
+    }
+
+    /// 停顿超过 2 分钟：这一段结束
+    private func closeStaleSegment(_ now: Date) {
+        if let s = segment, Self.ms(now) - s.lastMs > Self.gapMs { closeSegment() }
+    }
+
+    /// 把当前这一段写进专注账本（不结束它）
+    private func writeSegment() {
+        guard let s = segment, let m = s.model else { return }
+        FocusLedger.shared.upsertSticky(startMs: s.startMs, countedMs: s.countedMs, title: ledgerTitle(m), project: ledgerProject(m))
+    }
+
+    /// 结束当前这一段并写进账本
+    private func closeSegment() {
+        writeSegment()
+        segment = nil
+        ticksSinceWrite = 0
+    }
+
+    private func ledgerTitle(_ m: StickyModel) -> String {
+        let t = m.source?.title.nonEmpty ?? StickyShelf.firstLine(m.text).nonEmpty ?? m.source?.label ?? "结审便签"
+        return t.count > 40 ? String(t.prefix(40)) + "…" : t
+    }
+
+    private func ledgerProject(_ m: StickyModel) -> String {
+        if let s = m.source, s.kind == "sjz" {
+            let t = model?.sjzOverview?.projects.first { $0.name == s.project }?.title ?? s.project
+            return t.isEmpty ? "结审" : "结审 · " + t
+        }
+        let t = model?.sjzTargetTitle ?? ""
+        return t.isEmpty ? "结审" : "结审 · " + t
     }
 
     var count: Int { order.count }
@@ -303,7 +476,8 @@ final class StickyController {
     private static func snapshot(_ id: UUID, _ m: StickyModel, _ f: NSRect) -> StickyNote {
         StickyNote(id: id, text: m.text, color: m.color, pinned: m.pinned,
                    x: f.origin.x, y: f.origin.y, w: f.width, h: m.collapsed ? m.expandedH : f.height, createdAt: m.createdAt,
-                   source: m.source, original: m.original, closed: nil, collapsed: m.collapsed ? true : nil)
+                   source: m.source, original: m.original, closed: nil, collapsed: m.collapsed ? true : nil,
+                   workSecs: m.timer.secs > 0 ? m.timer.secs : nil)
     }
 
     /// 折叠 / 展开：上边缘不动，窗口高度在「一条」和展开时的高度之间切换；折叠时不能再拉高
@@ -333,6 +507,7 @@ final class StickyController {
     @discardableResult
     private func teardown(_ id: UUID) -> StickyNote? {
         guard let e = entries.removeValue(forKey: id) else { return nil }
+        if segment?.id == id { closeSegment() }
         let snap = Self.snapshot(id, e.model, e.panel.frame)
         e.tokens.forEach(NotificationCenter.default.removeObserver)
         e.panel.orderOut(nil)
@@ -415,6 +590,7 @@ final class StickyController {
         let host = FirstMouseHostingView(rootView: root)
         host.sizingOptions = []
         p.contentView = host
+        loadImages(for: m, model: model)
 
         m.onEdit = { [weak self] in self?.scheduleSave() }
         m.onPinChanged = { [weak self, weak p, weak m] in
@@ -425,8 +601,9 @@ final class StickyController {
             guard let p, let m else { return }
             self?.layoutCollapse(p, m)
         }
-        p.onKey = { [weak self, weak p] in
+        p.onKey = { [weak self, weak p, weak m] in
             guard let p else { return }
+            m?.lastTouch = Date()
             self?.lastKeyID = n.id
             self?.focusEditor(p)
         }
@@ -447,6 +624,17 @@ final class StickyController {
         entries[n.id] = Entry(model: m, panel: p, tokens: tokens)
         order.append(n.id)
         p.orderFrontRegardless()
+    }
+
+    /// 正文里有图片引用行的结审便签：到结审里取图（重启后恢复的便签也一样），取到了就在原位置显示
+    private func loadImages(for m: StickyModel, model: AppModel) {
+        guard let s = m.source, s.kind == "sjz", m.text.contains("][img") else { return }
+        let project = s.project, id = s.id
+        if let d = SjzDetailStore.cached(project: project, id: id), !d.images.isEmpty { m.images = d.images; return }
+        Task { [weak m] in
+            let d = await SjzDetailStore.load(api: model.sjz, project: project, id: id)
+            if let d, !d.images.isEmpty { m?.images = d.images }
+        }
     }
 
     /// 钉住：浮在所有窗口上面、所有桌面可见；没钉：普通窗口层级
@@ -499,6 +687,7 @@ final class StickyController {
     private func saveNow() {
         saveWork?.cancel()
         saveWork = nil
+        writeSegment()
         let notes: [StickyNote] = order.compactMap { id in
             guard let e = entries[id] else { return nil }
             return Self.snapshot(id, e.model, e.panel.frame)
@@ -506,6 +695,32 @@ final class StickyController {
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .millisecondsSince1970
         if let d = try? enc.encode(notes), let s = String(data: d, encoding: .utf8) { LocalStore.write("stickies.json", s) }
+    }
+}
+
+/// 标题栏里的前台计时：结审类便签才显示。亮 = 正在计时，灰 = 暂停（超过 5 分钟没互动 / 键鼠空闲 / 专注中 / 手动暂停）；点一下手动暂停 / 继续
+private struct StickyTimerBadge: View {
+    @ObservedObject var timer: StickyTimer
+    let ink: Color
+    let compact: Bool
+
+    var body: some View {
+        if timer.isSjz || timer.secs > 0 {
+            Button { timer.paused.toggle() } label: {
+                HStack(spacing: 3) {
+                    if !compact {
+                        Image(systemName: timer.paused ? "pause.fill" : "timer").font(.system(size: 9.5, weight: .semibold))
+                    }
+                    Text(StickyTimer.format(timer.secs))
+                        .font(.system(size: 11, weight: .medium, design: .rounded).monospacedDigit())
+                        .lineLimit(1).fixedSize()
+                }
+                .foregroundStyle(ink.opacity(timer.counting ? 0.8 : 0.32))
+                .padding(.horizontal, 4).frame(height: 22).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(timer.paused ? "已手动暂停，点一下继续计时" : (timer.counting ? "结审便签计时中（累计 \(StickyTimer.format(timer.secs))）：点一下暂停" : "暂停中：在便签上操作、或把鼠标放上来就继续（5 分钟没互动、键鼠空闲 2 分钟、专注进行中会自动停）。点一下可手动暂停"))
+        }
     }
 }
 
@@ -537,7 +752,8 @@ private struct StickyView: View {
                 compact: true,
                 onSubmitted: { msg in saved(msg) },
                 note: QuickAddNote(text: $m.text, isActive: { [id = m.id] in StickyController.shared.isActive(id) },
-                                   bound: m.source != nil, submitTick: m.submitTick)
+                                   bound: m.source != nil, submitTick: m.submitTick,
+                                   onKind: { [weak sticky = m] k in sticky?.setKind(k) }, images: m.images)
             )
             // 折叠时输入区高度压成 0 但仍留在视图里：展开后输入状态（类型、优先级等）都还在
             .frame(height: m.collapsed ? 0 : nil)
@@ -563,6 +779,7 @@ private struct StickyView: View {
     private var header: some View {
         HStack(spacing: 0) {
             tool(m.pinned ? "pin.fill" : "pin", m.pinned ? "已钉住：浮在所有窗口上面，点一下取消" : "钉住：浮在所有窗口上面", on: m.pinned) { m.pinned.toggle() }
+            StickyTimerBadge(timer: m.timer, ink: ink, compact: m.collapsed)
             if m.collapsed {
                 // 折叠时第一行文字就放在标题行中间；不接收点击，按住可以拖动窗口，双击展开
                 Text(firstLine.isEmpty ? "空白便签" : firstLine)

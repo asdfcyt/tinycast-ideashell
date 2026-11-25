@@ -81,7 +81,10 @@ struct FocusLedgerEntry: Codable, Hashable {
     var project: String
     /// 工作时间（结审任务，或带「工作」标签的待办）；false = 普通时间
     var work: Bool
+    /// 来源：nil = 专注；"sticky" = 结审便签在前台的时间（endMs = startMs + 实际计时的毫秒，中间短暂停顿已合并）
+    var source: String? = nil
 
+    var isSticky: Bool { source == "sticky" }
     var minutes: Int { max(0, Int((endMs - startMs) / 60_000)) }
     var startDate: Date { Date(timeIntervalSince1970: Double(startMs) / 1000) }
     var day: String { Day.string(startDate) }
@@ -117,9 +120,23 @@ final class FocusLedger {
     func add(_ e: FocusLedgerEntry) {
         guard e.minutes >= 1 else { return }
         let k = key(e)
-        if items.contains(where: { key($0) == k }) { return }
+        if items.contains(where: { key($0) == k && !$0.isSticky }) { return }
         items.append(e)
         items.sort { $0.startMs < $1.startMs }
+        save()
+    }
+
+    /// 结审便签在前台的时间：同一片段（startMs 相同）反复覆盖写入，计满 1 分钟才开始记
+    func upsertSticky(startMs: Int64, countedMs: Int64, title: String, project: String) {
+        guard countedMs >= 60_000 else { return }
+        let e = FocusLedgerEntry(startMs: startMs, endMs: startMs + countedMs, title: title, project: project, work: true, source: "sticky")
+        if let i = items.lastIndex(where: { $0.isSticky && $0.startMs == startMs }) {
+            if items[i] == e { return }
+            items[i] = e
+        } else {
+            items.append(e)
+            items.sort { $0.startMs < $1.startMs }
+        }
         save()
     }
 
@@ -212,6 +229,8 @@ struct WorkStats {
     var workMin = 0
     var normalMin = 0
     var sessions = 0
+    /// 其中结审便签在前台的分钟（不是专注，不计入「次数」和「平均每次」）
+    var stickyMin = 0
     var daily: [DayMin] = []
     /// 按项目（清单）汇总，时间多的在前
     var projects: [Item] = []
@@ -225,7 +244,7 @@ struct WorkStats {
     var paretoTop = 0
 
     var totalMin: Int { workMin + normalMin }
-    var avgSessionMin: Int { sessions > 0 ? Int((Double(totalMin) / Double(sessions)).rounded()) : 0 }
+    var avgSessionMin: Int { sessions > 0 ? Int((Double(totalMin - stickyMin) / Double(sessions)).rounded()) : 0 }
 
     /// `ending`：统计区间的最后一天（默认今天；算上一期时传上一期的最后一天）
     static func compute(days: Int, entries: [FocusLedgerEntry], ending: String? = nil) -> WorkStats {
@@ -244,7 +263,7 @@ struct WorkStats {
             guard day >= first, day <= today, let i = dayIndex[day] else { continue }
             let m = e.minutes
             guard m > 0 else { continue }
-            out.sessions += 1
+            if e.isSticky { out.stickyMin += m } else { out.sessions += 1 }
             if e.work { out.workMin += m; out.daily[i].work += m; workHours[e.startDate.hourOfDay] += m }
             else { out.normalMin += m; out.daily[i].normal += m }
             out.hours[e.startDate.hourOfDay] += m

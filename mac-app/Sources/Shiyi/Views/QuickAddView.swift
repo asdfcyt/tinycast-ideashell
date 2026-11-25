@@ -9,6 +9,21 @@ struct QuickAddNote {
     var bound = false
     /// 便签的确认条要求保存：值变了就保存一次
     var submitTick = 0
+    /// 现在识别 / 选中的类型变了：便签用它判断是不是结审类（结审类才计前台时间）
+    var onKind: (CaptureKind) -> Void = { _ in }
+    /// 正文里 `![说明][img1]` 引用行对应的图片（结审证据 / 法规），有图就在便签里直接显示
+    var images: [String: NSImage] = [:]
+}
+
+/// 类型变化时回报给便签（单独一个小视图，免得把万能输入主体的修饰符链拉得太长）
+private struct NoteKindReporter: View {
+    let kind: CaptureKind?
+    let report: ((CaptureKind) -> Void)?
+    var body: some View {
+        Color.clear.onChange(of: kind) { _, k in
+            if let k { report?(k) }
+        }
+    }
 }
 
 /// 万能输入（复刻安卓端）：一个输入框，自动识别是待办 / Daily Note / 笔记。
@@ -129,6 +144,8 @@ struct QuickAddView: View {
         return override ?? a.forced ?? sticky ?? autoKind(a)
     }
     private func clearSticky() { sticky = nil; UserDefaults.standard.removeObject(forKey: Self.stickyKey) }
+    /// 便签形态下现在识别 / 选中的类型（非便签为 nil）
+    private var noteKind: CaptureKind? { note == nil ? nil : kind(analysis) }
 
     /// 输入框高度：一行起步，按内容（粗估折行）长到最多 5 行，再多就在框里滚动；带图片时按缩略图再加高
     private var editorHeight: CGFloat {
@@ -156,6 +173,7 @@ struct QuickAddView: View {
                             contentHeight: $contentH,
                             allowsImages: (model.hasSjz || model.hasIdeashell) && record == nil,
                             markdown: note != nil,
+                            lineImages: note?.images ?? [:],
                             fontSize: note != nil ? 14 : (compact ? 14 : 16),
                             focusTick: focusTick,
                             onSubmit: note == nil ? { submitFromKeyboard() } : nil,
@@ -219,6 +237,7 @@ struct QuickAddView: View {
         .frame(width: compact ? nil : 480)
         .frame(maxHeight: note != nil ? .infinity : nil)
         .onChange(of: override) { _, new in onKindChange?(new) }
+        .background(NoteKindReporter(kind: noteKind, report: note?.onKind))
         .onChange(of: searchOn) { _, on in onSearchChange?(on ? searchFilter : nil) }
         .onChange(of: searchFilter) { _, f in if searchOn { onSearchChange?(f) } }
         .onChange(of: searchQuery) { _, _ in triggerSearch() }
@@ -270,6 +289,8 @@ struct QuickAddView: View {
                 text = note.text.wrappedValue
                 if text.isEmpty { focusTick += 1 }
                 model.sjzError = nil
+                // 文字刚放进来，等状态生效后把识别出的类型告诉便签
+                DispatchQueue.main.async { note.onKind(kind(analysis)) }
                 return
             }
             focusTick += 1
@@ -408,8 +429,8 @@ struct QuickAddView: View {
 
     /// 开启结审后，示例里带上线索 / 想法 / 证据 / 法规前缀
     private var exampleList: [String] {
-        if model.hasSjz { return compact ? ["明天 15:00 开会", "想法 …", "证据 …", "ss …"] : ["明天 15:00 开会", "想法 …", "证据 …", "线索 …", "ss …"] }
-        return agentOn ? ["明天 15:00 开会", "#读书 一句话想法", "@\(DispatchTarget.available[0].title) …", "ss …"] : ["明天 15:00 开会", "#读书 一句话想法", "ss …"]
+        if model.hasSjz { return compact ? ["想法 …", "证据 …", "ss …"] : ["想法 …", "证据 …", "线索 …", "ss …"] }
+        return agentOn ? ["#读书 一句话想法", "@\(DispatchTarget.available[0].title) …", "ss …"] : ["#读书 一句话想法", "ss …"]
     }
 
     /// 结审项目：放在底栏，空间不够时从末尾截断（具体追加到哪一份见上面的「去向」行）
