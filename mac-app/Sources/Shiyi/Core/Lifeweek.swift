@@ -69,7 +69,7 @@ final class LifeweekStore: ObservableObject {
                 }
             }
         }
-        let stale = (fetched ?? .distantPast) < Date().addingTimeInterval(-Self.staleAfter)
+        let stale = (fetched ?? .distantPast) < Date().addingTimeInterval(-Self.staleAfter) || issues.contains { $0.no == 0 }   // 旧版本存下的期号可能是错的（0），重新读一遍
         if issues.isEmpty || sections.isEmpty || stale { await reload() }
     }
 
@@ -80,8 +80,18 @@ final class LifeweekStore: ObservableObject {
         }
     }
 
+    /// 同时有好几处要载入（阅读页、今日信息、封面图标）：后来的等先到的做完，而不是直接返回一个空的
+    private var inflight: Task<Void, Never>?
+
     func reload() async {
-        guard !loading else { return }
+        if let t = inflight { await t.value; return }
+        let t = Task { await self.performReload() }
+        inflight = t
+        await t.value
+        inflight = nil
+    }
+
+    private func performReload() async {
         loading = true
         error = nil
         defer { loading = false }
@@ -190,7 +200,7 @@ final class LifeweekStore: ObservableObject {
 
     private static func issue(tab t: [String: Any]) -> LWIssue? {
         guard let id = (t["periodicalId"] as? NSNumber)?.intValue else { return nil }
-        return LWIssue(id: id, no: (t["qikan"] as? NSNumber)?.intValue ?? 0, total: (t["totalQikan"] as? NSNumber)?.intValue ?? 0,
+        return LWIssue(id: id, no: Int((t["qikan"] as? String) ?? "") ?? (t["qikan"] as? NSNumber)?.intValue ?? 0, total: (t["totalQikan"] as? NSNumber)?.intValue ?? 0,
                        name: (t["periodicalName"] as? String) ?? "", title: (t["title"] as? String) ?? "",
                        cover: (t["coverPic"] as? String).flatMap(Self.secure),
                        date: ((t["pubTime"] as? String) ?? "").replacingOccurrences(of: "年", with: " 年 ").replacingOccurrences(of: "月", with: " 月 "))

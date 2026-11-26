@@ -58,8 +58,18 @@ final class WeeklyStore: ObservableObject {
         if issues.isEmpty { await reload() }
     }
 
+    /// 同时有好几处要载入（阅读页、今日信息、封面图标）：后来的等先到的做完，而不是直接返回一个空的
+    private var inflight: Task<Void, Never>?
+
     func reload() async {
-        guard !loading else { return }
+        if let t = inflight { await t.value; return }
+        let t = Task { await self.performReload() }
+        inflight = t
+        await t.value
+        inflight = nil
+    }
+
+    private func performReload() async {
         loading = true
         error = nil
         defer { loading = false }

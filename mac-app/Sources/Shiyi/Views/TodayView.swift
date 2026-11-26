@@ -398,6 +398,7 @@ private struct TodayContent: View {
     @ViewBuilder private var railTop: some View {
         DashboardCard(focus: focus, loaded: loaded, remaining: remaining, todoDone: todayDone.count, todoTotal: todoTotal)
         HourlyRateCard(focus: focus)
+        InfoCard()
         if model.hasSjz { AuditProjectCard() }
     }
 
@@ -1541,6 +1542,20 @@ private struct DashboardCard: View {
 
 // MARK: - 侧栏：时薪
 
+private struct ProgressBar: View {
+    let value: Double
+    let color: Color
+    var body: some View {
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.08))
+                Capsule().fill(color).frame(width: max(value > 0 ? 4 : 0, g.size.width * min(max(value, 0), 1)))
+            }
+        }
+        .frame(height: 3)
+    }
+}
+
 /// 洞察里「你的时间值多少钱」的精简版：最近 7 天的有效时薪（较上一个 7 天的变化）、在岗时薪、每天的工作专注，点一下进洞察
 private struct HourlyRateCard: View {
     @EnvironmentObject var model: AppModel
@@ -1551,6 +1566,8 @@ private struct HourlyRateCard: View {
     @AppStorage("tp.jobCost") private var jobCost = 0.0
     @AppStorage("tp.goalHours") private var goalHours = 4.0
     @AppStorage("tp.workDays") private var workDays = 5.0
+    @AppStorage("tp.startHour") private var startHour = 9.0
+    @AppStorage("tp.endHour") private var endHour = 18.0
 
     private let days = 7
 
@@ -1591,12 +1608,96 @@ private struct HourlyRateCard: View {
                     Text("填上每月收入和每周工时，就能算出你的时间值多少钱")
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
+
+                // 倒计时 + 一周的前置节奏（每半分钟刷新一次倒计时）
+                TimelineView(.periodic(from: .now, by: 30)) { ctx in
+                    pace(WorkPace.compute(price: price, entries: items, holidays: model.holidays, startHour: startHour, endHour: endHour, now: ctx.date))
+                }
             }
             .padding(16)
         }
         .contentShape(Rectangle())
         .onTapGesture { model.section = .insights }
         .help("在洞察里查看详细的时间价格")
+        .task {
+            if model.holidays.isEmpty {
+                let h = await HolidayStore.load()
+                if !h.isEmpty { model.holidays = h }
+            }
+        }
+    }
+
+    // MARK: 节奏：离下班 / 离放假 + 前置进度 + 洞察
+
+    private func pace(_ p: WorkPace) -> some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .top, spacing: 0) {
+                switch p.phase {
+                case .working: countStat(WorkPace.clock(p.minutesToOff), "距下班")
+                case .before: countStat(WorkPace.clock(p.minutesToStart), "距上班")
+                case .after: countStat("已下班", "今天的班结束了", small: true)
+                case .off: countStat("休息中", p.daysToWork > 0 ? "\(p.daysToWork) 天后上班" : "好好休息", small: true)
+                }
+                if let o = p.nextOff {
+                    countStat(o.days == 1 ? "明天" : "\(o.days) 天", "距" + o.name + (o.length > 2 ? "（连休 \(o.length) 天）" : ""))
+                }
+                if let h = p.nextHoliday, h.name != p.nextOff?.name || h.days != p.nextOff?.days {
+                    countStat("\(h.days) 天", "距" + h.name + "（连休 \(h.length) 天）")
+                }
+            }
+            if p.phase == .working {
+                ProgressBar(value: p.dayProgress, color: Brand.orange.opacity(0.55)).help("今天的班已经上了 \(Int(p.dayProgress * 100))%")
+            }
+            if p.goalMin > 0 {
+                VStack(alignment: .leading, spacing: 7) {
+                    if p.personalToday {
+                        goalBar("今天", done: p.todayMin, total: p.goalMin, mark: nil)
+                    }
+                    if p.weekQuotaMin > 0 {
+                        goalBar("本周", done: p.weekDoneMin, total: p.weekQuotaMin, mark: p.personalToday ? p.weekExpectedMin : nil)
+                    }
+                }
+            }
+            ForEach(Array(p.insights.prefix(2))) { it in
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Image(systemName: it.icon).font(.system(size: 11)).foregroundStyle(it.good ? Color.green : Brand.orange).frame(width: 14)
+                    Text(it.text).font(.caption).foregroundStyle(.primary.opacity(0.85)).lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func countStat(_ value: String, _ label: String, small: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.system(size: small ? 14 : 17, weight: .bold)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                .frame(height: 22, alignment: .bottomLeading)
+            Text(label).font(.caption2).foregroundStyle(.secondary).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 一行「名称 已做 / 目标」+ 细进度条；`mark` 是按前置节奏此刻该做到的位置
+    private func goalBar(_ name: String, done: Int, total: Int, mark: Int?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                Text(name).font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Text("\(DashboardCard.fmt(done)) / \(DashboardCard.fmt(total))").font(.caption.weight(.semibold)).monospacedDigit()
+            }
+            GeometryReader { g in
+                let w = g.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.08))
+                    Capsule().fill(done >= total ? Color.green : Brand.orange).frame(width: max(done > 0 ? 4 : 0, w * min(Double(done) / Double(max(total, 1)), 1)))
+                    if let mark, mark > 0, mark < total {
+                        Rectangle().fill(Color.primary.opacity(0.45)).frame(width: 1.5, height: 8).offset(x: w * Double(mark) / Double(total) - 0.75)
+                    }
+                }
+            }
+            .frame(height: 4)
+            .help(mark.map { "竖线 = 按「趁早做完」，此刻该做到 \(DashboardCard.fmt($0))" } ?? "")
+        }
     }
 
     private func trend(_ rate: Double, _ prev: Double) -> some View {
@@ -1633,6 +1734,175 @@ private struct HourlyRateCard: View {
         if onDuty > 0 { t += "，占在岗的 \(Int((Double(s.workMin) / onDuty * 100).rounded()))%" }
         if todayMin > 0 { t += "；今天 \(DashboardCard.fmt(todayMin)) ≈ \(TimePrice.money(rate * Double(todayMin) / 60))" }
         return t
+    }
+}
+
+// MARK: - 侧栏：今日信息（AI 速览）
+
+/// 「信息」页的 AI 速览摘要：今天还没读的「先读」前几篇（带为什么先读）+ 一条洞察；点标题直接去读，点卡片头进完整速览。
+/// 今天还没有速览就引导生成（昨天的算过期）。
+private struct InfoCard: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var store = TodayStore.shared
+    @ObservedObject private var digest = TodayDigestStore.shared
+    @ObservedObject private var marks = ArticleMarks.shared
+    @ObservedObject private var feeds = FeedStore.shared
+
+    private struct Row: Identifiable {
+        let id: String
+        let title: String
+        let source: String
+        let why: String
+        let link: String?
+    }
+
+    private func link(_ e: TodayEntry) -> String? {
+        e.kind == .rss ? feeds.item(e.raw)?.link : e.raw
+    }
+
+    private var fresh: TodayDigest? {
+        guard let d = digest.digest, d.day == Day.today() else { return nil }
+        return d
+    }
+
+    /// 速览里还没读的「先读」，最多 3 篇
+    private func rows(_ d: TodayDigest, _ p: ParsedDigest) -> [Row] {
+        let entries = store.groups.flatMap(\.entries)
+        var out: [Row] = []
+        for pk in p.picks where pk.ref >= 1 && pk.ref <= d.ids.count {
+            guard let e = entries.first(where: { $0.id == d.ids[pk.ref - 1] }), !store.isRead(e), !out.contains(where: { $0.id == e.id }) else { continue }
+            out.append(Row(id: e.id, title: e.title, source: d.sources.flatMap { pk.ref - 1 < $0.count ? $0[pk.ref - 1] : nil } ?? "", why: pk.why, link: link(e)))
+            if out.count == 3 { break }
+        }
+        return out
+    }
+
+    private func goReading() {
+        UserDefaults.standard.set(ReadingSource.today.rawValue, forKey: "reader.source")
+        model.section = .reading
+    }
+
+    private func generate() {
+        goReading()
+        digest.generate(store: store)
+    }
+
+    private static func when(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "HH:mm"
+        let t = f.string(from: d)
+        if Calendar.current.isDateInToday(d) { return "今天 " + t }
+        if Calendar.current.isDateInYesterday(d) { return "昨天 " + t }
+        f.dateFormat = "M 月 d 日"
+        return f.string(from: d)
+    }
+
+    var body: some View {
+        let parsed = digest.digest.map { TodayDigestStore.parse($0.raw) }
+        Panel(radius: 18) {
+            VStack(alignment: .leading, spacing: 12) {
+                header
+                if store.groups.isEmpty {
+                    Text(store.loading ? "正在载入今天的内容…" : "今天还没有内容").font(.callout).foregroundStyle(.secondary)
+                } else if let d = fresh, let p = parsed {
+                    content(d, p)
+                } else if digest.busy {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(digest.waiting ? "等财新周刊、三联周刊的目录载入完…" : "AI 正在通读今天未读的内容…").font(.callout).foregroundStyle(.secondary)
+                    }
+                } else {
+                    empty
+                }
+            }
+            .padding(16)
+        }
+        .task { await store.loadIfNeeded() }
+    }
+
+    private var header: some View {
+        Button(action: goReading) {
+            HStack(spacing: 6) {
+                Image(systemName: "binoculars.fill").foregroundStyle(Brand.orange)
+                Text("AI 速览").foregroundStyle(Brand.orange)
+                if store.totalUnread > 0 {
+                    Text("未读 \(store.totalUnread)").font(.caption2.weight(.bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 6).padding(.vertical, 1).background(Brand.orange, in: Capsule())
+                }
+                Spacer(minLength: 6)
+                if let d = fresh, !digest.busy { Text(Self.when(d.at)).font(.caption).foregroundStyle(.tertiary) }
+                Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(.tertiary)
+            }
+            .font(.subheadline.weight(.semibold))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 还没有今天的速览：说明它能做什么，一键生成
+    private var empty: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(digest.digest != nil ? "上次的速览是 \(Self.when(digest.digest!.at)) 生成的，已经过期。" : "AI 会读一遍今天未读内容的标题和导语，告诉你各来源有什么、先读哪几篇、为什么，再给出洞察。")
+                .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("今天共 \(store.groups.reduce(0) { $0 + $1.entries.count }) 条，未读 \(store.totalUnread) 条")
+                .font(.caption).foregroundStyle(.tertiary)
+            Button(action: generate) {
+                Label(digest.digest != nil ? "重新生成今天的速览" : "生成今天的 AI 速览", systemImage: "binoculars").font(.callout.weight(.semibold))
+            }
+            .buttonStyle(GlassActionStyle(tint: Brand.orange))
+        }
+    }
+
+    @ViewBuilder private func content(_ d: TodayDigest, _ p: ParsedDigest) -> some View {
+        let list = rows(d, p)
+        VStack(alignment: .leading, spacing: 12) {
+            if !p.criterion.isEmpty || !list.isEmpty {
+                Text("先读这几篇").font(.system(size: 11, weight: .bold)).tracking(1.2).foregroundStyle(.secondary)
+            }
+            if list.isEmpty {
+                Label(p.picks.isEmpty ? "还在生成…" : "速览里挑的几篇你都读完了", systemImage: p.picks.isEmpty ? "ellipsis" : "checkmark.circle")
+                    .font(.callout).foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(list.enumerated()), id: \.element.id) { i, row in
+                        Button {
+                            if let l = row.link { model.openArticle(l) } else { goReading() }
+                        } label: {
+                            HStack(alignment: .top, spacing: 9) {
+                                Text("\(i + 1)").font(.system(size: 10.5, weight: .bold)).foregroundStyle(.white)
+                                    .frame(width: 17, height: 17).background(Brand.orange, in: Circle()).padding(.top, 1)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(row.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary)
+                                        .lineLimit(2).multilineTextAlignment(.leading)
+                                    if !row.why.isEmpty {
+                                        Text(row.why).font(.caption).foregroundStyle(Brand.orange).lineLimit(2).multilineTextAlignment(.leading)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            if let t = p.insights.first {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Image(systemName: "lightbulb").font(.system(size: 11)).foregroundStyle(Brand.orange).frame(width: 14)
+                    Text(t).font(.caption).foregroundStyle(.primary.opacity(0.85)).lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            HStack(spacing: 10) {
+                Button(action: goReading) { Text("查看完整速览").font(.caption.weight(.semibold)) }.buttonStyle(.link)
+                Spacer(minLength: 0)
+                if digest.busy {
+                    HStack(spacing: 5) { ProgressView().controlSize(.mini); Text("生成中…").font(.caption).foregroundStyle(.secondary) }
+                } else {
+                    Button(action: generate) { Label("重新生成", systemImage: "arrow.clockwise").font(.caption) }.buttonStyle(.link)
+                }
+            }
+        }
     }
 }
 

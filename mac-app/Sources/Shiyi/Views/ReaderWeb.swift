@@ -425,7 +425,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             var H = 'html.sy-r ';
             return [
               H + '.sy-anc{display:block !important;width:auto !important;min-width:0 !important;max-width:none !important;margin:0 !important;padding:0 !important;float:none !important;position:static !important;height:auto !important;min-height:0 !important;overflow:visible !important;transform:none !important;border:0 !important}',
-              A + ' div,' + A + ' section,' + A + ' figure,' + A + ' p,' + A + ' blockquote{width:auto !important;min-width:0 !important;max-width:100% !important;margin-left:0 !important;margin-right:0 !important;padding-left:0 !important;padding-right:0 !important;float:none !important;position:static !important}',
+              A + ' div:not(.sy-ai),' + A + ' section,' + A + ' figure,' + A + ' p,' + A + ' blockquote{width:auto !important;min-width:0 !important;max-width:100% !important;margin-left:0 !important;margin-right:0 !important;padding-left:0 !important;padding-right:0 !important;float:none !important;position:static !important}',
               A + ' img{margin-left:auto !important;margin-right:auto !important}'
             ].join('\n');
           }
@@ -585,7 +585,7 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
             if (!st) { st = document.createElement('style'); st.id = 'sy-sum-style'; document.head.appendChild(st); }
             var X = 'html .sy-ai.sy-ai.sy-ai', C = X + ' .sy-ai-c';
             st.textContent = [
-              X + '{display:block !important;position:relative;margin:0 0 22px !important;padding:13px 20px 6px !important;border-radius:14px !important;background:' + ac + '14 !important;border:1px solid ' + ac + '33 !important;box-sizing:border-box;width:auto !important;max-width:100% !important;text-indent:0 !important;text-align:left !important}',
+              X + '{display:block !important;position:relative;margin:8px 0 22px !important;padding:13px 20px 6px !important;border-radius:14px !important;background:' + ac + '14 !important;border:1px solid ' + ac + '33 !important;box-sizing:border-box;width:auto !important;max-width:100% !important;text-indent:0 !important;text-align:left !important}',
               C + '{font-family:' + F.hei + ' !important;color:' + ac + ' !important;text-indent:0 !important}',
               C + '.sy-ai-h{display:flex !important;align-items:center;justify-content:space-between;margin:0 0 6px !important;padding:0 !important;font-size:11px !important;font-weight:700 !important;letter-spacing:.16em;width:auto !important}',
               C + '.sy-ai-x{cursor:pointer;opacity:.55;font-size:15px !important;line-height:1;padding:0 2px !important;margin:0 !important;width:auto !important;letter-spacing:0}',
@@ -619,7 +619,10 @@ final class ReaderController: NSObject, ObservableObject, WKNavigationDelegate, 
               row.appendChild(el('span', 'sy-ai-c sy-ai-p', pts[i]));
               card.appendChild(row);
             }
-            root.insertBefore(card, root.firstChild);
+            // 财新：放在标题 / 导语下面（标题栏右上角有站点自己的简繁 / 听报道按钮，放最上面会和它们叠在一起）
+            var tit = root.querySelector('#conTit');
+            if (tit && tit.parentNode === root) { tit.insertAdjacentElement('afterend', card); }
+            else { root.insertBefore(card, root.firstChild); }
             sumStyle();
             if (jump) { window.scrollTo({ top: 0, behavior: 'smooth' }); }
           };

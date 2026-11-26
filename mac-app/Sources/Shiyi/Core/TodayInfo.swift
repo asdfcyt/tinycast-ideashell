@@ -104,7 +104,7 @@ final class TodayStore: ObservableObject {
             publish()
         }
         if let r = await LifeweekStore.shared.latestArticles() {
-            out.append(Self.weekly(id: "lifeweek", name: "三联", icon: "book.closed", r))
+            out.append(Self.weekly(id: "lifeweek", name: "三联周刊", icon: "book.closed", r))
             publish()
         }
     }

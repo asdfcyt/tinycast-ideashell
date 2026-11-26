@@ -6,7 +6,7 @@ enum ReadingSource: String, CaseIterable {
         switch self {
         case .caixin: "财新周刊"
         case .aihot: "AI 日报"
-        case .lifeweek: "三联"
+        case .lifeweek: "三联周刊"
         case .feeds: "订阅"
         case .today: "今日信息"
         }
@@ -18,6 +18,14 @@ enum ReadingSource: String, CaseIterable {
         case .lifeweek: "book.closed"
         case .feeds: "antenna.radiowaves.left.and.right"
         case .today: "sun.max"
+        }
+    }
+    /// 有封面可用的来源（见 MagazineIcons）
+    var coverKey: String? {
+        switch self {
+        case .caixin: "caixin"
+        case .lifeweek: "lifeweek"
+        default: nil
         }
     }
 }
@@ -32,6 +40,7 @@ struct ReadingView: View {
     @ObservedObject private var lifeweek = LifeweekStore.shared
     @ObservedObject private var feeds = FeedStore.shared
     @ObservedObject private var marks = ArticleMarks.shared
+    @ObservedObject private var icons = MagazineIcons.shared
     @State private var feedPick: String?
     @ObservedObject private var todayStore = TodayStore.shared
     @State private var todayPick: String?
@@ -74,6 +83,7 @@ struct ReadingView: View {
             if source == .lifeweek { await lifeweek.loadIfNeeded() }
             await reader.refreshLogin()
         }
+        .task { await icons.refresh() }
         .onAppear { consumePendingArticle() }
         .onChange(of: model.pendingArticle) { _, _ in consumePendingArticle() }
         .onChange(of: sourceRaw) { _, _ in
@@ -407,11 +417,17 @@ struct ReadingView: View {
     @ToolbarContentBuilder private var sourceToolbar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             Picker("来源", selection: $sourceRaw) {
-                ForEach(ReadingSource.allCases.filter { $0 != .today }, id: \.rawValue) {
-                    Label($0.title, systemImage: $0.icon).labelStyle(.iconOnly).tag($0.rawValue)
+                ForEach(ReadingSource.allCases.filter { $0 != .today }, id: \.rawValue) { s in
+                    // 杂志用最新一期的封面当图标
+                    if let k = s.coverKey, let img = icons.images[k] {
+                        Image(nsImage: img).help(s.title).tag(s.rawValue)
+                    } else {
+                        Label(s.title, systemImage: s.icon).labelStyle(.iconOnly).tag(s.rawValue)
+                    }
                 }
             }
-            .pickerStyle(.segmented)
+            .labelsHidden()
+            .pickerStyle(.palette)
         }
     }
 

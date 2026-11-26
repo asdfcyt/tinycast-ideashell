@@ -69,7 +69,7 @@ struct TodaySidebar: View {
                 Image(systemName: "binoculars").font(.system(size: 12)).foregroundStyle(Brand.orange).frame(width: 16)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("AI 速览").font(.system(size: 13, weight: .bold))
-                    Text(digest.digest == nil ? "一分钟看完今天要读的" : "先读什么、场景与洞察").font(.caption2).foregroundStyle(.tertiary)
+                    Text(digest.digest == nil ? "一分钟看完今天要读的" : (digest.digest?.day == Day.today() ? "先读什么、场景与洞察" : "上次的速览已过期，点开重新生成")).font(.caption2).foregroundStyle(.tertiary)
                 }
                 Spacer(minLength: 0)
                 if digest.busy { ProgressView().controlSize(.mini) }
@@ -95,7 +95,8 @@ struct TodaySidebar: View {
         let n = store.unread(g)
         return Button { store.toggle(g.id) } label: {
             HStack(spacing: 7) {
-                Image(systemName: g.icon).font(.system(size: 12)).foregroundStyle(Brand.orange).frame(width: 16)
+                SourceIcon(key: g.id, symbol: g.icon, height: g.id == "caixin" || g.id == "lifeweek" ? 20 : 15)
+                    .foregroundStyle(Brand.orange).frame(width: 16)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(g.name).font(.system(size: 13, weight: .bold))
                     if !g.note.isEmpty { Text(g.note).font(.caption2).foregroundStyle(.tertiary).lineLimit(1) }
@@ -147,6 +148,8 @@ struct TodaySidebar: View {
 struct TodayDigestView: View {
     @ObservedObject var store: TodayStore
     @ObservedObject private var digest = TodayDigestStore.shared
+    @ObservedObject private var marks = ArticleMarks.shared
+    @ObservedObject private var feeds = FeedStore.shared
     /// 点文章：参数是今日信息条目 ID
     let open: (String) -> Void
 
@@ -160,7 +163,7 @@ struct TodayDigestView: View {
                 } else if digest.busy {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text(digest.waiting ? "等财新、三联的目录载入完…" : "正在通读今天的内容…").font(.callout).foregroundStyle(.secondary)
+                        Text(digest.waiting ? "等财新周刊、三联周刊的目录载入完…" : "正在通读今天的内容…").font(.callout).foregroundStyle(.secondary)
                     }
                 } else {
                     VStack(spacing: 10) {
@@ -187,9 +190,16 @@ struct TodayDigestView: View {
                     Text("AI 速览").font(.system(size: 11, weight: .bold)).tracking(1.6)
                 }
                 .foregroundStyle(Brand.orange)
-                Text(Self.dateText).font(.system(size: 26, weight: .bold))
+                Text(Self.dateText(digest.digest?.at ?? Date())).font(.system(size: 26, weight: .bold))
                 Text(stats).font(.caption).foregroundStyle(.secondary)
-                if let d = digest.digest, !digest.busy { Text("基于标题和导语 · 生成于 \(Self.clock(d.at))").font(.caption2).foregroundStyle(.tertiary) }
+                if let d = digest.digest, !digest.busy {
+                    if d.day != Day.today() {
+                        Label("这是 \(Self.when(d.at)) 生成的，今天的内容已经变了，建议重新生成", systemImage: "clock.arrow.circlepath")
+                            .font(.caption.weight(.medium)).foregroundStyle(Brand.orange)
+                    } else {
+                        Text("基于未读条目的标题和导语 · 生成于 \(Self.when(d.at))").font(.caption2).foregroundStyle(.tertiary)
+                    }
+                }
             }
             Spacer(minLength: 8)
             if digest.busy {
@@ -206,19 +216,26 @@ struct TodayDigestView: View {
     private var stats: String {
         let total = store.groups.reduce(0) { $0 + $1.entries.count }
         let parts = store.groups.map { "\($0.name) \($0.entries.count)" }
-        return "共 \(total) 条 · " + parts.joined(separator: " · ") + (store.loading ? " · 还在载入…" : "")
+        return "共 \(total) 条，未读 \(store.totalUnread) · " + parts.joined(separator: " · ") + (store.loading ? " · 还在载入…" : "")
     }
 
-    private static var dateText: String {
+    private static func dateText(_ d: Date) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = "M 月 d 日 EEEE"
-        return f.string(from: Date())
+        return f.string(from: d)
     }
 
-    private static func clock(_ d: Date) -> String {
+    /// 「今天 16:48」「昨天 16:48」「11 月 24 日 16:48」
+    private static func when(_ d: Date) -> String {
         let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = "HH:mm"
+        let t = f.string(from: d)
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "今天 " + t }
+        if cal.isDateInYesterday(d) { return "昨天 " + t }
+        f.dateFormat = "M 月 d 日 HH:mm"
         return f.string(from: d)
     }
 
@@ -231,7 +248,8 @@ struct TodayDigestView: View {
                 ForEach(Array(p.inventory.enumerated()), id: \.offset) { _, s in inventory(s) }
             }
         }
-        let picks = p.picks.filter { $0.ref >= 1 && $0.ref <= d.ids.count }
+        let unread = unreadIDs()
+        let picks = p.picks.filter { $0.ref >= 1 && $0.ref <= d.ids.count && unread.contains(d.ids[$0.ref - 1]) }
         if !picks.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 label("先读这几篇")
@@ -244,6 +262,9 @@ struct TodayDigestView: View {
                 }
                 .padding(.horizontal, -10)
             }
+        }
+        if !p.picks.isEmpty && picks.isEmpty {
+            Label("速览里挑的几篇你都读完了", systemImage: "checkmark.circle").font(.callout).foregroundStyle(.secondary)
         }
         if !p.scenes.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
@@ -265,6 +286,11 @@ struct TodayDigestView: View {
         }
     }
 
+    /// 现在还没读的条目 ID（速览生成之后读掉的，从「先读」和场景里去掉）
+    private func unreadIDs() -> Set<String> {
+        Set(store.groups.flatMap(\.entries).filter { !store.isRead($0) }.map(\.id))
+    }
+
     private func label(_ t: String) -> some View {
         Text(t).font(.system(size: 11.5, weight: .bold)).tracking(1.4).foregroundStyle(.secondary)
     }
@@ -277,7 +303,7 @@ struct TodayDigestView: View {
     private func inventory(_ s: ParsedDigest.Source) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             HStack(spacing: 6) {
-                Image(systemName: icon(of: s.name)).font(.system(size: 11)).frame(width: 14)
+                SourceIcon(key: store.groups.first { $0.name == s.name }?.id ?? "", symbol: icon(of: s.name), height: 14).frame(width: 14)
                 Text(s.name).font(.system(size: 13, weight: .bold))
             }
             .foregroundStyle(Brand.orange)
@@ -302,7 +328,8 @@ struct TodayDigestView: View {
                 if !s.desc.isEmpty {
                     Text(s.desc).font(.system(size: 14)).lineSpacing(4).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 }
-                let refs = Array(s.refs.filter { $0 >= 1 && $0 <= d.ids.count }.prefix(3))
+                let unread = unreadIDs()
+                let refs = Array(s.refs.filter { $0 >= 1 && $0 <= d.ids.count && unread.contains(d.ids[$0 - 1]) }.prefix(3))
                 ForEach(refs, id: \.self) { n in
                     Button { open(d.ids[n - 1]) } label: {
                         HStack(spacing: 6) {

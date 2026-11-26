@@ -50,7 +50,7 @@ final class TodayDigestStore: ObservableObject {
     }
 
     private static let system = """
-    你是一位克制、犀利的信息编辑，为用户做「今日速览」：让他一分钟内知道今天各来源有什么、该先读哪几篇、为什么先读。输入里有「用户当前在做的事」（项目、待办，可能没有）和今天的条目（分来源，每条有编号、标题、导语，没有正文）。
+    你是一位克制、犀利的信息编辑，为用户做「今日速览」：让他一分钟内知道今天各来源有什么、该先读哪几篇、为什么先读。输入只包含用户还没读过的条目（读过的已经去掉）。输入里有「用户当前在做的事」（项目、待办，可能没有）和今天的条目（分来源，每条有编号、标题、导语，没有正文）。
     写作要求：
     - 具体：直接点出条目里的事实、数字、产品、人名、结论；禁止「值得关注」「引发热议」「备受瞩目」「值得一读」「很有价值」这类空话。
     - 只依据输入，不要编造；信息不足就少写。
@@ -65,7 +65,7 @@ final class TodayDigestStore: ObservableObject {
     - 场景名（2 到 6 字，例如「做产品」「看宏观」「学技术」）｜这一类今天的具体内容，点出 2 到 3 个具体事实，不超过 60 字｜涉及的条目编号，用英文逗号分隔
     洞察：
     - 把多条内容放在一起得出的判断：是什么趋势、对用户意味着什么，不超过 50 字
-    「必读」挑 4 到 6 篇，按「先读」的顺序排，并尽量覆盖不同来源，周刊（财新周刊、三联）有的话每家至少选 1 篇；和用户在做的事有真实关联时才提关联，没有就不要硬扯，改说信息本身的价值；「场景」写 3 到 4 个；「洞察」写 2 到 3 条，只写真正有信息量的。
+    「必读」挑 4 到 6 篇，按「先读」的顺序排，并尽量覆盖不同来源，周刊（财新周刊、三联周刊）有的话每家至少选 1 篇；和用户在做的事有真实关联时才提关联，没有就不要硬扯，改说信息本身的价值；「场景」写 3 到 4 个；「洞察」写 2 到 3 条，只写真正有信息量的。
     """
 
     /// 开始生成。周刊还在载入时先等它们载入完，免得速览里少了财新 / 三联
@@ -89,7 +89,8 @@ final class TodayDigestStore: ObservableObject {
             for g in store.groups {
                 var part: [String] = []
                 var used = 0
-                for e in g.entries.prefix(30) {
+                // 已经读过的不放进速览：它是用来决定「接下来读什么」的
+                for e in g.entries.filter({ !store.isRead($0) }).prefix(30) {
                     let brief = (e.brief.isEmpty ? e.sub : e.brief).trimmingCharacters(in: .whitespacesAndNewlines)
                         .replacingOccurrences(of: "\n", with: " ").prefix(110)
                     let tag = (e.sub == e.brief || e.sub.isEmpty) ? "" : "｜" + e.sub.prefix(24)
@@ -106,7 +107,7 @@ final class TodayDigestStore: ObservableObject {
                     lines += part
                 }
             }
-            guard !ids.isEmpty else { error = "今天还没有内容可以总结"; busy = false; return }
+            guard !ids.isEmpty else { error = store.groups.isEmpty ? "今天还没有内容可以总结" : "今天的内容你都读过了，没有要速览的"; busy = false; return }
             var ctx: [String] = []
             let kws = m.projects.map(\.keyword).prefix(8)
             if !kws.isEmpty { ctx.append("- 项目：" + kws.joined(separator: "、")) }

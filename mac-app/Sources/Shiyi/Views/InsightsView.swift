@@ -13,6 +13,8 @@ struct InsightsView: View {
     @AppStorage("tp.workTag") private var workTag = "工作"
     @AppStorage("tp.goalHours") private var goalHours = 4.0
     @AppStorage("tp.workDays") private var workDays = 5.0
+    @AppStorage("tp.startHour") private var startHour = 9.0
+    @AppStorage("tp.endHour") private var endHour = 18.0
     /// 统计范围（天）：0 = 全部。AI 洞察和笔记节奏最多读 30 天，其余按本机账本统计
     @AppStorage("insights.scope") private var scope = 14
     @AppStorage("insights.aiFold") private var aiFold = false
@@ -70,6 +72,10 @@ struct InsightsView: View {
             ledgerRev += 1
             await model.refreshOutputLedger()
             ledgerRev += 1
+            if model.holidays.isEmpty {
+                let h = await HolidayStore.load()
+                if !h.isEmpty { model.holidays = h }
+            }
         }
     }
 
@@ -98,6 +104,8 @@ struct InsightsView: View {
         if let e = r.todoError { ErrorBanner(text: "待办读取失败：" + e) { Task { await model.loadReview() } } }
 
         section("我比以前快了吗") { heroCard(stats, perf: perf, prevPerf: prevPerf, rate: rate) }
+
+        section("先做完，才有自己的时间") { paceCard(items) }
 
         section("时间价格") { priceCard(stats, rate: rate, prevRate: prevRate) }
 
@@ -239,6 +247,65 @@ struct InsightsView: View {
             return "效率和上期差不多。想再快一点：砍掉不重要的、把最难的放进黄金时段、给任务定更短的期限。"
         }
         return "现在平均每专注工作 1 小时完成 \(String(format: "%.1f", cur)) 项。下一个周期开始，就能和这个数比较，看有没有越来越快。"
+    }
+
+    // MARK: - 先做完，才有自己的时间
+
+    private func paceCard(_ items: [FocusLedgerEntry]) -> some View {
+        let p = WorkPace.compute(price: price, entries: items, holidays: model.holidays, startHour: startHour, endHour: endHour)
+        let g = p.goalMin
+        return InsightCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 16) {
+                    switch p.phase {
+                    case .working: metric("离下班", value: WorkPace.clock(p.minutesToOff), note: "今天的班上了 \(Int(p.dayProgress * 100))%", tint: workColor)
+                    case .before: metric("离上班", value: WorkPace.clock(p.minutesToStart), note: "还没开始", tint: workColor)
+                    case .after: metric("今天", value: "已下班", note: "今天专注工作 \(fmtMin(p.todayMin))")
+                    case .off: metric("今天", value: "休息", note: p.daysToWork > 0 ? "\(p.daysToWork) 天后上班" : nil)
+                    }
+                    Divider().frame(height: 62)
+                    if let o = p.nextOff {
+                        metric("离" + o.name, value: o.days == 1 ? "明天" : "\(o.days) 天", note: o.length > 2 ? "连休 \(o.length) 天" : "还要上 \(o.days) 天班")
+                    } else {
+                        metric("离周末", value: "–", note: "休息日里")
+                    }
+                    Divider().frame(height: 62)
+                    if let h = p.nextHoliday {
+                        metric("离" + h.name, value: "\(h.days) 天", note: "连休 \(h.length) 天", tint: workColor)
+                    } else {
+                        metric("离放假", value: "–", note: "还没有放假数据")
+                    }
+                }
+
+                if g > 0 {
+                    HStack(alignment: .top, spacing: 16) {
+                        metric("今天", value: fmtMin(p.todayMin), note: p.personalToday ? "目标 \(fmtMin(g))" + (p.todayMorningMin > 0 ? "，上午做了 \(fmtMin(p.todayMorningMin))" : "") : "今天不在工作日里",
+                               tint: p.personalToday && p.todayMin >= g ? .green : .primary)
+                        Divider().frame(height: 62)
+                        metric("本周", value: fmtMin(p.weekDoneMin), note: p.weekQuotaMin > 0 ? "目标 \(fmtMin(p.weekQuotaMin))（\(p.workdayCount) 天 × \(fmtMin(g))）" : nil,
+                               tint: p.weekQuotaMin > 0 && p.weekDoneMin >= p.weekQuotaMin ? .green : .primary)
+                        Divider().frame(height: 62)
+                        metric("上午占比", value: p.morningShare.map { "\(Int(($0 * 100).rounded()))%" } ?? "–", note: "近 14 天 12 点前开始的专注",
+                               tint: (p.morningShare ?? 1) < 0.5 ? .orange : .primary)
+                        Divider().frame(height: 62)
+                        metric("前半周占比", value: p.earlyShare.map { "\(Int(($0 * 100).rounded()))%" } ?? "–", note: "近 4 周前一半工作日做完的",
+                               tint: (p.earlyShare ?? 1) < 0.6 ? .orange : .primary)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(p.insights) { it in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: it.icon).foregroundStyle(it.good ? Color.green : Brand.orange).frame(width: 16)
+                            Text(it.text).font(.callout).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
+                Text("第一性原理：自由时间 = 总时间 − 做完固定工作所需的时间。固定工作的量是定的，所以只有两条路——做得更快，和做得更早：趁周初、趁上午精力最好时做完，后面的时间才真正属于你（帕金森定律：工作会膨胀到占满给它的时间）。目标在「时间价格 → 调整」里设：每周工作几天、每天专注几小时（例如 3 天 × 3 小时），上班 / 下班时间用来算倒计时。")
+                    .font(.caption).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     // MARK: - 长期趋势
@@ -421,6 +488,8 @@ struct InsightsView: View {
             priceField("每月为工作付出的花费", unit: "元", value: $jobCost, hint: "交通、工作餐、置装、通勤租房溢价等")
             priceField("每周工作几天", unit: "天", value: $workDays, hint: "周一起算；决定哪些天算工作日、时薪日历里每天分到多少收入")
             priceField("每天目标专注工作", unit: "小时", value: $goalHours, hint: "比它少花、又把事做完，省下的时间就记在「省下的时间」里")
+            priceField("上班时间", unit: "点", value: $startHour, hint: "9 = 9:00，9.5 = 9:30；用来算离下班还有多久")
+            priceField("下班时间", unit: "点", value: $endHour, hint: "18 = 18:00")
             HStack {
                 Text("「工作」标签").font(.callout)
                 Spacer()
