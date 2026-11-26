@@ -4,3 +4,4 @@ dist/
 *.map
 .cunzhi-memory/
 .cursor/skills/**
+design-explore/**

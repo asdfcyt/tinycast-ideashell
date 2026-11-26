@@ -17,6 +17,9 @@ struct HourGridView: View {
     let days: [String]
 
     @State private var dropTarget: String?
+    /// 读回 Daily Note 后 +1，让格子重画（数据放在 model.calendarDailyCache 里）
+    @State private var dailyRev = 0
+    private struct DailyKey: Equatable { let days: [String]; let tick: Int; let on: Bool }
     /// 鼠标在时间轴里最后停的位置（右键「在这里新建」用）。放在引用对象里：鼠标一动就写，不触发界面刷新
     @State private var hover = HoverBox()
     private final class HoverBox { var y: CGFloat = 0 }
@@ -39,7 +42,9 @@ struct HourGridView: View {
                 dayHeaders.frame(width: gridW > 0 ? gridW : nil).frame(maxWidth: .infinity, alignment: .leading)
                 Divider()
             }
-            allDayRow.frame(width: gridW > 0 ? gridW : nil).frame(maxWidth: .infinity, alignment: .leading)
+            // 全天行里的分隔线（Divider）会抢高度：按内容的高度固定，别让它把时间格挤到下面去
+            allDayRow.fixedSize(horizontal: false, vertical: true)
+                .frame(width: gridW > 0 ? gridW : nil).frame(maxWidth: .infinity, alignment: .leading)
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -57,6 +62,86 @@ struct HourGridView: View {
                 .onAppear { proxy.scrollTo(startHour, anchor: .top) }
                 .onChange(of: days) { _, _ in proxy.scrollTo(startHour, anchor: .top) }
             }
+        }
+        .task(id: DailyKey(days: days, tick: model.calendarLoadTick, on: model.hasIdeashell)) { await loadDaily() }
+    }
+
+    // MARK: Daily Note（带时间的记录按时间落在时间格上）
+
+    private func dailyEntries(_ d: String) -> [DailyEntry] {
+        _ = dailyRev
+        return (model.calendarDailyCache[d]?.day?.entries ?? []).filter { !$0.time.isEmpty }
+    }
+
+    private func loadDaily() async {
+        guard model.hasIdeashell, let from = days.first, let to = days.last else { return }
+        let tick = model.calendarLoadTick
+        let fresh = days.allSatisfy { d in
+            if let c = model.calendarDailyCache[d], c.tick == tick, Date().timeIntervalSince(c.at) < 30 { return true }
+            return false
+        }
+        if fresh { dailyRev += 1; return }
+        guard let r = try? await model.daily.days(from: from, to: to) else { return }
+        var changed = false
+        for d in days {
+            let f = r[d]
+            if model.calendarDailyCache[d]?.day != f { changed = true }
+            model.calendarDailyCache[d] = (f, tick, Date())
+        }
+        if changed { dailyRev += 1 }
+    }
+
+    private func firstLine(_ s: String) -> String {
+        s.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? s
+    }
+
+    /// 日视图右侧的 Daily Note 列：每条按时间落点，撞在一起的往下顺延，不重叠
+    private func dailyLabels(_ entries: [DailyEntry]) -> [(entry: DailyEntry, y: CGFloat)] {
+        var out: [(entry: DailyEntry, y: CGFloat)] = []
+        var bottom: CGFloat = -100
+        for e in entries.sorted(by: { minutes($0.time) < minutes($1.time) }) {
+            let y = max(CGFloat(minutes(e.time)) / 60 * rowH, bottom)
+            out.append((entry: e, y: y))
+            bottom = y + 18
+        }
+        return out
+    }
+
+    private func dailyLabel(_ e: DailyEntry, day: String) -> some View {
+        HStack(spacing: 5) {
+            Circle().fill(Brand.orange).frame(width: 6, height: 6)
+            Text(e.time).font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary)
+            Text(firstLine(e.text)).font(.system(size: 11)).lineLimit(1).strikethrough(e.struck)
+                .foregroundStyle(e.struck ? Color.secondary : Color.primary)
+        }
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, alignment: .leading).frame(height: 16)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { model.selectCalendarDay(day) }
+        .help(e.text)
+    }
+
+    /// 周视图：列右边缘的小圆点，同一时段撞车的往左错开；悬停看内容，点一下选中这一天
+    private func dailyDots(_ entries: [DailyEntry], day: String, width: CGFloat) -> some View {
+        var laneList: [(DailyEntry, Int)] = []
+        var recent: [(y: CGFloat, lane: Int)] = []
+        for e in entries.sorted(by: { minutes($0.time) < minutes($1.time) }) {
+            let y = CGFloat(minutes(e.time)) / 60 * rowH
+            let used = Set(recent.filter { y - $0.y < 9 }.map(\.lane))
+            var lane = 0
+            while used.contains(lane) { lane += 1 }
+            recent.append((y, lane))
+            laneList.append((e, lane))
+        }
+        let lanes = laneList
+        return ForEach(Array(lanes.enumerated()), id: \.offset) { _, item in
+            let y = CGFloat(minutes(item.0.time)) / 60 * rowH
+            Circle().fill(Brand.orange.opacity(item.0.struck ? 0.35 : 1)).frame(width: 7, height: 7)
+                .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor).opacity(0.8), lineWidth: 1))
+                .position(x: width - 8 - CGFloat(item.1) * 8, y: y)
+                .help("\(item.0.time)  \(firstLine(item.0.text))")
+                .onTapGesture { model.selectCalendarDay(day) }
         }
     }
 
@@ -127,6 +212,16 @@ struct HourGridView: View {
                     ForEach(allDay.prefix(4)) { t in chip(t) }
                     if allDay.count > 4 {
                         Text("+\(allDay.count - 4)").font(.system(size: 10, weight: .heavy)).foregroundStyle(Brand.orangeDeep)
+                    }
+                    let dn = dailyEntries(d).count
+                    if dn > 0, days.count > 1 {
+                        HStack(spacing: 4) {
+                            Circle().fill(Brand.orange).frame(width: 6, height: 6)
+                            Text("\(dn) 条日记").font(.system(size: 11))
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading).frame(height: 16)
+                        .padding(.horizontal, 5)
                     }
                     if notes > 0 {
                         HStack(spacing: 4) {
@@ -204,8 +299,11 @@ struct HourGridView: View {
         let timed = model.calendarTasks(on: d).filter { $0.time != nil }
         let layout = place(timed)
         let selected = d == model.calendarDay && days.count > 1
+        let entries = dailyEntries(d)
         return GeometryReader { geo in
-            let laneW = geo.size.width / CGFloat(layout.lanes)
+            // 日视图：右边留一列放 Daily Note，待办在左边并排
+            let strip: CGFloat = days.count == 1 && !entries.isEmpty ? min(max(geo.size.width * 0.38, 150), 280) : 0
+            let laneW = (geo.size.width - strip) / CGFloat(layout.lanes)
             ZStack(alignment: .topLeading) {
                 Rectangle().fill(dropTarget == d ? Brand.orange.opacity(0.2) : (selected ? Brand.orange.opacity(0.06) : .clear))
                 // 接收点击的底层：双击新建待办，单击选中这一天（点空白处也会收起右侧的详情）
@@ -253,6 +351,17 @@ struct HourGridView: View {
                     block(p.task)
                         .frame(width: max(laneW - 3, 10), height: rowH * CGFloat(blockMinutes) / 60 - 2, alignment: .topLeading)
                         .offset(x: CGFloat(p.lane) * laneW + 1, y: CGFloat(p.start) / 60 * rowH + 1)
+                }
+                if strip > 0 {
+                    Rectangle().fill(Color.primary.opacity(0.08)).frame(width: 0.5, height: rowH * 24)
+                        .offset(x: geo.size.width - strip).allowsHitTesting(false)
+                    ForEach(Array(dailyLabels(entries).enumerated()), id: \.offset) { _, item in
+                        dailyLabel(item.entry, day: d)
+                            .frame(width: strip - 8)
+                            .offset(x: geo.size.width - strip + 4, y: item.y)
+                    }
+                } else if days.count > 1, !entries.isEmpty {
+                    dailyDots(entries, day: d, width: geo.size.width)
                 }
                 // 双击出来的新建草稿（跟随右侧面板里改的时间）
                 if let dr = model.calendarDraft, dr.date == d, let t = dr.time {

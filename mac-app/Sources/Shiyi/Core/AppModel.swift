@@ -3,14 +3,13 @@ import Foundation
 import SwiftUI
 
 enum AppSection: String, CaseIterable, Identifiable {
-    case today, focus, workbench, todos, calendar, insights, reading, settings
+    case today, focus, workbench, calendar, insights, reading, settings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .today: return "今天"
-        case .todos: return "待办"
         case .calendar: return "日历"
         case .focus: return "行动"
         case .workbench: return "调度"
@@ -23,7 +22,6 @@ enum AppSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .today: return "sun.max"
-        case .todos: return "checklist"
         case .calendar: return "calendar"
         case .focus: return "target"
         case .workbench: return "wand.and.stars"
@@ -222,6 +220,9 @@ final class AppModel: ObservableObject {
     @Published var calendarMode: CalendarMode = .month
     /// 日历里选中的那一天（日 / 周视图以它为准）
     @Published var calendarDay: String = Day.today()
+    /// 日历底部「收集箱 / 逾期」抽屉：展开与否、当前页签（原来的「待办」页并进了这里）
+    @Published var trayExpanded = false
+    @Published var trayTab: TrayTab = .inbox
     /// 从别处（迷你日历 / 搜索 / 时间河等）特意跳到某一天再进日历页：这一次进入页面保留那一天，其余情况进日历都回到今天
     var calendarKeepOnce = false
     /// 上次进入日历页时的「今天」（跨天后回到前台要重新对到今天）
@@ -235,6 +236,9 @@ final class AppModel: ObservableObject {
 
     // 快速记录
     @Published var showQuickAdd = false
+    /// 今天页：标题栏上「重新规划」「快速启动」两个图标打开的弹窗
+    @Published var showReplan = false
+    @Published var showQuickStart = false
     /// 打开万能输入时预填的文字 / 指定类型 / 默认日期（日历里「添加待办」用）
     @Published var quickAddText = ""
     @Published var quickAddKind: CaptureKind?
@@ -858,6 +862,13 @@ final class AppModel: ObservableObject {
         let offset = (cal.component(.weekday, from: d) + 5) % 7
         let start = cal.date(byAdding: .day, value: -offset, to: d) ?? d
         return (0 ..< 7).map { Day.string(cal.date(byAdding: .day, value: $0, to: start) ?? start) }
+    }
+
+    /// 去日历底部的抽屉看收集箱 / 逾期的全部待办
+    func openInbox(_ tab: TrayTab = .inbox) {
+        trayTab = tab
+        trayExpanded = true
+        section = .calendar
     }
 
     func setCalendarMode(_ mode: CalendarMode) {

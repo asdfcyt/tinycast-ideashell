@@ -8,6 +8,7 @@ struct CalendarView: View {
     @State private var dropTarget: String?
     @State private var keyMonitor: Any?
     @State private var hostWindow = WindowRef()
+    @State private var trayQuery = ""
 
     private let weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
@@ -127,6 +128,7 @@ struct CalendarView: View {
                 }
             }
         let undated = model.overview?.undated ?? []
+        let overdue = model.overview?.overdue ?? []
         return VStack(spacing: 0) {
             header
                 .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 8)
@@ -142,7 +144,7 @@ struct CalendarView: View {
             case .year: YearView()
             }
 
-            if !undated.isEmpty && model.calendarMode != .year { undatedTray(undated) }
+            if (!undated.isEmpty || !overdue.isEmpty) && model.calendarMode != .year { inboxDrawer(undated: undated, overdue: overdue) }
         }
     }
 
@@ -244,39 +246,99 @@ struct CalendarView: View {
         .padding(.vertical, 5)
     }
 
-    // MARK: - 无日期托盘（拖拽的起点）
+    // MARK: - 收集箱 / 逾期抽屉（原来的「待办」页并进了这里；也是拖拽改期的起点）
 
-    private func undatedTray(_ tasks: [DidaTask]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text("无日期").font(.subheadline.weight(.heavy))
-                Text("\(tasks.count)").font(.caption.weight(.bold)).foregroundStyle(Brand.orangeDeep)
-                    .padding(.horizontal, 8).padding(.vertical, 1)
-                    .background(Brand.orange.opacity(0.18), in: Capsule())
-                Spacer()
-                Text("拖到日期格子里安排").font(.caption).foregroundStyle(.secondary)
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(tasks) { t in
-                        HStack(spacing: 6) {
-                            Circle().fill(CalendarPalette.color(t)).frame(width: 8, height: 8)
-                            Text(t.cleanTitle).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 6)
-                        .frame(maxWidth: 190)
-                        .background(Color.primary.opacity(0.07), in: Capsule())
-                        .draggable(t.id)
-                        .onTapGesture { model.openTask(t) }
-                        .contextMenu { TaskContextMenu(task: t) }
+    private func inboxDrawer(undated: [DidaTask], overdue: [DidaTask]) -> some View {
+        let tab: TrayTab = (model.trayTab == .overdue && !overdue.isEmpty) || undated.isEmpty ? .overdue : .inbox
+        let source = tab == .inbox ? undated : overdue
+        let q = trayQuery.trimmed.lowercased()
+        let list = q.isEmpty ? source : source.filter { $0.title.lowercased().contains(q) || $0.tags.contains { $0.lowercased().contains(q) } }
+        let open = model.trayExpanded
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                if !undated.isEmpty { trayTab("收集箱", undated.count, on: tab == .inbox, tint: Brand.orange) { model.trayTab = .inbox } }
+                if !overdue.isEmpty { trayTab("逾期", overdue.count, on: tab == .overdue, tint: .red) { model.trayTab = .overdue } }
+                Spacer(minLength: 8)
+                if open {
+                    HStack(spacing: 5) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.tertiary)
+                        TextField("筛选", text: $trayQuery).textFieldStyle(.plain).font(.callout)
                     }
+                    .padding(.horizontal, 8).frame(width: 150, height: 24)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                    if tab == .overdue {
+                        Button("全部改到今天") { Task { await model.moveToToday(overdue) } }
+                            .buttonStyle(.link).font(.callout).disabled(model.scheduling)
+                    }
+                } else {
+                    Text("拖到日期格子里安排").font(.caption).foregroundStyle(.secondary)
                 }
+                Image(systemName: open ? "chevron.down" : "chevron.up")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary).frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.easeOut(duration: 0.18)) { model.trayExpanded.toggle() } }
+
+            if open {
+                Divider()
+                if list.isEmpty {
+                    Text(q.isEmpty ? "没有待办" : "没有匹配的待办").font(.callout).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 96)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(list) { t in
+                                TaskRow(task: t, overdue: tab == .overdue, showDate: tab == .overdue)
+                                    .padding(.horizontal, 16).padding(.vertical, 5)
+                                    .modifier(DraggableWhenOpen(task: t))
+                                    .contextMenu { TaskContextMenu(task: t) }
+                                Divider().padding(.leading, 44)
+                            }
+                        }
+                    }
+                    .frame(height: min(CGFloat(list.count) * 46 + 4, 260))
+                }
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(list) { t in
+                            HStack(spacing: 6) {
+                                Circle().fill(CalendarPalette.color(t)).frame(width: 8, height: 8)
+                                Text(t.cleanTitle).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .frame(maxWidth: 190)
+                            .background(Color.primary.opacity(0.07), in: Capsule())
+                            .draggable(t.id)
+                            .onTapGesture { model.openTask(t) }
+                            .contextMenu { TaskContextMenu(task: t) }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+                .padding(.bottom, 10)
             }
         }
-        .padding(.horizontal, 16).padding(.vertical, 10)
         .background(.bar)
     }
+
+    private func trayTab(_ title: String, _ count: Int, on: Bool, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Text(title).font(.subheadline.weight(on ? .heavy : .semibold)).foregroundStyle(on ? Color.primary : Color.secondary)
+                Text("\(count)").font(.caption.weight(.bold)).foregroundStyle(on ? tint : Color.secondary)
+                    .padding(.horizontal, 8).padding(.vertical, 1)
+                    .background(tint.opacity(on ? 0.18 : 0.08), in: Capsule())
+            }
+        }
+        .buttonStyle(.plain)
+    }
 }
+
+/// 日历底部抽屉的页签
+enum TrayTab: String { case inbox, overdue }
 
 /// 没做完的任务才能拖
 struct DraggableWhenOpen: ViewModifier {

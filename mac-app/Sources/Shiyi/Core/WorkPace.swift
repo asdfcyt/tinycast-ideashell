@@ -29,7 +29,28 @@ struct WorkPace {
         var good: Bool
     }
 
+    /// 本周每一天（周一起）：做了多少、是不是自己的工作日，画图用
+    struct WeekDay: Identifiable {
+        let id: Int
+        var label: String
+        var work: Int
+        var quota: Bool
+        var isToday: Bool
+        var future: Bool
+    }
+
+    /// 今天的一段工作专注（从当天几点几分起，持续多少分钟），画时间轴用
+    struct Block: Identifiable {
+        let id = UUID()
+        var start: Int
+        var len: Int
+    }
+
     var phase: Phase = .off
+    var startMin = 0
+    var endMin = 0
+    var weekDays: [WeekDay] = []
+    var todayBlocks: [Block] = []
     var minutesToStart = 0
     var minutesToOff = 0
     /// 今天的班上了多少（0...1）
@@ -102,6 +123,8 @@ struct WorkPace {
         let s = Int((startHour * 60).rounded())
         var e = Int((endHour * 60).rounded())
         if e <= s { e = s + 8 * 60 }
+        p.startMin = s
+        p.endMin = e
 
         // 今天在岗到哪一步
         let offToday = isOff(today, h)
@@ -150,13 +173,19 @@ struct WorkPace {
         p.personalToday = personal(today)
         p.todayMin = dayWork[today] ?? 0
         p.todayMorningMin = dayMorning[today] ?? 0
+        for en in entries where en.work && en.day == today && en.minutes > 0 {
+            let c = Day.cal.dateComponents([.hour, .minute], from: en.startDate)
+            p.todayBlocks.append(Block(start: (c.hour ?? 0) * 60 + (c.minute ?? 0), len: en.minutes))
+        }
 
         // 本周（周一起）
         let wdIdx = ((Day.parse(today).map { Day.cal.component(.weekday, from: $0) } ?? 2) + 5) % 7
         let monday = Day.add(today, days: -wdIdx)
         var quotaDays = 0, doneDays = 0
+        let labels = ["一", "二", "三", "四", "五", "六", "日"]
         for n in 0 ..< 7 {
             let d = Day.add(monday, days: n)
+            p.weekDays.append(WeekDay(id: n, label: labels[n], work: dayWork[d] ?? 0, quota: personal(d), isToday: d == today, future: d > today))
             if personal(d) {
                 quotaDays += 1
                 if d < today { doneDays += 1 } else if d > today { p.weekDaysLeft += 1 }

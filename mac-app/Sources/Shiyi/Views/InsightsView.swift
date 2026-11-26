@@ -724,7 +724,7 @@ struct InsightsView: View {
                         }
                     }
                     if stale.count > 5 {
-                        Button("在「待办」里查看全部 \(stale.count) 件") { model.section = .todos }.buttonStyle(.link).font(.callout)
+                        Button("在日历抽屉里查看全部 \(stale.count) 件") { model.openInbox(.overdue) }.buttonStyle(.link).font(.callout)
                     }
                 }
                 if p.configured {

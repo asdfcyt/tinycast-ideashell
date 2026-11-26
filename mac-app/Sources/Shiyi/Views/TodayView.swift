@@ -15,9 +15,6 @@ private let postponeChoices: [(label: String, days: Int)] = [("1 天", 1), ("2 �
 private struct TodayContent: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var focus: FocusStore
-    @State private var showPlan = false
-    @State private var showQuickStart = false
-    @State private var showAllInbox = false
     @State private var showAllSjz = false
 
     private var today: String { Day.today() }
@@ -58,8 +55,8 @@ private struct TodayContent: View {
         }
         .background(AmbientBackground())
         .overlay(alignment: .bottom) { UndoToast().padding(.bottom, 16) }
-        .sheet(isPresented: $showQuickStart) { QuickStartSheet().environmentObject(model).dismissOnOutsideClick() }
-        .sheet(isPresented: $showPlan) { ReplanSheet(candidates: model.schedulable(includeOverdue: true)).environmentObject(model).dismissOnOutsideClick() }
+        .sheet(isPresented: $model.showQuickStart) { QuickStartSheet().environmentObject(model).dismissOnOutsideClick() }
+        .sheet(isPresented: $model.showReplan) { ReplanSheet(candidates: model.schedulable(includeOverdue: true)).environmentObject(model).dismissOnOutsideClick() }
         .task {
             await runAll([
                 { await model.loadMemory() },
@@ -147,27 +144,8 @@ private struct TodayContent: View {
                 }
             }
             Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 8) {
             nextLine
-            HStack(spacing: 8) {
-                if model.hasDida {
-                    Button { showPlan = true } label: {
-                        Label("重新规划", systemImage: "calendar.badge.clock")
-                    }
-                    .buttonStyle(GlassActionStyle(tint: Brand.orange))
-                    .disabled(model.scheduling || model.overview == nil)
-                    Button { showQuickStart = true } label: {
-                        Label("快速启动", systemImage: "bolt.fill")
-                    }
-                    .buttonStyle(GlassActionStyle(tint: Brand.orange))
-                    .disabled(model.overview == nil)
-                    .help("让 AI 梳理今天的待办、最近的笔记和 Daily Note，无压力地开始")
-                }
-                FocusStartButton(focus: focus)
-            }
-            .controlSize(.regular)
-            }
-            .padding(.bottom, 4)
+                .padding(.bottom, 4)
         }
         .padding(.horizontal, 4)
     }
@@ -183,12 +161,12 @@ private struct TodayContent: View {
         if model.hasDida || model.hasSjz {
             if !olderOverdue.isEmpty { overdueSection }
             todaySection
-            if !sjzLater.isEmpty { sjzSection }
-            if !plainUndated.isEmpty { inboxSection }
         } else {
             Panel { Text("填写滴答清单 API 口令后显示待办").foregroundStyle(.secondary).padding(18) }
         }
-        notesSection
+        // 今天要看：AI 速览 + 往日回顾
+        InfoCard()
+        if !model.memory.isEmpty { MemoryPanel(items: Array(model.memory.prefix(4))) }
     }
 
     private var overdueSection: some View {
@@ -203,7 +181,7 @@ private struct TodayContent: View {
             overdueGroup("近几天逾期", recent, first: long.isEmpty)
             if list.count > 6 {
                 Divider().padding(.leading, 46)
-                Button("在「待办」里查看全部 \(list.count) 个") { model.section = .todos }
+                Button("在「待办」里查看全部 \(list.count) 个") { model.section = .calendar }
                     .buttonStyle(.link).font(.callout).padding(.horizontal, 14).padding(.vertical, 9)
             }
         }
@@ -223,30 +201,36 @@ private struct TodayContent: View {
         }
     }
 
+    /// 今天 + 结审待办合成一张紧凑的列表：今天的在前，结审里还没排到今天的接在后面
     private var todaySection: some View {
-        let rest = todayTasks
-        return TaskSection(title: "今天", count: todayTasks.count) {
+        let later = sjzLater
+        let shownLater = showAllSjz ? Array(later.prefix(30)) : Array(later.prefix(3))
+        return TaskSection(title: "今天", count: todayTasks.count + later.count, tight: true) {
             EmptyView()
         } content: {
-            if todayTasks.isEmpty {
-                Text(todayDone.isEmpty ? "今天没有待办" : "今天的待办都完成了").font(.callout).foregroundStyle(.secondary).padding(14)
-            } else {
-                ForEach(Array(rest.enumerated()), id: \.element.id) { i, t in
-                    TaskLine(task: t, focus: focus)
-                    if i < rest.count - 1 { Divider().padding(.leading, 46) }
-                }
+            if todayTasks.isEmpty && later.isEmpty {
+                Text(todayDone.isEmpty ? "今天没有待办" : "今天的待办都完成了").font(.callout).foregroundStyle(.secondary).padding(12)
+            }
+            ForEach(Array(todayTasks.enumerated()), id: \.element.id) { i, t in
+                TaskLine(task: t, focus: focus, compact: true)
+                if i < todayTasks.count - 1 || !later.isEmpty { Divider().padding(.leading, 40) }
+            }
+            ForEach(Array(shownLater.enumerated()), id: \.element.id) { i, t in
+                TaskLine(task: t, undatedRow: t.date == nil, focus: focus, compact: true)
+                if i < shownLater.count - 1 { Divider().padding(.leading, 40) }
+            }
+            if later.count > 3 {
+                Button(showAllSjz ? "收起" : "结审待办还有 \(later.count - 3) 条，展开") { withAnimation(.easeOut(duration: 0.15)) { showAllSjz.toggle() } }
+                    .buttonStyle(.link).font(.caption).padding(.horizontal, 12).padding(.vertical, 6)
             }
             if !todayDone.isEmpty {
                 Divider()
                 Text("已完成 \(todayDone.count)").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-                    .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 2)
-                ForEach(todayDone.prefix(5)) { t in TaskLine(task: t, focus: focus) }
+                    .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 1)
+                ForEach(todayDone.prefix(3)) { t in TaskLine(task: t, focus: focus, compact: true) }
             }
         }
     }
-
-    /// 收集箱只放滴答的无日期任务；结审任务单独一块
-    private var plainUndated: [DidaTask] { undated.filter { !SjzTasks.owns($0.id) } }
 
     /// 结审里还没排到今天的任务：无日期的，和日期在今天之后的
     private var sjzLater: [DidaTask] {
@@ -256,154 +240,15 @@ private struct TodayContent: View {
             .sorted { ($0.date ?? "9999") < ($1.date ?? "9999") }
     }
 
-    private var sjzSection: some View {
-        let list = sjzLater
-        let shown = showAllSjz ? Array(list.prefix(30)) : Array(list.prefix(5))
-        return TaskSection(title: "结审待办", count: list.count) {
-            EmptyView()
-        } content: {
-            ForEach(Array(shown.enumerated()), id: \.element.id) { i, t in
-                TaskLine(task: t, undatedRow: t.date == nil, focus: focus)
-                if i < shown.count - 1 { Divider().padding(.leading, 46) }
-            }
-            if list.count > 5 {
-                Divider().padding(.leading, 46)
-                Button(showAllSjz ? "收起" : "展开全部 \(list.count) 条") { withAnimation(.easeOut(duration: 0.15)) { showAllSjz.toggle() } }
-                    .buttonStyle(.link).font(.callout).padding(.horizontal, 14).padding(.vertical, 9)
-            }
-        }
-    }
-
-    private var inboxSection: some View {
-        let undated = plainUndated
-        let shown = showAllInbox ? Array(undated.prefix(20)) : Array(undated.prefix(3))
-        return TaskSection(title: "收集箱", count: undated.count) {
-            EmptyView()
-        } content: {
-            ForEach(Array(shown.enumerated()), id: \.offset) { i, t in
-                TaskLine(task: t, undatedRow: true, focus: focus)
-                if i < shown.count - 1 { Divider().padding(.leading, 46) }
-            }
-            if undated.count > 3 {
-                Divider().padding(.leading, 46)
-                Button(showAllInbox ? "收起" : "展开全部 \(undated.count) 条") { withAnimation(.easeOut(duration: 0.15)) { showAllInbox.toggle() } }
-                    .buttonStyle(.link).font(.callout).padding(.horizontal, 14).padding(.vertical, 9)
-            }
-            if showAllInbox, undated.count > 20 {
-                Divider().padding(.leading, 46)
-                Button("在「待办」里查看全部 \(undated.count) 个") { model.section = .todos }
-                    .buttonStyle(.link).font(.callout).padding(.horizontal, 14).padding(.vertical, 9)
-            }
-        }
-    }
-
-    /// 今天的记录：普通笔记和 Daily Note 的最近几条放在同一条时间线上，新的在上
-    private struct FeedItem: Identifiable {
-        let id: String
-        let time: String
-        let text: String
-        let isDaily: Bool
-        let noteId: String
-        let title: String
-        /// 日记条目（普通笔记为 nil）：右键删除 / 转待办用
-        var entry: DailyEntry?
-    }
-
-    private var feed: [FeedItem] {
-        var out: [FeedItem] = todayNotes.map {
-            FeedItem(id: "n" + $0.id, time: $0.clock ?? "", text: $0.title, isDaily: false, noteId: $0.id, title: $0.title)
-        }
-        if let noteId = dailyToday?.noteId {
-            for (i, e) in dailyRecent.enumerated() {
-                out.append(FeedItem(id: "d\(i)" + e.time, time: e.time, text: e.text, isDaily: true, noteId: noteId, title: today + " Daily Note", entry: e))
-            }
-        }
-        return out.sorted { $0.time > $1.time }
-    }
-
-    private var notesSection: some View {
-        let items = feed
-        return TaskSection(title: "今天的笔记", count: items.count) {
-            if let noteId = dailyToday?.noteId, !dailyRecent.isEmpty {
-                Button { model.openNote(noteId, title: today + " Daily Note") } label: {
-                    Label("打开 Daily Note", systemImage: "text.append").font(.caption)
-                }
-                .buttonStyle(.link)
-            }
-        } content: {
-            if !model.hasIdeashell {
-                Text("填写闪念贝壳 API Key 后显示").font(.callout).foregroundStyle(.secondary).padding(14)
-            } else if items.isEmpty {
-                Text(model.notesLoading ? "加载中…" : "今天还没有笔记").font(.callout).foregroundStyle(.secondary).padding(14)
-            } else {
-                ForEach(Array(items.enumerated()), id: \.element.id) { i, it in
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(it.time).font(.caption.weight(.medium)).monospacedDigit().foregroundStyle(.tertiary)
-                            .frame(width: 38, alignment: .leading)
-                        Image(systemName: it.isDaily ? "text.append" : "doc.text")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(it.isDaily ? Color.green : Color.blue)
-                            .frame(width: 14)
-                        Text(it.text).font(.callout).lineLimit(2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .contentShape(Rectangle())
-                    .onTapGesture { model.openNote(it.noteId, title: it.title) }
-                    .contextMenu { feedMenu(it) }
-                    if i < items.count - 1 { Divider().padding(.leading, 62) }
-                }
-            }
-        }
-    }
-
-    /// 今天的笔记 / 日记条目的右键菜单
-    @ViewBuilder private func feedMenu(_ it: FeedItem) -> some View {
-        Button(it.isDaily ? "打开今天的 Daily Note" : "打开笔记") { model.openNote(it.noteId, title: it.title) }
-        Button("使用便签打开") {
-            if it.isDaily { StickyController.shared.create(text: it.text) } else { model.openNoteAsSticky(it.noteId, title: it.title) }
-        }
-        DispatchMenu(model: model) {
-            let full = it.isDaily ? nil : model.timeline.first(where: { $0.id == it.noteId })?.text?.trimmed.nonEmpty
-            return full ?? it.text
-        }
-        Button("在闪念贝壳中打开") { model.open(noteURL(it.noteId)) }
-        Divider()
-        Button(it.isDaily ? "复制这条" : "复制标题") { model.copy(it.text) }
-        if let full = model.timeline.first(where: { $0.id == it.noteId })?.text?.trimmed, !it.isDaily, !full.isEmpty {
-            Button("复制全文") { model.copy(full) }
-        }
-        Button("转成待办") {
-            Task {
-                do {
-                    let a = CaptureParser.analyze(it.text, sjz: model.hasSjz)
-                    let msg = try await model.submitCapture(a, kind: .todo)
-                    model.showNotice(msg)
-                } catch {
-                    model.showNotice("转成待办失败：" + error.localizedDescription)
-                }
-            }
-        }
-        .disabled(!model.hasDida)
-        if let e = it.entry {
-            Button("新建笔记…") { model.newNoteDraft = NewNoteDraft(title: it.text) }
-                .disabled(!model.hasIdeashell)
-            Divider()
-            Button("删除这条日记…", role: .destructive) { model.requestDelete(.daily(date: today, entry: e, noteId: it.noteId)) }
-        }
-    }
-
     // MARK: - 右：配角
 
     @ViewBuilder private var railTop: some View {
         DashboardCard(focus: focus, loaded: loaded, remaining: remaining, todoDone: todayDone.count, todoTotal: todoTotal)
         HourlyRateCard(focus: focus)
-        InfoCard()
         if model.hasSjz { AuditProjectCard() }
     }
 
     @ViewBuilder private func railBottom(weeks: Int) -> some View {
-        if !model.memory.isEmpty { MemoryPanel(items: Array(model.memory.prefix(4))) }
         if model.hasIdeashell { HeatPanel(weeks: weeks) }
     }
 }
@@ -425,13 +270,14 @@ private struct TaskSection<Trailing: View, Rows: View>: View {
     let title: String
     let count: Int
     var tint: Color = .primary
+    var tight = false
     @ViewBuilder var trailing: Trailing
     @ViewBuilder var content: Rows
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: tight ? 6 : 8) {
             HStack(spacing: 6) {
-                Text(title).font(.title3.weight(.bold)).foregroundStyle(tint)
+                Text(title).font(tight ? .headline.weight(.bold) : .title3.weight(.bold)).foregroundStyle(tint)
                 if count > 0 { Text("\(count)").font(.callout.weight(.semibold)).foregroundStyle(.tertiary) }
                 Spacer()
                 trailing
@@ -1182,6 +1028,8 @@ private struct TaskLine: View {
     var overdue = false
     var undatedRow = false
     @ObservedObject var focus: FocusStore
+    /// 紧凑：标题和副标题排在一行，行高更矮
+    var compact = false
     @State private var checked = false
     @State private var hover = false
 
@@ -1217,18 +1065,31 @@ private struct TaskLine: View {
                         Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
                     }
                 }
-                .frame(width: 20, height: 20)
-                .frame(width: 28, height: 28)
+                .frame(width: compact ? 17 : 20, height: compact ? 17 : 20)
+                .frame(width: compact ? 24 : 28, height: compact ? 24 : 28)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(task.done)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text(task.cleanTitle).font(.body).strikethrough(done)
-                    .foregroundStyle(done ? .secondary : .primary).lineLimit(2)
-                if !subtitle.isEmpty {
-                    Text(subtitle).font(.caption).foregroundStyle(overdue ? Color.red : Color.secondary).lineLimit(1)
+            Group {
+                if compact {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(task.cleanTitle).font(.callout).strikethrough(done)
+                            .foregroundStyle(done ? .secondary : .primary).lineLimit(1)
+                            .layoutPriority(1)
+                        if !subtitle.isEmpty {
+                            Text(subtitle).font(.caption).foregroundStyle(overdue ? Color.red : Color.secondary).lineLimit(1)
+                        }
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(task.cleanTitle).font(.body).strikethrough(done)
+                            .foregroundStyle(done ? .secondary : .primary).lineLimit(2)
+                        if !subtitle.isEmpty {
+                            Text(subtitle).font(.caption).foregroundStyle(overdue ? Color.red : Color.secondary).lineLimit(1)
+                        }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1264,7 +1125,7 @@ private struct TaskLine: View {
                 .opacity(hover ? 1 : 0)
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, 7)
+        .padding(.horizontal, 12).padding(.vertical, compact ? 3 : 7)
         .background(hover ? Color.primary.opacity(0.04) : Color.clear)
         .onHover { hover = $0 }
         .contextMenu {
@@ -1648,22 +1509,13 @@ private struct HourlyRateCard: View {
             if p.phase == .working {
                 ProgressBar(value: p.dayProgress, color: Brand.orange.opacity(0.55)).help("今天的班已经上了 \(Int(p.dayProgress * 100))%")
             }
-            if p.goalMin > 0 {
-                VStack(alignment: .leading, spacing: 7) {
-                    if p.personalToday {
-                        goalBar("今天", done: p.todayMin, total: p.goalMin, mark: nil)
-                    }
-                    if p.weekQuotaMin > 0 {
-                        goalBar("本周", done: p.weekDoneMin, total: p.weekQuotaMin, mark: p.personalToday ? p.weekExpectedMin : nil)
-                    }
+            if p.goalMin > 0, p.personalToday || p.weekQuotaMin > 0 {
+                VStack(alignment: .leading, spacing: 16) {
+                    if p.personalToday { todayChart(p) }
+                    if p.weekQuotaMin > 0 { weekChart(p) }
                 }
-            }
-            ForEach(Array(p.insights.prefix(2))) { it in
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Image(systemName: it.icon).font(.system(size: 11)).foregroundStyle(it.good ? Color.green : Brand.orange).frame(width: 14)
-                    Text(it.text).font(.caption).foregroundStyle(.primary.opacity(0.85)).lineSpacing(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                .padding(.top, 2)
+                .help(p.insights.prefix(2).map(\.text).joined(separator: "\n\n"))
             }
         }
     }
@@ -1677,26 +1529,147 @@ private struct HourlyRateCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// 一行「名称 已做 / 目标」+ 细进度条；`mark` 是按前置节奏此刻该做到的位置
-    private func goalBar(_ name: String, done: Int, total: Int, mark: Int?) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 5) {
-                Text(name).font(.caption).foregroundStyle(.secondary)
+    private static func hm(_ m: Int) -> String { String(format: "%d:%02d", m / 60, m % 60) }
+
+    /// 今天：上班到下班的时间轴。深色块 = 已经专注的时段，浅色块 = 还差的量从现在往后铺；铺过 12 点线变红 = 上午装不下
+    private func todayChart(_ p: WorkPace) -> some View {
+        let remain = max(p.goalMin - p.todayMin, 0)
+        let span = Double(max(p.endMin - p.startMin, 1))
+        let from = max(p.nowMin, p.startMin)
+        let toNoon = max(WorkPace.noon - from, 0)
+        let late = p.phase != .after && p.nowMin < WorkPace.noon && remain > toNoon
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("今天").font(.caption).foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                Text("\(DashboardCard.fmt(done)) / \(DashboardCard.fmt(total))").font(.caption.weight(.semibold)).monospacedDigit()
-            }
-            GeometryReader { g in
-                let w = g.size.width
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.08))
-                    Capsule().fill(done >= total ? Color.green : Brand.orange).frame(width: max(done > 0 ? 4 : 0, w * min(Double(done) / Double(max(total, 1)), 1)))
-                    if let mark, mark > 0, mark < total {
-                        Rectangle().fill(Color.primary.opacity(0.45)).frame(width: 1.5, height: 8).offset(x: w * Double(mark) / Double(total) - 0.75)
+                if remain == 0 {
+                    Label("已做完 \(WorkPace.clock(p.todayMin))", systemImage: "checkmark.circle.fill")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.green)
+                } else {
+                    Text("还差 \(WorkPace.clock(remain))").font(.caption.weight(.bold)).monospacedDigit()
+                    if p.phase != .after, p.nowMin < WorkPace.noon {
+                        Text("离 12 点 \(WorkPace.clock(toNoon))").font(.caption.weight(.semibold)).monospacedDigit()
+                            .foregroundStyle(late ? Color.red : Color.secondary)
                     }
                 }
             }
-            .frame(height: 4)
-            .help(mark.map { "竖线 = 按「趁早做完」，此刻该做到 \(DashboardCard.fmt($0))" } ?? "")
+            GeometryReader { g in
+                let w = g.size.width
+                let x = { (m: Int) -> CGFloat in w * CGFloat(min(max(Double(m - p.startMin) / span, 0), 1)) }
+                let seg = { (a: Int, b: Int, c: Color) -> AnyView in
+                    AnyView(RoundedRectangle(cornerRadius: 3, style: .continuous).fill(c)
+                        .frame(width: max(x(b) - x(a), 0)).offset(x: x(a)))
+                }
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color.primary.opacity(0.06))
+                    seg(p.startMin, WorkPace.noon, Brand.orange.opacity(0.10))
+                    if remain > 0, p.phase != .after {
+                        let to = min(from + remain, p.endMin)
+                        if from < WorkPace.noon {
+                            seg(from, min(to, WorkPace.noon), Brand.orange.opacity(0.35))
+                            if to > WorkPace.noon { seg(WorkPace.noon, to, Color.red.opacity(0.35)) }
+                        } else {
+                            seg(from, to, Brand.orange.opacity(0.35))
+                        }
+                    }
+                    ForEach(p.todayBlocks) { b in seg(b.start, b.start + max(b.len, 4), Brand.orange) }
+                    Rectangle().fill(Color.primary.opacity(0.28)).frame(width: 1).offset(x: x(WorkPace.noon))
+                    if p.phase == .working {
+                        Capsule().fill(Color.primary).frame(width: 2.5, height: 20).offset(x: x(p.nowMin) - 1.25)
+                    }
+                }
+            }
+            .frame(height: 16)
+            GeometryReader { g in
+                let w = g.size.width
+                let noonX = w * CGFloat(Double(WorkPace.noon - p.startMin) / Double(max(p.endMin - p.startMin, 1)))
+                ZStack(alignment: .leading) {
+                    Text(Self.hm(p.startMin)).frame(maxWidth: .infinity, alignment: .leading)
+                    Text("12:00").position(x: noonX, y: 6)
+                    Text(Self.hm(p.endMin)).frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .font(.system(size: 10)).monospacedDigit().foregroundStyle(.tertiary)
+            }
+            .frame(height: 12)
+        }
+    }
+
+    /// 本周：累计专注曲线。虚线 = 按「趁早做完」到此刻该有的累计，橙线 = 实际；两条线之间的缺口就是落后
+    private func weekChart(_ p: WorkPace) -> some View {
+        var planM: [Int] = [], actualM: [Int?] = []
+        var cp = 0, ca = 0
+        for d in p.weekDays {
+            if d.quota { cp += p.goalMin }
+            ca += d.work
+            planM.append(d.isToday && p.personalToday ? p.weekExpectedMin : cp)
+            actualM.append(d.future ? nil : ca)
+        }
+        let plan = planM, actual = actualM
+        let gap = p.weekDoneMin - p.weekExpectedMin
+        let finished = p.weekDoneMin >= p.weekQuotaMin
+        let peak = Double(max(p.weekQuotaMin, p.weekDoneMin, 1))
+        let count = max(p.weekDays.count, 1)
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("本周").font(.caption).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                if finished {
+                    Label("已做完", systemImage: "checkmark.circle.fill").font(.caption.weight(.semibold)).foregroundStyle(.green)
+                } else if abs(gap) >= 15 {
+                    Text("\(gap < 0 ? "落后" : "领先") \(WorkPace.clock(abs(gap)))")
+                        .font(.caption.weight(.bold)).monospacedDigit().foregroundStyle(gap < 0 ? Color.red : Color.green)
+                }
+                Text("\(WorkPace.clock(p.weekDoneMin)) / \(WorkPace.clock(p.weekQuotaMin))")
+                    .font(.caption.weight(.semibold)).monospacedDigit()
+            }
+            GeometryReader { g in
+                let w = g.size.width, h = g.size.height
+                let px = { (i: Int) -> CGFloat in w * (CGFloat(i) + 0.5) / CGFloat(count) }
+                let py = { (v: Int) -> CGFloat in 4 + (h - 8) * (1 - CGFloat(Double(v) / peak)) }
+                let planPath = Path { path in
+                    path.move(to: CGPoint(x: 0, y: py(0)))
+                    for (i, v) in plan.enumerated() { path.addLine(to: CGPoint(x: px(i), y: py(v))) }
+                }
+                let pts: [CGPoint] = actual.enumerated().compactMap { i, v in v.map { CGPoint(x: px(i), y: py($0)) } }
+                ZStack(alignment: .topLeading) {
+                    Path { path in
+                        path.move(to: CGPoint(x: 0, y: py(p.weekQuotaMin)))
+                        path.addLine(to: CGPoint(x: w, y: py(p.weekQuotaMin)))
+                    }
+                    .stroke(Color.primary.opacity(0.12), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                    planPath.stroke(Color.primary.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round, dash: [4, 3]))
+                    if let last = pts.last {
+                        Path { path in
+                            path.move(to: CGPoint(x: 0, y: py(0)))
+                            for q in pts { path.addLine(to: q) }
+                            path.addLine(to: CGPoint(x: last.x, y: py(0)))
+                            path.closeSubpath()
+                        }
+                        .fill(LinearGradient(colors: [Brand.orange.opacity(0.22), Brand.orange.opacity(0.02)], startPoint: .top, endPoint: .bottom))
+                        Path { path in
+                            path.move(to: CGPoint(x: 0, y: py(0)))
+                            for q in pts { path.addLine(to: q) }
+                        }
+                        .stroke(Brand.orange, style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+                        Circle().fill(Brand.orange).frame(width: 7, height: 7).position(last)
+                        if p.personalToday, gap <= -15, let ti = p.weekDays.firstIndex(where: \.isToday) {
+                            Path { path in
+                                path.move(to: CGPoint(x: px(ti), y: py(plan[ti])))
+                                path.addLine(to: CGPoint(x: px(ti), y: last.y))
+                            }
+                            .stroke(Color.red.opacity(0.7), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        }
+                    }
+                }
+            }
+            .frame(height: 52)
+            HStack(spacing: 0) {
+                ForEach(p.weekDays) { d in
+                    Text(d.label).font(.system(size: 10, weight: d.isToday ? .bold : .regular))
+                        .foregroundStyle(d.isToday ? Brand.orange : (d.quota ? Color.secondary : Color.secondary.opacity(0.45)))
+                        .frame(maxWidth: .infinity)
+                }
+            }
         }
     }
 
@@ -2542,81 +2515,6 @@ struct GlassActionStyle: ButtonStyle {
             .glassCard(radius: 12)
             .opacity(enabled ? (configuration.isPressed ? 0.6 : 1) : 0.45)
             .contentShape(Rectangle())
-    }
-}
-
-private struct FocusStartButton: View {
-    @EnvironmentObject var model: AppModel
-    @ObservedObject var focus: FocusStore
-
-    private var running: Bool { focus.run != nil && !(focus.run?.kind.isBreak ?? true) }
-
-    var body: some View {
-        let breakKind = focus.pendingBreak
-        let title = running ? "专注中" : (breakKind != nil ? "休息 \(focus.minutes) 分" : "专注 \(focus.minutes) 分")
-        let icon = running ? "timer" : (breakKind != nil ? "cup.and.saucer.fill" : "play.fill")
-        let primary = {
-            if running { model.selectedProject = nil; model.section = .focus }
-            else if breakKind != nil { focus.start() }
-            else { focus.quickFocus(focus.minutes) }
-        }
-        Group {
-            if running {
-                Button(action: primary) { Label(title, systemImage: icon) }
-                    .buttonStyle(GlassActionStyle())
-            } else {
-                // 主按钮 + 右边的下拉：自己拼，字体才能和旁边的按钮一致（系统的菜单按钮标签不吃字体设置）
-                HStack(spacing: 8) {
-                    Button(action: primary) { Label(title, systemImage: icon) }
-                        .buttonStyle(.plain)
-                    Menu {
-                        if let b = breakKind {
-                            Button("开始\(b.label) \(focus.minutes) 分钟") { focus.start() }
-                            Divider()
-                        }
-                        ForEach(FocusStore.choices, id: \.self) { m in
-                            Button((breakKind != nil ? "跳过休息，专注 " : "专注 ") + "\(m) 分钟") { focus.quickFocus(m) }
-                        }
-                        Divider()
-                        Button("打开专注页") { model.selectedProject = nil; model.section = .focus }
-                    } label: {
-                        Image(systemName: "chevron.down").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
-                    }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                }
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 12).frame(height: 28)
-                .glassCard(radius: 12)
-            }
-        }
-        .help(running ? "专注进行中，点击打开专注页" : "按上次的时长开始专注，右边的箭头可以选时间")
-    }
-}
-
-private struct QuickButton: View {
-    let icon: String
-    let tint: Color
-    let title: String
-    let action: () -> Void
-    @State private var hover = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 26, height: 26)
-                    .background(tint.gradient, in: Circle())
-                Text(title).font(.callout.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 9)
-            .frame(maxWidth: .infinity)
-            .glassCard(radius: 12, tint: hover ? Brand.orange.opacity(0.10) : nil)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hover = $0 }
     }
 }
 

@@ -4,7 +4,7 @@ import SwiftUI
 /// 应用内（菜单栏里的）快捷键：可以在「设置 → 通用」里改。全局快捷键另有一套（Carbon 热键，见 GlobalHotkey）。
 enum AppShortcutID: String, CaseIterable, Identifiable {
     case quickAdd, note, todo, daily, refresh, settings, mainWindow
-    case pageToday, pageFocus, pageTodos, pageCalendar, pageInsights, pageWorkbench, pageReading
+    case pageToday, pageFocus, pageCalendar, pageInsights, pageWorkbench, pageReading
 
     var id: String { rawValue }
 
@@ -13,7 +13,6 @@ enum AppShortcutID: String, CaseIterable, Identifiable {
         switch self {
         case .pageToday: return .today
         case .pageFocus: return .focus
-        case .pageTodos: return .todos
         case .pageCalendar: return .calendar
         case .pageInsights: return .insights
         case .pageWorkbench: return .workbench
@@ -56,7 +55,6 @@ enum AppShortcutID: String, CaseIterable, Identifiable {
         case .mainWindow: return AppShortcut(key: "0", mods: cmd)
         case .pageToday: return AppShortcut(key: "1", mods: cmd)
         case .pageFocus: return AppShortcut(key: "2", mods: cmd)
-        case .pageTodos: return AppShortcut(key: "3", mods: cmd)
         case .pageCalendar: return AppShortcut(key: "4", mods: cmd)
         case .pageInsights: return AppShortcut(key: "6", mods: cmd)
         case .pageWorkbench: return AppShortcut(key: "7", mods: cmd)

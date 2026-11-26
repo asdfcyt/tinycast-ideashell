@@ -44,6 +44,14 @@ struct RootView: View {
                     }
                     // 刷新放在右边；搜索框由页面自己的 .searchable 放在最右边
                     ToolbarItemGroup(placement: .primaryAction) {
+                        if model.section == .today && model.hasDida {
+                            Button { model.showReplan = true } label: { Image(systemName: "calendar.badge.clock") }
+                                .disabled(model.scheduling || model.overview == nil)
+                                .help("重新规划：把待办重新排进今天")
+                            Button { model.showQuickStart = true } label: { Image(systemName: "bolt.fill") }
+                                .disabled(model.overview == nil)
+                                .help("快速启动：让 AI 梳理今天的待办、最近的笔记和 Daily Note，无压力地开始")
+                        }
                         Button {
                             Task { await model.refreshAll() }
                         } label: {
@@ -76,7 +84,7 @@ struct RootView: View {
 
     private func badge(_ s: AppSection) -> Int {
         switch s {
-        case .todos: return model.overview?.overdue.count ?? 0
+        case .calendar: return model.overview?.overdue.count ?? 0
         // 等你拍板的审批 + 没处理的验收卡
         case .workbench: return agents.pending.count + agents.completions.count
         default: return 0
@@ -86,7 +94,6 @@ struct RootView: View {
     @ViewBuilder private var detail: some View {
         switch model.section {
         case .today: TodayView()
-        case .todos: TodosView()
         case .calendar: CalendarView()
         case .insights: InsightsView()
         case .reading: ReadingView()
