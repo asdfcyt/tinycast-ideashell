@@ -421,7 +421,18 @@ final class QuickAddPanelController: ObservableObject {
             p.makeFirstResponder(tv)
             // 面板不激活应用时，输入法默认还挂在原来的 App 上：显式把输入上下文切到这个输入框
             tv.inputContext?.activate()
+            tv.inputContext?.invalidateCharacterCoordinates()
         }
+    }
+
+    /// 让输入法重新取光标位置：窗口大小变了之后，SwiftUI 要过一会儿才把输入框摆到新位置，所以立刻和稍后各刷新一次
+    private func refreshIMEPosition() {
+        func refresh() {
+            guard let root = panel?.contentView, let tv = Self.firstTextView(in: root) else { return }
+            tv.inputContext?.invalidateCharacterCoordinates()
+        }
+        refresh()
+        for d in [0.03, 0.12, 0.3] { DispatchQueue.main.asyncAfter(deadline: .now() + d) { refresh() } }
     }
 
     private static func firstTextView(in view: NSView) -> NSTextView? {
@@ -439,6 +450,8 @@ final class QuickAddPanelController: ObservableObject {
         f.size.height = h + Self.shadowInset * 2
         f.origin.y = top - f.size.height
         p.setFrame(f, display: true)
+        // 窗口位置 / 大小变了：让输入法重新取光标位置（否则第一次打字时候选框会停在屏幕左下角）
+        refreshIMEPosition()
         if revealPending { reveal() }
     }
 

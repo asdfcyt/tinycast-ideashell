@@ -158,7 +158,7 @@ final class AppModel: ObservableObject {
         }
     }
     /// 「项目进展」的算结果缓存：它要把每个项目和每条待办两两比对，今天页每次重绘都算会很吃 CPU；待办 / 项目变了才作废
-    var projectProgressMemo: Double??
+    var projectProgressMemo: [Double]?
     /// 今天页的过滤 / 排序结果缓存，见 TodayData.swift；待办 / 笔记 / 今天的 Daily Note 变了就作废
     var todayMemo: (day: String, data: TodayData)?
     @Changed var todosLoading = false

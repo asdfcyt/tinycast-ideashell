@@ -105,6 +105,8 @@ struct ComposerTextView: NSViewRepresentable {
                 MainActor.assumeIsolated {
                     guard let coordinator, let tv else { return }
                     coordinator.sync(from: tv)
+                    // 输入窗长高 / 挪动后 SwiftUI 才把输入框摆到新位置：这时候再让输入法重新取一次光标位置
+                    if tv.hasMarkedText() { tv.inputContext?.invalidateCharacterCoordinates() }
                 }
             }
             DispatchQueue.main.async { [weak coordinator = context.coordinator, weak tv] in
@@ -237,7 +239,42 @@ final class ComposerNSTextView: NSTextView {
 
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        // 输入窗刚弹出时窗口位置还在变（先摆好再长高），输入法会拿着旧位置把候选框画在屏幕左下角：每次开始 / 更新拼音都让它重新问一遍光标在哪
+        inputContext?.invalidateCharacterCoordinates()
         onTextChange?()
+    }
+
+    /// 输入法候选框的位置：系统给的矩形不在本窗口附近（输入窗刚出现、还没排版好时会是 (0,0)，候选框就停在屏幕左下角）时，按光标处自己算。
+    /// 输入窗刚长高时 SwiftUI 还没把输入框摆到新位置，算出来会偏到窗口外面：先强制排一次版，还不对就夹回窗口顶部附近
+    override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        let r = super.firstRect(forCharacterRange: range, actualRange: actualRange)
+        guard let w = window else { return r }
+        if w.frame.insetBy(dx: -80, dy: -80).contains(NSPoint(x: r.midX, y: r.midY)), !(r.origin.x == 0 && r.origin.y == 0) { return r }
+        // 按协议告诉输入法：这个矩形对应的就是它问的那段文字
+        actualRange?.pointee = range
+
+        func caretRect() -> NSRect {
+            var local = NSRect(x: textContainerOrigin.x + 2, y: textContainerOrigin.y,
+                               width: 1, height: ceil(baseFont.ascender - baseFont.descender + baseFont.leading))
+            let ns = string as NSString
+            if let lm = layoutManager, let tc = textContainer, lm.numberOfGlyphs > 0, range.location > 0, ns.length > 0 {
+                let gr = lm.glyphRange(forCharacterRange: NSRange(location: min(range.location, ns.length) - 1, length: 1), actualCharacterRange: nil)
+                let b = lm.boundingRect(forGlyphRange: gr, in: tc)
+                local = NSRect(x: b.maxX + textContainerOrigin.x, y: b.minY + textContainerOrigin.y, width: 1, height: max(b.height, local.height))
+            }
+            return w.convertToScreen(convert(local, to: nil))
+        }
+        let inside = w.frame.insetBy(dx: -4, dy: -4)
+        var out = caretRect()
+        if !inside.contains(out) {
+            w.contentView?.layoutSubtreeIfNeeded()
+            out = caretRect()
+        }
+        if !inside.contains(out) {
+            out.origin.x = min(max(out.origin.x, w.frame.minX + 8), w.frame.maxX - 40)
+            out.origin.y = min(max(out.origin.y, w.frame.minY + 8), w.frame.maxY - out.height - 34)
+        }
+        return out
     }
 
     override func unmarkText() {

@@ -44,6 +44,8 @@ final class UniversalSearch: ObservableObject {
     @Published private(set) var searchedQuery = ""
 
     private var generation = 0
+    /// 当前关键词拆出来的词：排序时用来把「字面上真的包含关键词」的结果顶到最前面
+    private var rankTerms: [String] = []
     private var work: Task<Void, Never>?
     private var bySource: [SearchItem.Source: [SearchItem]] = [:]
 
@@ -59,6 +61,7 @@ final class UniversalSearch: ObservableObject {
         generation += 1
         let gen = generation
         guard !q.isEmpty else { reset(); return }
+        rankTerms = Self.terms(q)
         // 本机的来源（待办缓存 / 日记）不用等：立刻出结果，网络来源再等输入稳定
         showLocal(q, gen: gen, model: model)
         work = Task { [weak self] in
@@ -88,8 +91,22 @@ final class UniversalSearch: ObservableObject {
         publish()
     }
 
+    /// 排序分：来源给的分数 + 字面命中加分。语义搜索（笔记）会把「意思相近但根本没有这个词」的排在前面，
+    /// 默认选中的第一条就不是想找的；标题里直接有关键词的最先，正文 / 摘要里有的其次
+    private func rank(_ it: SearchItem) -> Double {
+        guard !rankTerms.isEmpty else { return it.score }
+        let title = it.title.lowercased()
+        if rankTerms.allSatisfy({ title.contains($0) }) { return it.score + 100 }
+        let body = title + " " + it.snippet.lowercased() + " " + it.context.lowercased()
+        if rankTerms.allSatisfy({ body.contains($0) }) { return it.score + 40 }
+        return it.score
+    }
+
     private func publish() {
-        items = bySource.values.flatMap { $0 }.sorted { $0.score != $1.score ? $0.score > $1.score : $0.id < $1.id }
+        items = bySource.values.flatMap { $0 }
+            .map { (item: $0, rank: rank($0)) }
+            .sorted { $0.rank != $1.rank ? $0.rank > $1.rank : $0.item.id < $1.item.id }
+            .map(\.item)
     }
 
     private func run(_ q: String, gen: Int, model: AppModel, includeData: Bool, currentOnly: Bool) async {

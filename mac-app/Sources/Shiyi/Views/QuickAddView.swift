@@ -58,6 +58,11 @@ struct QuickAddView: View {
     @State private var searchOn = false
     @State private var searchFilter: SearchFilter = .all
     @State private var searchSel = 0
+    /// 「用以下方式使用」候选列表里选中的那一行（↑↓ 选、↩ 执行；输入变了回到第一行 = 默认动作）
+    @State private var candSel = 0
+    /// 用户自己按过 ↑↓ 挪过选中项：之后结果陆续到达、重新排序时，选中的那一条跟着内容走；没挪过就始终是第一条（最相关的）
+    @State private var searchTouched = false
+    @State private var searchSelID: String?
     @AppStorage("search.includeData") private var searchData = false
     @AppStorage("search.currentOnly") private var searchCurrent = false
     /// 输入框里插入的图片（结审类型支持图文混排）：text 里每个 U+FFFC 对应一张
@@ -116,6 +121,13 @@ struct QuickAddView: View {
         return nil
     }
     private var searchActive: Bool { searchQuery != nil }
+
+    /// 计算器：整段输入是个算式（没写前缀、没手动选类型、不在搜索 / 便签 / 专注记录里）就直接给结果，↩ 复制。
+    /// 想把算式本身记下来：Tab 选一个类型即可
+    private func calc(_ a: CaptureAnalysis) -> CalcResult? {
+        guard record == nil, note == nil, override == nil, a.forced == nil, !searchActive, images.isEmpty, material == nil else { return nil }
+        return Calculator.evaluate(ComposerImage.stripMarker(text))
+    }
     /// 「全部」里每个来源最多列几条（免得某一个来源把别的挤到下面看不见）；单选某个分类时全列
     private static let perSourceCap = 8
     private var searchVisible: [SearchItem] {
@@ -206,8 +218,15 @@ struct QuickAddView: View {
 
             // 提示行：空的时候给几个例子，写了字就显示识别结果
             if searchQuery == nil, note?.bound != true, k != .agent {
-                hintRow(a, k)
-                    .padding(.horizontal, compact ? 12 : 18).padding(.top, 6)
+                if calc(a) == nil {
+                    hintRow(a, k)
+                        .padding(.horizontal, compact ? 12 : 18).padding(.top, 6)
+                }
+                let list = candidates(a, k)
+                if !list.isEmpty {
+                    candidateList(list)
+                        .padding(.horizontal, compact ? 8 : 12).padding(.top, 6)
+                }
             }
 
             if searchQuery == nil, k == .agent, let m = material {
@@ -236,7 +255,7 @@ struct QuickAddView: View {
         }
         .frame(width: compact ? nil : 480)
         .frame(maxHeight: note != nil ? .infinity : nil)
-        .onChange(of: override) { _, new in onKindChange?(new) }
+        .onChange(of: override) { _, new in onKindChange?(new); candSel = 0 }
         .background(NoteKindReporter(kind: noteKind, report: note?.onKind))
         .onChange(of: searchOn) { _, on in onSearchChange?(on ? searchFilter : nil) }
         .onChange(of: searchFilter) { _, f in if searchOn { onSearchChange?(f) } }
@@ -244,10 +263,19 @@ struct QuickAddView: View {
         .onChange(of: searchData) { _, _ in triggerSearch() }
         .onChange(of: searchCurrent) { _, _ in triggerSearch() }
         .onChange(of: search.items) { _, _ in
-            let n = searchVisible.count
-            if searchSel >= n { searchSel = max(n - 1, 0) }
+            let list = searchVisible
+            if !searchTouched {
+                searchSel = 0
+            } else if let id = searchSelID, let i = list.firstIndex(where: { $0.id == id }) {
+                searchSel = i
+            } else if searchSel >= list.count {
+                searchSel = max(list.count - 1, 0)
+            }
         }
-        .onChange(of: searchFilter) { _, _ in searchSel = 0 }
+        .onChange(of: searchSel) { _, i in
+            if searchTouched, searchVisible.indices.contains(i) { searchSelID = searchVisible[i].id }
+        }
+        .onChange(of: searchFilter) { _, _ in searchSel = 0; searchTouched = false; searchSelID = nil }
         // 语音听写（麦克风按钮，或输入窗开着时按语音快捷键）：说的话追加到输入框，可以直接说「证据，…」「想法，…」带类型口令
         .onChange(of: model.quickAddInsert) { _, new in
             guard !new.isEmpty, record == nil else { return }
@@ -264,6 +292,7 @@ struct QuickAddView: View {
             if note?.bound != true, !text.trimmed.isEmpty { submitFromKeyboard() }
         }
         .onChange(of: text) { _, new in
+            candSel = 0
             // 开头写了搜索前缀（ss / sj / sn / sd / sr / 搜 / ?）加空格：直接切到搜索，前缀不留在输入框里
             if record == nil, note == nil, !searchOn, let p = SearchFilter.parsePrefix(new) {
                 searchOn = true
@@ -733,7 +762,10 @@ struct QuickAddView: View {
         }
         if let record { if !model.recording { recordSubmit(record) }; return }
         let a = analysis
-        submit(a, kind(a))
+        let k = kind(a)
+        let list = candidates(a, k)
+        if !list.isEmpty { runCandidate(list[min(candSel, list.count - 1)]); return }
+        primarySubmit(a, k)
     }
 
     private func recordSubmit(_ f: FocusStore) {
@@ -905,7 +937,7 @@ struct QuickAddView: View {
     private func submitButton(_ a: CaptureAnalysis, _ k: CaptureKind) -> some View {
         let disabled = submitting || (text.trimmed.isEmpty && !(k == .agent && material != nil))
         return Button {
-            submit(a, k)
+            primarySubmit(a, k)
         } label: {
             HStack(spacing: 6) {
                 if submitting { ProgressView().controlSize(.small) } else { Text(submitLabel(k, a)).font(.callout.weight(.semibold)).lineLimit(1).fixedSize() }
@@ -955,6 +987,11 @@ struct QuickAddView: View {
     }
 
     private func submitLabel(_ k: CaptureKind, _ a: CaptureAnalysis) -> String {
+        if calc(a) != nil { return "复制结果" }
+        return actionTitle(k, a)
+    }
+
+    private func actionTitle(_ k: CaptureKind, _ a: CaptureAnalysis) -> String {
         if note != nil {
             // 便签很窄：类型已经在左边的按钮上了，提交按钮只写一个动作
             switch k {
@@ -975,20 +1012,173 @@ struct QuickAddView: View {
         }
     }
 
+    // MARK: - 计算器 / 候选列表
+
+    /// 候选动作里的一行
+    private enum CandAction { case calc(CalcResult), kind(CaptureKind), search, agent(DispatchTarget), web(String) }
+    private struct Candidate: Identifiable {
+        let id: String
+        let icon: String
+        let title: String
+        var detail = ""
+        let tint: Color
+        /// 计算结果：字号放大
+        var big = false
+        let action: CandAction
+    }
+
+    /// 输入一行字之后的「用以下方式使用「…」」：第一行是默认动作（↩ 就是原来的提交，算式则是复制结果），
+    /// 后面是改成别的类型、搜索、派给 Agent、网页搜索。多行 / 带图片 / 搜索中 / 便签 / 专注记录里不出现
+    private func candidates(_ a: CaptureAnalysis, _ k: CaptureKind) -> [Candidate] {
+        guard record == nil, note == nil, !searchActive, images.isEmpty, material == nil, k != .agent, !submitting else { return [] }
+        let q = text.trimmed
+        guard !q.isEmpty, !q.contains("\n") else { return [] }
+        var out: [Candidate] = []
+        if let c = calc(a) {
+            out.append(Candidate(id: "calc", icon: "equal", title: "= " + c.display, detail: "复制结果", tint: Brand.orangeDeep, big: true, action: .calc(c)))
+        }
+        // 其余类型只列日常三类（结审的四类用 Tab / 底栏菜单切，免得列表太长）
+        for c in [k] + CaptureKind.available(sjz: false).filter({ $0 != k }) {
+            var detail = ""
+            if c == k, c == .todo {
+                let date = a.todo.date ?? defaultDate
+                detail = date.map { Day.label($0) + ((a.todo.time ?? (a.todo.date == nil ? defaultTime : nil)).map { " " + $0 } ?? "") } ?? "无日期 · 收集箱"
+            }
+            out.append(Candidate(id: "kind." + c.rawValue, icon: c.icon, title: actionTitle(c, a), detail: detail, tint: c.isSjz ? Color.indigo : Brand.orange, action: .kind(c)))
+        }
+        out.append(Candidate(id: "search", icon: "magnifyingglass", title: "搜索「\(Self.shortened(q))」", detail: "", tint: Color.indigo, action: .search))
+        for t in agentTargets {
+            out.append(Candidate(id: "agent." + t.id, icon: t.icon, title: "派给 \(t.title)", detail: t.isCommand ? "选目录再发" : "", tint: t.color, action: .agent(t)))
+        }
+        out.append(Candidate(id: "web.google", icon: "globe", title: "Google 搜索", detail: "", tint: .secondary, action: .web("google")))
+        out.append(Candidate(id: "web.baidu", icon: "globe.asia.australia", title: "百度搜索", detail: "", tint: .secondary, action: .web("baidu")))
+        return out
+    }
+
+    private static func shortened(_ s: String, _ n: Int = 16) -> String { s.count > n ? String(s.prefix(n)) + "…" : s }
+
+    private func candidateList(_ list: [Candidate]) -> some View {
+        let sel = min(candSel, list.count - 1)
+        return VStack(alignment: .leading, spacing: 1) {
+            if calc(analysis) == nil {
+                Text("用以下方式使用「\(Self.shortened(text.trimmed, 20))」…")
+                    .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                    .padding(.horizontal, 8).padding(.bottom, 2)
+            }
+            ForEach(Array(list.enumerated()), id: \.element.id) { i, c in
+                candidateRow(c, selected: i == sel)
+                    .onTapGesture { candSel = i; runCandidate(c) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func candidateRow(_ c: Candidate, selected: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: c.icon)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(c.tint)
+                .frame(width: 22, height: 22)
+                .background(c.tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            Text(c.title)
+                .font(c.big ? .system(size: 19, weight: .semibold, design: .rounded).monospacedDigit() : .system(size: 12.5, weight: selected ? .semibold : .medium))
+                .lineLimit(1).truncationMode(.middle).minimumScaleFactor(c.big ? 0.6 : 1)
+            Spacer(minLength: 6)
+            if !c.detail.isEmpty { Text(c.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+            if selected { Text("↩").font(.caption2).foregroundStyle(.tertiary) }
+        }
+        .padding(.horizontal, 7).padding(.vertical, c.big ? 5 : 3.5)
+        .background(selected ? Brand.orange.opacity(0.14) : Color.clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+    }
+
+    private func runCandidate(_ c: Candidate) {
+        let a = analysis
+        switch c.action {
+        case let .calc(r): copyCalc(r)
+        case let .kind(k): submit(a, k)
+        case .search:
+            searchOn = true
+            searchFilter = .all
+            override = nil
+            searchSel = 0
+            focusTick += 1
+        case let .agent(t):
+            var b = a
+            b.agentTarget = t
+            lastTarget = t.rawValue
+            if t.isCommand {
+                // 命令行 Agent 要先选工作目录 / 会话：切到派活模式，在底栏选好再发
+                override = .agent
+                focusTick += 1
+            } else {
+                submitAgent(b)
+            }
+        case let .web(engine): openWeb(engine)
+        }
+    }
+
+    /// 默认动作：算式 → 复制结果，否则按识别 / 选中的类型提交
+    private func primarySubmit(_ a: CaptureAnalysis, _ k: CaptureKind) {
+        if let c = calc(a) { copyCalc(c) } else { submit(a, k) }
+    }
+
+    private func openWeb(_ engine: String) {
+        let q = text.trimmed
+        let allowed = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&+=#?/"))
+        guard let enc = q.addingPercentEncoding(withAllowedCharacters: allowed),
+              let url = URL(string: (engine == "baidu" ? "https://www.baidu.com/s?wd=" : "https://www.google.com/search?q=") + enc) else { return }
+        NSWorkspace.shared.open(url)
+        finish("已在浏览器搜索「\(Self.shortened(q))」")
+    }
+
+    private func copyCalc(_ c: CalcResult) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(c.plain, forType: .string)
+        finish("已复制 " + c.display)
+    }
+
+    /// 不经过发件箱的收尾（复制 / 打开网页）：清空输入框，按所在形态提示并关闭
+    private func finish(_ msg: String) {
+        _ = CaptureOutbox.shared.takeSubmitted()   // 别让提示条上出现上一次保存的「撤销」
+        text = ""
+        images = []
+        if let onSubmitted {
+            onSubmitted(msg)
+        } else if let onDone {
+            model.showNotice(msg)
+            onDone()
+        } else {
+            okText = msg
+            focusTick += 1
+        }
+    }
+
     // MARK: - 全能搜索
 
     private func triggerSearch() {
-        guard let q = searchQuery else { search.reset(); searchSel = 0; return }
+        guard let q = searchQuery else { search.reset(); searchSel = 0; searchTouched = false; searchSelID = nil; return }
         searchSel = 0
+        searchTouched = false
+        searchSelID = nil
         search.update(q, model: model, includeData: searchData, currentOnly: searchCurrent)
     }
 
     /// 上 / 下方向键：在结果里挪选中项（只在搜索时接管，其他时候照常移动光标）
     private func moveSearch(_ dir: Int) -> Bool {
-        guard searchActive else { return false }
+        // 不在搜索：有候选列表（单行输入）时 ↑↓ 在候选里选，否则照常移动光标
+        guard searchActive else {
+            let a = analysis
+            let n = candidates(a, kind(a)).count
+            guard n > 0 else { return false }
+            candSel = (min(candSel, n - 1) + dir + n) % n
+            return true
+        }
         let n = searchVisible.count
         guard n > 0 else { return true }
+        searchTouched = true
         searchSel = (searchSel + dir + n) % n
+        searchSelID = searchVisible[searchSel].id
         return true
     }
 
