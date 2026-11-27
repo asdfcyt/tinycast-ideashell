@@ -40,12 +40,7 @@ private val REVISIT_LIMIT_PRESETS = listOf(3, 5, 8, 10, 15, 20)
 private val REVISIT_RETENTION_PRESETS = listOf(80, 85, 90, 95)
 
 /** 首页「重温」那一行的状态摘要 */
-internal fun SettingsEnv.revisitSummary(today: RevisitToday): String = when {
-    today.remaining > 0 -> "今天有 ${today.remaining} 条待重温"
-    today.total == 0 -> "还没有加入的内容"
-    today.doneToday > 0 -> "今天已完成 · 共 ${today.total} 条"
-    else -> "今天没有待重温的 · 共 ${today.total} 条"
-} + if (settings.revisitReminder) " · 每天 ${formatClock(settings.revisitReminderMinutes)} 提醒" else ""
+internal fun SettingsEnv.revisitSummary(today: RevisitToday): String = ""
 
 @Composable
 internal fun RevisitSection(env: SettingsEnv) {
@@ -96,12 +91,7 @@ internal fun RevisitSection(env: SettingsEnv) {
         SettingsItem(
             iconRes = R.drawable.ic_revisit,
             title = "开始重温",
-            summary = when {
-                revisitToday.remaining > 0 -> "今天 ${revisitToday.remaining} 条待重温"
-                revisitToday.total == 0 -> "还没有内容"
-                revisitToday.doneToday > 0 -> "今天已完成 · 共 ${revisitToday.total} 条"
-                else -> "今天没有待重温 · 共 ${revisitToday.total} 条"
-            },
+            summary = "",
             onClick = env.onOpenRevisit,
         )
         SettingsItem(
@@ -141,7 +131,7 @@ internal fun RevisitSection(env: SettingsEnv) {
         )
     }
 
-    AdvancedGroup(key = "revisit", summary = "目标记忆率 · 自动挖空比例 · 全部推后 7 天") {
+    AdvancedGroup(key = "revisit", summary = "") {
         SettingsItem(
             icon = Icons.Filled.Refresh,
             title = "目标记忆率",
@@ -216,11 +206,6 @@ private fun ClozeRangeDialog(minPercent: Int, maxPercent: Int, onConfirm: (Int, 
                     onValueChange = { range = it },
                     valueRange = 5f..60f,
                     steps = 54,
-                )
-                Text(
-                    "比例小只挖关键词，比例大几乎每个词都要回忆",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         },

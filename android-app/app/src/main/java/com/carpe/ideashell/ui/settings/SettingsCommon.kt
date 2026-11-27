@@ -219,7 +219,7 @@ internal fun AdvancedGroup(key: String, summary: String, content: @Composable Co
         SettingsItem(
             icon = Icons.Filled.Build,
             title = "高级选项",
-            summary = if (open) "点一下收起" else summary,
+            summary = "",
             onClick = { open = !open },
             trailing = {
                 Icon(
