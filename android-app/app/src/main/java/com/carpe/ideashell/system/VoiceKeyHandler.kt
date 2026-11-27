@@ -79,7 +79,9 @@ class VoiceKeyHandler(private val service: AccessibilityService) {
             Toast.makeText(service, "先在拾忆里开一次语音输入，授予麦克风权限", Toast.LENGTH_LONG).show()
             return false
         }
-        if (!Settings.canDrawOverlays(service)) {
+        // 停在锁屏界面时悬浮窗看不见，不需要这个权限（走没有画面的录音：震动反馈、直接保存）
+        val locked = service.getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked == true
+        if (!locked && !Settings.canDrawOverlays(service)) {
             Toast.makeText(service, "需要先开启拾忆的「显示在其他应用上层」权限", Toast.LENGTH_LONG).show()
             return false
         }

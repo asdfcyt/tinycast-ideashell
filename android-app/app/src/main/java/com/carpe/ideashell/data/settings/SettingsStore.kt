@@ -92,6 +92,10 @@ data class AppSettings(
     /** 悬浮胶囊识别后先弹出确认卡片（可修改 / 放弃 / 重新说）；关闭则直接保存 */
     /** 音量键按住说话 */
     val voiceKey: VoiceKey = VoiceKey.OFF,
+    /** 熄屏时音量键也能按住说话：常驻一个守候服务接管熄屏后的音量键，录音结果直接保存，用震动反馈 */
+    val voiceKeyScreenOff: Boolean = false,
+    /** 熄屏时按耳机线控 / 蓝牙耳机的播放键开始录音，再按一下结束（要先开「熄屏也能用」；没在放音乐时才接管） */
+    val voiceHeadsetKey: Boolean = false,
     /** 语音识别引擎：云端 / 本地 SenseVoice / 自动（云端优先，失败时用本地） */
     val voiceEngine: VoiceEngine = VoiceEngine.AUTO,
     /** 大模型接口（OpenAI 兼容）：地址和模型名；Key 在 CredentialStore 里 */
@@ -212,6 +216,10 @@ class SettingsStore(context: Context) {
 
     fun setVoiceKey(key: VoiceKey) = update { it.copy(voiceKey = key) }
 
+    fun setVoiceKeyScreenOff(enabled: Boolean) = update { it.copy(voiceKeyScreenOff = enabled) }
+
+    fun setVoiceHeadsetKey(enabled: Boolean) = update { it.copy(voiceHeadsetKey = enabled) }
+
     fun setVoiceEngine(engine: VoiceEngine) = update { it.copy(voiceEngine = engine) }
 
     fun setCalendarSync(enabled: Boolean) = update { it.copy(calendarSync = enabled) }
@@ -266,6 +274,8 @@ class SettingsStore(context: Context) {
             .putInt(KEY_VOICEPRINT_LEVEL, next.voiceprintLevel)
             .putInt(KEY_VOICE_SILENCE_MS, next.voiceSilenceMs)
             .putString(KEY_VOICE_KEY, next.voiceKey.name)
+            .putBoolean(KEY_VOICE_KEY_SCREEN_OFF, next.voiceKeyScreenOff)
+            .putBoolean(KEY_VOICE_HEADSET_KEY, next.voiceHeadsetKey)
             .putString(KEY_LLM_BASE_URL, next.llmBaseUrl)
             .putString(KEY_LLM_MODEL, next.llmModel)
             .putBoolean(KEY_CALENDAR_SYNC, next.calendarSync)
@@ -312,6 +322,8 @@ class SettingsStore(context: Context) {
         voiceSilenceMs = prefs.getInt(KEY_VOICE_SILENCE_MS, 1500),
         voiceKey = runCatching { VoiceKey.valueOf(prefs.getString(KEY_VOICE_KEY, null).orEmpty()) }
             .getOrDefault(VoiceKey.OFF),
+        voiceKeyScreenOff = prefs.getBoolean(KEY_VOICE_KEY_SCREEN_OFF, false),
+        voiceHeadsetKey = prefs.getBoolean(KEY_VOICE_HEADSET_KEY, false),
         voiceEngine = runCatching { VoiceEngine.valueOf(prefs.getString(KEY_VOICE_ENGINE, null).orEmpty()) }
             .getOrDefault(VoiceEngine.AUTO),
         llmBaseUrl = prefs.getString(KEY_LLM_BASE_URL, null)?.ifBlank { null } ?: AppSettings.DEFAULT_LLM_BASE_URL,
@@ -426,6 +438,8 @@ class SettingsStore(context: Context) {
         const val KEY_VOICEPRINT_LEVEL = "voiceprint_level"
         const val KEY_VOICE_SILENCE_MS = "voice_silence_ms"
         const val KEY_VOICE_KEY = "voice_key"
+        const val KEY_VOICE_KEY_SCREEN_OFF = "voice_key_screen_off"
+        const val KEY_VOICE_HEADSET_KEY = "voice_headset_key"
         const val KEY_LLM_BASE_URL = "llm_base_url"
         const val KEY_LLM_MODEL = "llm_model"
         const val KEY_CALENDAR_SYNC = "calendar_sync"

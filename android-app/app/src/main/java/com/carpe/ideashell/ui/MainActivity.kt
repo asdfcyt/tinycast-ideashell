@@ -128,6 +128,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // 「熄屏也能用」开着但守候服务没在跑（刚开机 / 被系统杀了）：趁应用在前台补启动（麦克风前台服务不能在后台新建）
+        com.carpe.ideashell.system.VoiceCapsuleService.armIfEnabled(this)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)

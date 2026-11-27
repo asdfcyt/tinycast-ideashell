@@ -1,6 +1,8 @@
 package com.carpe.ideashell.ui.settings
 
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.widget.Toast
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.net.Uri
@@ -43,6 +45,7 @@ import com.carpe.ideashell.data.asr.VoiceprintModelState
 import com.carpe.ideashell.data.settings.VoiceEngine
 import com.carpe.ideashell.data.settings.VoiceKey
 import com.carpe.ideashell.system.ExcerptService
+import com.carpe.ideashell.system.VoiceCapsuleService
 import com.carpe.ideashell.ui.glass.GlassAlertDialog as AlertDialog
 
 // ───────────────────────── 文字记录 ─────────────────────────
@@ -154,6 +157,39 @@ internal fun VoiceSection(env: SettingsEnv) {
                 else dialog = VoiceDialog.Key
             },
         )
+        SettingsSwitchItem(
+            iconRes = R.drawable.ic_mic,
+            title = "熄屏也能用",
+            summary = if (settings.voiceKeyScreenOff) "已开启 · 熄屏后按住${settings.voiceKey.label}说话，震动一下开始，松手自动保存；部分手机（如荣耀）熄屏时系统吃掉了按下，改为按一下开始、说完停顿自动保存（或再按一下结束）；通知栏常驻「熄屏守候中」，放音乐时无效"
+            else "关闭 · 熄屏、锁屏时也能用上面选的音量键说话（没有画面，靠震动提示，结果直接保存）",
+            checked = settings.voiceKeyScreenOff,
+            onChange = { on ->
+                when {
+                    !on -> {
+                        container.settings.setVoiceKeyScreenOff(false)
+                        VoiceCapsuleService.disarm(context)
+                    }
+                    settings.voiceKey == VoiceKey.OFF ->
+                        Toast.makeText(context, "先在上面选一个音量键", Toast.LENGTH_SHORT).show()
+                    context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ->
+                        Toast.makeText(context, "先在拾忆里开一次语音输入，授予麦克风权限", Toast.LENGTH_LONG).show()
+                    else -> {
+                        container.settings.setVoiceKeyScreenOff(true)
+                        VoiceCapsuleService.arm(context)
+                    }
+                }
+            },
+        )
+        if (settings.voiceKeyScreenOff) {
+            SettingsSwitchItem(
+                icon = Icons.Filled.Star,
+                title = "耳机键也能录音",
+                summary = if (settings.voiceHeadsetKey) "已开启 · 熄屏时按一下耳机（线控 / 蓝牙）的播放键开始录音，再按一下结束；正在放音乐时照常控制音乐"
+                else "关闭 · 熄屏时按耳机播放键仍然是播放 / 暂停",
+                checked = settings.voiceHeadsetKey,
+                onChange = { container.settings.setVoiceHeadsetKey(it) },
+            )
+        }
         SettingsSwitchItem(
             icon = Icons.Filled.Done,
             title = "说完自动停止",

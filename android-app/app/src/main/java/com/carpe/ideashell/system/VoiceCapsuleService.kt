@@ -27,6 +27,13 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.app.KeyguardManager
+import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.widget.Toast
 import android.provider.Settings
 import android.text.InputType
 import android.text.TextUtils
@@ -109,6 +116,17 @@ class VoiceCapsuleService : Service() {
     private var shown = Shown.NONE
     private var stopping = false
     private var holdMode = false
+
+    /**
+     * 守候模式（设置里的「熄屏也能用」）：服务常驻，录完回到待机而不是退出。
+     * 麦克风前台服务不能在后台新建，所以提前在前台启动好，熄屏后音量键一按就能直接开录。
+     */
+    var armed = false
+        private set
+
+    /** 没有画面的录音（熄屏 / 锁屏）：不画胶囊，用震动反馈，结果直接保存 */
+    private var headless = false
+    private var keys: ScreenOffVoiceKeys? = null
 
     // 录音面板里要刷新的控件
     private var timerText: TextView? = null
@@ -201,9 +219,17 @@ class VoiceCapsuleService : Service() {
     /** 跟着屏幕刷新（vsync）驱动，比 Handler 定时更跟手，波形滚动不会一顿一顿 */
     private val frameCallback: Choreographer.FrameCallback = Choreographer.FrameCallback { tick.run() }
 
-    private fun scheduleTick() = Choreographer.getInstance().postFrameCallback(frameCallback)
+    /** 没有画面时屏幕不出帧（vsync 停了），改用 Handler 定时驱动（说完停顿自动结束要靠它） */
+    private val headlessTick = Runnable { tick.run() }
 
-    private fun stopTick() = Choreographer.getInstance().removeFrameCallback(frameCallback)
+    private fun scheduleTick() {
+        if (headless) handler.postDelayed(headlessTick, 50) else Choreographer.getInstance().postFrameCallback(frameCallback)
+    }
+
+    private fun stopTick() {
+        Choreographer.getInstance().removeFrameCallback(frameCallback)
+        handler.removeCallbacks(headlessTick)
+    }
 
     private val tick: Runnable = object : Runnable {
         override fun run() {
@@ -211,10 +237,10 @@ class VoiceCapsuleService : Service() {
             val v = voice ?: return
             when (v.phase) {
                 VoicePhase.RECORDING, VoicePhase.LOCKED -> {
-                    if (shown != Shown.RECORDING) renderRecording()
+                    if (!headless && shown != Shown.RECORDING) renderRecording()
                     onRecordingTick(v)
                 }
-                VoicePhase.PROCESSING -> if (shown != Shown.PROCESSING) renderProcessing()
+                VoicePhase.PROCESSING -> if (headless) shown = Shown.PROCESSING else if (shown != Shown.PROCESSING) renderProcessing()
                 VoicePhase.IDLE -> Unit
             }
             scheduleTick()
@@ -230,6 +256,11 @@ class VoiceCapsuleService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_ARM -> armService()
+            ACTION_DISARM -> {
+                settings.setVoiceKeyScreenOff(false)
+                disarm()
+            }
             ACTION_CANCEL -> {
                 voice?.cancel()
                 stopSelfClean()
@@ -253,6 +284,8 @@ class VoiceCapsuleService : Service() {
             else -> {
                 startForegroundNow()
                 val hold = intent?.getBooleanExtra(EXTRA_HOLD, false) == true
+                // 锁屏界面上（亮屏但没解锁）悬浮窗不可见：按没有画面处理
+                val noScreen = intent?.getBooleanExtra(EXTRA_HEADLESS, false) == true
                 val v = voice
                 val recording = v != null && (v.phase == VoicePhase.RECORDING || v.phase == VoicePhase.LOCKED)
                 when {
@@ -260,7 +293,7 @@ class VoiceCapsuleService : Service() {
                     recording -> if (!hold) v?.finish()
                     // 正在整理 / 等着确认：不重复开始
                     v != null && (shown == Shown.PROCESSING || shown == Shown.CONFIRM || shown == Shown.PENDING) -> Unit
-                    else -> begin(hold)
+                    else -> begin(hold, headless = noScreen)
                 }
             }
         }
@@ -272,6 +305,133 @@ class VoiceCapsuleService : Service() {
         val v = voice
         if (v != null && holdMode && (v.phase == VoicePhase.RECORDING || v.phase == VoicePhase.LOCKED)) v.finish()
         else pendingRelease = true // 录音还没真正开始就松手了：开始后立刻结束
+    }
+
+    // ───────────────────────────── 守候模式：熄屏也能用 ─────────────────────────────
+
+    private fun armService() {
+        armed = true
+        if (!startArmedForeground()) {
+            armed = false
+            if (voice == null) stopSelf()
+            return
+        }
+        if (keys == null) {
+            keys = ScreenOffVoiceKeys(
+                context = this,
+                settings = settings,
+                onHoldStart = { beginHeadlessHold() },
+                onHoldEnd = { endHeadlessHold() },
+                onToggle = { toggleHeadless() },
+            ).also { it.start() }
+        }
+    }
+
+    /** 关闭守候：不再接管熄屏的按键，没在录音就退出服务 */
+    fun disarm() {
+        armed = false
+        keys?.stop()
+        keys = null
+        stopSelfClean()
+    }
+
+    /** 待机时的常驻通知（点「关闭」就关掉熄屏守候）。启动失败（系统不允许在后台起麦克风服务）返回 false */
+    private fun startArmedForeground(refreshOnly: Boolean = false): Boolean {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(NotificationChannel(CHANNEL_ARMED, "熄屏守候", NotificationManager.IMPORTANCE_LOW))
+        val off = PendingIntent.getService(
+            this, 1, Intent(this, VoiceCapsuleService::class.java).setAction(ACTION_DISARM),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val key = settings.current.voiceKey
+        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ARMED)
+            .setSmallIcon(R.drawable.ic_stat_shiyi)
+            .setContentTitle("拾忆 · 熄屏守候中")
+            .setContentText(if (key == com.carpe.ideashell.data.settings.VoiceKey.OFF) "先在设置里选一个音量键" else "熄屏后按住${key.label}说话，松手自动保存")
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .addAction(0, "关闭", off)
+            .build()
+        // 已经是前台服务了（录完回到待机）：只换通知，不重新走一遍 startForeground
+        if (refreshOnly) {
+            nm.notify(NOTIFICATION_ID, notification)
+            return true
+        }
+        return runCatching {
+            val type = if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
+        }.onFailure {
+            Toast.makeText(this, "没能启动熄屏守候：" + (it.message ?: ""), Toast.LENGTH_LONG).show()
+        }.isSuccess
+    }
+
+    private fun canRecordHeadless(): Boolean {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            vibrate(VIB_ERROR)
+            return false
+        }
+        val v = voice
+        // 上一条还在录 / 识别 / 等确认：不重复开始
+        return !(v != null && v.phase != VoicePhase.IDLE) && shown == Shown.NONE
+    }
+
+    /** 熄屏：音量键按够长按时间 → 震一下，开始录音 */
+    private fun beginHeadlessHold() {
+        if (!canRecordHeadless()) return
+        if (startHeadless(hold = true)) vibrate(VIB_START)
+    }
+
+    /** 熄屏：音量键抬起 → 震一下，结束录音并处理 */
+    private fun endHeadlessHold() {
+        finishHeadless()
+    }
+
+    /** 耳机键：没在录就开始，在录就结束 */
+    private fun toggleHeadless() {
+        val v = voice
+        if (headless && v != null && (v.phase == VoicePhase.RECORDING || v.phase == VoicePhase.LOCKED)) {
+            finishHeadless()
+            return
+        }
+        if (!canRecordHeadless()) return
+        if (startHeadless(hold = false)) vibrate(VIB_START)
+    }
+
+    private fun startHeadless(hold: Boolean): Boolean {
+        begin(hold, headless = true)
+        val v = voice
+        val recording = v != null && (v.phase == VoicePhase.RECORDING || v.phase == VoicePhase.LOCKED)
+        // 万一松手的事件没收到，别一直录下去
+        if (recording) handler.postDelayed(maxHeadless, HEADLESS_MAX_MS)
+        return recording
+    }
+
+    private val maxHeadless = Runnable { finishHeadless() }
+
+    private fun finishHeadless() {
+        handler.removeCallbacks(maxHeadless)
+        val v = voice ?: return
+        if (headless && (v.phase == VoicePhase.RECORDING || v.phase == VoicePhase.LOCKED)) {
+            vibrate(VIB_STOP)
+            v.finish()
+        }
+    }
+
+    /** 没有画面的录音处理完了：震动告知结果，回到待机 */
+    private fun headlessDone(ok: Boolean) {
+        vibrate(if (ok) VIB_OK else VIB_ERROR)
+        stopSelfClean()
+    }
+
+    private fun vibrate(pattern: LongArray) {
+        val vibrator = if (Build.VERSION.SDK_INT >= 31) getSystemService(VibratorManager::class.java)?.defaultVibrator
+        else getSystemService(Vibrator::class.java)
+        // 用「闹钟」用途：熄屏 / 后台 / 静音模式下也会震
+        @Suppress("DEPRECATION")
+        vibrator?.vibrate(
+            VibrationEffect.createWaveform(pattern, -1),
+            AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build(),
+        )
     }
 
     private fun startForegroundNow() {
@@ -340,8 +500,9 @@ class VoiceCapsuleService : Service() {
         }
     }
 
-    private fun begin(hold: Boolean) {
-        if (!Settings.canDrawOverlays(this)) {
+    private fun begin(hold: Boolean, headless: Boolean = false) {
+        this.headless = headless
+        if (!headless && !Settings.canDrawOverlays(this)) {
             stopSelfClean()
             return
         }
@@ -351,7 +512,7 @@ class VoiceCapsuleService : Service() {
         drafts.clear()
         cancelCountdown()
         pal = resolvePalette()
-        ensureColumn()
+        if (!headless) ensureColumn()
         if (!controller.start()) return // start() 已经通过 onError 说明了原因
         recStart = SystemClock.uptimeMillis()
         lastTimerSec = -1
@@ -359,7 +520,7 @@ class VoiceCapsuleService : Service() {
         speechMs = 0L
         lastVoiceMs = 0L
         lastTickMs = 0L
-        renderRecording()
+        if (headless) shown = Shown.RECORDING else renderRecording()
         stopTick()
         scheduleTick()
         if (hold && pendingRelease) {
@@ -424,6 +585,18 @@ class VoiceCapsuleService : Service() {
             drafts.clear()
             drafts.addAll(built)
             val note = listOfNotNull(result.polishError, queryText.ifBlank { null }).joinToString("\n").ifBlank { null }
+            // 没有画面（熄屏 / 锁屏）：没法确认，直接保存；删除待办不可恢复，这种情况下一律不执行
+            if (headless) {
+                val safe = built.filterNot { it.mode == Mode.EDIT && it.op() == TodoOp.DELETE }
+                if (safe.isEmpty()) {
+                    headlessDone(false)
+                } else {
+                    drafts.clear()
+                    drafts.addAll(safe)
+                    saveAll(safe, note, quiet = true)
+                }
+                return@launch
+            }
             // 删除待办不可恢复：即使开了「松手自动保存」也要弹出确认卡片，由用户点保存
             val needsConfirm = drafts.any { it.mode == Mode.EDIT && it.op() == TodoOp.DELETE && it.task != null }
             // 开了「松手自动保存」：不弹确认卡片，只显示小胶囊倒计时；点它才展开卡片修改
@@ -1290,6 +1463,10 @@ class VoiceCapsuleService : Service() {
     /** 保存成功：每条记录一个小胶囊，依次从右侧滑出；整理出几条就是几个 */
     private fun showSaved(items: List<SavedItem>, note: String?, quiet: Boolean = false) {
         if (stopping) return
+        if (headless) {
+            headlessDone(true)
+            return
+        }
         stopTick()
         dotAnimator?.cancel()
         cancelCountdown()
@@ -1342,6 +1519,10 @@ class VoiceCapsuleService : Service() {
 
     private fun showMessage(message: String, error: Boolean, durationMs: Long = if (error) 4000L else 2500L) {
         if (stopping) return
+        if (headless) {
+            headlessDone(!error)
+            return
+        }
         stopTick()
         dotAnimator?.cancel()
         cancelCountdown()
@@ -1411,11 +1592,33 @@ class VoiceCapsuleService : Service() {
         host = null
         column = null
         surface = null
+        if (armed) {
+            resetToIdle()
+            return
+        }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
+    /** 守候模式下一条记录结束：不退出服务，清掉这一轮的状态，通知改回「守候中」 */
+    private fun resetToIdle() {
+        voice?.let { if (it.phase != VoicePhase.IDLE) it.cancel() }
+        drafts.clear()
+        shown = Shown.NONE
+        holdMode = false
+        headless = false
+        editing = false
+        pendingRelease = false
+        dotAnimator = null
+        wave = null
+        timerText = null
+        stopping = false
+        startArmedForeground(refreshOnly = true)
+    }
+
     override fun onDestroy() {
+        keys?.stop()
+        keys = null
         if (instance === this) instance = null
         handler.removeCallbacksAndMessages(null)
         dotAnimator?.cancel()
@@ -1562,7 +1765,17 @@ class VoiceCapsuleService : Service() {
 
     companion object {
         private const val CHANNEL = "voice_capsule"
+        private const val CHANNEL_ARMED = "voice_capsule_armed"
         private const val NOTIFICATION_ID = 7301
+
+        /** 熄屏录音的最长时间：松手事件万一丢了，到点自动结束 */
+        private const val HEADLESS_MAX_MS = 60_000L
+
+        // 震动节奏（关屏时没有画面，靠它知道到哪一步了）
+        private val VIB_START = longArrayOf(0, 35)
+        private val VIB_STOP = longArrayOf(0, 25)
+        private val VIB_OK = longArrayOf(0, 30, 80, 30)
+        private val VIB_ERROR = longArrayOf(0, 260)
         private const val ORIGIN = "voice"
 
         /** 面板共同的水平中心线，离 [restingY]（录音胶囊顶边）的距离：录音胶囊高 56dp，所以是 28 */
@@ -1588,7 +1801,10 @@ class VoiceCapsuleService : Service() {
         const val ACTION_FINISH = "com.carpe.ideashell.action.VOICE_CAPSULE_FINISH"
         const val ACTION_CANCEL = "com.carpe.ideashell.action.VOICE_CAPSULE_CANCEL"
         const val ACTION_REPLAY = "com.carpe.ideashell.action.VOICE_CAPSULE_REPLAY"
+        const val ACTION_ARM = "com.carpe.ideashell.action.VOICE_CAPSULE_ARM"
+        const val ACTION_DISARM = "com.carpe.ideashell.action.VOICE_CAPSULE_DISARM"
         private const val EXTRA_HOLD = "hold"
+        private const val EXTRA_HEADLESS = "headless"
         private const val EXTRA_REPLAY_ID = "replay_id"
         private const val EXTRA_REPLAY_AUDIO = "replay_audio"
 
@@ -1625,7 +1841,32 @@ class VoiceCapsuleService : Service() {
         /** 音量键按住：开始录，松手由 [onKeyReleased] 结束（录音期间不做说完自动结束） */
         fun startHold(context: Context) {
             pendingRelease = false
-            context.startForegroundService(Intent(context, VoiceCapsuleService::class.java).putExtra(EXTRA_HOLD, true))
+            // 亮屏但停在锁屏界面：悬浮窗看不见，按没有画面的方式录（震动反馈、直接保存）
+            val locked = context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+            context.startForegroundService(
+                Intent(context, VoiceCapsuleService::class.java).putExtra(EXTRA_HOLD, true).putExtra(EXTRA_HEADLESS, locked),
+            )
+        }
+
+        /** 开启熄屏守候（要在应用在前台时调：麦克风前台服务不能在后台新建） */
+        fun arm(context: Context) {
+            context.startForegroundService(Intent(context, VoiceCapsuleService::class.java).setAction(ACTION_ARM))
+        }
+
+        /** 守候是否正在生效 */
+        val isArmed: Boolean get() = instance?.armed == true
+
+        /** 设置里开着「熄屏也能用」、权限也够，但服务没在守候（刚开机 / 被系统杀了）：应用打开时补一次 */
+        fun armIfEnabled(context: Context) {
+            val s = (context.applicationContext as IdeashellApp).container.settings.current
+            if (!s.voiceKeyScreenOff || s.voiceKey == com.carpe.ideashell.data.settings.VoiceKey.OFF || isArmed) return
+            if (context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return
+            runCatching { arm(context) }
+        }
+
+        /** 关闭熄屏守候 */
+        fun disarm(context: Context) {
+            instance?.disarm()
         }
     }
 }
