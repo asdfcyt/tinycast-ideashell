@@ -48,7 +48,7 @@ internal fun formatGoal(min: Int): String = when {
 
 /** 首页「待办与专注」那一行的状态摘要 */
 internal fun SettingsEnv.todoSummary(): String =
-    "专注目标 ${formatGoal(settings.focusGoalMin)} · 常驻通知${if (settings.persistentNotification) "已开" else "已关"}"
+    ""
 
 @Composable
 internal fun TodoFocusSection(env: SettingsEnv) {
@@ -80,27 +80,27 @@ internal fun TodoFocusSection(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Star,
             title = "每日专注目标",
-            summary = "${formatGoal(settings.focusGoalMin)} · 「今天」页的专注环以它为满环",
+            summary = formatGoal(settings.focusGoalMin),
             onClick = { dialog = TodoDialog.FocusGoal },
         )
         SettingsSwitchItem(
             iconRes = R.drawable.ic_tile_focus,
             title = "专注完成后自动休息",
-            summary = "番茄走完立刻开始休息倒计时；关闭时只在通知和专注页上提供「开始休息」",
+            summary = "",
             checked = settings.autoBreak,
             onChange = { container.settings.setAutoBreak(it) },
         )
         SettingsSwitchItem(
             icon = Icons.Filled.Notifications,
             title = "常驻通知",
-            summary = "通知栏显示「今天 N · 逾期 M」，可直接回复快记、点完成。系统可能允许你划掉它，下次刷新会重新出现",
+            summary = "",
             checked = settings.persistentNotification,
             onChange = { setPersistentNotification(it) },
         )
         SettingsSwitchItem(
             icon = Icons.Filled.DateRange,
             title = "每晚自动生成今日小结",
-            summary = "每晚 23:20 把今天完成的任务和专注时长插到今天 Daily Note 最前面（需要连接滴答清单）",
+            summary = "",
             checked = settings.autoDaySummary,
             onChange = { container.settings.setAutoDaySummary(it) },
         )
@@ -110,13 +110,13 @@ internal fun TodoFocusSection(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Check,
             title = "短休息时长",
-            summary = "${settings.shortBreakMin} 分钟 · 每个番茄之后",
+            summary = "${settings.shortBreakMin} 分钟",
             onClick = { dialog = TodoDialog.ShortBreak },
         )
         SettingsItem(
             icon = Icons.Filled.DateRange,
             title = "长休息时长",
-            summary = "${settings.longBreakMin} 分钟 · 每完成 4 个番茄之后",
+            summary = "${settings.longBreakMin} 分钟",
             onClick = { dialog = TodoDialog.LongBreak },
         )
     }

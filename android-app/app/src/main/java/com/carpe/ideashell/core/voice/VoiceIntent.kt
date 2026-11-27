@@ -23,6 +23,13 @@ enum class TodoOp(val label: String) {
     QUERY("查待办"),
 }
 
+/** 对 App 本身下的指令（不是要记录的内容）：本地直接执行，不存成记录 */
+enum class VoiceCmd(val key: String, val label: String) {
+    LONG_RECORD("long_record", "长录音"),
+    NEW_NOTE("new_note", "新建笔记"),
+    OPEN_AI("open_ai", "闪念贝壳 AI"),
+}
+
 /** 大模型对一句语音的整理结果。日期 / 时间由模型按「当前时间 + 日历」推算，本地只做格式校验。 */
 data class VoiceIntent(
     val type: CaptureKind,
@@ -46,6 +53,12 @@ data class VoiceIntent(
     val op: TodoOp = TodoOp.EDIT,
     /** 查询范围：today / tomorrow / week / overdue / all（默认 today） */
     val range: String? = null,
+    /** 这是一句对 App 的指令（「开始长录音」）：不存成记录，由界面直接执行 */
+    val cmd: VoiceCmd? = null,
+    /** 这是一句「找一下已有的东西」：note / todo / all；[target] 是关键词。本地查完直接列出来，不调 AI */
+    val searchScope: String? = null,
+    /** 搜索的时间范围终点（含，yyyy-MM-dd）；起点放在 [date]。都为 null = 不限时间 */
+    val until: LocalDate? = null,
 )
 
 /** 一次语音输入的完整结果 */
@@ -60,8 +73,8 @@ data class VoiceResult(
     val polishError: String? = null,
     /** 没经过大模型、但本地规则听出了「追加到上一条笔记」：[cleaned] 已经去掉了这句口令 */
     val appendToLast: Boolean = false,
-    /** 说的是「长录音」口令：不整理、不保存，丢掉这段，改去闪念贝壳自己的录音页开始长录音 */
-    val longRecord: Boolean = false,
+    /** 说的是对 App 的指令（长录音 / 新建笔记 / 打开 AI）：不整理、不保存，丢掉这段直接执行 */
+    val command: VoiceCmd? = null,
 )
 
 object VoiceIntents {
@@ -112,12 +125,18 @@ object VoiceIntents {
 - 拆分规则：只有明显是「不同的事」才拆，例如「明天上午开会，下午交周报」是两个待办；同一件事的补充说明、同一段想法 / 心情不要拆，仍然是一项。每项要自成一句、能单独看懂（必要时把共同的人名 / 地点补进去）；每项各自推算 date / time；不同类型可以混在一起。最多 8 项。
 
 每一项的字段：
-- type："todo" | "daily" | "note" | "ask"，四种意图要分清：
+- type："cmd" | "search" | "todo" | "daily" | "note" | "ask"，六种意图要分清（先看是不是 cmd / search，再看后四种）：
+  - cmd（指令）：用户是在**命令这个 App 做一个操作**，而不是在说一段要记录的内容。content 填 ""，用 cmd 字段说明做什么：
+    - "long_record"：开始长录音 / 「记录为长录音」「帮我把接下来的内容记成长录音」「开个长录音」「我要录一段长的」（用闪念贝壳自己的录音页）。口令后面如果还带了内容，一律丢掉，只执行指令。
+    - "new_note"：打开空白笔记编辑器手打一条（「我要手写一条笔记」「新建一个文字笔记」），注意「记个笔记，复利是…」带了正文的是 note，不是 cmd。
+    - "open_ai"：只想打开闪念贝壳 AI 对话、没有具体问题（「打开 AI」「我想和 AI 聊聊」）；有具体问题的是 ask。
+    句子里出现「长录音」「新建笔记」这类词，要先判断是不是在下指令：是指令就 cmd，只是在叙述一件事（「昨天的长录音还没整理」）才不是。
+  - search（找已有的记录，只列清单，不分析）：「找一下关于招聘的笔记」「搜一下预算」「我有没有记过装修的事」「列出和周报相关的待办」。target 填关键词（去掉「相关 / 关于 / 的笔记」和时间说法，只留要找的主题词；没有主题、只问某段时间做了什么 / 记了什么时填 ""，一定要带上时间范围），scope 填 "note"（说了笔记 / 记录）/ "todo"（说了待办 / 任务）/ "all"（没限定）。说了时间范围（「最近一周」「这个月」「昨天」「上周」）就按日历推算成 since / until（yyyy-MM-dd，含首尾；「最近一周」= 今天往前 6 天到今天；没说时间都填 null）。content 填 ""。要 AI 帮忙总结 / 分析 / 回答的是 ask，不是 search；按日期查待办（「今天还有什么没做」）仍然用 edit 的 query。
   - ask（问 AI）：用户是在让 AI 查资料、回答问题、分析、解释、总结、翻译、出主意，常见说法「帮我查一下 / 搜一下 / 问一下 AI / 帮我看看 / X 是什么 / 怎么 X / 为什么 / 帮我分析 / 帮我总结」。content 写成整理后的完整问题。注意「提醒我去查…」「记得查…」是 todo，不是 ask。
   - todo（待办）：用户要去做的一件具体的事——需要在将来做，或明确说了「提醒我 / 待办 / 记得 / 别忘了 / 要去 / 得去」。已经做完的事不是 todo。带不带时间都行。
   - note（笔记）：只有用户明确说了「记成笔记 / 记个笔记 / 做个笔记 / 笔记：/ 存为笔记 / 摘录」之类的话才用。没有这类明确说法时，绝对不要用 note，哪怕内容像知识、想法、摘抄也选 daily。这句口令本身不要写进正文。
   - daily（日记）：除上面三种以外的一切，也是默认选项——今天发生的事、心情、感想、流水账、已经做完的事、随口的一个想法、没头没尾的一句话。用户说了「记个日记 / 写进日记」也是 daily。
-  拿不准时选 daily。
+  拿不准时选 daily；但对 App 说的指令、找东西的请求绝对不能当成 daily 存起来。
 - append：true / false，默认 false。用户说了「追加到上一条笔记 / 上个笔记 / 上一篇 / 刚才那条」「接着上一条写」「补充到上一条」这类话，就是想把这段话接到最近一条笔记后面：append 填 true，type 填 note，content 只写要追加的内容（口令本身不要写进去）。没说这类话一律 false。append 和 ask 不会同时出现。
 - edit：true / false，默认 false。用户要对**之前已经建好的待办**做操作（而不是新建）：修改、完成、删除、查询。这时 type 填 todo，edit 填 true，用 op 说明做什么：
   - op = "edit"（改时间 / 补充备注 / 改优先级）：「把刚才的会改到两点四十」「开会那个待办补充一下，带上办公电脑」「把交周报那个推迟到周五」「开会那个往后推一小时」。
@@ -152,6 +171,14 @@ object VoiceIntents {
 输出：{"items":[{"type":"daily","content":"突然想到可以把每周复盘放到周日晚上。","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
 输入：记个笔记，复利就是利滚利，时间越长差距越大
 输出：{"items":[{"type":"note","content":"复利就是利滚利，时间越长差距越大。","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
+输入：帮我把接下来的内容记录为长录音
+输出：{"items":[{"type":"cmd","cmd":"long_record","content":""}]}
+输入：找一下我之前记的关于招聘的笔记
+输出：{"items":[{"type":"search","scope":"note","target":"招聘","since":null,"until":null,"content":""}]}
+输入：我昨天做了哪些事情
+输出：{"items":[{"type":"search","scope":"all","target":"","since":"2026-10-17","until":"2026-10-17","content":""}]}
+输入：帮我找一下最近一周关于书法的笔记
+输出：{"items":[{"type":"search","scope":"note","target":"书法","since":"2026-10-12","until":"2026-10-18","content":""}]}
 输入：帮我查一下格雷厄姆的安全边际是什么意思
 输出：{"items":[{"type":"ask","content":"格雷厄姆说的「安全边际」是什么意思？","date":null,"time":null,"repeat":null,"tags":[],"priority":0}]}
 输入：追加到上一条笔记，复利的关键是时间和不中断
@@ -221,6 +248,21 @@ object VoiceIntents {
 
     private fun parseOne(obj: JsonObject): VoiceIntent? {
         val content = obj.string("content")?.trim().orEmpty()
+        val kind = obj.string("type")?.trim()?.lowercase()
+        if (kind == "cmd") {
+            val cmd = VoiceCmd.entries.firstOrNull { it.key == obj.string("cmd")?.trim()?.lowercase() } ?: return null
+            return VoiceIntent(CaptureKind.DAILY, "", null, null, null, emptyList(), 0, cmd = cmd)
+        }
+        if (kind == "search") {
+            val scope = obj.string("scope")?.trim()?.lowercase()?.takeIf { it in SEARCH_SCOPES } ?: "all"
+            val keyword = obj.string("target")?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", true) }
+            fun day(key: String) = obj.string(key)?.trim()?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+            val since = day("since")
+            val until = day("until")
+            // 关键词和时间范围至少要有一个（「我昨天做了哪些事情」没有关键词，只有时间）
+            if (keyword == null && since == null && until == null) return null
+            return VoiceIntent(CaptureKind.DAILY, "", since, null, null, emptyList(), 0, target = keyword, searchScope = scope, until = until)
+        }
         val edit = obj.string("type")?.trim()?.lowercase() == "todo" &&
             (obj["edit"] as? JsonPrimitive)?.contentOrNull?.equals("true", ignoreCase = true) == true
         if (edit) return parseEdit(obj, content)
@@ -288,6 +330,7 @@ object VoiceIntents {
     }
 
     private val QUERY_RANGES = setOf("today", "tomorrow", "week", "overdue", "all")
+    private val SEARCH_SCOPES = setOf("note", "todo", "all")
 
     /**
      * 「半小时后 / 两小时后 / 十分钟后」这类相对现在的说法，本地用规则再精确算一遍，不依赖模型的心算：
@@ -295,7 +338,7 @@ object VoiceIntents {
      */
     fun fixRelativeTime(raw: String, intents: List<VoiceIntent>, now: LocalDateTime = LocalDateTime.now()): List<VoiceIntent> {
         val found = com.carpe.ideashell.core.parse.TodoParser.findAfterDuration(raw, now) ?: return intents
-        val fresh = intents.filter { it.type == CaptureKind.TODO && !it.edit && !it.ask && !it.append }
+        val fresh = intents.filter { it.type == CaptureKind.TODO && !it.edit && !it.ask && !it.append && it.cmd == null && it.searchScope == null }
         if (fresh.size != 1) return intents
         val at = found.first
         return intents.map {

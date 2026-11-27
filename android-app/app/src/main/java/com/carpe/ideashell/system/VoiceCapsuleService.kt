@@ -65,6 +65,7 @@ import com.carpe.ideashell.core.voice.TodoOp
 import com.carpe.ideashell.core.voice.VoiceResult
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.dida.TodoEditor
+import com.carpe.ideashell.data.voice.VoiceSearch
 import com.carpe.ideashell.ui.capture.voiceIntentBody
 import com.carpe.ideashell.ui.capture.voiceIntentSchedule
 import com.carpe.ideashell.ui.components.VoiceInputController
@@ -427,15 +428,15 @@ class VoiceCapsuleService : Service() {
     }
 
     /** 没有画面的录音处理完了：震动告知结果，回到待机 */
-    private fun headlessDone(ok: Boolean, detail: String? = null) {
+    private fun headlessDone(ok: Boolean, detail: String? = null, searchQuery: String? = null, title: String? = null) {
         android.util.Log.i("ShiyiKeys", "headlessDone ok=$ok detail=$detail")
         vibrate(if (ok) VIB_OK else VIB_ERROR)
-        if (!detail.isNullOrBlank()) postHeadlessResult(ok, detail)
+        if (!detail.isNullOrBlank()) postHeadlessResult(ok, detail, searchQuery, title)
         stopSelfClean()
     }
 
     /** 没有画面时的结果：发一条通知，解锁后（锁屏上也看得到）能知道记下了什么，点开进拾忆 */
-    private fun postHeadlessResult(ok: Boolean, detail: String) {
+    private fun postHeadlessResult(ok: Boolean, detail: String, searchQuery: String? = null, title: String? = null) {
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_RESULT, "锁屏录音结果", NotificationManager.IMPORTANCE_DEFAULT).apply {
@@ -445,13 +446,15 @@ class VoiceCapsuleService : Service() {
             },
         )
         val open = PendingIntent.getActivity(
-            this, 2,
-            Intent(this, com.carpe.ideashell.ui.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            this, if (searchQuery.isNullOrBlank()) 2 else 3 + (searchQuery.hashCode() and 0xFFFF),
+            Intent(this, com.carpe.ideashell.ui.MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .apply { if (!searchQuery.isNullOrBlank()) putExtra(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_SEARCH, searchQuery) },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_RESULT)
             .setSmallIcon(R.drawable.ic_stat_shiyi)
-            .setContentTitle(if (ok) "锁屏录音已保存" else "锁屏录音没成功")
+            .setContentTitle(title ?: if (ok) "锁屏录音已保存" else "锁屏录音没成功")
             .setContentText(detail)
             .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -610,16 +613,17 @@ class VoiceCapsuleService : Service() {
     // ───────────────────────────── 结果：确认或直接保存 ─────────────────────────────
 
     private fun onResult(result: VoiceResult) {
-        // 说了「长录音」：丢掉这段，唤起闪念贝壳自己的录音页（长录音由它录、它整理）
-        if (result.longRecord) {
+        // 说了指令（长录音 / 新建笔记 / 打开 AI）：丢掉这段，直接去闪念贝壳执行
+        val command = result.command
+        if (command != null) {
             if (stopping) return
-            val ok = IdeashellBridge.startVoiceRecording(this)
+            val ok = IdeashellBridge.run(this, command)
             if (headless) {
                 headlessDone(ok)
             } else if (ok) {
                 stopSelfClean()
             } else {
-                showMessage("没能打开闪念贝壳的录音", error = true)
+                showMessage("没能打开闪念贝壳（${command.label}）", error = true)
             }
             return
         }
@@ -627,17 +631,23 @@ class VoiceCapsuleService : Service() {
             val editor = (application as IdeashellApp).container.todoEditor
             // 「今天还有什么没做」：纯查询，不保存任何东西，直接把清单显示出来
             val queries = result.intents.filter { it.edit && it.op == TodoOp.QUERY }
-            val queryLines = mutableListOf<String>()
-            for (q in queries) queryLines += editor.formatQuery(q.range, q.target, editor.query(q.range, q.target))
-            val queryText = queryLines.joinToString("\n")
-            val rest = result.intents.filterNot { it.edit && it.op == TodoOp.QUERY }
-            if (queries.isNotEmpty() && rest.isEmpty()) {
+            val found = mutableListOf<VoiceSearch.Result>()
+            for (q in queries) {
+                val tasks = editor.query(q.range, q.target)
+                found += VoiceSearch.Result(editor.formatQuery(q.range, q.target, tasks), VoiceSearch.taskHits(tasks), q.target.orEmpty())
+            }
+            // 「找一下关于招聘的笔记」：不调 AI，本机待办 + 闪念贝壳笔记里直接查
+            val searches = result.intents.filter { it.searchScope != null }
+            for (s in searches) found += VoiceSearch.find((application as IdeashellApp).container, s)
+            val queryText = found.joinToString("\n") { it.text }
+            val rest = result.intents.filterNot { (it.edit && it.op == TodoOp.QUERY) || it.searchScope != null }
+            if (found.isNotEmpty() && rest.isEmpty()) {
                 if (stopping) return@launch
-                showMessage(queryText, error = false, durationMs = 6000L + queryText.length * 20L)
+                showResults(VoiceSearch.merge(found))
                 return@launch
             }
             // 修改 / 完成 / 删除待办要先去滴答里找到那一条（可能要刷新一下），这期间界面还停在「正在识别整理」
-            val built = buildDrafts(if (queries.isEmpty()) result else result.copy(intents = rest))
+            val built = buildDrafts(if (queries.isEmpty() && searches.isEmpty()) result else result.copy(intents = rest))
             if (stopping) return@launch
             drafts.clear()
             drafts.addAll(built)
@@ -1573,6 +1583,86 @@ class VoiceCapsuleService : Service() {
         // 带「撤销」的多停留一会儿，给用户反悔的时间
         val hasUndo = items.any { it.undo != null }
         handler.postDelayed({ dismissWithSlide() }, if (hasUndo) 7000L else if (quiet) 1100L else 2800L + items.size * 400L)
+    }
+
+    /** 搜索 / 查询结果：不自动消失的卡片，每条可点（笔记 → 拾忆里的笔记页，待办 → 待办页），最后一行去搜索页看全部 */
+    private fun showResults(res: VoiceSearch.Result) {
+        if (stopping) return
+        if (headless) {
+            // 没有画面：结果放进通知（点开进搜索页）
+            val lines = res.hits.take(VoiceSearch.MAX_LINES).joinToString("\n") { "· ${it.title}" }
+            val text = if (lines.isBlank()) res.text else res.text + "\n" + lines
+            headlessDone(true, text, searchQuery = res.keyword.takeIf { res.hits.isNotEmpty() }, title = "语音搜索")
+            return
+        }
+        if (res.hits.isEmpty()) {
+            showMessage(res.text, error = false, durationMs = 3500L)
+            return
+        }
+        stopTick()
+        dotAnimator?.cancel()
+        cancelCountdown()
+        exitEditMode()
+        shown = Shown.MESSAGE
+        val col = ensureColumn()
+        col.removeAllViews()
+        surface = null
+        handler.removeCallbacksAndMessages(null)
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = capsuleBackground(22)
+            setPadding(dp(16), dp(10), dp(8), dp(8))
+            elevation = dp(8).toFloat()
+        }
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(label(res.text, 13f, bold = true).apply {
+            setTextColor(pal.accentSoft)
+            maxWidth = dp(220)
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(textButton("关闭") { dismissWithSlide() })
+        card.addView(head)
+        fun open(extra: String, value: String) {
+            startActivity(
+                Intent(this, com.carpe.ideashell.ui.MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    .putExtra(extra, value),
+            )
+            dismissWithSlide()
+        }
+        res.hits.take(VoiceSearch.MAX_LINES).forEach { hit ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(9), dp(8), dp(9))
+                pressable()
+                setOnClickListener {
+                    if (hit.isNote) open(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_NOTE, hit.id)
+                    else open(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_TASK, hit.id)
+                }
+            }
+            row.addView(label(if (hit.isNote) "笔记" else "待办", 11f, bold = true).apply {
+                setTextColor(pal.accentSoft)
+                setPadding(0, 0, dp(10), 0)
+            })
+            row.addView(label(hit.title, 15f).apply {
+                maxWidth = dp(190)
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            if (hit.sub.isNotBlank()) row.addView(label(hit.sub, 12f).apply { alpha = 0.6f; setPadding(dp(8), 0, 0, 0) })
+            card.addView(row)
+        }
+        if (res.keyword.isNotBlank() && res.hits.size > VoiceSearch.MAX_LINES) {
+            card.addView(textButton("查看全部 ${res.hits.size} 条") { open(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_SEARCH, res.keyword) }.apply {
+                setTextColor(pal.accentSoft); alpha = 1f
+                gravity = Gravity.START
+                setPadding(0, dp(9), dp(14), dp(9))
+            })
+        }
+        addSmall(card)
+        recenter()
+        // 结果要留给人看、点：停留一分钟，点「关闭」或点某条才收起
+        handler.postDelayed({ dismissWithSlide() }, 60_000L)
     }
 
     private fun showMessage(message: String, error: Boolean, durationMs: Long = if (error) 4000L else 2500L) {

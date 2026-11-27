@@ -101,9 +101,8 @@ private enum class VoiceDialog { Engine, Key, LockedKey, Silence, Enroll, Voicep
 /** 首页「语音输入」那一行的状态摘要 */
 internal fun SettingsEnv.voiceSummary(localReady: Boolean): String = when {
     !settings.voiceEnabled -> "已关闭"
-    !ocrConfigured && !localReady -> "未配置 · 需要腾讯云密钥并开通「语音识别」，或下载本地模型"
-    settings.voicePolish && llmConfigured -> "按住说话 · AI 整理并推算日期时间（${settings.llmModel}）"
-    else -> "按住说话 · 本地规则识别日期时间（配置大模型可让 AI 整理）"
+    !ocrConfigured && !localReady -> "未配置识别"
+    else -> ""
 }
 
 @Composable
@@ -123,7 +122,7 @@ internal fun VoiceSection(env: SettingsEnv) {
         SettingsSwitchItem(
             iconRes = R.drawable.ic_mic,
             title = "按住说话",
-            summary = if (settings.voiceEnabled) "记一条里按住输入框说话，松手识别；上滑取消、下滑锁定" else "已关闭",
+            summary = "",
             checked = settings.voiceEnabled,
             onChange = { container.settings.setVoiceEnabled(it) },
         )
@@ -131,8 +130,7 @@ internal fun VoiceSection(env: SettingsEnv) {
         SettingsItem(
             iconRes = R.drawable.ic_tile_voice,
             title = "语音记一条 · 悬浮胶囊",
-            summary = if (env.overlayOn) "已开启 · 点磁贴 / 桌面快捷方式「语音记一条」会浮出录音胶囊，不打开面板，说完点「完成」直接保存"
-            else "未开启 · 需要允许「显示在其他应用上层」；没开时「语音记一条」会打开快记面板录音 · 点一下去开启",
+            summary = if (env.overlayOn) "" else "未开启",
             onClick = {
                 if (!env.overlayOn) {
                     context.startActivity(
@@ -148,9 +146,9 @@ internal fun VoiceSection(env: SettingsEnv) {
             icon = Icons.Filled.PlayArrow,
             title = "音量键按住说话",
             summary = when {
-                settings.voiceKey == VoiceKey.OFF -> "关闭 · 选一个音量键，长按开始录音、松手结束（不用点胶囊）"
-                !env.excerptServiceOn -> "${settings.voiceKey.label} · 还没开启无障碍里的「拾忆」，点一下去开启"
-                else -> "${settings.voiceKey.label} · 长按录音，松手结束；轻按照常调音量"
+                settings.voiceKey == VoiceKey.OFF -> "关闭"
+                !env.excerptServiceOn -> "${settings.voiceKey.label} · 需要开启无障碍「拾忆」"
+                else -> settings.voiceKey.label
             },
             onClick = {
                 if (settings.voiceKey != VoiceKey.OFF && !env.excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
@@ -160,8 +158,7 @@ internal fun VoiceSection(env: SettingsEnv) {
         SettingsSwitchItem(
             iconRes = R.drawable.ic_mic,
             title = "熄屏也能用",
-            summary = if (settings.voiceKeyScreenOff) "已开启 · 熄屏 / 锁屏（没解锁）时按住${settings.voiceKeyLocked.label}说话，震动一下开始，松手自动保存，并发一条通知；通知栏常驻「熄屏守候中」，放音乐时无效"
-            else "关闭 · 熄屏、锁屏时也能按住音量键说话（没有画面，靠震动提示，结果直接保存）；解锁后仍用上面选的键",
+            summary = "",
             checked = settings.voiceKeyScreenOff,
             onChange = { on ->
                 when {
@@ -184,16 +181,13 @@ internal fun VoiceSection(env: SettingsEnv) {
             SettingsItem(
                 icon = Icons.Filled.PlayArrow,
                 title = "熄屏 / 锁屏时用的键",
-                summary = "${settings.voiceKeyLocked.label} · " +
-                    if (settings.voiceKeyLocked == VoiceKey.VOLUME_DOWN) "荣耀等手机熄屏时会吞掉音量下键的按下，只能「轻按开始」，建议用音量上键"
-                    else "解锁后仍然用上面选的键；熄屏时按住它说话",
+                summary = settings.voiceKeyLocked.label,
                 onClick = { dialog = VoiceDialog.LockedKey },
             )
             SettingsSwitchItem(
                 icon = Icons.Filled.Star,
                 title = "耳机键也能录音",
-                summary = if (settings.voiceHeadsetKey) "已开启 · 熄屏时按一下耳机（线控 / 蓝牙）的播放键开始录音，再按一下结束；正在放音乐时照常控制音乐"
-                else "关闭 · 熄屏时按耳机播放键仍然是播放 / 暂停",
+                summary = "",
                 checked = settings.voiceHeadsetKey,
                 onChange = { container.settings.setVoiceHeadsetKey(it) },
             )
@@ -201,8 +195,7 @@ internal fun VoiceSection(env: SettingsEnv) {
         SettingsSwitchItem(
             icon = Icons.Filled.Done,
             title = "说完自动停止",
-            summary = if (settings.voiceAutoStop) "已开启 · 说完停顿 ${"%.1f".format(settings.voiceSilenceMs / 1000f)} 秒就自动结束并开始处理；一直没人说话约 6 秒后放弃"
-            else "已关闭 · 需要手动点胶囊上的停止键",
+            summary = "",
             checked = settings.voiceAutoStop,
             onChange = { container.settings.setVoiceAutoStop(it) },
         )
@@ -212,8 +205,7 @@ internal fun VoiceSection(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Search,
             title = "腾讯云密钥",
-            summary = if (env.ocrConfigured) "已配置 · 云端识别需在腾讯云开通「语音识别」（每月免费 5000 次）· 在「账号与连接」里修改"
-            else "未配置 · 点这里去「账号与连接」填写（本地模型不需要）",
+            summary = if (env.ocrConfigured) "" else "未配置",
             onClick = { env.go(SEC_ACCOUNTS) },
             trailing = { Chevron() },
         )
@@ -223,10 +215,10 @@ internal fun VoiceSection(env: SettingsEnv) {
             title = "本地模型（SenseVoice）",
             summary = when (val s = localAsr) {
                 LocalAsrState.Unsupported -> "这台设备不支持（仅支持 64 位 ARM 手机）"
-                LocalAsrState.Missing -> "未下载 · 约 160 MB，建议连 Wi-Fi；识别在手机上完成，支持中 / 英 / 日 / 韩 / 粤 · 点一下下载"
+                LocalAsrState.Missing -> "未下载 · 约 160 MB"
                 is LocalAsrState.Downloading ->
                     if (s.unpacking) "正在保存模型…"
-                    else "正在下载" + (if (s.percent >= 0) " ${s.percent}%" else "") + "，请先别关掉应用 · 点一下取消"
+                    else "正在下载" + (if (s.percent >= 0) " ${s.percent}%" else "") + " · 点一下取消"
                 is LocalAsrState.Ready -> "已下载（${s.sizeMb} MB）"
                 is LocalAsrState.Failed -> "下载失败：${s.message} · 点一下重试"
             },
@@ -246,8 +238,7 @@ internal fun VoiceSection(env: SettingsEnv) {
         SettingsSwitchItem(
             icon = Icons.Filled.Info,
             title = "系统降噪",
-            summary = if (settings.voiceSystemDenoise) "已开启 · 录音用语音识别专用录音源，并打开系统的降噪 / 自动增益（效果因手机而异，说话很轻时可能被削掉）"
-            else "已关闭 · 开启后在嘈杂环境里识别更稳；不下载任何东西",
+            summary = "",
             checked = settings.voiceSystemDenoise,
             onChange = { container.settings.setVoiceSystemDenoise(it) },
         )
@@ -255,8 +246,7 @@ internal fun VoiceSection(env: SettingsEnv) {
             val ns = runCatching { NoiseSuppressor.isAvailable() }.getOrDefault(false)
             val agc = runCatching { AutomaticGainControl.isAvailable() }.getOrDefault(false)
             fun mark(ok: Boolean) = if (ok) "可用" else "不可用"
-            "降噪（NS）${mark(ns)} · 自动增益（AGC）${mark(agc)}" +
-                if (!ns && !agc) "，这台手机开「系统降噪」不会有任何效果" else ""
+            "降噪 ${mark(ns)} · 自动增益 ${mark(agc)}"
         }
         SettingsItem(
             icon = Icons.Filled.Info,
@@ -271,13 +261,13 @@ internal fun VoiceSection(env: SettingsEnv) {
             icon = Icons.Filled.Star,
             title = "只识别我的声音",
             summary = when {
-                !settings.voiceprintEnabled -> "已关闭 · 开启后，录完先和你录入的声音比对，不像就不识别，避免把旁人的话记进来（本机处理，录音不上传）"
+                !settings.voiceprintEnabled -> ""
                 vpModel is VoiceprintModelState.Unsupported -> "这台设备不支持（仅支持 64 位 ARM 手机）"
                 vpModel is VoiceprintModelState.Downloading -> "正在下载声纹模型（约 27 MB）" + (vpModel as VoiceprintModelState.Downloading).percent.takeIf { it >= 0 }?.let { " $it%" }.orEmpty()
-                vpModel is VoiceprintModelState.Failed -> "模型下载失败：${(vpModel as VoiceprintModelState.Failed).message} · 点下面的「声纹模型」重试"
+                vpModel is VoiceprintModelState.Failed -> "模型下载失败：${(vpModel as VoiceprintModelState.Failed).message}"
                 vpModel !is VoiceprintModelState.Ready -> "已开启 · 声纹模型还没下载"
-                !vpEnrolled -> "已开启 · 还没录入你的声音，点下面「录入我的声音」，录入前不会拦截任何录音"
-                else -> "已开启 · 录音和你的声音不像就会被忽略（并留在语音历史里，可强制重新识别）"
+                !vpEnrolled -> "已开启 · 还没录入声音"
+                else -> ""
             },
             checked = settings.voiceprintEnabled,
             onChange = { on ->
@@ -293,7 +283,7 @@ internal fun VoiceSection(env: SettingsEnv) {
                     summary = when (val s = vpModel) {
                         is VoiceprintModelState.Downloading -> "正在下载" + (if (s.percent >= 0) " ${s.percent}%" else "") + " · 点一下取消"
                         is VoiceprintModelState.Failed -> "下载失败：${s.message} · 点一下重试"
-                        else -> "未下载 · 约 27 MB，建议连 Wi-Fi · 点一下下载"
+                        else -> "未下载 · 约 27 MB"
                     },
                     onClick = {
                         if (vpModel is VoiceprintModelState.Downloading) container.voicePrint.cancelDownload()
@@ -306,49 +296,46 @@ internal fun VoiceSection(env: SettingsEnv) {
                 SettingsItem(
                     icon = Icons.Filled.Create,
                     title = "录入我的声音",
-                    summary = if (vpEnrolled) "已录入 · 点一下重新录入（读 3 句话，每句约 5 秒，在安静的地方录）"
-                    else "未录入 · 读 3 句话，每句约 5 秒，在安静的地方录；只保存一个声音特征，不保存录音",
+                    summary = if (vpEnrolled) "" else "未录入",
                     onClick = { dialog = VoiceDialog.Enroll },
                 )
                 SettingsItem(
                     icon = Icons.Filled.Search,
                     title = "严格程度",
-                    summary = voiceprintLevelLabel(settings.voiceprintLevel) + " · 误拒太多（说了却被忽略）就调宽松，旁人的话仍进来就调严格；每次被拦截都会显示相似度分数",
+                    summary = voiceprintLevelLabel(settings.voiceprintLevel),
                     onClick = { dialog = VoiceDialog.VoiceprintLevel },
                 )
                 if (vpEnrolled) {
                     SettingsItem(
                         icon = Icons.Filled.Delete,
                         title = "删除我的声纹",
-                        summary = "删除录入的声音特征；删除后声纹不再拦截任何录音",
+                        summary = "",
                         onClick = { confirmClearVoiceprint = true },
                     )
                 }
             }
         }
     }
-    SettingsNote("声纹只能判断「整段录音像不像你」：旁人的话被单独录进来时会被拦下；你和别人同时说话、或背景一直有人说话时，它分不开，还可能误拒你自己。它不是安全验证，别人播放你的录音也可能通过。")
 
     Group("整理与词库") {
         SettingsSwitchItem(
             icon = Icons.Filled.Star,
             title = "AI 整理口语",
-            summary = if (settings.voicePolish) "去掉嗯啊重复，判断是待办 / 日记 / 笔记，并由大模型推算日期、时间、重复；失败时退回本地规则"
-            else "已关闭 · 只做简单清洗，日期时间由本地规则识别",
+            summary = "",
             checked = settings.voicePolish,
             onChange = { container.settings.setVoicePolish(it) },
         )
         SettingsItem(
             iconRes = R.drawable.ic_sparkle,
             title = "大模型接口",
-            summary = (if (env.llmConfigured) "已配置" else "未配置 · 需要 API Key") + " · ${settings.llmModel} · 在「账号与连接」里设置",
+            summary = if (env.llmConfigured) "" else "未配置",
             onClick = { env.go(SEC_ACCOUNTS) },
             trailing = { Chevron() },
         )
         SettingsItem(
             icon = Icons.Filled.Create,
             title = "语音词库",
-            summary = "${lexicon.hotwords.size} 个热词 · ${lexicon.replacements.size} 条替换规则 · 另有来自文件夹、项目、待办的自动热词；改对的同音错字会自动学到这里",
+            summary = "${lexicon.hotwords.size} 个热词 · ${lexicon.replacements.size} 条替换",
             onClick = { env.go(SEC_LEXICON) },
             trailing = { Chevron() },
         )
@@ -358,33 +345,30 @@ internal fun VoiceSection(env: SettingsEnv) {
         SettingsSwitchItem(
             icon = Icons.Filled.Send,
             title = "松手直接保存",
-            summary = if (settings.voiceAutoSend) "识别完不弹确认卡片，只显示一条小提示，几秒后自动保存；点它可以改字、放弃，已完成 / 已修改的待办还能点「撤销」（删除待办仍会先确认）"
-            else "识别完先放进输入框 / 弹出确认卡片，确认后再保存",
+            summary = "",
             checked = settings.voiceAutoSend,
             onChange = { container.settings.setVoiceAutoSend(it) },
         )
         SettingsItem(
             icon = Icons.Filled.Refresh,
             title = "语音历史",
-            summary = if (settings.voiceHistory) "保留最近 ${VoiceHistory.MAX_RECORDS} 条原话和录音（只在本机）· 识别错了可重新识别 / 整理"
-            else "已关闭 · 点进去可以开启，或清空已有的",
+            summary = if (settings.voiceHistory) "" else "已关闭",
             onClick = { env.go(SEC_VOICE_HISTORY) },
             trailing = { Chevron() },
         )
     }
 
-    AdvancedGroup(key = "voice", summary = "识别方式 · 停顿多久算说完 · 删除本地模型") {
+    AdvancedGroup(key = "voice", summary = "识别方式 · 停顿时长") {
         SettingsItem(
             icon = Icons.Filled.Info,
             title = "识别方式",
-            summary = settings.voiceEngine.label + " · " + settings.voiceEngine.summary,
+            summary = settings.voiceEngine.label,
             onClick = { dialog = VoiceDialog.Engine },
         )
         SettingsItem(
             icon = Icons.Filled.DateRange,
             title = "停顿多久算说完",
-            summary = if (settings.voiceAutoStop) "${"%.1f".format(settings.voiceSilenceMs / 1000f)} 秒 · 说话慢、爱停顿就调长一点"
-            else "只在开启「说完自动停止」后生效",
+            summary = if (settings.voiceAutoStop) "${"%.1f".format(settings.voiceSilenceMs / 1000f)} 秒" else "需先开启「说完自动停止」",
             onClick = { dialog = VoiceDialog.Silence },
         )
         val ready = localAsr as? LocalAsrState.Ready
@@ -392,7 +376,7 @@ internal fun VoiceSection(env: SettingsEnv) {
             SettingsItem(
                 icon = Icons.Filled.Delete,
                 title = "删除本地模型",
-                summary = "释放 ${ready.sizeMb} MB 空间，需要时可以重新下载",
+                summary = "${ready.sizeMb} MB",
                 onClick = { confirmDeleteLocalAsr = true },
             )
         }
@@ -400,13 +384,12 @@ internal fun VoiceSection(env: SettingsEnv) {
             SettingsItem(
                 icon = Icons.Filled.Delete,
                 title = "删除声纹模型",
-                summary = "释放 ${vp.sizeMb} MB 空间；已录入的声音保留，再下载模型即可继续用",
+                summary = "${vp.sizeMb} MB",
                 onClick = { container.voicePrint.deleteModel() },
             )
         }
     }
 
-    SettingsNote("你说的话会发给腾讯云识别（或在本机识别），再把文字发给所选大模型整理，不经过其他服务器。")
 
     when (dialog) {
         VoiceDialog.Engine -> VoiceEngineDialog(
@@ -553,9 +536,8 @@ private fun VoiceEngineDialog(current: VoiceEngine, onSelect: (VoiceEngine) -> U
 
 /** 首页「OCR 输入」那一行的状态摘要 */
 internal fun SettingsEnv.ocrSummary(): String = when {
-    !ocrConfigured -> "未配置 · 填入腾讯云密钥后，可拍照识别文字录入"
-    settings.ocrEnabled -> "已开启 · 记一条里点相机，拍完自动识别文字"
-    else -> "已配置 · 在相机页点「识别文字」开启"
+    !ocrConfigured -> "未配置"
+    else -> ""
 }
 
 @Composable
@@ -567,19 +549,14 @@ internal fun OcrSection(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Search,
             title = "腾讯云密钥",
-            summary = if (env.ocrConfigured) "已配置 · 云端识别需在腾讯云开通「文字识别」· 在「账号与连接」里修改"
-            else "未配置 · 点这里去「账号与连接」填写",
+            summary = if (env.ocrConfigured) "" else "未配置",
             onClick = { env.go(SEC_ACCOUNTS) },
             trailing = { Chevron() },
         )
         SettingsItem(
             iconRes = R.drawable.ic_ocr,
             title = "识别文字",
-            summary = when {
-                !env.ocrConfigured -> "需要先填入腾讯云密钥"
-                settings.ocrEnabled -> "已开启 · 记一条里点相机，拍照或选图后自动识别，挑出要的文字录入"
-                else -> "已关闭 · 拍的照片直接当图片附件；也可以在相机页右下角随时开启"
-            },
+            summary = if (!env.ocrConfigured) "需要先填入腾讯云密钥" else "",
             onClick = {
                 if (!env.ocrConfigured) env.go(SEC_ACCOUNTS) else container.settings.setOcrEnabled(!settings.ocrEnabled)
             },
@@ -592,11 +569,10 @@ internal fun OcrSection(env: SettingsEnv) {
         )
         SettingsSwitchItem(
             icon = Icons.Filled.Create,
-            title = "选择方式",
-            summary = if (settings.ocrFrameMode) "选择框 · 先框出要识别的区域，只识别框里的文字" else "划选识别 · 整张图识别，再点选 / 划选要的文字",
+            title = "选择框",
+            summary = "",
             checked = settings.ocrFrameMode,
             onChange = { container.settings.setOcrFrameMode(it) },
         )
     }
-    SettingsNote("识别在腾讯云完成：图片先缩放压缩再发送，不经过其他服务器。图片转文字之后，和其他输入一样按平常的方式保存。")
 }

@@ -95,6 +95,9 @@ class NotesRepository(
 
     suspend fun search(query: String): List<NoteInfo> = ideashell.searchNotes(query.trim(), 20)
 
+    /** [from, to) 内创建的全部笔记（语音搜索按时间范围补漏用） */
+    suspend fun rangeNotes(from: java.time.Instant, to: java.time.Instant): List<NoteInfo> = ideashell.notesInRange(from, to).notes
+
     private var memoryCache: MemoryData? = null
     private var memoryCacheAt = 0L
     private var memoryCacheDay: LocalDate? = null

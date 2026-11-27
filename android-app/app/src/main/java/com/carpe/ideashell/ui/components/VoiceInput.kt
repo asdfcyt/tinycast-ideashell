@@ -69,6 +69,7 @@ import com.carpe.ideashell.R
 import com.carpe.ideashell.core.capture.CaptureSchedule
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.core.voice.SpeechCleaner
+import com.carpe.ideashell.core.voice.VoiceCmd
 import com.carpe.ideashell.core.voice.VoiceIntent
 import com.carpe.ideashell.core.voice.VoiceIntents
 import com.carpe.ideashell.core.voice.VoiceResult
@@ -301,7 +302,7 @@ class VoiceInputController(
         // 「长录音」口令：不用再交给大模型整理，直接交出去换成闪念贝壳的录音
         if (VoiceIntents.isLongRecordCommand(raw)) {
             if (historyId != null) history?.update(historyId, summary = "口令：长录音", error = "")
-            onResult(VoiceResult(raw, raw, emptyList(), heardNote, longRecord = true))
+            onResult(VoiceResult(raw, raw, emptyList(), heardNote, command = VoiceCmd.LONG_RECORD))
             return
         }
         val hot = lexicon.hotwordsFor(extraHotwords())
@@ -316,12 +317,22 @@ class VoiceInputController(
                 val reply = llm.chatJson(VoiceIntents.systemPrompt(now, vocabulary = hot, todos = todoContext()), VoiceIntents.userPrompt(raw))
                 // 「半小时后」这类相对时间，本地再精确算一遍
                 intents = VoiceIntents.fixRelativeTime(raw, VoiceIntents.parse(reply), now)
-                if (intents.isEmpty()) polishError = "AI 整理的结果无法解析，已使用原始转写"
+                if (intents.isEmpty()) {
+                    android.util.Log.w("VoiceInput", "unparseable reply: $reply")
+                    polishError = "AI 整理的结果无法解析，已使用原始转写"
+                }
             } catch (e: LlmException) {
                 polishError = (e.message ?: "AI 整理失败") + "，已使用原始转写"
             }
         }
         val note = listOfNotNull(heardNote, polishError).joinToString("；").ifBlank { null }
+        // AI 听出这是一句对 App 的指令：丢掉这段话，直接执行（指令是独占的，不和别的意图混在一起）
+        val command = intents.firstNotNullOfOrNull { it.cmd }
+        if (command != null) {
+            if (historyId != null) history?.update(historyId, summary = "指令：${command.label}", error = "")
+            onResult(VoiceResult(raw, raw, emptyList(), heardNote, command = command))
+            return
+        }
         // 没有大模型整理时，本地规则听「追加到上一条笔记」
         val appendText = if (intents.isEmpty()) VoiceIntents.stripAppendCommand(raw) else null
         if (historyId != null) {
@@ -339,6 +350,7 @@ class VoiceInputController(
         return intents.joinToString("；") { i ->
             val kind = when {
                 i.edit -> i.op.label
+                i.searchScope != null -> "搜索"
                 i.ask -> "问 AI"
                 i.append -> "追加"
                 else -> when (i.type) {
@@ -347,7 +359,7 @@ class VoiceInputController(
                     CaptureKind.NOTE -> "笔记"
                 }
             }
-            val body = if (i.edit && i.content.isBlank()) (i.target ?: "") else i.content
+            val body = if ((i.edit || i.searchScope != null) && i.content.isBlank()) (i.target ?: "") else i.content
             "$kind：${body.take(30)}"
         }.take(120)
     }

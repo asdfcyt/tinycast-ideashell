@@ -24,10 +24,10 @@ import kotlinx.coroutines.withContext
 internal fun SettingsEnv.calendarSummary(): String {
     val st = container.calendar.state.value
     return when {
-        !settings.calendarSync -> "未开启 · 把系统日历的事件读进待办页"
-        !container.calendar.hasPermission() -> "已开启，但还没授权读取日历"
-        st.names.keys.none { !it.startsWith("cal:t:") } && !settings.calendarTasks -> "已开启 · 还没选日历"
-        else -> "已同步 ${st.names.keys.count { !it.startsWith("cal:t:") }} 个日历${if (settings.calendarTasks) " + 系统待办" else ""} · 前 ${SystemCalendarRepository.PAST_DAYS} 天到后 ${SystemCalendarRepository.FUTURE_DAYS} 天"
+        !settings.calendarSync -> "未开启"
+        !container.calendar.hasPermission() -> "未授权读取日历"
+        st.names.keys.none { !it.startsWith("cal:t:") } && !settings.calendarTasks -> "还没选日历"
+        else -> ""
     }
 }
 
@@ -78,7 +78,7 @@ internal fun CalendarSection(env: SettingsEnv) {
         SettingsSwitchItem(
             icon = Icons.Filled.DateRange,
             title = "同步系统日历",
-            summary = "把日历里的事件读进待办页，和滴答任务一起显示；只读取，不会修改你的日历",
+            summary = "",
             checked = settings.calendarSync && hasPermission,
             onChange = { setSync(it) },
         )
@@ -88,7 +88,7 @@ internal fun CalendarSection(env: SettingsEnv) {
         val selected = container.calendar.selectedIds(calendars)
         Group("要同步的日历") {
             if (calendars.isEmpty()) {
-                SettingsItem(title = "没有找到日历", summary = "系统里还没有日历账户，或日历 App 没有授权同步", onClick = null)
+                SettingsItem(title = "没有找到日历", summary = "系统里没有日历", onClick = null)
             }
             calendars.forEach { c ->
                 val on = c.id in selected
@@ -110,7 +110,7 @@ internal fun CalendarSection(env: SettingsEnv) {
             SettingsSwitchItem(
                 icon = Icons.Filled.Check,
                 title = "同时读取系统待办",
-                summary = "荣耀日历 App 里的待办（带截止时间的任务）也读进来；逾期未完成的会进「逾期」",
+                summary = "",
                 checked = settings.calendarTasks,
                 onChange = { container.settings.setCalendarTasks(it) },
             )
@@ -118,7 +118,7 @@ internal fun CalendarSection(env: SettingsEnv) {
                 SettingsSwitchItem(
                     icon = Icons.Filled.Check,
                     title = "完成状态同步回系统待办",
-                    summary = "在拾忆里完成 / 恢复系统待办时，荣耀日历里的待办也跟着变；需要「写入日历」权限，重复待办只记在本机",
+                    summary = "",
                     checked = settings.calendarWriteback && hasWrite,
                     onChange = { on ->
                         when {
@@ -132,10 +132,4 @@ internal fun CalendarSection(env: SettingsEnv) {
         }
     }
 
-    SettingsNote(
-        "同步范围（日历事件）：过去 ${SystemCalendarRepository.PAST_DAYS} 天到未来 ${SystemCalendarRepository.FUTURE_DAYS} 天（翻到更远的月份会自动读取），" +
-            "含全天事件和重复事件的每一次。事件在待办页带「日历」标记，时间显示为起止时间；" +
-            "点开可以「标记已处理」（日历事件只记在本机；系统待办开启同步后会写回系统）、归入项目、创建任务笔记；改时间、改标题、删除请到日历 App 里操作。" +
-            "过去的事件不算逾期。小部件和常驻通知仍只统计滴答任务。",
-    )
 }

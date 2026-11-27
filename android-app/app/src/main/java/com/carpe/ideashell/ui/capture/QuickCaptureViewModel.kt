@@ -115,8 +115,11 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
     /** 语音里说了「帮我查一下…」：整理好的问题；界面收到后转交闪念贝壳 AI 并收起面板，null 表示没有 */
     var askRequest by mutableStateOf<String?>(null)
 
-    /** 语音里说了「长录音」：界面收到后唤起闪念贝壳的录音页并收起面板 */
-    var longRecordRequest by mutableStateOf(false)
+    /** 语音里说了指令（长录音 / 新建笔记 / 打开 AI）：界面收到后去闪念贝壳执行并收起面板 */
+    var commandRequest by mutableStateOf<com.carpe.ideashell.core.voice.VoiceCmd?>(null)
+
+    /** 语音里说了「找一下…」：界面收到后直接打开拾忆的搜索页（结果可点、不会消失）并收起面板 */
+    var searchRequest by mutableStateOf<String?>(null)
 
     /** 快速设置磁贴「语音记一条」进来：面板准备好后自动开始录音（锁定模式，点「完成」结束） */
     var voiceStartRequest by mutableStateOf(false)
@@ -149,9 +152,21 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
      * - 没开 / 失败：追加本地清洗过的转写，日期时间退回本地规则识别。
      */
     private fun applyVoice(result: VoiceResult) {
-        // 「长录音」口令：丢掉这段，界面收到后唤起闪念贝壳的录音页
-        if (result.longRecord) {
-            longRecordRequest = true
+        // 指令：丢掉这段，界面收到后去闪念贝壳执行
+        if (result.command != null) {
+            commandRequest = result.command
+            return
+        }
+        // 「找一下关于招聘的笔记」：不调 AI，查完把清单提示出来，不进输入框
+        val searches = result.intents.filter { it.searchScope != null }
+        if (searches.isNotEmpty()) {
+            val rest = result.intents.filter { it.searchScope == null }
+            searchRequest = searches.first().target.orEmpty()
+            if (rest.isEmpty()) {
+                error = result.polishError
+                return
+            }
+            applyVoice(result.copy(intents = rest))
             return
         }
         // 「把刚才那个会改到两点四十」：修改之前建好的待办，直接去滴答里改，不进输入框

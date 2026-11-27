@@ -35,9 +35,9 @@ internal fun SettingsEnv.accountsSummary(): String {
         if (!llmConfigured) add("大模型")
     }
     return when {
-        missing.isEmpty() -> "已全部配置：${ok.joinToString("、")}"
-        ok.isEmpty() -> "都还没配置：${missing.joinToString("、")}"
-        else -> "已配置：${ok.joinToString("、")} · 未配置：${missing.joinToString("、")}"
+        missing.isEmpty() -> ""
+        ok.isEmpty() -> "未配置：${missing.joinToString("、")}"
+        else -> "未配置：${missing.joinToString("、")}"
     }
 }
 
@@ -54,13 +54,13 @@ internal fun AccountsSection(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Lock,
             title = "闪念贝壳",
-            summary = if (env.ideashellConnected) "已连接 · 点击可更换或检查连接" else "未连接 · 填入 API Key",
+            summary = if (env.ideashellConnected) "" else "未连接",
             onClick = env.onOpenConnection,
         )
         SettingsItem(
             icon = Icons.Filled.CheckCircle,
             title = "滴答清单",
-            summary = if (env.didaConnected) "已连接 · 待办直接建到滴答" else "未连接 · 待办会先建到闪念贝壳",
+            summary = if (env.didaConnected) "" else "未连接",
             onClick = env.onOpenConnection,
         )
     }
@@ -69,23 +69,17 @@ internal fun AccountsSection(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Search,
             title = "腾讯云密钥",
-            summary = if (env.ocrConfigured) "已配置 · 语音识别和 OCR 共用，需要在腾讯云开通「语音识别」「文字识别」"
-            else "未配置 · 填入 SecretId / SecretKey（语音识别和 OCR 共用）",
+            summary = if (env.ocrConfigured) "" else "未配置",
             onClick = { dialog = AccountDialog.Ocr },
         )
         SettingsItem(
             iconRes = R.drawable.ic_sparkle,
             title = "大模型接口",
-            summary = (if (env.llmConfigured) "已配置" else "未配置 · 需要 API Key") +
-                " · ${settings.llmModel} · ${settings.llmBaseUrl}",
+            summary = if (env.llmConfigured) "" else "未配置",
             onClick = { dialog = AccountDialog.Llm },
         )
     }
 
-    SettingsNote(
-        "密钥只保存在本机（系统密钥库加密），备份不会带上它们，换机或重装后需要重新填写。" +
-            "腾讯云建议用子账号：在「访问管理 → 用户」新建子用户，只授予「语音识别」「文字识别」权限，再用它的密钥，泄露了也不会动到别的服务。",
-    )
 
     when (dialog) {
         AccountDialog.Ocr -> OcrKeyDialog(
@@ -124,7 +118,7 @@ private fun LlmConfigDialog(
     var key by remember { mutableStateOf(initialKey) }
     InputSheet(
         title = "大模型接口",
-        hint = "任意 OpenAI 兼容服务都行（通义千问、DeepSeek、智谱、OpenAI…）。接口地址填到 /v1 为止，应用会请求其中的 /chat/completions。Key 只保存在本机（加密）。",
+        hint = "OpenAI 兼容接口，地址填到 /v1 为止",
         onDismiss = onDismiss,
         onConfirm = {
             onConfirm(url.trim(), model.trim(), key.trim())
@@ -176,7 +170,7 @@ private fun OcrKeyDialog(
     var key by remember { mutableStateOf(initialKey) }
     InputSheet(
         title = "腾讯云密钥",
-        hint = "拍照识别文字、按住说话共用这对密钥：在腾讯云控制台开通「文字识别」「语音识别」，并在「访问管理 → API 密钥管理」创建密钥（建议用只授予这两项权限的子账号）。密钥只保存在本机（加密）。两项都留空并保存即可清除。",
+        hint = "文字识别、语音识别共用；两项留空保存即清除",
         onDismiss = onDismiss,
         onConfirm = {
             onConfirm(id, key)

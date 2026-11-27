@@ -172,7 +172,7 @@ internal fun SettingsItem(
             }
         },
         headlineContent = { Text(title, style = MaterialTheme.typography.titleMedium) },
-        supportingContent = { Text(summary, style = MaterialTheme.typography.bodyMedium) },
+        supportingContent = if (summary.isBlank()) null else ({ Text(summary, style = MaterialTheme.typography.bodyMedium) }),
         trailingContent = trailing,
     )
 }

@@ -39,7 +39,7 @@ import kotlinx.coroutines.withContext
 
 /** 首页「后台同步」那一行的状态摘要 */
 internal fun SettingsEnv.backgroundSummary(): String =
-    if (batteryIgnored) "电池优化已忽略" else "建议开启，离线记下的内容才能及时同步"
+    if (batteryIgnored) "" else "建议开启"
 
 @Composable
 internal fun BackgroundSection(env: SettingsEnv) {
@@ -48,13 +48,13 @@ internal fun BackgroundSection(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Notifications,
             title = "忽略电池优化",
-            summary = if (env.batteryIgnored) "已允许" else "未允许 · 建议开启，离线记下的内容和待办修改才能及时同步",
+            summary = if (env.batteryIgnored) "已允许" else "未允许",
             onClick = { if (!env.batteryIgnored) requestIgnoreBattery(context) },
         )
         SettingsItem(
             icon = Icons.Filled.Info,
             title = "应用启动管理",
-            summary = "打开系统的应用信息页。在「应用启动管理」里把「拾忆」改为手动管理，打开「自启动」「关联启动」「后台活动」；再到多任务界面锁定「拾忆」卡片。不同系统版本入口略有差异。",
+            summary = "",
             onClick = { openAppDetails(context) },
         )
     }
@@ -64,8 +64,7 @@ internal fun BackgroundSection(env: SettingsEnv) {
 
 /** 首页「备份与迁移」那一行的状态摘要 */
 internal fun backupSummary(cloudBackupAt: Long): String =
-    if (cloudBackupAt > 0) "上次备份到闪念贝壳：${formatDateTime(cloudBackupAt)}"
-    else "导出 / 导入文件，或备份到闪念贝壳，换手机不丢数据"
+    if (cloudBackupAt > 0) "上次备份 ${formatDateTime(cloudBackupAt)}" else ""
 
 @Composable
 internal fun BackupSection(env: SettingsEnv) {
@@ -137,13 +136,13 @@ internal fun BackupSection(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Share,
             title = "导出到文件",
-            summary = "项目、任务笔记、模板、专注记录、设置、重温库，保存成一个 JSON 文件",
+            summary = "",
             onClick = { if (!backupBusy) exportLauncher.launch("拾忆备份-${java.time.LocalDate.now()}.json") },
         )
         SettingsItem(
             icon = Icons.Filled.Add,
             title = "从文件导入",
-            summary = "选择之前导出的备份文件，合并进当前数据",
+            summary = "",
             onClick = { if (!backupBusy) importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
         )
     }
@@ -152,8 +151,8 @@ internal fun BackupSection(env: SettingsEnv) {
             icon = Icons.Filled.Send,
             title = "备份到闪念贝壳",
             summary = if (!env.ideashellConnected) "请先连接闪念贝壳"
-            else if (cloudBackupAt > 0) "存成一篇备份笔记（回顾里不显示）· 上次：${formatDateTime(cloudBackupAt)}"
-            else "存成一篇备份笔记（回顾里不显示），换机时一键恢复",
+            else if (cloudBackupAt > 0) "上次 ${formatDateTime(cloudBackupAt)}"
+            else "尚未备份",
             onClick = { if (env.ideashellConnected) backupToIdeashell() else env.onOpenConnection() },
         )
         SettingsItem(
@@ -181,13 +180,10 @@ internal fun BackupSection(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Refresh,
             title = "从闪念贝壳恢复",
-            summary = if (env.ideashellConnected) "读取备份笔记并合并进当前数据" else "请先连接闪念贝壳",
+            summary = if (env.ideashellConnected) "" else "请先连接闪念贝壳",
             onClick = { if (env.ideashellConnected) restoreFromIdeashell() else env.onOpenConnection() },
         )
     }
-    SettingsNote(
-        "备份不含 API Key、口令等凭证，换机后需要在「账号与连接」里重新填写。恢复是合并：同名项目 / 模板以备份为准，本机多出来的内容不会被删除。",
-    )
     if (backupBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
 
     pendingRestore?.let { file ->
@@ -213,10 +209,10 @@ internal fun BackupSection(env: SettingsEnv) {
 /** 「每周自动备份」那一行的说明：没连接 / 已开启（带上次时间与最近的失败原因）/ 未开启 */
 private fun autoBackupSummary(connected: Boolean, enabled: Boolean, lastAt: Long, error: String?): String = when {
     !connected -> "请先连接闪念贝壳"
-    !enabled -> "每 7 天在有网络时自动更新那篇备份笔记，不用再手动点"
-    error != null -> "已开启 · 最近一次自动备份失败：$error（系统会稍后重试）"
-    lastAt > 0 -> "已开启 · 每 7 天一次 · 上次：${formatDateTime(lastAt)}"
-    else -> "已开启 · 每 7 天一次，马上会先备份一次"
+    !enabled -> "已关闭"
+    error != null -> "上次失败：$error"
+    lastAt > 0 -> "每 7 天 · 上次 ${formatDateTime(lastAt)}"
+    else -> "每 7 天"
 }
 
 // ───────────────────────── 主题 ─────────────────────────

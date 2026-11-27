@@ -174,7 +174,7 @@ private fun SettingsHome(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Create,
             title = "文字记录",
-            summary = "${settings.defaultTagsText.ifEmpty { "无默认标签" }} · ${settings.dailyFolder}",
+            summary = "",
             onClick = { env.go(SEC_RECORD) },
             trailing = { Chevron() },
         )
@@ -262,7 +262,7 @@ private fun SettingsHome(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Info,
             title = "拾忆",
-            summary = "版本 ${BuildConfig.VERSION_NAME} · 记录自动同步到闪念贝壳与滴答清单",
+            summary = "版本 ${BuildConfig.VERSION_NAME}",
             onClick = null,
         )
     }

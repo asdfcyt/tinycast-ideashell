@@ -42,6 +42,13 @@ object IdeashellBridge {
     /** 立刻开始录音（闪念贝壳自己的录音页，说完点「结束」会自动整理成笔记） */
     fun startVoiceRecording(context: Context): Boolean = shortcut(context, Action.VOICE)
 
+    /** 执行一条语音指令（长录音 / 新建笔记 / 打开 AI） */
+    fun run(context: Context, cmd: com.carpe.ideashell.core.voice.VoiceCmd): Boolean = when (cmd) {
+        com.carpe.ideashell.core.voice.VoiceCmd.LONG_RECORD -> startVoiceRecording(context)
+        com.carpe.ideashell.core.voice.VoiceCmd.NEW_NOTE -> newTextNote(context)
+        com.carpe.ideashell.core.voice.VoiceCmd.OPEN_AI -> askAi(context)
+    }
+
     /** 打开空白笔记编辑器 */
     fun newTextNote(context: Context): Boolean = shortcut(context, Action.TEXT)
 

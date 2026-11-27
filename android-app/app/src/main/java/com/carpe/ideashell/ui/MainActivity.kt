@@ -102,6 +102,9 @@ class MainActivity : ComponentActivity() {
     /** 「有记录没能同步」通知点进来：直接打开连接与诊断页（里面有同步队列）；界面消费后清空 */
     private var requestedConnection by mutableStateOf(false)
 
+    /** 语音搜索结果里点进来：（search / note / task，搜索词或 id）；界面消费后清空 */
+    private var requestedOpen by mutableStateOf<Pair<String, String>?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as IdeashellApp).container
@@ -109,6 +112,7 @@ class MainActivity : ComponentActivity() {
         requestedFocus = intent?.getBooleanExtra(EXTRA_OPEN_FOCUS, false) == true
         requestedRevisit = intent?.getBooleanExtra(EXTRA_OPEN_REVISIT, false) == true
         requestedConnection = intent?.getBooleanExtra(EXTRA_OPEN_CONNECTION, false) == true
+        requestedOpen = readOpen(intent)
 
         setContent {
             val settings by container.settings.state.collectAsStateWithLifecycle()
@@ -123,6 +127,8 @@ class MainActivity : ComponentActivity() {
                     onRevisitConsumed = { requestedRevisit = false },
                     requestedConnection = requestedConnection,
                     onConnectionConsumed = { requestedConnection = false },
+                    requestedOpen = requestedOpen,
+                    onOpenConsumed = { requestedOpen = null },
                 )
             }
         }
@@ -141,6 +147,15 @@ class MainActivity : ComponentActivity() {
         requestedFocus = intent.getBooleanExtra(EXTRA_OPEN_FOCUS, false)
         requestedRevisit = intent.getBooleanExtra(EXTRA_OPEN_REVISIT, false)
         requestedConnection = intent.getBooleanExtra(EXTRA_OPEN_CONNECTION, false)
+        requestedOpen = readOpen(intent)
+    }
+
+    private fun readOpen(intent: Intent?): Pair<String, String>? {
+        intent ?: return null
+        intent.getStringExtra(EXTRA_OPEN_SEARCH)?.let { return "search" to it }
+        intent.getStringExtra(EXTRA_OPEN_NOTE)?.let { return "note" to it }
+        intent.getStringExtra(EXTRA_OPEN_TASK)?.let { return "task" to it }
+        return null
     }
 
     private fun readTab(intent: Intent?): Int? =
@@ -151,6 +166,9 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_OPEN_FOCUS = "open_focus"
         const val EXTRA_OPEN_REVISIT = "open_revisit"
         const val EXTRA_OPEN_CONNECTION = "open_connection"
+        const val EXTRA_OPEN_SEARCH = "open_search"
+        const val EXTRA_OPEN_NOTE = "open_note"
+        const val EXTRA_OPEN_TASK = "open_task"
     }
 }
 
@@ -173,6 +191,8 @@ private fun AppRoot(
     onRevisitConsumed: () -> Unit,
     requestedConnection: Boolean,
     onConnectionConsumed: () -> Unit,
+    requestedOpen: Pair<String, String>?,
+    onOpenConsumed: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(requestedTab ?: TAB_HOME) }
     var connection by rememberSaveable { mutableStateOf(requestedConnection) }
@@ -241,6 +261,32 @@ private fun AppRoot(
             noteId = null
             onConnectionConsumed()
         }
+    }
+
+    // 语音搜索结果里点进来：直接进搜索页 / 笔记 / 任务
+    LaunchedEffect(requestedOpen) {
+        val (kind, value) = requestedOpen ?: return@LaunchedEffect
+        connection = false
+        focus = false
+        revisit = false
+        when (kind) {
+            "search" -> {
+                noteId = null
+                search = true
+                searchVm.submit(value)
+            }
+            "note" -> {
+                search = false
+                noteId = value
+            }
+            "task" -> {
+                noteId = null
+                search = false
+                todo.pendingTask = value
+                tab = TAB_TODOS
+            }
+        }
+        onOpenConsumed()
     }
 
     BackHandler(enabled = subpage || tab != TAB_HOME) {

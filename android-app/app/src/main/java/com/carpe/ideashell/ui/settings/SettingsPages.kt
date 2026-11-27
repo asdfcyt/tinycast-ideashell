@@ -82,7 +82,7 @@ internal fun LexiconPage() {
         SettingsItem(
             icon = Icons.Filled.Add,
             title = "添加热词",
-            summary = "项目名、人名、产品名等专有名词（2–10 个字），识别时优先，也会告诉 AI",
+            summary = "",
             onClick = { adding = LexiconAdd.Hotword },
         )
         lexicon.hotwords.forEach { word ->
@@ -95,7 +95,7 @@ internal fun LexiconPage() {
         SettingsItem(
             icon = Icons.Filled.Add,
             title = "添加替换规则",
-            summary = "总是被听错的词：识别后自动改成正确写法。在悬浮胶囊的确认卡片里把同音错字改对，也会自动记到这里",
+            summary = "",
             onClick = { adding = LexiconAdd.Rule },
         )
         lexicon.replacements.forEach { (from, to) ->
@@ -109,7 +109,7 @@ internal fun LexiconPage() {
             SettingsItem(
                 icon = Icons.Filled.Info,
                 title = "还没有",
-                summary = "有了文件夹、项目、滴答清单的待办之后，这里会自动出现",
+                summary = "",
                 onClick = null,
             )
         } else {
@@ -124,19 +124,13 @@ internal fun LexiconPage() {
             }
         }
     }
-    Text(
-        "自动热词来自拾忆里已有的内容，识别时和上面的热词一起使用（只用本机已有的数据，不读屏幕）；你加的热词和替换规则永远优先。",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 8.dp),
-    )
 
     when (adding) {
         LexiconAdd.Hotword -> {
             var word by remember { mutableStateOf("") }
             InputSheet(
                 title = "添加热词",
-                hint = "2–10 个字的专有名词；可以一次写多个，用换行或逗号分开。",
+                hint = "可一次写多个，换行或逗号分开",
                 confirmEnabled = word.isNotBlank(),
                 onDismiss = { adding = null },
                 onConfirm = {
@@ -213,8 +207,7 @@ internal fun VoiceHistoryPage() {
         SettingsItem(
             icon = Icons.Filled.Info,
             title = "保存语音历史",
-            summary = if (settings.voiceHistory) "已开启 · 保留最近 ${com.carpe.ideashell.data.asr.VoiceHistory.MAX_RECORDS} 条的原话、整理结果和原始录音，只存在这台手机里"
-            else "已关闭 · 不再保留录音和原话（已有的历史还在，可以清空）",
+            summary = "",
             onClick = { container.settings.setVoiceHistory(!settings.voiceHistory) },
             trailing = { Switch(checked = settings.voiceHistory, onCheckedChange = { container.settings.setVoiceHistory(it) }) },
         )
@@ -223,7 +216,7 @@ internal fun VoiceHistoryPage() {
             SettingsItem(
                 icon = Icons.Filled.Close,
                 title = "清空历史",
-                summary = "删除全部 ${records.size} 条原话和录音",
+                summary = "${records.size} 条",
                 onClick = { confirmClear = true },
             )
         }
@@ -281,12 +274,6 @@ internal fun VoiceHistoryPage() {
                 }
             }
         }
-        Text(
-            "「重新识别」用留底的录音再识别并整理一遍，「重新整理」只让 AI 重新整理上面的原话；结果和平时一样先弹出确认卡片，你确认后才保存。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 8.dp),
-        )
     }
 
     if (confirmClear) {

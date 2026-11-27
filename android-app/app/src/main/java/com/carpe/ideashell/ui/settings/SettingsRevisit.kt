@@ -97,23 +97,23 @@ internal fun RevisitSection(env: SettingsEnv) {
             iconRes = R.drawable.ic_revisit,
             title = "开始重温",
             summary = when {
-                revisitToday.remaining > 0 -> "今天有 ${revisitToday.remaining} 条待重温 · 点击开始"
-                revisitToday.total == 0 -> "还没有加入的内容 · 在笔记页点右上角的循环图标，或选中文字加入"
-                revisitToday.doneToday > 0 -> "今天的重温完成了 · 共 ${revisitToday.total} 条在重温"
-                else -> "今天没有待重温的 · 共 ${revisitToday.total} 条在重温"
+                revisitToday.remaining > 0 -> "今天 ${revisitToday.remaining} 条待重温"
+                revisitToday.total == 0 -> "还没有内容"
+                revisitToday.doneToday > 0 -> "今天已完成 · 共 ${revisitToday.total} 条"
+                else -> "今天没有待重温 · 共 ${revisitToday.total} 条"
             },
             onClick = env.onOpenRevisit,
         )
         SettingsItem(
             icon = Icons.Filled.Star,
             title = "每天最多重温",
-            summary = "${settings.revisitDailyLimit} 条 · 超出的顺延到后面几天，不会一次性全抛出来",
+            summary = "${settings.revisitDailyLimit} 条",
             onClick = { dialog = RevisitDialog.Limit },
         )
         SettingsSwitchItem(
             icon = Icons.Filled.Notifications,
             title = "每天提醒",
-            summary = if (settings.revisitReminder) "每天 ${formatClock(settings.revisitReminderMinutes)} 一条通知「今天有 N 条待重温」" else "已关闭 · 「今天」页仍会显示今日重温",
+            summary = "",
             checked = settings.revisitReminder,
             onChange = { setRevisitReminder(it) },
         )
@@ -127,7 +127,7 @@ internal fun RevisitSection(env: SettingsEnv) {
             SettingsSwitchItem(
                 icon = Icons.Filled.Favorite,
                 title = "周末不提醒",
-                summary = "周六、周日不发通知",
+                summary = "",
                 checked = settings.revisitSkipWeekends,
                 onChange = { container.settings.setRevisitSkipWeekends(it) },
             )
@@ -135,8 +135,7 @@ internal fun RevisitSection(env: SettingsEnv) {
         SettingsSwitchItem(
             icon = Icons.Filled.Create,
             title = "填空模式",
-            summary = if (settings.revisitCloze) "已开启 · 重温时把关键词挖空，点空白处查看。用 {{词}}、**加粗**、==高亮== 标出的词优先挖，没标就自动挑"
-            else "关闭 · 开启后重温时把正文里的关键词挖空，先回忆再看答案",
+            summary = "",
             checked = settings.revisitCloze,
             onChange = { container.settings.setRevisitCloze(it) },
         )
@@ -146,21 +145,21 @@ internal fun RevisitSection(env: SettingsEnv) {
         SettingsItem(
             icon = Icons.Filled.Refresh,
             title = "目标记忆率",
-            summary = "${settings.revisitRetention}% · 越高出现得越频繁（范围 80%–95%）",
+            summary = "${settings.revisitRetention}%",
             onClick = { dialog = RevisitDialog.Retention },
         )
         if (settings.revisitCloze) {
             SettingsItem(
                 icon = Icons.Filled.Create,
                 title = "自动挖空比例",
-                summary = "${settings.clozeMinPercent}% – ${settings.clozeMaxPercent}% · 挖掉的字数占正文的比例，每次重温在范围内随机取；你手动挖的空不受影响",
+                summary = "${settings.clozeMinPercent}% – ${settings.clozeMaxPercent}%",
                 onClick = { dialog = RevisitDialog.ClozeRange },
             )
         }
         SettingsItem(
             icon = Icons.Filled.DateRange,
             title = "全部推后 7 天",
-            summary = "积压太多、一时看不过来时，把现在到期的都往后挪一周",
+            summary = "",
             onClick = { postponeRevisit() },
         )
     }
@@ -219,7 +218,7 @@ private fun ClozeRangeDialog(minPercent: Int, maxPercent: Int, onConfirm: (Int, 
                     steps = 54,
                 )
                 Text(
-                    "比例按正文字数算，每次重温在这个范围内随机取一个目标，位置也会换。比例小：只挖最关键的词；比例大：几乎每个词都要回忆。原文里用 {{词}} 标出的、加粗或高亮的词，以及你手动挖的空，不受这个比例影响。",
+                    "比例小只挖关键词，比例大几乎每个词都要回忆",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -172,11 +172,22 @@ fun QuickCaptureScreen(
             viewModel.text = if (viewModel.text.isBlank()) question else viewModel.text.trimEnd() + "\n" + question
         }
     }
-    // 语音里说了「长录音」：换成闪念贝壳自己的录音页；唤不起来就留在面板里
-    LaunchedEffect(viewModel.longRecordRequest) {
-        if (!viewModel.longRecordRequest) return@LaunchedEffect
-        viewModel.longRecordRequest = false
-        if (IdeashellBridge.startVoiceRecording(context)) onClose()
+    // 语音里说了指令（长录音 / 新建笔记 / 打开 AI）：交给闪念贝壳执行；唤不起来就留在面板里
+    LaunchedEffect(viewModel.commandRequest) {
+        val cmd = viewModel.commandRequest ?: return@LaunchedEffect
+        viewModel.commandRequest = null
+        if (IdeashellBridge.run(context, cmd)) onClose()
+    }
+    // 语音里说了「找一下…」：打开拾忆的搜索页看结果（可点、不会消失）
+    LaunchedEffect(viewModel.searchRequest) {
+        val q = viewModel.searchRequest?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        viewModel.searchRequest = null
+        context.startActivity(
+            android.content.Intent(context, com.carpe.ideashell.ui.MainActivity::class.java)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                .putExtra(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_SEARCH, q),
+        )
+        onClose()
     }
     // 语音里说了修改之前的待办：改完弹一条提示；全部改成功就收起面板
     LaunchedEffect(viewModel.editNotice) {
