@@ -211,6 +211,40 @@ fun QuickCaptureScreen(
             onClose()
         }
     }
+    // 语音助手回答：查的时候提示一下，查完用对话框显示回答，相关的待办 / 笔记可点开
+    LaunchedEffect(viewModel.answering) {
+        if (viewModel.answering) android.widget.Toast.makeText(context, "正在查你的记录…", android.widget.Toast.LENGTH_SHORT).show()
+    }
+    viewModel.answerResult?.let { res ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { viewModel.answerResult = null },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(res.text)
+                    res.hits.take(6).forEach { hit ->
+                        Text(
+                            (if (hit.isNote) "笔记 · " else "待办 · ") + hit.title + if (hit.sub.isBlank()) "" else "  ${hit.sub}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                viewModel.answerResult = null
+                                context.startActivity(
+                                    android.content.Intent(context, com.carpe.ideashell.ui.MainActivity::class.java)
+                                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                                        .putExtra(
+                                            if (hit.isNote) com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_NOTE else com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_TASK,
+                                            hit.id,
+                                        ),
+                                )
+                                onClose()
+                            }.padding(vertical = 4.dp),
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { viewModel.answerResult = null }) { Text("好") } },
+        )
+    }
     // 语音里说了删除待办：删除不可恢复，先让用户确认
     if (viewModel.pendingDeletes.isNotEmpty()) {
         androidx.compose.material3.AlertDialog(

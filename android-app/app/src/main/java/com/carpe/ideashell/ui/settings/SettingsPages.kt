@@ -202,6 +202,7 @@ internal fun VoiceHistoryPage() {
     val player = remember { PcmPlayer() }
     DisposableEffect(Unit) { onDispose { player.stop() } }
     var confirmClear by remember { mutableStateOf(false) }
+    var caseFor by remember { mutableStateOf<VoiceRecord?>(null) }
 
     Group(null) {
         SettingsItem(
@@ -221,6 +222,8 @@ internal fun VoiceHistoryPage() {
             )
         }
     }
+
+    IntentRegressionSection()
 
     if (records.isEmpty()) {
         Text(
@@ -268,12 +271,17 @@ internal fun VoiceHistoryPage() {
                                 cm.setPrimaryClip(ClipData.newPlainText("语音原话", record.raw))
                                 toast(context, "已复制原话")
                             }) { Text("复制原话") }
+                            TextButton(onClick = { caseFor = record }) { Text("加入回归集") }
                         }
                         TextButton(onClick = { container.voiceHistory.delete(record.id) }) { Text("删除") }
                     }
                 }
             }
         }
+    }
+
+    caseFor?.let { r ->
+        AddIntentCaseDialog(raw = r.raw.orEmpty(), kinds = r.kinds, onDismiss = { caseFor = null })
     }
 
     if (confirmClear) {

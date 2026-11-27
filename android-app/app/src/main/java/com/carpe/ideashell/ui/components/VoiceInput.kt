@@ -78,6 +78,7 @@ import com.carpe.ideashell.data.asr.CODE_NETWORK
 import com.carpe.ideashell.data.asr.LocalSenseVoice
 import com.carpe.ideashell.data.asr.Lexicon
 import com.carpe.ideashell.data.asr.VoiceHistory
+import com.carpe.ideashell.data.voice.VoiceSession
 import com.carpe.ideashell.data.asr.TencentAsr
 import com.carpe.ideashell.data.llm.LlmClient
 import com.carpe.ideashell.data.llm.LlmException
@@ -301,7 +302,8 @@ class VoiceInputController(
     private suspend fun deliver(raw: String, heardNote: String?, historyId: String?) {
         // 「长录音」口令：不用再交给大模型整理，直接交出去换成闪念贝壳的录音
         if (VoiceIntents.isLongRecordCommand(raw)) {
-            if (historyId != null) history?.update(historyId, summary = "口令：长录音", error = "")
+            if (historyId != null) history?.update(historyId, summary = "口令：长录音", error = "", kinds = "cmd:long_record")
+            VoiceSession.add(raw, "执行指令：长录音")
             onResult(VoiceResult(raw, raw, emptyList(), heardNote, command = VoiceCmd.LONG_RECORD))
             return
         }
@@ -314,7 +316,10 @@ class VoiceInputController(
         if (settings.current.voicePolish && llm.configured) {
             try {
                 val now = LocalDateTime.now()
-                val reply = llm.chatJson(VoiceIntents.systemPrompt(now, vocabulary = hot, todos = todoContext()), VoiceIntents.userPrompt(raw))
+                val reply = llm.chatJson(
+                    VoiceIntents.systemPrompt(now, vocabulary = hot, todos = todoContext()),
+                    VoiceIntents.userPrompt(raw, VoiceSession.contextBlock()),
+                )
                 // 「半小时后」这类相对时间，本地再精确算一遍
                 intents = VoiceIntents.fixRelativeTime(raw, VoiceIntents.parse(reply), now)
                 if (intents.isEmpty()) {
@@ -329,15 +334,22 @@ class VoiceInputController(
         // AI 听出这是一句对 App 的指令：丢掉这段话，直接执行（指令是独占的，不和别的意图混在一起）
         val command = intents.firstNotNullOfOrNull { it.cmd }
         if (command != null) {
-            if (historyId != null) history?.update(historyId, summary = "指令：${command.label}", error = "")
+            if (historyId != null) history?.update(historyId, summary = "指令：${command.label}", error = "", kinds = VoiceIntents.signature(intents))
+            VoiceSession.add(raw, "执行指令：${command.label}")
             onResult(VoiceResult(raw, raw, emptyList(), heardNote, command = command))
             return
         }
         // 没有大模型整理时，本地规则听「追加到上一条笔记」
         val appendText = if (intents.isEmpty()) VoiceIntents.stripAppendCommand(raw) else null
         if (historyId != null) {
-            history?.update(historyId, summary = summarize(intents, cleaned), error = if (polishError != null) polishError else "")
+            history?.update(
+                historyId,
+                summary = summarize(intents, cleaned),
+                error = if (polishError != null) polishError else "",
+                kinds = if (intents.isEmpty()) null else VoiceIntents.signature(intents),
+            )
         }
+        if (intents.isNotEmpty()) VoiceSession.add(raw, VoiceIntents.contextLine(intents, cleaned))
         onResult(
             if (appendText != null) VoiceResult(raw, SpeechCleaner.clean(appendText), intents, note, appendToLast = true)
             else VoiceResult(raw, cleaned, intents, note),
@@ -351,6 +363,7 @@ class VoiceInputController(
             val kind = when {
                 i.edit -> i.op.label
                 i.searchScope != null -> "搜索"
+                i.answer -> "回答"
                 i.ask -> "问 AI"
                 i.append -> "追加"
                 else -> when (i.type) {

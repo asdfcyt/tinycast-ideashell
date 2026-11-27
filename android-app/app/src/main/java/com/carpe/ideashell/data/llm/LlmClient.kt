@@ -70,6 +70,37 @@ class LlmClient(
         return content?.trim().takeUnless { it.isNullOrEmpty() } ?: throw LlmException("大模型没有返回内容")
     }
 
+    /**
+     * 带工具的一轮对话（OpenAI function calling）：[messages] 是完整的对话（system / user / assistant / tool），
+     * 返回模型这一轮的 message（可能带 `tool_calls`，也可能直接是 `content`）。[tools] 为空就不带工具（用来逼它直接作答）。
+     */
+    suspend fun chatWithTools(messages: JsonArray, tools: JsonArray, timeoutSec: Long = 30): JsonObject {
+        val key = credentials.llmKey
+        if (key.isNullOrBlank()) throw LlmException("还没有填写大模型 API Key")
+        val s = settings.current
+        val url = s.llmBaseUrl.trimEnd('/') + "/chat/completions"
+        val payload = buildJsonObject {
+            put("model", s.llmModel)
+            put("temperature", 0.2)
+            put("stream", false)
+            put("messages", messages)
+            if (tools.isNotEmpty()) {
+                put("tools", tools)
+                put("tool_choice", "auto")
+            }
+        }.toString()
+        val reply = post(url, key, payload, timeoutSec)
+        if (reply.code == 400 && tools.isNotEmpty()) throw LlmException("当前大模型不支持工具调用（400）" + reply.body.take(80).let { if (it.isBlank()) "" else "：$it" })
+        if (reply.code !in 200..299) throw LlmException(describeHttpError(reply.code, reply.body))
+        val root = try {
+            Json.parseToJsonElement(reply.body).jsonObject
+        } catch (_: Exception) {
+            throw LlmException("大模型返回了无法解析的内容")
+        }
+        return ((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("message") as? JsonObject
+            ?: throw LlmException("大模型没有返回内容")
+    }
+
     private suspend fun send(url: String, key: String, model: String, system: String, user: String, jsonMode: Boolean, timeoutSec: Long?): LlmReply {
         val payload = buildJsonObject {
             put("model", model)
@@ -81,6 +112,10 @@ class LlmClient(
                 add(buildJsonObject { put("role", "user"); put("content", user) })
             })
         }.toString()
+        return post(url, key, payload, timeoutSec)
+    }
+
+    private suspend fun post(url: String, key: String, payload: String, timeoutSec: Long?): LlmReply {
         val request = try {
             Request.Builder()
                 .url(url)

@@ -22,6 +22,9 @@ import com.carpe.ideashell.core.parse.FolderInfo
 import com.carpe.ideashell.core.parse.RepeatParser
 import com.carpe.ideashell.core.voice.VoiceIntent
 import com.carpe.ideashell.core.voice.VoiceResult
+import com.carpe.ideashell.data.voice.VoiceAgent
+import com.carpe.ideashell.data.voice.VoiceSearch
+import com.carpe.ideashell.data.voice.VoiceSession
 import com.carpe.ideashell.ui.components.VoiceInputController
 import com.carpe.ideashell.ui.components.VoiceUndo
 import com.carpe.ideashell.data.capture.CaptureImages
@@ -121,6 +124,28 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
     /** 语音里说了「找一下…」：界面收到后直接打开拾忆的搜索页（结果可点、不会消失）并收起面板 */
     var searchRequest by mutableStateOf<String?>(null)
 
+    /** 语音里问了「我昨天做了哪些事」：语音助手在查你的记录，查完把回答放进 [answerResult] */
+    var answering by mutableStateOf(false)
+        private set
+    var answerResult by mutableStateOf<com.carpe.ideashell.data.voice.VoiceSearch.Result?>(null)
+
+    private fun askAnswer(question: String, raw: String) {
+        answering = true
+        viewModelScope.launch {
+            val result = try {
+                val a = VoiceAgent.answer(container, question, VoiceSession.format(VoiceSession.recent().filter { it.raw != raw }))
+                VoiceSession.attach(raw, "回答：" + a.text)
+                VoiceSearch.Result(a.text, a.hits, "", isAnswer = true)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                VoiceSearch.Result("没能回答：" + (e.message ?: "未知错误"), emptyList(), "", isAnswer = true)
+            }
+            answering = false
+            answerResult = result
+        }
+    }
+
     /** 快速设置磁贴「语音记一条」进来：面板准备好后自动开始录音（锁定模式，点「完成」结束） */
     var voiceStartRequest by mutableStateOf(false)
 
@@ -155,6 +180,18 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         // 指令：丢掉这段，界面收到后去闪念贝壳执行
         if (result.command != null) {
             commandRequest = result.command
+            return
+        }
+        // 「我昨天做了哪些事」：语音助手查你的记录后回答，不进输入框
+        val answers = result.intents.filter { it.answer }
+        if (answers.isNotEmpty()) {
+            val rest = result.intents.filterNot { it.answer }
+            askAnswer(answers.first().content, result.raw)
+            if (rest.isEmpty()) {
+                error = result.polishError
+                return
+            }
+            applyVoice(result.copy(intents = rest))
             return
         }
         // 「找一下关于招聘的笔记」：不调 AI，查完把清单提示出来，不进输入框

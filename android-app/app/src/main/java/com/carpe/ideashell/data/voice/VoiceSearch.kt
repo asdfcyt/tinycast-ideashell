@@ -20,12 +20,13 @@ object VoiceSearch {
     class Hit(val isNote: Boolean, val id: String, val title: String, val sub: String)
 
     /** [text] 是几行能直接看 / 放通知里的文字；[hits] 是可以点开的条目；[keyword] 用来跳到拾忆的搜索页看全部 */
-    class Result(val text: String, val hits: List<Hit>, val keyword: String)
+    class Result(val text: String, val hits: List<Hit>, val keyword: String, val isAnswer: Boolean = false)
 
     fun merge(list: List<Result>): Result = Result(
         text = list.joinToString("\n") { it.text },
         hits = list.flatMap { it.hits },
         keyword = list.firstOrNull { it.keyword.isNotBlank() }?.keyword.orEmpty(),
+        isAnswer = list.any { it.isAnswer },
     )
 
     /** 待办查询（「今天还有什么没做」）的结果也做成可点开的条目 */
@@ -72,10 +73,17 @@ object VoiceSearch {
     }
 
     private suspend fun todos(container: AppContainer, k: String, since: LocalDate?, until: LocalDate?): List<Hit> {
+        val hits = findTodos(container, k, since, until)
+        Log.i(TAG, "todo hits=${hits.size}")
+        return taskHits(hits).mapIndexed { i, h -> if (hits[i].done) Hit(false, h.id, "✓ " + h.title, h.sub) else h }
+    }
+
+    /** 待办（含已完成）里按计划日期范围 + 关键词查；未完成的排前面 */
+    suspend fun findTodos(container: AppContainer, k: String, since: LocalDate?, until: LocalDate?): List<DidaTask> {
         runCatching { container.todos.refreshNow() }
         val o = container.todos.peek() ?: return emptyList()
         val key = k.lowercase()
-        val hits: List<DidaTask> = (o.overdue + o.upcoming + o.undated + o.done)
+        return (o.overdue + o.upcoming + o.undated + o.done)
             .filter { t ->
                 inRange(t.date?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }, since, until) &&
                     (key.isEmpty() || TodoMeta.cleanTitle(t.title).lowercase().contains(key) ||
@@ -84,13 +92,22 @@ object VoiceSearch {
             }
             .distinctBy { it.id }
             .sortedBy { it.done }
-        Log.i(TAG, "todo hits=${hits.size}")
-        return taskHits(hits).mapIndexed { i, h -> if (hits[i].done) Hit(false, h.id, "✓ " + h.title, h.sub) else h }
     }
 
     /** 返回（结果, 错误提示）：搜索失败时结果为空、提示里写原因 */
     private suspend fun notes(container: AppContainer, k: String, since: LocalDate?, until: LocalDate?): Pair<List<Hit>, String?> {
-        if (!container.credentials.ideashellConnected.value) return emptyList<Hit>() to null
+        val (list, error) = findNotes(container, k, since, until)
+        return list.map(::noteHit) to error
+    }
+
+    fun noteHit(n: NoteInfo): Hit {
+        val d = n.localDate?.let { "${it.monthValue}/${it.dayOfMonth}" }.orEmpty()
+        return Hit(true, n.id, n.title.trim().ifEmpty { (n.summary ?: "").trim().take(24) }.ifEmpty { "（无标题）" }, d)
+    }
+
+    /** 笔记：语义搜索 ∪ 时间范围内字面匹配，新的在前；返回（笔记, 错误提示） */
+    suspend fun findNotes(container: AppContainer, k: String, since: LocalDate?, until: LocalDate?): Pair<List<NoteInfo>, String?> {
+        if (!container.credentials.ideashellConnected.value) return emptyList<NoteInfo>() to null
         val zone = ZoneId.systemDefault()
         val found = LinkedHashMap<String, NoteInfo>()
         try {
@@ -112,13 +129,10 @@ object VoiceSearch {
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "note search failed", e)
-            return emptyList<Hit>() to ("笔记搜索失败：" + (e.message ?: "未知错误"))
+            return emptyList<NoteInfo>() to ("笔记搜索失败：" + (e.message ?: "未知错误"))
         }
         val hits = found.values.sortedByDescending { it.createdAt.orEmpty() }
         Log.i(TAG, "note hits=${hits.size}")
-        return hits.map { n ->
-            val d = n.localDate?.let { "${it.monthValue}/${it.dayOfMonth}" }.orEmpty()
-            Hit(true, n.id, n.title.trim().ifEmpty { (n.summary ?: "").trim().take(24) }.ifEmpty { "（无标题）" }, d)
-        } to null
+        return hits to null
     }
 }

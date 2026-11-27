@@ -59,6 +59,8 @@ data class VoiceIntent(
     val searchScope: String? = null,
     /** 搜索的时间范围终点（含，yyyy-MM-dd）；起点放在 [date]。都为 null = 不限时间 */
     val until: LocalDate? = null,
+    /** 这是一个要用「我自己的记录」回答的问题（「我昨天做了哪些事」）：[content] 是整理好的完整问题，交给语音助手查数据后回答，不存成记录 */
+    val answer: Boolean = false,
 )
 
 /** 一次语音输入的完整结果 */
@@ -121,22 +123,25 @@ object VoiceIntents {
 未来三周日历：$calendar。$vocab$todoCtx
 推算日期以这份日历为准（「下周三」= 下一个周一所在那周的周三；「周五」= 本周还没到的最近一个周五，本周已过则取下周）。月底、节日、「N 天后」请自行推算。
 
+如果用户消息开头带有「最近对话」，那是这几分钟内的上下文，只用来理解「那个 / 刚才 / 它们 / 再 / 也」这类指代：把指代补成具体名字再填 target / content（例如上一轮改了「交周报」，这一轮说「再推迟一天」，target 就填「周报」）；绝不能把「最近对话」里的内容当成这次要记录的话，也不要重复执行上一轮的事。
+
 输出格式：{"items":[{...},{...}]}。items 是数组，一句话里有几个互相独立的意图就输出几项，每项按下面的字段整理：
 - 拆分规则：只有明显是「不同的事」才拆，例如「明天上午开会，下午交周报」是两个待办；同一件事的补充说明、同一段想法 / 心情不要拆，仍然是一项。每项要自成一句、能单独看懂（必要时把共同的人名 / 地点补进去）；每项各自推算 date / time；不同类型可以混在一起。最多 8 项。
 
 每一项的字段：
-- type："cmd" | "search" | "todo" | "daily" | "note" | "ask"，六种意图要分清（先看是不是 cmd / search，再看后四种）：
+- type："cmd" | "search" | "answer" | "todo" | "daily" | "note" | "ask"，七种意图要分清（先看是不是 cmd / search / answer，再看后四种）：
   - cmd（指令）：用户是在**命令这个 App 做一个操作**，而不是在说一段要记录的内容。content 填 ""，用 cmd 字段说明做什么：
     - "long_record"：开始长录音 / 「记录为长录音」「帮我把接下来的内容记成长录音」「开个长录音」「我要录一段长的」（用闪念贝壳自己的录音页）。口令后面如果还带了内容，一律丢掉，只执行指令。
     - "new_note"：打开空白笔记编辑器手打一条（「我要手写一条笔记」「新建一个文字笔记」），注意「记个笔记，复利是…」带了正文的是 note，不是 cmd。
     - "open_ai"：只想打开闪念贝壳 AI 对话、没有具体问题（「打开 AI」「我想和 AI 聊聊」）；有具体问题的是 ask。
     句子里出现「长录音」「新建笔记」这类词，要先判断是不是在下指令：是指令就 cmd，只是在叙述一件事（「昨天的长录音还没整理」）才不是。
   - search（找已有的记录，只列清单，不分析）：「找一下关于招聘的笔记」「搜一下预算」「我有没有记过装修的事」「列出和周报相关的待办」。target 填关键词（去掉「相关 / 关于 / 的笔记」和时间说法，只留要找的主题词；没有主题、只问某段时间做了什么 / 记了什么时填 ""，一定要带上时间范围），scope 填 "note"（说了笔记 / 记录）/ "todo"（说了待办 / 任务）/ "all"（没限定）。说了时间范围（「最近一周」「这个月」「昨天」「上周」）就按日历推算成 since / until（yyyy-MM-dd，含首尾；「最近一周」= 今天往前 6 天到今天；没说时间都填 null）。content 填 ""。要 AI 帮忙总结 / 分析 / 回答的是 ask，不是 search；按日期查待办（「今天还有什么没做」）仍然用 edit 的 query。
+  - answer（语音助手：查我自己的记录再回答，或做专注计时操作）：问题的答案就在用户自己的待办 / 笔记 / 专注记录里，要查完再用几句话回答或统计；或者要助手帮忙开始 / 暂停 / 继续 / 结束专注计时（「开始对今天的第一个任务进行专注」「开始专注 25 分钟」「结束专注」「专注暂停一下」，注意这是对 App 的操作请求，不是 todo / daily）。查询类例子：「我昨天做了哪些事情」「今天完成了几个待办」「这周专注了多久」「我最近记了哪些关于书法的内容，帮我总结一下」「哪个任务最花时间」「明天有什么要紧的」。content 写成**完整、能单独看懂的问题 / 请求**（把「那个 / 它 / 刚才」按最近对话补全，时间说法保留原样，如「昨天」「最近一周」）。只想要清单、不要回答（「找一下 / 列出 / 搜一下」）是 search；要外部知识、深度分析、大范围梳理（「帮我分析三个月的笔记」「X 是什么」）是 ask。
   - ask（问 AI）：用户是在让 AI 查资料、回答问题、分析、解释、总结、翻译、出主意，常见说法「帮我查一下 / 搜一下 / 问一下 AI / 帮我看看 / X 是什么 / 怎么 X / 为什么 / 帮我分析 / 帮我总结」。content 写成整理后的完整问题。注意「提醒我去查…」「记得查…」是 todo，不是 ask。
   - todo（待办）：用户要去做的一件具体的事——需要在将来做，或明确说了「提醒我 / 待办 / 记得 / 别忘了 / 要去 / 得去」。已经做完的事不是 todo。带不带时间都行。
   - note（笔记）：只有用户明确说了「记成笔记 / 记个笔记 / 做个笔记 / 笔记：/ 存为笔记 / 摘录」之类的话才用。没有这类明确说法时，绝对不要用 note，哪怕内容像知识、想法、摘抄也选 daily。这句口令本身不要写进正文。
   - daily（日记）：除上面三种以外的一切，也是默认选项——今天发生的事、心情、感想、流水账、已经做完的事、随口的一个想法、没头没尾的一句话。用户说了「记个日记 / 写进日记」也是 daily。
-  拿不准时选 daily；但对 App 说的指令、找东西的请求绝对不能当成 daily 存起来。
+  拿不准时选 daily；但对 App 说的指令、找东西的请求、向我提问的请求绝对不能当成 daily 存起来。
 - append：true / false，默认 false。用户说了「追加到上一条笔记 / 上个笔记 / 上一篇 / 刚才那条」「接着上一条写」「补充到上一条」这类话，就是想把这段话接到最近一条笔记后面：append 填 true，type 填 note，content 只写要追加的内容（口令本身不要写进去）。没说这类话一律 false。append 和 ask 不会同时出现。
 - edit：true / false，默认 false。用户要对**之前已经建好的待办**做操作（而不是新建）：修改、完成、删除、查询。这时 type 填 todo，edit 填 true，用 op 说明做什么：
   - op = "edit"（改时间 / 补充备注 / 改优先级）：「把刚才的会改到两点四十」「开会那个待办补充一下，带上办公电脑」「把交周报那个推迟到周五」「开会那个往后推一小时」。
@@ -175,8 +180,16 @@ object VoiceIntents {
 输出：{"items":[{"type":"cmd","cmd":"long_record","content":""}]}
 输入：找一下我之前记的关于招聘的笔记
 输出：{"items":[{"type":"search","scope":"note","target":"招聘","since":null,"until":null,"content":""}]}
+输入：把昨天记的笔记列出来
+输出：{"items":[{"type":"search","scope":"note","target":"","since":"2026-10-17","until":"2026-10-17","content":""}]}
 输入：我昨天做了哪些事情
-输出：{"items":[{"type":"search","scope":"all","target":"","since":"2026-10-17","until":"2026-10-17","content":""}]}
+输出：{"items":[{"type":"answer","content":"我昨天做了哪些事情？"}]}
+输入：这周我专注了多久
+输出：{"items":[{"type":"answer","content":"这周我专注了多久？"}]}
+输入：开始对今天的第一个任务进行专注
+输出：{"items":[{"type":"answer","content":"对今天的第一个待办开始专注。"}]}
+输入：结束专注
+输出：{"items":[{"type":"answer","content":"结束当前的专注。"}]}
 输入：帮我找一下最近一周关于书法的笔记
 输出：{"items":[{"type":"search","scope":"note","target":"书法","since":"2026-10-12","until":"2026-10-18","content":""}]}
 输入：帮我查一下格雷厄姆的安全边际是什么意思
@@ -223,7 +236,8 @@ object VoiceIntents {
     }
 
     /** 用户消息：就是转写原文 */
-    fun userPrompt(raw: String): String = "语音转写：$raw"
+    fun userPrompt(raw: String, context: String? = null): String =
+        if (context.isNullOrBlank()) "语音转写：$raw" else "$context\n语音转写：$raw"
 
     private val RE_TIME = Regex("^\\s*(\\d{1,2})[:：](\\d{2})")
 
@@ -252,6 +266,10 @@ object VoiceIntents {
         if (kind == "cmd") {
             val cmd = VoiceCmd.entries.firstOrNull { it.key == obj.string("cmd")?.trim()?.lowercase() } ?: return null
             return VoiceIntent(CaptureKind.DAILY, "", null, null, null, emptyList(), 0, cmd = cmd)
+        }
+        if (kind == "answer") {
+            if (content.isEmpty()) return null
+            return VoiceIntent(CaptureKind.DAILY, content, null, null, null, emptyList(), 0, answer = true)
         }
         if (kind == "search") {
             val scope = obj.string("scope")?.trim()?.lowercase()?.takeIf { it in SEARCH_SCOPES } ?: "all"
@@ -329,6 +347,53 @@ object VoiceIntents {
         return VoiceIntent(CaptureKind.TODO, content, date, time, null, emptyList(), priority, edit = true, target = target)
     }
 
+    /** 一项整理结果的类型记号：todo / daily / note / ask / answer / search / append / cmd:xxx / edit:edit|complete|delete|query */
+    fun kindToken(i: VoiceIntent): String = when {
+        i.cmd != null -> "cmd:${i.cmd.key}"
+        i.searchScope != null -> "search"
+        i.answer -> "answer"
+        i.edit -> "edit:" + when (i.op) {
+            TodoOp.EDIT -> "edit"
+            TodoOp.COMPLETE -> "complete"
+            TodoOp.DELETE -> "delete"
+            TodoOp.QUERY -> "query"
+        }
+        i.ask -> "ask"
+        i.append -> "append"
+        else -> when (i.type) {
+            CaptureKind.TODO -> "todo"
+            CaptureKind.DAILY -> "daily"
+            CaptureKind.NOTE -> "note"
+        }
+    }
+
+    /** 一句话整理结果的「类型签名」（回归集比对用）：各项记号按字母序用逗号连起来 */
+    fun signature(intents: List<VoiceIntent>): String = intents.map(::kindToken).sorted().joinToString(",")
+
+    /** 给「最近对话」用的一句话：这句话被整理成了什么 / 做了什么（带具体名字和日期，方便下一句的「那个」能指到） */
+    fun contextLine(intents: List<VoiceIntent>, cleaned: String): String {
+        if (intents.isEmpty()) return "原话：$cleaned".take(60)
+        fun day(d: LocalDate?, t: LocalTime?): String {
+            if (d == null && t == null) return ""
+            return "（" + listOfNotNull(d?.toString(), t?.let { "%02d:%02d".format(it.hour, it.minute) }).joinToString(" ") + "）"
+        }
+        return intents.joinToString("；") { i ->
+            when {
+                i.cmd != null -> "执行指令：${i.cmd.label}"
+                i.searchScope != null -> "搜索「${i.target.orEmpty()}」"
+                i.answer -> "回答：${i.content.take(40)}"
+                i.edit -> "${i.op.label}「${i.target.orEmpty()}」" + day(i.date, i.time)
+                i.ask -> "问闪念贝壳 AI：${i.content.take(40)}"
+                i.append -> "追加到上一条笔记：${i.content.take(40)}"
+                else -> when (i.type) {
+                    CaptureKind.TODO -> "新建待办「${i.content.take(30)}」" + day(i.date, i.time)
+                    CaptureKind.DAILY -> "记日记：${i.content.take(40)}"
+                    CaptureKind.NOTE -> "记笔记：${i.content.take(40)}"
+                }
+            }
+        }.take(200)
+    }
+
     private val QUERY_RANGES = setOf("today", "tomorrow", "week", "overdue", "all")
     private val SEARCH_SCOPES = setOf("note", "todo", "all")
 
@@ -338,7 +403,7 @@ object VoiceIntents {
      */
     fun fixRelativeTime(raw: String, intents: List<VoiceIntent>, now: LocalDateTime = LocalDateTime.now()): List<VoiceIntent> {
         val found = com.carpe.ideashell.core.parse.TodoParser.findAfterDuration(raw, now) ?: return intents
-        val fresh = intents.filter { it.type == CaptureKind.TODO && !it.edit && !it.ask && !it.append && it.cmd == null && it.searchScope == null }
+        val fresh = intents.filter { it.type == CaptureKind.TODO && !it.edit && !it.ask && !it.append && it.cmd == null && it.searchScope == null && !it.answer }
         if (fresh.size != 1) return intents
         val at = found.first
         return intents.map {

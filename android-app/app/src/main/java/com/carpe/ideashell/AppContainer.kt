@@ -105,6 +105,9 @@ class AppContainer(context: Context) {
     /** 语音历史：最近几条的原话、结果和原始录音，识别错了可重新识别 / 整理 */
     val voiceHistory = com.carpe.ideashell.data.asr.VoiceHistory(context)
 
+    /** 语音意图回归集：自己攒的样本（语音历史里「加入回归集」） */
+    val intentCases = com.carpe.ideashell.data.voice.IntentCases(context)
+
     /** 大模型（OpenAI 兼容）：把转写整理成待办 / 日记 / 笔记，并推算日期时间 */
     val llm = com.carpe.ideashell.data.llm.LlmClient(http = http, credentials = credentials, settings = settings)
 

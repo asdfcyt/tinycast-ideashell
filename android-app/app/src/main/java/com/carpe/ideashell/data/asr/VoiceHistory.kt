@@ -23,6 +23,8 @@ data class VoiceRecord(
     val raw: String? = null,
     val summary: String? = null,
     val error: String? = null,
+    /** 这句话被整理成了哪几类（[com.carpe.ideashell.core.voice.VoiceIntents.signature]），加进意图回归集时当默认答案 */
+    val kinds: String? = null,
 )
 
 /**
@@ -55,7 +57,7 @@ class VoiceHistory(context: Context) {
     }
 
     /** 补充这一条的结果：只改传了的字段；[error] 传空串表示清掉旧的失败原因 */
-    fun update(id: String, raw: String? = null, summary: String? = null, error: String? = null) {
+    fun update(id: String, raw: String? = null, summary: String? = null, error: String? = null, kinds: String? = null) {
         synchronized(lock) {
             val list = _state.value
             if (list.none { it.id == id }) return
@@ -65,6 +67,7 @@ class VoiceHistory(context: Context) {
                     else it.copy(
                         raw = raw ?: it.raw,
                         summary = summary ?: it.summary,
+                        kinds = kinds ?: it.kinds,
                         error = when {
                             error == null -> it.error
                             error.isEmpty() -> null

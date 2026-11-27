@@ -65,7 +65,9 @@ import com.carpe.ideashell.core.voice.TodoOp
 import com.carpe.ideashell.core.voice.VoiceResult
 import com.carpe.ideashell.data.dida.DidaTask
 import com.carpe.ideashell.data.dida.TodoEditor
+import com.carpe.ideashell.data.voice.VoiceAgent
 import com.carpe.ideashell.data.voice.VoiceSearch
+import com.carpe.ideashell.data.voice.VoiceSession
 import com.carpe.ideashell.ui.capture.voiceIntentBody
 import com.carpe.ideashell.ui.capture.voiceIntentSchedule
 import com.carpe.ideashell.ui.components.VoiceInputController
@@ -639,15 +641,18 @@ class VoiceCapsuleService : Service() {
             // 「找一下关于招聘的笔记」：不调 AI，本机待办 + 闪念贝壳笔记里直接查
             val searches = result.intents.filter { it.searchScope != null }
             for (s in searches) found += VoiceSearch.find((application as IdeashellApp).container, s)
+            // 「我昨天做了哪些事」：让语音助手（大模型 + 查数据的工具）基于你自己的记录回答
+            val answers = result.intents.filter { it.answer }
+            for (a in answers) found += answerOf((application as IdeashellApp).container, a.content, result.raw)
             val queryText = found.joinToString("\n") { it.text }
-            val rest = result.intents.filterNot { (it.edit && it.op == TodoOp.QUERY) || it.searchScope != null }
+            val rest = result.intents.filterNot { (it.edit && it.op == TodoOp.QUERY) || it.searchScope != null || it.answer }
             if (found.isNotEmpty() && rest.isEmpty()) {
                 if (stopping) return@launch
                 showResults(VoiceSearch.merge(found))
                 return@launch
             }
             // 修改 / 完成 / 删除待办要先去滴答里找到那一条（可能要刷新一下），这期间界面还停在「正在识别整理」
-            val built = buildDrafts(if (queries.isEmpty() && searches.isEmpty()) result else result.copy(intents = rest))
+            val built = buildDrafts(if (queries.isEmpty() && searches.isEmpty() && answers.isEmpty()) result else result.copy(intents = rest))
             if (stopping) return@launch
             drafts.clear()
             drafts.addAll(built)
@@ -669,6 +674,17 @@ class VoiceCapsuleService : Service() {
             // 开了「松手自动保存」：不弹确认卡片，只显示小胶囊倒计时；点它才展开卡片修改
             if (settings.current.voiceAutoSend && !needsConfirm) renderPending(note) else renderConfirm(note)
         }
+    }
+
+    /** 跑一次语音助手回答；失败也返回一条能显示的文字，不抛异常。回答放进「最近对话」，下一句追问能接上 */
+    private suspend fun answerOf(container: com.carpe.ideashell.AppContainer, question: String, raw: String): VoiceSearch.Result = try {
+        val a = VoiceAgent.answer(container, question, VoiceSession.format(VoiceSession.recent().filter { it.raw != raw }))
+        VoiceSession.attach(raw, "回答：" + a.text)
+        VoiceSearch.Result(a.text, a.hits, "", isAnswer = true)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        VoiceSearch.Result("没能回答：" + (e.message ?: "未知错误"), emptyList(), "", isAnswer = true)
     }
 
     private suspend fun buildDrafts(result: VoiceResult): List<Draft> {
@@ -1592,11 +1608,11 @@ class VoiceCapsuleService : Service() {
             // 没有画面：结果放进通知（点开进搜索页）
             val lines = res.hits.take(VoiceSearch.MAX_LINES).joinToString("\n") { "· ${it.title}" }
             val text = if (lines.isBlank()) res.text else res.text + "\n" + lines
-            headlessDone(true, text, searchQuery = res.keyword.takeIf { res.hits.isNotEmpty() }, title = "语音搜索")
+            headlessDone(true, text, searchQuery = res.keyword.takeIf { res.hits.isNotEmpty() }, title = if (res.isAnswer) "语音回答" else "语音搜索")
             return
         }
         if (res.hits.isEmpty()) {
-            showMessage(res.text, error = false, durationMs = 3500L)
+            showMessage(res.text, error = false, durationMs = if (res.isAnswer) 12_000L else 3500L)
             return
         }
         stopTick()
@@ -1615,9 +1631,9 @@ class VoiceCapsuleService : Service() {
             elevation = dp(8).toFloat()
         }
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        head.addView(label(res.text, 13f, bold = true).apply {
-            setTextColor(pal.accentSoft)
-            maxWidth = dp(220)
+        head.addView(label(res.text, if (res.isAnswer) 15f else 13f, bold = !res.isAnswer).apply {
+            setTextColor(if (res.isAnswer) pal.text else pal.accentSoft)
+            maxWidth = dp(if (res.isAnswer) 250 else 220)
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         head.addView(textButton("关闭") { dismissWithSlide() })
         card.addView(head)
