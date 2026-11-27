@@ -1996,6 +1996,12 @@ class VoiceCapsuleService : Service() {
             context.startForegroundService(Intent(context, VoiceCapsuleService::class.java))
         }
 
+        /** 系统助手入口（长按电源键等）：没在录就开始录，亮屏停在锁屏界面时按没有画面的方式录 */
+        fun startAssist(context: Context) {
+            val locked = context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+            context.startForegroundService(Intent(context, VoiceCapsuleService::class.java).putExtra(EXTRA_HEADLESS, locked))
+        }
+
         /** 语音历史里的「重新识别 / 重新整理」：用胶囊显示进度和确认卡片（需要「显示在其他应用上层」权限） */
         fun replay(context: Context, historyId: String, audio: Boolean) {
             context.startForegroundService(

@@ -768,6 +768,50 @@ class ExcerptService : AccessibilityService() {
         return walk(root, 0)
     }
 
+    /**
+     * 语音助手要「读屏幕」时调用：把当前窗口里看得见的文字按顺序拼起来（最多 [com.carpe.ideashell.data.assistant.ScreenContext.MAX_CHARS] 字），
+     * 带上选中的文字。拾忆自己的界面、银行 / 支付类应用、密码框一律不读；读不到返回 null。
+     */
+    fun readScreen(): com.carpe.ideashell.data.assistant.ScreenContext.Snapshot? {
+        val root = rootInActiveWindow ?: return null
+        val pkg = root.packageName?.toString() ?: return null
+        if (pkg == packageName || isSensitive(pkg)) return null
+        val max = com.carpe.ideashell.data.assistant.ScreenContext.MAX_CHARS
+        val budget = Budget(2500, 900L)
+        val out = StringBuilder()
+        var selected: String? = null
+        fun walk(n: AccessibilityNodeInfo, depth: Int) {
+            if (depth > 40 || budget.spent() || out.length >= max || !n.isVisibleToUser) return
+            if (!n.isPassword) {
+                val text = n.text?.toString()?.trim()
+                if (!text.isNullOrEmpty()) {
+                    if (out.isNotEmpty()) out.append('\n')
+                    out.append(text)
+                    val a = n.textSelectionStart
+                    val b = n.textSelectionEnd
+                    if (selected == null && a >= 0 && b >= 0 && a != b && maxOf(a, b) <= text.length) {
+                        selected = text.substring(minOf(a, b), maxOf(a, b)).trim().takeIf { it.isNotEmpty() }
+                    }
+                } else {
+                    n.contentDescription?.toString()?.trim()?.takeIf { it.isNotEmpty() && it.length > 1 }?.let {
+                        if (out.isNotEmpty()) out.append('\n')
+                        out.append(it)
+                    }
+                }
+            }
+            for (i in 0 until n.childCount) n.getChild(i)?.let { walk(it, depth + 1) }
+        }
+        walk(root, 0)
+        if (out.isBlank()) return null
+        return com.carpe.ideashell.data.assistant.ScreenContext.Snapshot(
+            at = System.currentTimeMillis(),
+            pkg = pkg,
+            label = appLabel(pkg),
+            text = out.toString().take(max),
+            selection = selected,
+        )
+    }
+
     private fun hideAll() {
         main.removeCallbacks(clearPending)
         main.removeCallbacks(menuCheck)

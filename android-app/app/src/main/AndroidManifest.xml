@@ -32,6 +32,11 @@
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- 语音助手：定时任务开机后重排闹钟；替你设闹钟 / 倒计时；按名字找通讯录里的人（打电话只是打开拨号盘，通讯录权限要在设置里另外授权） -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
     <!-- 把系统日历里的事件读进待办页（只读，设置里开启「日历同步」时才会申请） -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
@@ -361,6 +366,46 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+        <!-- 语音助手任务：到点的闹钟、开机 / 升级 / 改时间后补排 -->
+        <receiver
+            android:name=".system.AssistantAlarmReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".system.AssistantBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 系统「默认数字助手」：长按电源键 / 手势呼出，直接开始语音记一条，并把当前屏幕交给助手（要读时才用） -->
+        <service
+            android:name=".system.assist.IdeashellVoiceInteractionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".system.assist.IdeashellSessionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_VOICE_INTERACTION" />
+        <service
+            android:name=".system.assist.IdeashellRecognitionService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
         <!-- 拍照：给系统相机一个可写入的临时文件地址 -->
         <provider
             android:name="androidx.core.content.FileProvider"

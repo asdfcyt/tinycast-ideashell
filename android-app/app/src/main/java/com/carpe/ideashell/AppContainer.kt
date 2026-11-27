@@ -61,6 +61,11 @@ class IdeashellApp : Application() {
         container = AppContainer(this)
         // 后台预热文件夹缓存，输入框里的 @文件夹 预览和保存都用它
         container.folders.refreshIfStale()
+        // 助手任务：重排下一次闹钟，并补跑错过的（应用被杀 / 重启后）
+        runCatching {
+            com.carpe.ideashell.system.AssistantScheduler.reschedule(this)
+            if (container.assistantTasks.state.value.any { it.enabled }) com.carpe.ideashell.system.AssistantScheduler.runNow(this)
+        }
     }
 }
 
@@ -104,6 +109,17 @@ class AppContainer(context: Context) {
 
     /** 语音历史：最近几条的原话、结果和原始录音，识别错了可重新识别 / 整理 */
     val voiceHistory = com.carpe.ideashell.data.asr.VoiceHistory(context)
+
+    /** 应用级 Context（助手工具要打开系统闹钟 / 拨号盘、推通知时用） */
+    val appContext: Context = context.applicationContext
+
+    /** 语音助手记忆：用户让它记住的事实，只在本机 */
+    val assistantMemory = com.carpe.ideashell.data.assistant.AssistantMemory(context)
+
+    /** 语音助手任务（定时 / 条件）：有变化就重排闹钟 */
+    val assistantTasks = com.carpe.ideashell.data.assistant.AssistantTasks(context) {
+        runCatching { com.carpe.ideashell.system.AssistantScheduler.reschedule(context.applicationContext) }
+    }
 
     /** 语音意图回归集：自己攒的样本（语音历史里「加入回归集」） */
     val intentCases = com.carpe.ideashell.data.voice.IntentCases(context)

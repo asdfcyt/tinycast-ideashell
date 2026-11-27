@@ -70,6 +70,7 @@ internal const val SEC_OCR = "ocr"
 internal const val SEC_AI = "ai"
 internal const val SEC_LEXICON = "lexicon"
 internal const val SEC_VOICE_HISTORY = "voice_history"
+internal const val SEC_ASSISTANT = "assistant"
 
 internal fun sectionTitle(section: String?): String? = when (section) {
     SEC_ACCOUNTS -> "账号与连接"
@@ -85,6 +86,7 @@ internal fun sectionTitle(section: String?): String? = when (section) {
     SEC_AI -> "AI 与大模型"
     SEC_LEXICON -> "语音词库"
     SEC_VOICE_HISTORY -> "语音历史"
+    SEC_ASSISTANT -> "语音助手"
     else -> null
 }
 

@@ -38,16 +38,18 @@ object VoiceAgent {
     /** [text] 是回答；[hits] 是查数据时碰到的待办 / 笔记，卡片上可点开 */
     class Answer(val text: String, val hits: List<VoiceSearch.Hit>)
 
-    suspend fun answer(container: AppContainer, question: String, context: String? = null): Answer {
+    /** [scheduled]：助手任务到点自动运行（没人在场）：不给读屏幕 / 打开别的应用 / 改任务的工具 */
+    suspend fun answer(container: AppContainer, question: String, context: String? = null, scheduled: Boolean = false): Answer {
         if (!container.llm.configured) throw LlmException("还没有填写大模型 API Key")
         val hits = LinkedHashMap<String, VoiceSearch.Hit>()
         val messages = mutableListOf<JsonObject>()
-        messages += msg("system", systemPrompt(LocalDateTime.now()))
+        messages += msg("system", systemPrompt(LocalDateTime.now(), container.assistantMemory.promptBlock(), scheduled))
+        val tools = toolsFor(scheduled)
         messages += msg("user", if (context.isNullOrBlank()) question else "$context\n\n我现在问：$question")
 
         for (round in 1..MAX_ROUNDS + 1) {
             val last = round > MAX_ROUNDS
-            val reply = container.llm.chatWithTools(JsonArray(messages), if (last) JsonArray(emptyList()) else TOOLS)
+            val reply = container.llm.chatWithTools(JsonArray(messages), if (last) JsonArray(emptyList()) else tools)
             val calls = (reply["tool_calls"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
             val content = (reply["content"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
             if (calls.isEmpty() || last) {
@@ -98,15 +100,22 @@ object VoiceAgent {
 
     private fun weekday(d: LocalDate) = "周" + d.dayOfWeek.getDisplayName(TextStyle.SHORT, Locale.CHINA).removePrefix("周")
 
-    private fun systemPrompt(now: LocalDateTime): String {
+    private fun toolsFor(scheduled: Boolean): JsonArray = JsonArray(
+        (TOOLS + AssistantTools.defs).filter { t ->
+            !scheduled || ((t as JsonObject)["function"] as? JsonObject)?.get("name")?.let { (it as? JsonPrimitive)?.contentOrNull } !in AssistantTools.NOT_FOR_SCHEDULED
+        },
+    )
+
+    private fun systemPrompt(now: LocalDateTime, memory: String?, scheduled: Boolean): String {
         val today = now.toLocalDate()
         val calendar = (-13..3).joinToString("；") { i ->
             val d = today.plusDays(i.toLong())
             val tag = when (i) { -2 -> "前天"; -1 -> "昨天"; 0 -> "今天"; 1 -> "明天"; 2 -> "后天"; else -> "" }
             "$d ${weekday(d)}" + if (tag.isEmpty()) "" else "（$tag）"
         }
+        val memoryText = if (memory == null) "" else "\n\n你记得关于用户的这些事（用户让你记住的，回答和办事时可以参考）：\n$memory"
         return """
-你是用户的私人语音助手，用户用语音提了一个和他自己的待办 / 笔记 / 专注有关的问题或请求。你通过工具查他的数据（或开始 / 结束专注计时），再用中文回答。
+你是用户的私人语音助手，用户用语音提了一个问题或请求。你通过工具查他的待办 / 笔记 / 专注数据，或替他办事（专注计时、记忆、定时任务、读屏幕、记笔记、闹钟 / 倒计时 / 拨号 / 导航 / 音乐），再用中文回答。$memoryText
 
 现在是 $today ${weekday(today)} ${"%02d:%02d".format(now.hour, now.minute)}。日期对照：$calendar。「本周」= 本周一到今天；「上周」= 上一个周一到周日；「最近一周」= 今天往前 6 天到今天。
 
@@ -115,15 +124,18 @@ object VoiceAgent {
 - 需要什么查什么，能一次查完的并行调用；不要重复调用同样的工具。
 - 回答是给人在手机卡片 / 锁屏通知里看的：纯文字、不要 Markdown、不要客套，先说结论，最多 5 行、总共 150 字以内；列条目时用「· 」开头，最多列 5 条，多的说「等 N 项」。
 - 笔记只引用标题和摘要里有的信息；需要细节再用 read_note 读全文。
-- 你能做的操作只有专注计时：start_focus（开始）、focus_control（暂停 / 继续 / 结束）。只有用户明确要求才调用，做完用一句话告诉他结果（开始了什么、多少分钟）。
+- 能办的事：start_focus / focus_control（专注计时）、remember / forget（记忆）、create_task / list_tasks / task_control（定时或条件任务）、read_screen、create_note、set_alarm / set_timer / dial / navigate / media_control。只有用户明确要求才调用，做完用一句话告诉他结果。
+- 你没有天气、联网搜索、股价这类工具；条件或请求依赖它们时如实说做不到，不要假装能。
+- 创建任务前想清楚：时间（几点、每天 / 哪几天 / 哪一天）、做什么、有没有条件；用户没说几点就问不了他，按最合理的默认（早上 8 点）并在回答里说明。
+- 用户说「这页 / 这段 / 这篇 / 屏幕上」时先 read_screen 再处理；要求「记成笔记」时再 create_note，content 写整理好的最终内容。
 - 「今天的第一个任务」= list_todos(today) 里**计划日期是今天**的未完成待办中时间最靠前的一条（没有时间的排在有时间的后面；已逾期的不算今天）；「接下来要做的」同理。要对某个任务开始专注，先 list_todos 找到它，再用它的 id 调 start_focus。
-- 你不能新建 / 修改 / 删除待办和笔记；用户要这些时，告诉他直接说「提醒我……」「把……改到……」即可。
+- 你不能新建 / 修改 / 删除待办，也不能改 / 删已有笔记；用户要待办时，告诉他直接说「提醒我……」「把……改到……」即可。
         """.trimIndent()
     }
 
     // ───────────────────────── 工具 ─────────────────────────
 
-    private fun tool(name: String, description: String, props: JsonObjectBuilder.() -> Unit = {}, required: List<String> = emptyList()) = buildJsonObject {
+    internal fun tool(name: String, description: String, props: JsonObjectBuilder.() -> Unit = {}, required: List<String> = emptyList()) = buildJsonObject {
         put("type", "function")
         putJsonObject("function") {
             put("name", name)
@@ -222,15 +234,16 @@ object VoiceAgent {
         )
     }
 
-    private fun JsonObject.arg(key: String): String? =
+    internal fun JsonObject.arg(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", true) }
 
-    private fun JsonObject.day(key: String): LocalDate? = arg(key)?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
+    internal fun JsonObject.day(key: String): LocalDate? = arg(key)?.let { runCatching { LocalDate.parse(it.take(10)) }.getOrNull() }
 
     /** 执行一个工具，返回给模型看的文字；出错也返回文字（让模型自己决定怎么说），不抛异常 */
     private suspend fun runTool(container: AppContainer, name: String, args: JsonObject, hits: MutableMap<String, VoiceSearch.Hit>): String {
         Log.i(TAG, "tool $name $args")
         return try {
+            if (name in AssistantTools.names) return AssistantTools.run(container, name, args)
             when (name) {
                 "day_summary" -> daySummary(container, args)
                 "focus_stats" -> focusStats(container, args)

@@ -136,6 +136,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                     SEC_VOICE -> VoiceSection(env)
                     SEC_LEXICON -> LexiconPage()
                     SEC_VOICE_HISTORY -> VoiceHistoryPage()
+                    SEC_ASSISTANT -> AssistantSection(env)
                     SEC_OCR -> OcrSection(env)
                     SEC_AI -> AiSection(env)
                     SEC_REVISIT -> RevisitSection(env)
@@ -183,6 +184,13 @@ private fun SettingsHome(env: SettingsEnv) {
             title = "语音输入",
             summary = env.voiceSummary(localReady = localAsr is LocalAsrState.Ready),
             onClick = { env.go(SEC_VOICE) },
+            trailing = { Chevron() },
+        )
+        SettingsItem(
+            iconRes = R.drawable.ic_sparkle,
+            title = "语音助手",
+            summary = "",
+            onClick = { env.go(SEC_ASSISTANT) },
             trailing = { Chevron() },
         )
         SettingsItem(
