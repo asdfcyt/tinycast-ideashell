@@ -238,7 +238,8 @@ final class AppModel: ObservableObject {
     @Published var showQuickAdd = false
     /// 今天页：标题栏上「重新规划」「快速启动」两个图标打开的弹窗
     @Published var showReplan = false
-    @Published var showQuickStart = false
+    /// 点标题栏的闪电：今天页的快速启动结果卡重新梳理一次
+    @Published var quickStartTick = 0
     /// 打开万能输入时预填的文字 / 指定类型 / 默认日期（日历里「添加待办」用）
     @Published var quickAddText = ""
     @Published var quickAddKind: CaptureKind?

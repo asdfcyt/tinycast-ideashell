@@ -1,10 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// 今天。设计北极星：**一条清楚的行动队列，数据退到侧栏**。
-/// 左边是主角——先回顾昨天（做了什么、哪些没做，融合结审的每日日报），再是逾期（拖得久的在前）、今天、收集箱（默认 3 条）；
-/// 右边是配角——三个圆环、快捷操作、往日回顾、Daily Note 热力图。窗口变窄时侧栏折到下面，变成单列。
-/// 排期工具（一键推迟、自动排期）放在标题右边，随手能用；单条待办悬停时出现「专注 / 推迟」。
+/// 今天。设计北极星：**中间是时段（昨天回顾、待办、今天要看），右边是时点（此刻各项进度的仪表盘）**。
+/// 中间一列都是同一种卡片：标题行（图标 + 标题 + 数量）+ 分隔线隔开的内容，正文字号统一；
+/// 右边的仪表盘平铺在一张底上（不套卡片），用分隔线分段，跟着整页一起滚，只有一个滚动条。窗口变窄时仪表盘折到下面。
+/// 开始专注、重新规划、快速启动放在标题栏；单条待办悬停时出现「专注 / 推迟」。
 struct TodayView: View {
     @EnvironmentObject var model: AppModel
     var body: some View { TodayContent(focus: model.focus) }
@@ -35,27 +35,25 @@ private struct TodayContent: View {
     var body: some View {
         ScrollView {
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 24) {
-                    VStack(alignment: .leading, spacing: 20) { header; mainBlocks }
-                        .frame(minWidth: 420, idealWidth: 460, maxWidth: .infinity, alignment: .topLeading)
-                    VStack(alignment: .leading, spacing: 16) { railTop; railBottom(weeks: 20) }
-                        .frame(width: 300)
+                HStack(alignment: .top, spacing: 0) {
+                    middle
+                        .frame(minWidth: 420, idealWidth: 420, maxWidth: .infinity, alignment: .top)
+                    dashboard(weeks: 20)
+                        .frame(width: 316)
+                        .padding(.vertical, 6)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .background(Color.primary.opacity(0.035))
+                        .overlay(alignment: .leading) { Divider() }
                 }
-                VStack(alignment: .leading, spacing: 20) {
-                    header
-                    railTop
-                    mainBlocks
-                    railBottom(weeks: heatWeeks)
+                VStack(alignment: .leading, spacing: 0) {
+                    middle
+                    dashboard(weeks: heatWeeks)
+                        .background(Color.primary.opacity(0.035))
                 }
             }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 22)
-            .frame(maxWidth: 1100)
-            .frame(maxWidth: .infinity)
         }
         .background(AmbientBackground())
         .overlay(alignment: .bottom) { UndoToast().padding(.bottom, 16) }
-        .sheet(isPresented: $model.showQuickStart) { QuickStartSheet().environmentObject(model).dismissOnOutsideClick() }
         .sheet(isPresented: $model.showReplan) { ReplanSheet(candidates: model.schedulable(includeOverdue: true)).environmentObject(model).dismissOnOutsideClick() }
         .task {
             await runAll([
@@ -69,85 +67,12 @@ private struct TodayContent: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await model.loadDailyToday() } }
     }
 
-    // MARK: - 标题 + 排期工具
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "M月d日 EEEE"
-        return f
-    }()
-
-    private var greeting: String {
-        switch Date().hourOfDay {
-        case 0 ..< 6: return "夜深了"
-        case 6 ..< 11: return "早上好"
-        case 11 ..< 14: return "中午好"
-        case 14 ..< 18: return "下午好"
-        default: return "晚上好"
-        }
-    }
-
-    /// 下一件：今天最早的；今天没有就看最早的逾期
-    private var next: (task: DidaTask, overdue: Bool)? {
-        if let t = todayTasks.first { return (t, false) }
-        if let t = overdue.first { return (t, true) }
-        return nil
-    }
-
-    /// 标题右边的一行：下一件事，点一下打开
-    @ViewBuilder private var nextLine: some View {
-        if let n = next {
-            let t = n.task
-            let meta: String = {
-                if n.overdue, let d = t.date { return "逾期 \(max(1, Day.diff(d, Day.today()))) 天" }
-                return t.time ?? "今天"
-            }()
-            HStack(spacing: 10) {
-                Button { model.openTask(t) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.right.circle.fill").foregroundStyle(Brand.orange)
-                        Text("下一件").font(.caption.weight(.bold)).foregroundStyle(Brand.orange)
-                        Text(t.cleanTitle).font(.callout.weight(.medium)).foregroundStyle(.primary).lineLimit(1)
-                        Text(meta).font(.caption).foregroundStyle(n.overdue ? Color.red : Color.secondary).fixedSize()
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("打开这一件")
-
-                Divider().frame(height: 14)
-                Button { Task { await model.complete(t) } } label: { Image(systemName: "checkmark.circle") }
-                    .buttonStyle(.plain).help("完成")
-                Button { startFocus(t, focus) } label: { Image(systemName: "play.circle") }
-                    .buttonStyle(.plain).disabled(focus.run != nil).help("专注 \(focus.focusMinutes) 分钟")
-                Menu { SnoozeItems(task: t) } label: { Image(systemName: "clock.arrow.circlepath") }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .disabled(model.scheduling).help("推迟")
-            }
-            .font(.system(size: 14))
-            .padding(.horizontal, 12).frame(height: 28)
-            .frame(maxWidth: 440, alignment: .trailing)
-            .glassCard(radius: 12)
-        }
-    }
-
-    private var header: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(Self.dateFormatter.string(from: Date()))
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                Text(greeting).font(.system(size: 34, weight: .bold))
-                if model.overview != nil {
-                    Text(remaining == 0 ? "今天的待办都清空了" : "还有 \(remaining) 件事")
-                        .font(.title3).foregroundStyle(.secondary)
-                }
-            }
-            Spacer(minLength: 8)
-            nextLine
-                .padding(.bottom, 4)
-        }
-        .padding(.horizontal, 4)
+    /// 中间一列：昨天回顾、待办、今天要看
+    private var middle: some View {
+        VStack(alignment: .leading, spacing: 16) { mainBlocks }
+            .padding(.horizontal, 24).padding(.vertical, 20)
+            .frame(maxWidth: 780, alignment: .topLeading)
+            .frame(maxWidth: .infinity)
     }
 
     // MARK: - 左：主角
@@ -158,6 +83,8 @@ private struct TodayContent: View {
         if model.hasDida || model.hasSjz {
             YesterdayCard(focus: focus, day: Day.add(today, days: -1), done: model.todayData().yesterdayDone, missed: model.todayData().yesterdayMissed)
         }
+        // 快速启动的结果（AI 梳理，同一天有缓存就直接用）
+        if model.hasDida && model.hasLlm { QuickStartCard() }
         if model.hasDida || model.hasSjz {
             if !olderOverdue.isEmpty { overdueSection }
             todaySection
@@ -173,16 +100,16 @@ private struct TodayContent: View {
         let list = olderOverdue
         let long = list.filter { t in t.date.map { Day.diff($0, today) >= 7 } ?? false }
         let recent = list.filter { t in !(t.date.map { Day.diff($0, today) >= 7 } ?? false) }
-        return TaskSection(title: "逾期", count: list.count, tint: .red) {
+        return TaskSection(title: "逾期", count: list.count, icon: "exclamationmark.circle.fill", tint: .red) {
             Button("全部改到今天") { Task { await model.moveToToday(list) } }
                 .buttonStyle(.link).font(.callout).disabled(model.scheduling)
         } content: {
             overdueGroup("拖了很久（7 天以上）", long, first: true)
             overdueGroup("近几天逾期", recent, first: long.isEmpty)
             if list.count > 6 {
-                Divider().padding(.leading, 46)
-                Button("在「待办」里查看全部 \(list.count) 个") { model.section = .calendar }
-                    .buttonStyle(.link).font(.callout).padding(.horizontal, 14).padding(.vertical, 9)
+                Divider().padding(.leading, 50)
+                Button("在「日历」里查看全部 \(list.count) 个") { model.section = .calendar }
+                    .buttonStyle(.link).font(.callout).padding(.horizontal, 16).padding(.vertical, 9)
             }
         }
     }
@@ -193,40 +120,51 @@ private struct TodayContent: View {
         if !shown.isEmpty {
             if !first { Divider() }
             Text("\(title) · \(items.count)").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 2)
+                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 2)
             ForEach(Array(shown.enumerated()), id: \.offset) { i, t in
-                TaskLine(task: t, overdue: true, focus: focus)
-                if i < shown.count - 1 { Divider().padding(.leading, 46) }
+                TaskLine(task: t, overdue: true, focus: focus, compact: true)
+                if i < shown.count - 1 { Divider().padding(.leading, 50) }
             }
         }
     }
 
     /// 今天 + 结审待办合成一张紧凑的列表：今天的在前，结审里还没排到今天的接在后面
+    /// 今天一张卡：日常的在前，结审的另起一组（今天到期的 + 还没排到今天的）
     private var todaySection: some View {
         let later = sjzLater
+        let plain = todayTasks.filter { !SjzTasks.owns($0.id) }
+        let sjzToday = todayTasks.filter { SjzTasks.owns($0.id) }
+        let sjzCount = sjzToday.count + later.count
         let shownLater = showAllSjz ? Array(later.prefix(30)) : Array(later.prefix(3))
-        return TaskSection(title: "今天", count: todayTasks.count + later.count, tight: true) {
+        let sjzShown = sjzToday + shownLater
+        let grouped = !sjzShown.isEmpty
+        return TaskSection(title: "今天", count: todayTasks.count + later.count) {
             EmptyView()
         } content: {
             if todayTasks.isEmpty && later.isEmpty {
-                Text(todayDone.isEmpty ? "今天没有待办" : "今天的待办都完成了").font(.callout).foregroundStyle(.secondary).padding(12)
+                Text(todayDone.isEmpty ? "今天没有待办" : "今天的待办都完成了").font(.system(size: 13)).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.vertical, 10)
             }
-            ForEach(Array(todayTasks.enumerated()), id: \.element.id) { i, t in
+            if grouped && !plain.isEmpty { GroupLabel(icon: "checklist", title: "日常", count: plain.count, tint: .secondary) }
+            ForEach(Array(plain.enumerated()), id: \.element.id) { i, t in
                 TaskLine(task: t, focus: focus, compact: true)
-                if i < todayTasks.count - 1 || !later.isEmpty { Divider().padding(.leading, 40) }
+                if i < plain.count - 1 { Divider().padding(.leading, 50) }
             }
-            ForEach(Array(shownLater.enumerated()), id: \.element.id) { i, t in
-                TaskLine(task: t, undatedRow: t.date == nil, focus: focus, compact: true)
-                if i < shownLater.count - 1 { Divider().padding(.leading, 40) }
-            }
-            if later.count > 3 {
-                Button(showAllSjz ? "收起" : "结审待办还有 \(later.count - 3) 条，展开") { withAnimation(.easeOut(duration: 0.15)) { showAllSjz.toggle() } }
-                    .buttonStyle(.link).font(.caption).padding(.horizontal, 12).padding(.vertical, 6)
+            if grouped {
+                if !plain.isEmpty { Divider() }
+                GroupLabel(icon: "checkmark.shield", title: "结审", count: sjzCount, tint: Brand.orange)
+                ForEach(Array(sjzShown.enumerated()), id: \.element.id) { i, t in
+                    TaskLine(task: t, undatedRow: t.date == nil, focus: focus, compact: true)
+                    if i < sjzShown.count - 1 { Divider().padding(.leading, 50) }
+                }
+                if later.count > 3 {
+                    Button(showAllSjz ? "收起" : "结审待办还有 \(later.count - 3) 条，展开") { withAnimation(.easeOut(duration: 0.15)) { showAllSjz.toggle() } }
+                        .buttonStyle(.link).font(.caption).padding(.horizontal, 16).padding(.vertical, 6)
+                }
             }
             if !todayDone.isEmpty {
                 Divider()
                 Text("已完成 \(todayDone.count)").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-                    .padding(.horizontal, 12).padding(.top, 6).padding(.bottom, 1)
+                    .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 1)
                 ForEach(todayDone.prefix(3)) { t in TaskLine(task: t, focus: focus, compact: true) }
             }
         }
@@ -240,57 +178,107 @@ private struct TodayContent: View {
             .sorted { ($0.date ?? "9999") < ($1.date ?? "9999") }
     }
 
-    // MARK: - 右：配角
+    // MARK: - 右：仪表盘
 
-    @ViewBuilder private var railTop: some View {
-        DashboardCard(focus: focus, loaded: loaded, remaining: remaining, todoDone: todayDone.count, todoTotal: todoTotal)
-        HourlyRateCard(focus: focus)
-        if model.hasSjz { AuditProjectCard() }
-    }
-
-    @ViewBuilder private func railBottom(weeks: Int) -> some View {
-        if model.hasIdeashell { HeatPanel(weeks: weeks) }
+    /// 此刻各项的进度：今日三环、时薪（今天 / 本周图表）、倒计时、项目、Daily Note 热力图；平铺在同一张底上，用分隔线分段
+    @ViewBuilder private func dashboard(weeks: Int) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // 正在做的审计项目放在仪表盘上面；它的环并进下面的仪表里
+            if model.hasSjz {
+                AuditProjectCard { extra in
+                    AnyView(PaceDashboard(focus: focus, loaded: loaded, remaining: remaining, todoDone: todayDone.count, todoTotal: todoTotal, extraRings: extra))
+                }
+            } else {
+                PaceDashboard(focus: focus, loaded: loaded, remaining: remaining, todoDone: todayDone.count, todoTotal: todoTotal)
+            }
+            Divider().padding(.horizontal, 16)
+            HourlyRateCard(focus: focus)
+            if model.hasIdeashell {
+                Divider().padding(.horizontal, 16)
+                HeatPanel(weeks: weeks)
+            }
+        }
+        .padding(.horizontal, 8)
+        .environment(\.flatPanels, true)
     }
 }
 
 // MARK: - 基础部件
 
-private struct Panel<Content: View>: View {
-    var radius: CGFloat = 16
-    @ViewBuilder var content: Content
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) { content }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassCard(radius: radius)
+private struct FlatPanelsKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    /// 平铺：Panel 不画卡片底（右边的仪表盘用）
+    var flatPanels: Bool {
+        get { self[FlatPanelsKey.self] }
+        set { self[FlatPanelsKey.self] = newValue }
     }
 }
 
-/// 一组：标题（+ 数量 + 右侧动作）在卡片外面，内容是一张分隔线隔开的列表卡
+struct Panel<Content: View>: View {
+    var radius: CGFloat = 16
+    @ViewBuilder var content: Content
+    @Environment(\.flatPanels) private var flat
+    var body: some View {
+        let v = VStack(alignment: .leading, spacing: 0) { content }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        if flat { v } else { v.glassCard(radius: radius) }
+    }
+}
+
+/// 中间一列所有卡片共用的标题行：图标 + 标题 + 数量（左），右边放动作
+struct CardHeader<Trailing: View>: View {
+    let icon: String
+    let title: String
+    var count = 0
+    var tint: Color = Brand.orange
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).foregroundStyle(tint)
+            Text(title).foregroundStyle(tint)
+            if count > 0 { Text("\(count)").foregroundStyle(.tertiary) }
+            Spacer(minLength: 6)
+            trailing
+        }
+        .font(.subheadline.weight(.semibold))
+        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 6)
+    }
+}
+
+/// 卡片里的小分组标题：日常 / 结审
+private struct GroupLabel: View {
+    let icon: String
+    let title: String
+    let count: Int
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+            Text(title)
+            Text("\(count)").foregroundStyle(.tertiary)
+        }
+        .font(.caption.weight(.semibold)).foregroundStyle(tint)
+        .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 2)
+    }
+}
+
+/// 一张卡：标题行 + 分隔线隔开的列表
 private struct TaskSection<Trailing: View, Rows: View>: View {
     let title: String
     let count: Int
-    var tint: Color = .primary
-    var tight = false
+    var icon = "checklist"
+    var tint: Color = Brand.orange
     @ViewBuilder var trailing: Trailing
     @ViewBuilder var content: Rows
 
     var body: some View {
-        VStack(alignment: .leading, spacing: tight ? 6 : 8) {
-            HStack(spacing: 6) {
-                Text(title).font(tight ? .headline.weight(.bold) : .title3.weight(.bold)).foregroundStyle(tint)
-                if count > 0 { Text("\(count)").font(.callout.weight(.semibold)).foregroundStyle(.tertiary) }
-                Spacer()
-                trailing
-            }
-            .padding(.horizontal, 4)
-            Panel { content }
+        Panel {
+            CardHeader(icon: icon, title: title, count: count, tint: tint) { trailing }
+            content
         }
     }
-}
-
-private struct RailTitle: View {
-    let text: String
-    var body: some View { Text(text).font(.subheadline.weight(.bold)).foregroundStyle(.secondary).padding(.horizontal, 4) }
 }
 
 /// 「推迟到…」菜单项（单条）
@@ -1075,7 +1063,7 @@ private struct TaskLine: View {
             Group {
                 if compact {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(task.cleanTitle).font(.callout).strikethrough(done)
+                        Text(task.cleanTitle).font(.system(size: 13, weight: .medium)).strikethrough(done)
                             .foregroundStyle(done ? .secondary : .primary).lineLimit(1)
                             .layoutPriority(1)
                         if !subtitle.isEmpty {
@@ -1125,7 +1113,7 @@ private struct TaskLine: View {
                 .opacity(hover ? 1 : 0)
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, compact ? 3 : 7)
+        .padding(.horizontal, compact ? 16 : 12).padding(.vertical, compact ? 3 : 7)
         .background(hover ? Color.primary.opacity(0.04) : Color.clear)
         .onHover { hover = $0 }
         .contextMenu {
@@ -1310,6 +1298,39 @@ struct FocusTaskMenu<MenuLabel: View>: View {
 
 // MARK: - 侧栏：仪表
 
+/// 仪表盘顶部：倒计时（离下班 / 周末 / 放假）+ 一组环形仪表
+private struct PaceDashboard: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject var focus: FocusStore
+    let loaded: Bool
+    let remaining: Int
+    let todoDone: Int
+    let todoTotal: Int
+    var extraRings: [AnyView] = []
+    @AppStorage("tp.pay") private var pay = 0.0
+    @AppStorage("tp.paidHours") private var paidHours = 40.0
+    @AppStorage("tp.unpaidHours") private var unpaidHours = 0.0
+    @AppStorage("tp.jobCost") private var jobCost = 0.0
+    @AppStorage("tp.goalHours") private var goalHours = 4.0
+    @AppStorage("tp.workDays") private var workDays = 5.0
+    @AppStorage("tp.startHour") private var startHour = 9.0
+    @AppStorage("tp.endHour") private var endHour = 18.0
+
+    var body: some View {
+        let price = TimePrice(monthlyPay: pay, paidHoursPerWeek: paidHours, unpaidHoursPerWeek: unpaidHours, monthlyJobCost: jobCost, goalHoursPerDay: goalHours, workDaysPerWeek: workDays)
+        let items = FocusLedger.shared.items
+        let _ = focus.summary
+        // 每半分钟刷新一次（倒计时、在岗进度）
+        TimelineView(.periodic(from: .now, by: 30)) { ctx in
+            let p = WorkPace.compute(price: price, entries: items, holidays: model.holidays, startHour: startHour, endHour: endHour, now: ctx.date)
+            VStack(alignment: .leading, spacing: 0) {
+                DashboardCard(focus: focus, loaded: loaded, remaining: remaining, todoDone: todoDone, todoTotal: todoTotal, pace: p, extraRings: extraRings)
+            }
+        }
+    }
+}
+
+/// 一组环形仪表：专注 / 待办 / 项目 / 本周 / 在岗 / 记录
 private struct DashboardCard: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var focus: FocusStore
@@ -1317,105 +1338,334 @@ private struct DashboardCard: View {
     let remaining: Int
     let todoDone: Int
     let todoTotal: Int
+    let pace: WorkPace
+    /// 审计项目的几个环（有结审时由 AuditProjectCard 提供），接在后面一起排
+    var extraRings: [AnyView] = []
+    @State private var showTodo = false
+    @State private var showFocus = false
+    @State private var showProject = false
 
     private var goal: Int { model.focusGoalMin }
     private var focusMin: Int? { focus.summary?.todayMin }
     private let amber = Color(red: 0.96, green: 0.71, blue: 0.25)
-    private var ink: Color { Color.primary.opacity(0.8) }
+    private let green = Color(red: 0.20, green: 0.70, blue: 0.40)
+    private let indigo = Color(red: 0.42, green: 0.45, blue: 0.92)
+    private let teal = Color(red: 0.16, green: 0.66, blue: 0.72)
+    private let pink = Color(red: 0.92, green: 0.34, blue: 0.55)
 
     static func fmt(_ m: Int) -> String {
         m < 60 ? "\(m)m" : (m % 60 == 0 ? "\(m / 60)h" : "\(m / 60)h\(m % 60)m")
     }
 
-    var body: some View {
-        Panel(radius: 18) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 18) {
-                    rings
-                    VStack(alignment: .leading, spacing: 11) {
-                        stat(Brand.orange, "专注", focusMin.map(Self.fmt) ?? "–", "/ " + Self.fmt(goal),
-                             progress: min(Double(focusMin ?? 0) / Double(max(goal, 1)), 1))
-                        stat(ink, "待办", loaded ? "\(todoDone)/\(todoTotal)" : "–", nil,
-                             progress: todoTotal == 0 ? 0 : Double(todoDone) / Double(todoTotal))
-                        stat(amber, "项目进展", model.projectProgress.map { "\(Int($0 * 100))%" } ?? "–", nil,
-                             progress: min(max(model.projectProgress ?? 0, 0), 1))
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .contentShape(Rectangle())
-                .onTapGesture { model.selectedProject = nil; model.section = .focus }
-                FocusRunBar(focus: focus)
-            }
-            .padding(16)
-        }
+    private func ratio(_ a: Int, _ b: Int) -> Double { b <= 0 ? 0 : min(max(Double(a) / Double(b), 0), 1) }
+
+    /// 本月（到今天）有 Daily Note 记录的天数 / 本月已过天数
+    private var noteDays: (done: Int, total: Int) {
+        let today = Day.today()
+        let prefix = String(today.prefix(7))
+        let done = model.heat.filter { $0.key.hasPrefix(prefix) && $0.key <= today && $0.value > 0 }.count
+        return (done, Int(today.suffix(2)) ?? 1)
     }
 
-    /// 一行：圆点 + 名称 … 数值（右对齐），下面一条铺满的细进度条
-    private func stat(_ color: Color, _ name: String, _ value: String, _ suffix: String?, progress: Double) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Circle().fill(color).frame(width: 7, height: 7).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 3 }
-                Text(name).font(.caption).foregroundStyle(.secondary)
-                Spacer(minLength: 6)
-                Text(value).font(.system(size: 17, weight: .bold)).monospacedDigit()
-                if let suffix { Text(suffix).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
+    private func ringButton<L: View>(_ help: String, action: @escaping () -> Void, @ViewBuilder label: () -> L) -> some View {
+        Button(action: action) { label().contentShape(Rectangle()) }
+            .buttonStyle(.plain)
+            .help(help)
+    }
+
+    private static let clockFmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    /// 专注环弹出的小窗：今天的进度 + 每一次专注
+    private var focusPeek: some View {
+        let sum = focus.summary
+        let today = Day.today()
+        let list = (sum?.sessions ?? []).filter { Day.string(Date(timeIntervalSince1970: Double($0.startMs) / 1000)) == today }.reversed()
+        let done = sum?.todayMin ?? 0
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("今天的专注").font(.subheadline.weight(.semibold))
+                Spacer(minLength: 8)
+                Text("\(Self.fmt(done)) / 目标 \(Self.fmt(goal))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
             }
             GeometryReader { g in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.08))
-                    Capsule().fill(color).frame(width: max(progress > 0 ? 4 : 0, g.size.width * progress))
+                    Capsule().fill(Brand.orange.opacity(0.16))
+                    Capsule().fill(Brand.orange).frame(width: g.size.width * ratio(done, goal))
                 }
-                .animation(.easeOut(duration: 0.7), value: progress)
             }
-            .frame(height: 4)
+            .frame(height: 6)
+            if list.isEmpty {
+                Text("今天还没有专注记录").font(.callout).foregroundStyle(.secondary)
+            } else {
+                Divider()
+                ForEach(Array(list)) { s in
+                    HStack(spacing: 8) {
+                        Text(Self.clockFmt.string(from: Date(timeIntervalSince1970: Double(s.startMs) / 1000)))
+                            .font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 40, alignment: .leading)
+                        Text(s.title ?? s.taskId.flatMap { sum?.titles[$0] } ?? "自由专注").font(.system(size: 13)).lineLimit(1)
+                        Spacer(minLength: 6)
+                        Text(Self.fmt(s.minutes)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                }
+            }
         }
+        .padding(14).frame(width: 300)
     }
 
-    private var rings: some View {
-        let focusP = min(Double(focusMin ?? 0) / Double(max(goal, 1)), 1)
-        let todoP = todoTotal == 0 ? 0 : Double(todoDone) / Double(todoTotal)
-        let projP = min(max(model.projectProgress ?? 0, 0), 1)
-        let stroke: CGFloat = 7, gap: CGFloat = 2.5, size: CGFloat = 92
-        return ZStack {
-            ring(0, size: size, stroke: stroke, gap: gap, progress: focusP, color: Brand.orange)
-            ring(1, size: size, stroke: stroke, gap: gap, progress: todoP, color: ink)
-            ring(2, size: size, stroke: stroke, gap: gap, progress: projP, color: amber)
+    /// 项目环弹出的小窗：每个项目的任务完成率
+    private var projectPeek: some View {
+        let ov = model.overview
+        let open = (ov?.overdue ?? []) + (ov?.upcoming ?? []) + (ov?.undated ?? [])
+        let rows: [(name: String, open: Int, done: Int)] = model.projects.filter { $0.projectStatus != .PAUSED }.compactMap { p in
+            let o = open.filter { p.matches($0.title, tags: $0.tags) }.count
+            let d = (ov?.done ?? []).filter { p.matches($0.title, tags: $0.tags) }.count
+            return o + d == 0 ? nil : (p.keyword, o, d)
+        }.sorted { ratio($0.done, $0.done + $0.open) < ratio($1.done, $1.done + $1.open) }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("项目进度").font(.subheadline.weight(.semibold))
+                Spacer(minLength: 8)
+                Text(model.projectProgress.map { "平均 \(Int($0 * 100))%" } ?? "").font(.caption).foregroundStyle(.secondary)
+            }
+            if rows.isEmpty {
+                Text("还没有可统计的项目任务").font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(rows, id: \.name) { r in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(r.name).font(.system(size: 13)).lineLimit(1)
+                        Spacer(minLength: 6)
+                        Text("完成 \(r.done) / 共 \(r.done + r.open)").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    GeometryReader { g in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(amber.opacity(0.18))
+                            Capsule().fill(amber).frame(width: g.size.width * ratio(r.done, r.done + r.open))
+                        }
+                    }
+                    .frame(height: 5)
+                }
+            }
+        }
+        .padding(14).frame(width: 300)
+    }
+
+    /// 待办环弹出的列表：日常 / 结审（今天的 + 还没排到今天的）/ 逾期，点一条打开
+    private var todoPeek: some View {
+        let d = model.todayData()
+        let today = Day.today()
+        let plain = d.todayTasks.filter { !SjzTasks.owns($0.id) }
+        let sjzToday = d.todayTasks.filter { SjzTasks.owns($0.id) }
+        let sjzLater: [DidaTask] = (model.overview.map { $0.upcoming + $0.undated } ?? [])
+            .filter { SjzTasks.owns($0.id) && ($0.date == nil || ($0.date ?? "") > today) }
+            .sorted { ($0.date ?? "9999") < ($1.date ?? "9999") }
+        let sjz = sjzToday + sjzLater
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if plain.isEmpty && sjz.isEmpty && d.overdue.isEmpty {
+                    Text("没有未完成的待办").font(.callout).foregroundStyle(.secondary).padding(14)
+                }
+                if !plain.isEmpty { peekHead("日常", plain.count, .secondary) }
+                ForEach(plain) { t in peekRow(t, tail: t.time ?? "", tint: .secondary) }
+                if !sjz.isEmpty { peekHead("结审", sjz.count, Brand.orange) }
+                ForEach(sjz) { t in
+                    peekRow(t, tail: (t.date ?? "") == today ? (t.time ?? "今天") : (t.date.map { Day.label($0) } ?? "未排期"), tint: .secondary)
+                }
+                if !d.overdue.isEmpty { peekHead("逾期", d.overdue.count, .red) }
+                ForEach(d.overdue) { t in peekRow(t, tail: t.date.map { Day.label($0) } ?? "", tint: .red) }
+            }
+            .padding(.vertical, 6)
+        }
+        .frame(width: 320).frame(maxHeight: 380)
+    }
+
+    private func peekHead(_ title: String, _ n: Int, _ tint: Color) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+            Text("\(n)").foregroundStyle(.tertiary)
+        }
+        .font(.caption.weight(.semibold)).foregroundStyle(tint)
+        .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 2)
+    }
+
+    private func peekRow(_ t: DidaTask, tail: String, tint: Color) -> some View {
+        Button { showTodo = false; model.openTask(t) } label: {
+            HStack(spacing: 8) {
+                Text(t.cleanTitle).font(.system(size: 13)).lineLimit(1)
+                Spacer(minLength: 6)
+                Text(tail).font(.caption).monospacedDigit().foregroundStyle(tint)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 今日综合完成度：专注、待办、项目三项完成率的平均（没有数据的项不计）
+    private var composite: Double {
+        var v = [ratio(focusMin ?? 0, goal)]
+        if todoTotal > 0 { v.append(ratio(todoDone, todoTotal)) }
+        if let p = model.projectProgress { v.append(min(max(p, 0), 1)) }
+        return v.reduce(0, +) / Double(v.count)
+    }
+
+    var body: some View {
+        let score = composite
+        VStack(alignment: .leading, spacing: 16) {
+            // 半圆表盘：今日综合完成度
+            DialGauge(progress: score, title: "今日综合完成度")
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture { model.selectedProject = nil; model.section = .focus }
+            // 六个环：专注 / 待办 / 项目 + 审计项目的三个；每个都能点
+            let over = model.todayData().overdue.count
+            let rings: [AnyView] = [
+                AnyView(ringButton("今天的专注：点一下看每一次") { showFocus.toggle() } label: {
+                    MiniRing(color: Brand.orange, progress: ratio(focusMin ?? 0, goal), value: focusMin.map(Self.fmt) ?? "–", label: "专注")
+                }
+                .popover(isPresented: $showFocus, arrowEdge: .bottom) { focusPeek }),
+                AnyView(ringButton("今天的待办、结审待办和逾期的：点一下看看") { showTodo.toggle() } label: {
+                    MiniRing(color: over > 0 ? .red : green, progress: ratio(todoDone, todoTotal), value: loaded ? "\(todoDone)/\(todoTotal)" : "–", label: "待办")
+                        .overlay(alignment: .topTrailing) {
+                            if over > 0 {
+                                Text("逾期 \(over)").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                                    .padding(.horizontal, 5).padding(.vertical, 1.5).background(Color.red, in: Capsule()).offset(x: -2, y: -2)
+                            }
+                        }
+                }
+                .popover(isPresented: $showTodo, arrowEdge: .bottom) { todoPeek }),
+                AnyView(ringButton("项目的整体进度：点一下看每个项目") { showProject.toggle() } label: {
+                    MiniRing(color: amber, progress: model.projectProgress ?? 0, value: model.projectProgress.map { "\(Int($0 * 100))%" } ?? "–", label: "项目")
+                }
+                .popover(isPresented: $showProject, arrowEdge: .bottom) { projectPeek }),
+            ] + extraRings
+            VStack(spacing: 14) {
+                ForEach(Array(stride(from: 0, to: rings.count, by: 3)), id: \.self) { i in
+                    HStack(alignment: .top, spacing: 0) {
+                        ForEach(i ..< min(i + 3, rings.count), id: \.self) { rings[$0] }
+                        // 不满一行时补空位，环不会被拉宽
+                        ForEach(0 ..< max(0, i + 3 - rings.count), id: \.self) { _ in Color.clear.frame(maxWidth: .infinity, maxHeight: 1) }
+                    }
+                }
+            }
+            FocusRunBar(focus: focus)
+        }
+        .padding(16)
+    }
+}
+
+/// 半圆表盘：渐变弧 + 刻度 + 弧上的游标，中间是百分比
+private struct DialGauge: View {
+    let progress: Double
+    let title: String
+
+    private let w: CGFloat = 232, h: CGFloat = 132, r: CGFloat = 92
+    private var cx: CGFloat { w / 2 }
+    private var cy: CGFloat { h - 16 }
+
+    private func point(_ t: Double, _ radius: CGFloat) -> CGPoint {
+        let a = Double.pi * (1 - t)
+        return CGPoint(x: cx + radius * CGFloat(cos(a)), y: cy - radius * CGFloat(sin(a)))
+    }
+
+    private func arc(_ upTo: Double) -> Path {
+        var path = Path()
+        let n = 80
+        for i in 0 ... n {
+            let pt = point(upTo * Double(i) / Double(n), r)
+            if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+        }
+        return path
+    }
+
+    var body: some View {
+        let p = min(max(progress, 0), 1)
+        let grad = Gradient(colors: [Color(red: 0.16, green: 0.66, blue: 0.72), Color(red: 0.96, green: 0.71, blue: 0.25), Brand.orange])
+        ZStack {
+            Canvas { ctx, _ in
+                let style = StrokeStyle(lineWidth: 12, lineCap: .round, lineJoin: .round)
+                ctx.stroke(arc(1), with: .color(Color.primary.opacity(0.08)), style: style)
+                if p > 0 {
+                    ctx.stroke(arc(max(p, 0.02)), with: .linearGradient(grad, startPoint: CGPoint(x: cx - r, y: cy), endPoint: CGPoint(x: cx + r, y: cy)), style: style)
+                }
+                // 刻度
+                for k in 0 ... 40 {
+                    let t = Double(k) / 40
+                    let major = k % 10 == 0
+                    var tick = Path()
+                    tick.move(to: point(t, r + 12))
+                    tick.addLine(to: point(t, r + 12 - (major ? 11 : 6)))
+                    ctx.stroke(tick, with: .color(Color.primary.opacity(major ? 0.35 : 0.18)), lineWidth: major ? 1.5 : 1)
+                }
+                // 游标
+                let m = point(max(p, 0.0), r)
+                let dot = Path(ellipseIn: CGRect(x: m.x - 8, y: m.y - 8, width: 16, height: 16))
+                ctx.fill(dot, with: .color(.white))
+                ctx.stroke(dot, with: .color(Color.primary.opacity(0.85)), lineWidth: 3)
+            }
+            .frame(width: w, height: h)
             VStack(spacing: 0) {
-                Text(loaded ? "\(remaining)" : "–").font(.system(size: 20, weight: .heavy)).monospacedDigit()
-                Text("还剩").font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 1) {
+                    Text("\(Int((p * 100).rounded()))").font(.system(size: 34, weight: .heavy, design: .rounded)).monospacedDigit()
+                    Text("%").font(.system(size: 13, weight: .bold)).foregroundStyle(.secondary)
+                }
+                Text(title).font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
             }
+            .offset(y: 12)
         }
-        .frame(width: size, height: size)
+        .frame(width: w, height: h)
+        .help("专注、待办、项目三项完成率的平均")
     }
+}
 
-    private func ring(_ i: Int, size: CGFloat, stroke: CGFloat, gap: CGFloat, progress: Double, color: Color) -> some View {
-        let d = size - 2 * CGFloat(i) * (stroke + gap) - stroke
-        return ZStack {
-            Circle().stroke(Color.primary.opacity(0.09), lineWidth: stroke)
-            Circle().trim(from: 0, to: progress > 0 ? max(progress, 0.002) : 0)
-                .stroke(color, style: StrokeStyle(lineWidth: stroke, lineCap: .round))
+/// 小环：中间是读数，下面是名称
+private struct MiniRing: View {
+    let color: Color
+    let progress: Double
+    let value: String
+    let label: String
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack {
+                ActivityRing(size: 60, line: 6, color: color, progress: progress)
+                Text(value).font(.system(size: 12, weight: .bold, design: .rounded)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.6)
+                    .padding(.horizontal, 9)
+            }
+            .frame(width: 60, height: 60)
+            Text(label).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// 环：圆头 + 渐变，轨道是同色的淡色
+private struct ActivityRing: View {
+    let size: CGFloat
+    let line: CGFloat
+    let color: Color
+    let progress: Double
+
+    var body: some View {
+        let p = progress > 0 ? max(min(progress, 1), 0.02) : 0
+        ZStack {
+            Circle().stroke(color.opacity(0.16), lineWidth: line)
+            Circle().trim(from: 0, to: p)
+                .stroke(AngularGradient(colors: [color.opacity(0.55), color], center: .center, startAngle: .degrees(0), endAngle: .degrees(360 * max(p, 0.05))),
+                        style: StrokeStyle(lineWidth: line, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(.easeOut(duration: 0.7), value: progress)
         }
-        .frame(width: d, height: d)
+        .frame(width: size - line, height: size - line)
+        .frame(width: size, height: size)
     }
 }
 
 // MARK: - 侧栏：时薪
-
-private struct ProgressBar: View {
-    let value: Double
-    let color: Color
-    var body: some View {
-        GeometryReader { g in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.08))
-                Capsule().fill(color).frame(width: max(value > 0 ? 4 : 0, g.size.width * min(max(value, 0), 1)))
-            }
-        }
-        .frame(height: 3)
-    }
-}
 
 /// 洞察里「你的时间值多少钱」的精简版：最近 7 天的有效时薪（较上一个 7 天的变化）、在岗时薪、每天的工作专注，点一下进洞察
 private struct HourlyRateCard: View {
@@ -1441,45 +1691,40 @@ private struct HourlyRateCard: View {
         let prevRate = price.effectiveHourly(workMin: prev.workMin, days: days)
         let todayMin = stats.daily.last?.work ?? 0
         let _ = focus.summary
-        Panel(radius: 18) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 6) {
-                    Image(systemName: "yensign.circle.fill").foregroundStyle(Brand.orange)
-                    Text("时薪").foregroundStyle(Brand.orange)
-                    Spacer(minLength: 6)
-                    Text("近 \(days) 天").font(.caption).foregroundStyle(.tertiary)
-                }
-                .font(.subheadline.weight(.semibold))
-
-                if price.configured {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(rate.map { TimePrice.money($0) } ?? "–").font(.system(size: 26, weight: .bold)).monospacedDigit()
-                        Text("/ 小时").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        if let rate, let pr = prevRate, pr > 0 { trend(rate, pr) }
-                        Spacer(minLength: 6)
-                        VStack(alignment: .trailing, spacing: 1) {
-                            Text(TimePrice.money(price.realHourly)).font(.system(size: 14, weight: .semibold)).monospacedDigit()
-                            Text("在岗底价").font(.caption2).foregroundStyle(.secondary)
+        // 每半分钟刷新一次（倒计时、此刻的位置）
+        TimelineView(.periodic(from: .now, by: 30)) { ctx in
+            let p = WorkPace.compute(price: price, entries: items, holidays: model.holidays, startHour: startHour, endHour: endHour, now: ctx.date)
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("时薪").font(.subheadline.weight(.bold)).foregroundStyle(.secondary)
+                    if price.configured {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(rate.map { TimePrice.money($0) } ?? "–").font(.system(size: 26, weight: .bold)).monospacedDigit()
+                            Text("/ 小时").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            if let rate, let pr = prevRate, pr > 0 { trend(rate, pr) }
+                            Spacer(minLength: 6)
+                            Text("底价 " + TimePrice.money(price.realHourly)).font(.caption).foregroundStyle(.secondary).monospacedDigit()
                         }
+                    } else {
+                        Text("填上每月收入和每周工时，就能算出你的时间值多少钱")
+                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
-                    bars(stats)
-                    Text(summary(price, stats, rate: rate, todayMin: todayMin))
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Text("填上每月收入和每周工时，就能算出你的时间值多少钱")
-                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    // 距下班 / 周末 / 放假：和时薪合在一起
+                    countdown(p).padding(.top, 2)
+                    if p.goalMin > 0, p.personalToday || p.weekQuotaMin > 0 {
+                        VStack(alignment: .leading, spacing: 16) {
+                            if p.personalToday { todayChart(p) }
+                            if p.weekQuotaMin > 0 { weekChart(p) }
+                        }
+                        .help(p.insights.prefix(2).map(\.text).joined(separator: "\n\n"))
+                    }
                 }
-
-                // 倒计时 + 一周的前置节奏（每半分钟刷新一次倒计时）
-                TimelineView(.periodic(from: .now, by: 30)) { ctx in
-                    pace(WorkPace.compute(price: price, entries: items, holidays: model.holidays, startHour: startHour, endHour: endHour, now: ctx.date))
-                }
+                .padding(16)
+                .contentShape(Rectangle())
+                .onTapGesture { model.section = .insights }
+                .help("在洞察里查看详细的时间价格")
             }
-            .padding(16)
         }
-        .contentShape(Rectangle())
-        .onTapGesture { model.section = .insights }
-        .help("在洞察里查看详细的时间价格")
         .task {
             if model.holidays.isEmpty {
                 let h = await HolidayStore.load()
@@ -1488,34 +1733,22 @@ private struct HourlyRateCard: View {
         }
     }
 
-    // MARK: 节奏：离下班 / 离放假 + 前置进度 + 洞察
+    // MARK: 今天 / 本周图表
 
-    private func pace(_ p: WorkPace) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .top, spacing: 0) {
-                switch p.phase {
-                case .working: countStat(WorkPace.clock(p.minutesToOff), "距下班")
-                case .before: countStat(WorkPace.clock(p.minutesToStart), "距上班")
-                case .after: countStat("已下班", "今天的班结束了", small: true)
-                case .off: countStat("休息中", p.daysToWork > 0 ? "\(p.daysToWork) 天后上班" : "好好休息", small: true)
-                }
-                if let o = p.nextOff {
-                    countStat(o.days == 1 ? "明天" : "\(o.days) 天", "距" + o.name + (o.length > 2 ? "（连休 \(o.length) 天）" : ""))
-                }
-                if let h = p.nextHoliday, h.name != p.nextOff?.name || h.days != p.nextOff?.days {
-                    countStat("\(h.days) 天", "距" + h.name + "（连休 \(h.length) 天）")
-                }
+    /// 离下班 / 离周末 / 离放假
+    private func countdown(_ p: WorkPace) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            switch p.phase {
+            case .working: countStat(WorkPace.clock(p.minutesToOff), "距下班")
+            case .before: countStat(WorkPace.clock(p.minutesToStart), "距上班")
+            case .after: countStat("已下班", "今天的班结束了", small: true)
+            case .off: countStat("休息中", p.daysToWork > 0 ? "\(p.daysToWork) 天后上班" : "好好休息", small: true)
             }
-            if p.phase == .working {
-                ProgressBar(value: p.dayProgress, color: Brand.orange.opacity(0.55)).help("今天的班已经上了 \(Int(p.dayProgress * 100))%")
+            if let o = p.nextOff {
+                countStat(o.days == 1 ? "明天" : "\(o.days) 天", "距" + o.name + (o.length > 2 ? "（连休 \(o.length) 天）" : ""))
             }
-            if p.goalMin > 0, p.personalToday || p.weekQuotaMin > 0 {
-                VStack(alignment: .leading, spacing: 16) {
-                    if p.personalToday { todayChart(p) }
-                    if p.weekQuotaMin > 0 { weekChart(p) }
-                }
-                .padding(.top, 2)
-                .help(p.insights.prefix(2).map(\.text).joined(separator: "\n\n"))
+            if let h = p.nextHoliday, h.name != p.nextOff?.name || h.days != p.nextOff?.days {
+                countStat("\(h.days) 天", "距" + h.name + "（连休 \(h.length) 天）")
             }
         }
     }
@@ -1528,6 +1761,7 @@ private struct HourlyRateCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+
 
     private static func hm(_ m: Int) -> String { String(format: "%d:%02d", m / 60, m % 60) }
 
@@ -1683,31 +1917,6 @@ private struct HourlyRateCard: View {
         .foregroundStyle(color)
         .help("较上一个 \(days) 天")
     }
-
-    /// 每天的工作专注：今天用主色，其余淡一点
-    private func bars(_ s: WorkStats) -> some View {
-        let peak = max(s.daily.map(\.work).max() ?? 0, 30)
-        return HStack(alignment: .bottom, spacing: 5) {
-            ForEach(Array(s.daily.enumerated()), id: \.offset) { i, d in
-                let last = i == s.daily.count - 1
-                Capsule()
-                    .fill(last ? Brand.orange : Brand.orange.opacity(0.35))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: max(3, 28 * CGFloat(d.work) / CGFloat(peak)))
-                    .help("\(d.day)：专注工作 \(DashboardCard.fmt(d.work))")
-            }
-        }
-        .frame(height: 28, alignment: .bottom)
-    }
-
-    private func summary(_ p: TimePrice, _ s: WorkStats, rate: Double?, todayMin: Int) -> String {
-        guard let rate else { return "最近 \(days) 天专注工作不足 30 分钟，还算不出有效时薪" }
-        let onDuty = p.onDutyMinutes(days: days)
-        var t = "专注工作 \(DashboardCard.fmt(s.workMin))"
-        if onDuty > 0 { t += "，占在岗的 \(Int((Double(s.workMin) / onDuty * 100).rounded()))%" }
-        if todayMin > 0 { t += "；今天 \(DashboardCard.fmt(todayMin)) ≈ \(TimePrice.money(rate * Double(todayMin) / 60))" }
-        return t
-    }
 }
 
 // MARK: - 侧栏：今日信息（AI 速览）
@@ -1773,7 +1982,7 @@ private struct InfoCard: View {
 
     var body: some View {
         let parsed = digest.digest.map { TodayDigestStore.parse($0.raw) }
-        Panel(radius: 18) {
+        Panel {
             VStack(alignment: .leading, spacing: 12) {
                 header
                 if store.groups.isEmpty {
@@ -1789,7 +1998,7 @@ private struct InfoCard: View {
                     empty
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 16)
         }
         .task { await store.loadIfNeeded() }
     }
@@ -1883,6 +2092,8 @@ private struct InfoCard: View {
 
 /// 正在做的审计项目（结审里「当前项目」，没钉住就取第一个）：阶段进度，以及已发出、还没收回的取证单——到了回复期限没收回的标红
 struct AuditProjectCard: View {
+    /// 下面的仪表：拿到审计项目的几个环，排进自己的环里
+    let content: ([AnyView]) -> AnyView
     @EnvironmentObject var model: AppModel
     @State private var docs: SjzDocs?
     @State private var items: [SjzOutstanding] = []
@@ -1895,7 +2106,7 @@ struct AuditProjectCard: View {
     @State private var peek: Peek?
 
     enum Peek: String, Identifiable, CaseIterable {
-        case today, clues, ideas, evidence, regulations, datalists, all, open, overdue, summaries
+        case today, clues, ideas, evidence, regulations, datalists, all, open, overdue, summaries, recall
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -1909,6 +2120,7 @@ struct AuditProjectCard: View {
             case .open: return "未完成任务"
             case .overdue: return "逾期任务"
             case .summaries: return "工作小结"
+            case .recall: return "待收回"
             }
         }
         var icon: String {
@@ -1923,10 +2135,11 @@ struct AuditProjectCard: View {
             case .open: return "checklist"
             case .overdue: return "exclamationmark.circle"
             case .summaries: return "doc.richtext"
+            case .recall: return "tray.and.arrow.down"
             }
         }
         /// 统计里有对应数字的几类：弹窗挂在那个数字上，其余的挂在整张卡片上
-        var hasTile: Bool { self == .open || self == .overdue || self == .clues || self == .today || self == .summaries }
+        var hasTile: Bool { self == .open || self == .overdue || self == .clues || self == .today || self == .summaries || self == .recall }
     }
 
     struct PeekEntry: Identifiable {
@@ -1943,6 +2156,21 @@ struct AuditProjectCard: View {
     private static var docCache: [String: SjzDocs] = [:]
     private static var itemCache: [String: [SjzOutstanding]] = [:]
     private static var capCache: [String: [SjzCapture]] = [:]
+    private static var summaryCache: [String: [SjzSummary]] = [:]
+    /// 上次显示的项目：切页面回来时，环里的数字一开始就是上次的，不会先归零再涨上去
+    private static var lastProject = ""
+
+    init(content: @escaping ([AnyView]) -> AnyView) {
+        self.content = content
+        let n = Self.lastProject
+        if !n.isEmpty {
+            _docs = State(initialValue: Self.docCache[n])
+            _items = State(initialValue: Self.itemCache[n] ?? [])
+            _caps = State(initialValue: Self.capCache[n] ?? [])
+            _summaries = State(initialValue: Self.summaryCache[n] ?? [])
+            _loadedItems = State(initialValue: Self.itemCache[n] != nil)
+        }
+    }
 
     private var name: String { model.sjzPin.project.isEmpty ? (model.sjzOverview?.projects.first?.name ?? "") : model.sjzPin.project }
     private var title: String {
@@ -2022,58 +2250,43 @@ struct AuditProjectCard: View {
         if !name.isEmpty {
             let rs = rows
             let late = rs.filter { ($0.left ?? 0) < 0 }.count
-            Panel(radius: 18) {
-                VStack(alignment: .leading, spacing: 11) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.shield").font(.system(size: 14, weight: .semibold)).foregroundStyle(Brand.orange)
-                            .frame(width: 30, height: 30)
-                            .background(Brand.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("正在做的审计项目").font(.caption).foregroundStyle(.secondary)
-                            Text(title).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+            Panel {
+                CardHeader(icon: "checkmark.shield", title: "正在做的审计项目") {
+                    Button { model.section = .focus; model.selectedProject = SjzTasks.prefix + name } label: {
+                        HStack(spacing: 3) {
+                            Text("打开项目")
+                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold))
                         }
-                        Spacer(minLength: 4)
-                        Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture { model.section = .focus; model.selectedProject = SjzTasks.prefix + name }
-                    if let d = docs, !d.phases.isEmpty { phaseBar(d) }
-                    HStack(alignment: .top, spacing: 0) {
-                        mini("未完成", "\(stat?.open ?? 0)", .primary.opacity(0.85), .open)
-                        mini("逾期", "\(stat?.overdue ?? 0)", (stat?.overdue ?? 0) > 0 ? .red : .primary.opacity(0.85), .overdue)
-                        mini("待核实线索", "\(pendingClues)", pendingClues > 0 ? .pink : .primary.opacity(0.85), .clues)
-                        mini("今天新增", "\(todayCount)", todayCount > 0 ? Brand.orange : .primary.opacity(0.85), .today)
-                        mini("工作小结", "\(summaries.count)", .primary.opacity(0.85), .summaries)
-                    }
-                    .padding(.horizontal, -6)
-                    if !rs.isEmpty {
-                        Divider().opacity(0.6)
-                        HStack(spacing: 6) {
-                            Text("待收回").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                            Text("\(rs.count)").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-                            if late > 0 { TagChip(text: "\(late) 条已逾期", tint: .red) }
-                            Spacer(minLength: 4)
-                            if rs.contains(where: { !$0.isList }) {
-                                Text("取证单期限 \(replyDays) 天").font(.caption2).foregroundStyle(.tertiary).help("取证单发出后 \(replyDays) 天内应收回，右键卡片可以改；资料清单按任务的计划日期和截止日期算")
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 7) {
-                            ForEach(rs.prefix(3)) { r in row(r) }
-                            if rs.count > 3 { Text("还有 \(rs.count - 3) 条，在结审里查看").font(.caption2).foregroundStyle(.tertiary) }
-                        }
-                    }
-                    let recent = recentEntries
-                    if !recent.isEmpty {
-                        Divider().opacity(0.6)
-                        Text("最近").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.bottom, -4)
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(recent) { r in
-                                RecentRow(icon: r.icon, tint: r.tint, text: r.text, time: r.date.map(Self.timeLabel) ?? "", action: r.action)
-                            }
-                        }
-                    }
+                    .buttonStyle(.plain)
                 }
-                .padding(14)
+                // 项目名 + 阶段进度
+                VStack(alignment: .leading, spacing: 9) {
+                    Text(title).font(.system(size: 15, weight: .semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    if let d = docs, !d.phases.isEmpty { phaseBar(d) }
+                }
+                .padding(.horizontal, 16).padding(.bottom, 4)
+                content(ringViews(rs))
+                if !rs.isEmpty {
+                    Divider().padding(.horizontal, 16)
+                    HStack(spacing: 6) {
+                        Text("待收回").foregroundStyle(.secondary)
+                        Text("\(rs.count)").foregroundStyle(.tertiary)
+                        if late > 0 { TagChip(text: "\(late) 条已逾期", tint: .red) }
+                        Spacer(minLength: 4)
+                        if rs.contains(where: { !$0.isList }) {
+                            Text("取证单期限 \(replyDays) 天").font(.caption2).foregroundStyle(.tertiary).help("取证单发出后 \(replyDays) 天内应收回，右键卡片可以改；资料清单按任务的计划日期和截止日期算")
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 2)
+                    ForEach(Array(rs.prefix(3).enumerated()), id: \.element.id) { i, r in
+                        row(r).padding(.horizontal, 16).padding(.vertical, 6)
+                        if i < min(rs.count, 3) - 1 { Divider().padding(.leading, 16) }
+                    }
+                    if rs.count > 3 { Text("还有 \(rs.count - 3) 条，在结审里查看").font(.caption2).foregroundStyle(.tertiary).padding(.horizontal, 16).padding(.vertical, 4) }
+                }
             }
             .popover(item: Binding(get: { peek.flatMap { $0.hasTile ? nil : $0 } }, set: { if $0 == nil { peek = nil } }), arrowEdge: .leading) { k in
                 peekList(k)
@@ -2083,8 +2296,11 @@ struct AuditProjectCard: View {
             .onReceive(NotificationCenter.default.publisher(for: .sjzCapturesChanged)) { _ in Task { await load() } }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in Task { await load() } }
         } else {
-            Color.clear.frame(height: 0)
-                .task { await model.refreshSjzTarget(); await model.refreshSjzOverview() }
+            VStack(spacing: 0) {
+                content([])
+                Color.clear.frame(height: 0)
+                    .task { await model.refreshSjzTarget(); await model.refreshSjzOverview() }
+            }
         }
     }
 
@@ -2096,7 +2312,7 @@ struct AuditProjectCard: View {
                     .frame(width: 52).padding(.vertical, 3)
                     .background(tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(r.title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+                    Text(r.title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
                     HStack(spacing: 5) {
                         Text(r.isList ? "资料清单" : "取证单").font(.system(size: 10, weight: .medium)).foregroundStyle(r.isList ? Color.indigo : Brand.orange)
                         if let range = r.range {
@@ -2187,6 +2403,34 @@ struct AuditProjectCard: View {
     private func mini(_ label: String, _ value: String, _ color: Color, _ k: Peek) -> some View {
         PeekTile(label: label, value: value, color: color, active: peek == k) { peek = peek == k ? nil : k }
             .popover(isPresented: Binding(get: { peek == k }, set: { if !$0 && peek == k { peek = nil } }), arrowEdge: .bottom) { peekList(k) }
+    }
+
+    /// 并进仪表的三个环：工作小结、待核实线索、待收回
+    private func ringViews(_ rs: [Row]) -> [AnyView] {
+        [
+            AnyView(ring("工作小结", summaries.count, cap: 5, color: Color(red: 0.16, green: 0.66, blue: 0.72), .summaries)),
+            AnyView(ring("待核实线索", pendingClues, cap: 10, color: Color(red: 0.92, green: 0.34, blue: 0.55), .clues)),
+            AnyView(ring("待收回", rs.count, cap: 5, color: Color(red: 0.96, green: 0.71, blue: 0.25), .recall)),
+        ]
+    }
+
+    /// 一个环：数字在中间，满环按 cap 算；点一下弹出列表
+    private func ring(_ label: String, _ value: Int, cap: Double, color: Color, _ k: Peek, badge: String? = nil) -> some View {
+        Button { peek = peek == k ? nil : k } label: {
+            MiniRing(color: color, progress: min(Double(value) / cap, 1), value: "\(value)", label: label)
+                .overlay(alignment: .topTrailing) {
+                    if let badge {
+                        Text(badge).font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                            .padding(.horizontal, 5).padding(.vertical, 1.5)
+                            .background(Color.red, in: Capsule())
+                            .offset(x: -2, y: -2)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("点一下看看是哪些")
+        .popover(isPresented: Binding(get: { peek == k }, set: { if !$0 && peek == k { peek = nil } }), arrowEdge: .bottom) { peekList(k) }
     }
 
     private func peekList(_ k: Peek) -> some View {
@@ -2297,6 +2541,13 @@ struct AuditProjectCard: View {
         case .open: return taskEntries(overdueOnly: false)
         case .overdue: return taskEntries(overdueOnly: true)
         case .summaries: return Self.summaryEntries(summaries, project: name, model: model)
+        case .recall:
+            return rows.map { r in
+                let (badge, tint) = Self.badge(r.left, notStarted: r.notStarted)
+                return PeekEntry(id: r.id, icon: r.isList ? "list.clipboard" : "doc.text", tint: r.isList ? .indigo : Brand.orange,
+                                 title: r.title, sub: [r.isList ? "资料清单" : "取证单", r.matter].filter { !$0.isEmpty }.joined(separator: " · "),
+                                 trailing: badge, trailTint: tint, open: r.open)
+            }
         }
     }
 
@@ -2348,12 +2599,13 @@ struct AuditProjectCard: View {
         if model.sjzOverview == nil { await model.refreshSjzOverview() }
         let n = name
         guard !n.isEmpty else { return }
+        Self.lastProject = n
         if docs == nil, let c = Self.docCache[n] { docs = c }
         if items.isEmpty, let c = Self.itemCache[n] { items = c; loadedItems = true }
         if caps.isEmpty, let c = Self.capCache[n] { caps = c }
         if let c = try? await model.sjz.captures(project: n, limit: 300) { caps = c; Self.capCache[n] = c }
         if let c = try? await model.sjz.outstanding(project: n) { items = c; loadedItems = true; Self.itemCache[n] = c }
-        if let sm = try? await model.sjz.summaries(project: n) { summaries = sm }
+        if let sm = try? await model.sjz.summaries(project: n) { summaries = sm; Self.summaryCache[n] = sm }
         if let d = try? await model.sjz.documents(project: n) { docs = d; Self.docCache[n] = d }
     }
 }
@@ -2518,35 +2770,33 @@ struct GlassActionStyle: ButtonStyle {
     }
 }
 
-// MARK: - 侧栏：往日回顾
+// MARK: - 往日回顾
 
 private struct MemoryPanel: View {
     @EnvironmentObject var model: AppModel
     let items: [MemoryItem]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            RailTitle(text: "往日回顾")
-            Panel {
-                ForEach(Array(items.enumerated()), id: \.element.id) { i, m in
-                    Button { model.openNote(m.note.id, title: m.note.title) } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 6) {
-                                Text(m.label).font(.caption.weight(.bold)).foregroundStyle(Brand.orange)
-                                Text(String(m.date.dropFirst(5))).font(.caption).foregroundStyle(.tertiary).monospacedDigit()
-                            }
-                            Text(m.note.title).font(.callout.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
-                            if let s = m.note.summary?.trimmed, !s.isEmpty {
-                                Text(s).font(.caption).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
-                            }
+        Panel {
+            CardHeader(icon: "clock.arrow.circlepath", title: "往日回顾") { EmptyView() }
+            ForEach(Array(items.enumerated()), id: \.element.id) { i, m in
+                Button { model.openNote(m.note.id, title: m.note.title) } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(m.label).font(.caption.weight(.bold)).foregroundStyle(Brand.orange)
+                            Text(String(m.date.dropFirst(5))).font(.caption).foregroundStyle(.tertiary).monospacedDigit()
                         }
-                        .padding(.horizontal, 14).padding(.vertical, 9)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                        Text(m.note.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
+                        if let s = m.note.summary?.trimmed, !s.isEmpty {
+                            Text(s).font(.caption).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    if i < items.count - 1 { Divider().padding(.leading, 14) }
+                    .padding(.horizontal, 16).padding(.vertical, 9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                if i < items.count - 1 { Divider().padding(.leading, 16) }
             }
         }
     }
@@ -2598,11 +2848,14 @@ private struct HeatGrid: View, Equatable {
         }.count
 
         VStack(alignment: .leading, spacing: 8) {
-            RailTitle(text: "Daily Note · 最近 \(weeks) 周")
-            Panel {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Daily Note · 最近 \(weeks) 周").font(.subheadline.weight(.bold)).foregroundStyle(.secondary)
+                Spacer(minLength: 6)
+                Text(loading && counts.isEmpty ? "正在读取…" : "本月 \(monthDays) 天")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary).help("共 \(total) 条")
+            }
+            Group {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(loading && counts.isEmpty ? "正在读取…" : "本月记了 \(monthDays) 天 · 共 \(total) 条")
-                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     Canvas { ctx, size in
                         let (cell, gap) = metrics(size.width)
                         var prev = -1
@@ -2635,8 +2888,8 @@ private struct HeatGrid: View, Equatable {
                     }
                     .aspectRatio(CGFloat(weeks) / 7.0, contentMode: .fit)
                 }
-                .padding(14)
             }
         }
+        .padding(16)
     }
 }

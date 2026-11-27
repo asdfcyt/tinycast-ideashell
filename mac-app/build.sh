@@ -66,8 +66,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key><string>Shiyi</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.2.6</string>
-    <key>CFBundleVersion</key><string>17</string>
+    <key>CFBundleShortVersionString</key><string>0.2.7</string>
+    <key>CFBundleVersion</key><string>18</string>
     <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>

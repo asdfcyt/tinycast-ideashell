@@ -34,10 +34,10 @@ enum QuickStartPlanner {
     你是用户的私人晨间助理，帮他「无压力地开始今天」。你会拿到：今天的待办、逾期的待办、最近的笔记、最近几天的 Daily Note（随手记）、进行中的项目和今天已有的专注时长。
 
     请梳理出：
-    1. focus：今天真正值得做的 1~3 件事（不是把所有待办罗列一遍）。优先考虑：今天到期的、高优先级的、逾期很久的、笔记 / Daily Note 里反复出现或写着「要做 / 别忘了 / 卡住了」的事。每件给一句不超过 30 字的理由或做法。如果是某个待办，带上它的 id（t1、t2…），不是待办就不带。
+    1. focus：今天真正值得做的 1~3 件事（不是把所有待办罗列一遍）。只能从 todayTasks 和 overdueTasks 里挑，必须带上它的 id（t1、t2…），title 用待办原来的标题；绝对不要把笔记、Daily Note、项目里提到的、不在待办清单里的事当成 focus。优先考虑：今天到期的、高优先级的、逾期很久的；笔记 / Daily Note 只用来帮你判断哪件更要紧、写理由。每件给一句不超过 30 字的理由或做法。
     2. watch：需要留意的事项（0~3 条），比如笔记里提到的担心、没有收尾的想法、逾期很久的、时间冲突、今天很满等。每条不超过 40 字。
-    3. later：可以放心先放一放的（0~3 条，每条 {"text":"不超过 20 字","taskId":"t3"}），帮用户减压。如果这件事就是某个待办，务必带上它的 id（t1、t2…），用户可以一键把它延期；不是待办就不带 taskId。
-    4. start：「无压启动」——从 focus 里挑最容易开头的一件，给出 10~25 分钟的小目标：taskId（待办 id，可为空）、title（这一步的名称）、minutes（10~25 的整数）、step（第一步具体做什么，足够小、马上能动手，不超过 40 字）、tip（一句不超过 30 字、让人放松的话）。
+    3. later：可以放心先放一放的（0~3 条，每条 {"text":"不超过 20 字","taskId":"t3"}），帮用户减压。必须是待办清单里的事，务必带上它的 id（t1、t2…），用户可以一键把它延期；不是待办的不要列。
+    4. start：「无压启动」——从 focus 里挑最容易开头的一件，给出 10~25 分钟的小目标：taskId（待办 id，必填，从 focus 里选）、title（这一步的名称）、minutes（10~25 的整数）、step（第一步具体做什么，足够小、马上能动手，不超过 40 字）、tip（一句不超过 30 字、让人放松的话）。
     5. greeting：一句温和、不说教的开场白，不超过 30 字，可以结合时间段（现在几点会告诉你）。
 
     原则：语气温和，不责备，不制造焦虑；逾期不要用「拖延」这种词；信息不足时宁可少说，不要编造用户没写过的内容。
@@ -52,10 +52,9 @@ enum QuickStartPlanner {
         let today = Day.today()
         let ov = model.overview
 
-        // 待办：今天 + 逾期（最久的 10 条）+ 收集箱（5 条），用 t1、t2… 的短 id
-        let todayTasks = (ov?.todayTasks(today) ?? []).filter { !SjzTasks.owns($0.id) }.sorted { ($0.time ?? "99:99") < ($1.time ?? "99:99") }
-        let overdue = (ov?.overdue ?? []).filter { !SjzTasks.owns($0.id) }.sorted { ($0.date ?? "") < ($1.date ?? "") }.prefix(10)
-        let inbox = (ov?.undated ?? []).filter { !SjzTasks.owns($0.id) }.prefix(5)
+        // 待办：只取有日期的——今天 + 逾期（最久的 10 条）；没排日期的不参与，用 t1、t2… 的短 id
+        let todayTasks = (ov?.todayTasks(today) ?? []).filter { !SjzTasks.owns($0.id) && $0.date != nil }.sorted { ($0.time ?? "99:99") < ($1.time ?? "99:99") }
+        let overdue = (ov?.overdue ?? []).filter { !SjzTasks.owns($0.id) && $0.date != nil }.sorted { ($0.date ?? "") < ($1.date ?? "") }.prefix(10)
         var idMap: [String: DidaTask] = [:]
         var n = 0
         func encode(_ t: DidaTask, kind: String) -> [String: Any] {
@@ -73,7 +72,6 @@ enum QuickStartPlanner {
         }
         let todayJson = todayTasks.map { encode($0, kind: "今天") }
         let overdueJson = overdue.map { encode($0, kind: "逾期") }
-        let inboxJson = inbox.map { encode($0, kind: "无日期") }
         let doneToday = (ov?.done ?? []).filter { $0.completedDate.map { Day.string($0) == today } ?? false }.map(\.cleanTitle)
 
         // 最近的笔记（最多 8 条）
@@ -109,7 +107,7 @@ enum QuickStartPlanner {
         let payload: [String: Any] = [
             "now": String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0),
             "today": today, "weekday": "周" + wk[((c.weekday ?? 1) - 1) % 7],
-            "todayTasks": todayJson, "overdueTasks": overdueJson, "inboxTasks": inboxJson,
+            "todayTasks": todayJson, "overdueTasks": overdueJson,
             "doneToday": Array(doneToday.prefix(8)),
             "focusMinutesToday": model.focus.summary?.todayMin ?? 0,
             "focusGoalMinutes": model.focusGoalMin,
@@ -121,17 +119,19 @@ enum QuickStartPlanner {
 
         func strings(_ k: String) -> [String] { (obj[k] as? [Any])?.compactMap { ($0 as? String)?.trimmed }.filter { !$0.isEmpty } ?? [] }
         let focus: [QuickStartPlan.Focus] = ((obj["focus"] as? [[String: Any]]) ?? []).prefix(3).compactMap { f in
-            guard let t = (f["title"] as? String)?.trimmed, !t.isEmpty else { return nil }
-            return .init(title: t, why: (f["why"] as? String)?.trimmed ?? "", task: (f["taskId"] as? String).flatMap { idMap[$0] })
+            // 只认待办清单里的：没有对上 id 的（AI 从笔记里编出来的）直接丢掉
+            guard let task = (f["taskId"] as? String).flatMap({ idMap[$0] }) else { return nil }
+            return .init(title: task.cleanTitle, why: (f["why"] as? String)?.trimmed ?? "", task: task)
         }
         let later: [QuickStartPlan.Later] = ((obj["later"] as? [Any]) ?? []).prefix(3).compactMap { item in
-            if let str = item as? String { return str.trimmed.isEmpty ? nil : .init(text: str.trimmed, task: nil) }
-            guard let o = item as? [String: Any], let t = (o["text"] as? String)?.trimmed, !t.isEmpty else { return nil }
-            return .init(text: t, task: (o["taskId"] as? String).flatMap { idMap[$0] })
+            guard let o = item as? [String: Any], let task = (o["taskId"] as? String).flatMap({ idMap[$0] }) else { return nil }
+            let t = (o["text"] as? String)?.trimmed.nonEmpty ?? task.cleanTitle
+            return .init(text: t, task: task)
         }
         guard !focus.isEmpty else { throw LlmError(message: "AI 没有梳理出内容，请重试") }
         let st = obj["start"] as? [String: Any] ?? [:]
         let startTask = (st["taskId"] as? String).flatMap { idMap[$0] } ?? focus.first?.task
+        // 无压启动的标题：如果它对应的待办不在 focus 里，就退回 focus 第一件
         let minsRaw = (st["minutes"] as? Int) ?? Int((st["minutes"] as? Double) ?? 15)
         return QuickStartPlan(
             greeting: (obj["greeting"] as? String)?.trimmed ?? "",
