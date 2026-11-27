@@ -94,6 +94,8 @@ data class AppSettings(
     val voiceKey: VoiceKey = VoiceKey.OFF,
     /** 熄屏时音量键也能按住说话：常驻一个守候服务接管熄屏后的音量键，录音结果直接保存，用震动反馈 */
     val voiceKeyScreenOff: Boolean = false,
+    /** 熄屏 / 锁屏（没解锁）时用哪个音量键：有的手机（如荣耀）熄屏时会拦截音量下键的按下，默认用音量上键，解锁后仍然用 [voiceKey] */
+    val voiceKeyLocked: VoiceKey = VoiceKey.VOLUME_UP,
     /** 熄屏时按耳机线控 / 蓝牙耳机的播放键开始录音，再按一下结束（要先开「熄屏也能用」；没在放音乐时才接管） */
     val voiceHeadsetKey: Boolean = false,
     /** 语音识别引擎：云端 / 本地 SenseVoice / 自动（云端优先，失败时用本地） */
@@ -218,6 +220,8 @@ class SettingsStore(context: Context) {
 
     fun setVoiceKeyScreenOff(enabled: Boolean) = update { it.copy(voiceKeyScreenOff = enabled) }
 
+    fun setVoiceKeyLocked(key: VoiceKey) = update { it.copy(voiceKeyLocked = key) }
+
     fun setVoiceHeadsetKey(enabled: Boolean) = update { it.copy(voiceHeadsetKey = enabled) }
 
     fun setVoiceEngine(engine: VoiceEngine) = update { it.copy(voiceEngine = engine) }
@@ -275,6 +279,7 @@ class SettingsStore(context: Context) {
             .putInt(KEY_VOICE_SILENCE_MS, next.voiceSilenceMs)
             .putString(KEY_VOICE_KEY, next.voiceKey.name)
             .putBoolean(KEY_VOICE_KEY_SCREEN_OFF, next.voiceKeyScreenOff)
+            .putString(KEY_VOICE_KEY_LOCKED, next.voiceKeyLocked.name)
             .putBoolean(KEY_VOICE_HEADSET_KEY, next.voiceHeadsetKey)
             .putString(KEY_LLM_BASE_URL, next.llmBaseUrl)
             .putString(KEY_LLM_MODEL, next.llmModel)
@@ -323,6 +328,8 @@ class SettingsStore(context: Context) {
         voiceKey = runCatching { VoiceKey.valueOf(prefs.getString(KEY_VOICE_KEY, null).orEmpty()) }
             .getOrDefault(VoiceKey.OFF),
         voiceKeyScreenOff = prefs.getBoolean(KEY_VOICE_KEY_SCREEN_OFF, false),
+        voiceKeyLocked = runCatching { VoiceKey.valueOf(prefs.getString(KEY_VOICE_KEY_LOCKED, null).orEmpty()) }
+            .getOrDefault(VoiceKey.VOLUME_UP).takeIf { it != VoiceKey.OFF } ?: VoiceKey.VOLUME_UP,
         voiceHeadsetKey = prefs.getBoolean(KEY_VOICE_HEADSET_KEY, false),
         voiceEngine = runCatching { VoiceEngine.valueOf(prefs.getString(KEY_VOICE_ENGINE, null).orEmpty()) }
             .getOrDefault(VoiceEngine.AUTO),
@@ -440,6 +447,7 @@ class SettingsStore(context: Context) {
         const val KEY_VOICE_KEY = "voice_key"
         const val KEY_VOICE_KEY_SCREEN_OFF = "voice_key_screen_off"
         const val KEY_VOICE_HEADSET_KEY = "voice_headset_key"
+        const val KEY_VOICE_KEY_LOCKED = "voice_key_locked"
         const val KEY_LLM_BASE_URL = "llm_base_url"
         const val KEY_LLM_MODEL = "llm_model"
         const val KEY_CALENDAR_SYNC = "calendar_sync"

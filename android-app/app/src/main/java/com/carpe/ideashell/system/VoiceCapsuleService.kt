@@ -293,7 +293,9 @@ class VoiceCapsuleService : Service() {
                     recording -> if (!hold) v?.finish()
                     // 正在整理 / 等着确认：不重复开始
                     v != null && (shown == Shown.PROCESSING || shown == Shown.CONFIRM || shown == Shown.PENDING) -> Unit
-                    else -> begin(hold, headless = noScreen)
+                    // 锁屏界面上按住音量键：和熄屏一样，震动提示 + 兜底的最长时间
+                    noScreen -> if (hold) beginHeadlessHold() else toggleHeadless()
+                    else -> begin(hold, headless = false)
                 }
             }
         }
@@ -303,8 +305,12 @@ class VoiceCapsuleService : Service() {
     /** 音量键松手：结束录音（按住说话） */
     fun onKeyReleased() {
         val v = voice
-        if (v != null && holdMode && (v.phase == VoicePhase.RECORDING || v.phase == VoicePhase.LOCKED)) v.finish()
-        else pendingRelease = true // 录音还没真正开始就松手了：开始后立刻结束
+        if (v != null && holdMode && (v.phase == VoicePhase.RECORDING || v.phase == VoicePhase.LOCKED)) {
+            if (headless) vibrate(VIB_STOP) // 没有画面：松手那一刻震一下，告诉你「收到了，在整理」
+            v.finish()
+        } else {
+            pendingRelease = true // 录音还没真正开始就松手了：开始后立刻结束
+        }
     }
 
     // ───────────────────────────── 守候模式：熄屏也能用 ─────────────────────────────
@@ -344,10 +350,11 @@ class VoiceCapsuleService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val key = settings.current.voiceKey
+        val lockedKey = settings.current.voiceKeyLocked
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ARMED)
             .setSmallIcon(R.drawable.ic_stat_shiyi)
             .setContentTitle("拾忆 · 熄屏守候中")
-            .setContentText(if (key == com.carpe.ideashell.data.settings.VoiceKey.OFF) "先在设置里选一个音量键" else "熄屏后按住${key.label}说话，松手自动保存")
+            .setContentText(if (key == com.carpe.ideashell.data.settings.VoiceKey.OFF) "先在设置里选一个音量键" else "熄屏 / 锁屏后按住${lockedKey.label}说话，松手自动保存")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .addAction(0, "关闭", off)
@@ -377,6 +384,7 @@ class VoiceCapsuleService : Service() {
 
     /** 熄屏：音量键按够长按时间 → 震一下，开始录音 */
     private fun beginHeadlessHold() {
+        android.util.Log.i("ShiyiKeys", "beginHeadlessHold")
         if (!canRecordHeadless()) return
         if (startHeadless(hold = true)) vibrate(VIB_START)
     }
@@ -388,6 +396,7 @@ class VoiceCapsuleService : Service() {
 
     /** 耳机键：没在录就开始，在录就结束 */
     private fun toggleHeadless() {
+        android.util.Log.i("ShiyiKeys", "toggleHeadless headless=$headless")
         val v = voice
         if (headless && v != null && (v.phase == VoicePhase.RECORDING || v.phase == VoicePhase.LOCKED)) {
             finishHeadless()
@@ -418,9 +427,40 @@ class VoiceCapsuleService : Service() {
     }
 
     /** 没有画面的录音处理完了：震动告知结果，回到待机 */
-    private fun headlessDone(ok: Boolean) {
+    private fun headlessDone(ok: Boolean, detail: String? = null) {
+        android.util.Log.i("ShiyiKeys", "headlessDone ok=$ok detail=$detail")
         vibrate(if (ok) VIB_OK else VIB_ERROR)
+        if (!detail.isNullOrBlank()) postHeadlessResult(ok, detail)
         stopSelfClean()
+    }
+
+    /** 没有画面时的结果：发一条通知，解锁后（锁屏上也看得到）能知道记下了什么，点开进拾忆 */
+    private fun postHeadlessResult(ok: Boolean, detail: String) {
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_RESULT, "锁屏录音结果", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                setSound(null, null) // 已经震过了，通知本身不再响
+                enableVibration(false)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            },
+        )
+        val open = PendingIntent.getActivity(
+            this, 2,
+            Intent(this, com.carpe.ideashell.ui.MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(this, CHANNEL_RESULT)
+            .setSmallIcon(R.drawable.ic_stat_shiyi)
+            .setContentTitle(if (ok) "锁屏录音已保存" else "锁屏录音没成功")
+            .setContentText(detail)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        // 每次一个新 id：连续录几条不会互相覆盖
+        runCatching { nm.notify(RESULT_ID_BASE + (System.currentTimeMillis() % 10_000).toInt(), notification) }
+            .onFailure { android.util.Log.w("ShiyiKeys", "notify failed", it) }
     }
 
     private fun vibrate(pattern: LongArray) {
@@ -525,6 +565,7 @@ class VoiceCapsuleService : Service() {
         scheduleTick()
         if (hold && pendingRelease) {
             pendingRelease = false
+            if (headless) vibrate(VIB_STOP)
             controller.finish()
         }
     }
@@ -555,7 +596,10 @@ class VoiceCapsuleService : Service() {
             noise = if (noise == 0f) level else noise * 0.9f + level * 0.1f
         }
         val heard = speechMs >= 250
-        if (heard && elapsed - lastVoiceMs >= settings.current.voiceSilenceMs) {
+        // 没有屏幕时没法看进度，停顿时间缩短一点（约 2/3，至少 0.9 秒），更快进入整理
+        val silenceMs = if (headless) (settings.current.voiceSilenceMs * 2 / 3).coerceAtLeast(900) else settings.current.voiceSilenceMs
+        if (heard && elapsed - lastVoiceMs >= silenceMs) {
+            if (headless) vibrate(VIB_STOP)
             v.finish()
         } else if (!heard && elapsed >= NO_SPEECH_MS) {
             v.cancel()
@@ -566,6 +610,19 @@ class VoiceCapsuleService : Service() {
     // ───────────────────────────── 结果：确认或直接保存 ─────────────────────────────
 
     private fun onResult(result: VoiceResult) {
+        // 说了「长录音」：丢掉这段，唤起闪念贝壳自己的录音页（长录音由它录、它整理）
+        if (result.longRecord) {
+            if (stopping) return
+            val ok = IdeashellBridge.startVoiceRecording(this)
+            if (headless) {
+                headlessDone(ok)
+            } else if (ok) {
+                stopSelfClean()
+            } else {
+                showMessage("没能打开闪念贝壳的录音", error = true)
+            }
+            return
+        }
         scope.launch {
             val editor = (application as IdeashellApp).container.todoEditor
             // 「今天还有什么没做」：纯查询，不保存任何东西，直接把清单显示出来
@@ -1464,7 +1521,8 @@ class VoiceCapsuleService : Service() {
     private fun showSaved(items: List<SavedItem>, note: String?, quiet: Boolean = false) {
         if (stopping) return
         if (headless) {
-            headlessDone(true)
+            val text = items.joinToString("\n") { "${it.tag}：${it.text}" }.take(400)
+            headlessDone(true, if (note.isNullOrBlank()) text else "$text\n$note")
             return
         }
         stopTick()
@@ -1520,7 +1578,9 @@ class VoiceCapsuleService : Service() {
     private fun showMessage(message: String, error: Boolean, durationMs: Long = if (error) 4000L else 2500L) {
         if (stopping) return
         if (headless) {
-            headlessDone(!error)
+            // 没听到声音：这类手机熄屏 / 锁屏时系统吃掉了「按下」，要先轻按、震动后再说话，提示里带上用法
+            val hint = if (error && message.contains("没有听到声音")) "没有听到声音：先轻按一下音量键，震动后再说话（不要按着说）" else message
+            headlessDone(!error, hint)
             return
         }
         stopTick()
@@ -1766,6 +1826,8 @@ class VoiceCapsuleService : Service() {
     companion object {
         private const val CHANNEL = "voice_capsule"
         private const val CHANNEL_ARMED = "voice_capsule_armed"
+        private const val CHANNEL_RESULT = "voice_headless_result"
+        private const val RESULT_ID_BASE = 20_000
         private const val NOTIFICATION_ID = 7301
 
         /** 熄屏录音的最长时间：松手事件万一丢了，到点自动结束 */

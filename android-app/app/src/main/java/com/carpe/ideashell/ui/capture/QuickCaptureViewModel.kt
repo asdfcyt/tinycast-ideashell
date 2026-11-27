@@ -115,6 +115,9 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
     /** 语音里说了「帮我查一下…」：整理好的问题；界面收到后转交闪念贝壳 AI 并收起面板，null 表示没有 */
     var askRequest by mutableStateOf<String?>(null)
 
+    /** 语音里说了「长录音」：界面收到后唤起闪念贝壳的录音页并收起面板 */
+    var longRecordRequest by mutableStateOf(false)
+
     /** 快速设置磁贴「语音记一条」进来：面板准备好后自动开始录音（锁定模式，点「完成」结束） */
     var voiceStartRequest by mutableStateOf(false)
 
@@ -146,6 +149,11 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
      * - 没开 / 失败：追加本地清洗过的转写，日期时间退回本地规则识别。
      */
     private fun applyVoice(result: VoiceResult) {
+        // 「长录音」口令：丢掉这段，界面收到后唤起闪念贝壳的录音页
+        if (result.longRecord) {
+            longRecordRequest = true
+            return
+        }
         // 「把刚才那个会改到两点四十」：修改之前建好的待办，直接去滴答里改，不进输入框
         val edits = result.intents.filter { it.edit }
         if (edits.isNotEmpty()) {

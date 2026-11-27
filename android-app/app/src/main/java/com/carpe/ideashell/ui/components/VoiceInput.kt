@@ -298,6 +298,12 @@ class VoiceInputController(
 
     /** 拿到原话之后：（可选）AI 整理 → [onResult]，并把整理结果记进历史 */
     private suspend fun deliver(raw: String, heardNote: String?, historyId: String?) {
+        // 「长录音」口令：不用再交给大模型整理，直接交出去换成闪念贝壳的录音
+        if (VoiceIntents.isLongRecordCommand(raw)) {
+            if (historyId != null) history?.update(historyId, summary = "口令：长录音", error = "")
+            onResult(VoiceResult(raw, raw, emptyList(), heardNote, longRecord = true))
+            return
+        }
         val hot = lexicon.hotwordsFor(extraHotwords())
         val cleaned = SpeechCleaner.clean(raw)
 

@@ -1,5 +1,6 @@
 package com.carpe.ideashell.system
 
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -12,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.util.Log
 import android.view.KeyEvent
 import androidx.core.content.ContextCompat
 import com.carpe.ideashell.data.settings.SettingsStore
@@ -59,14 +61,16 @@ class ScreenOffVoiceKeys(
 
     private val reactivate = Runnable {
         passingThrough = false
-        if (!isInteractive()) activate()
+        if (shouldBeActive()) activate()
     }
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> activate()
-                Intent.ACTION_SCREEN_ON -> deactivate()
+                // 亮屏但还停在锁屏界面：没解锁就还是由这里接管，解锁（USER_PRESENT）后才还给无障碍服务
+                Intent.ACTION_SCREEN_ON -> if (isLocked()) activate() else deactivate()
+                Intent.ACTION_USER_PRESENT -> deactivate()
             }
         }
     }
@@ -89,10 +93,11 @@ class ScreenOffVoiceKeys(
             IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
             },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
-        if (!isInteractive()) activate()
+        if (shouldBeActive()) activate()
     }
 
     fun stop() {
@@ -105,10 +110,17 @@ class ScreenOffVoiceKeys(
 
     private fun isInteractive(): Boolean = context.getSystemService(PowerManager::class.java)?.isInteractive != false
 
+    /** 停在锁屏界面（没解锁） */
+    private fun isLocked(): Boolean = context.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
+
+    /** 熄屏，或者亮屏但没解锁：这两种状态都由这里接管 */
+    private fun shouldBeActive(): Boolean = !isInteractive() || isLocked()
+
     /** 熄屏：让会话处于「播放中」，系统才会把音量键 / 耳机键交给它 */
     private fun activate() {
         val s = session ?: return
         if (active) return
+        Log.i(TAG, "activate (interactive=${isInteractive()} locked=${isLocked()})")
         active = true
         s.setPlaybackState(
             PlaybackState.Builder()
@@ -128,6 +140,7 @@ class ScreenOffVoiceKeys(
         otherDown = false
         if (wasHolding) onHoldEnd()
         if (!active) return
+        Log.i(TAG, "deactivate")
         active = false
         session?.let {
             it.isActive = false
@@ -137,8 +150,10 @@ class ScreenOffVoiceKeys(
 
     /** 熄屏时的音量键：只认设置里选的那个键 */
     private fun onVolumeKey(direction: Int) {
-        val key = settings.current.voiceKey
-        if (key == VoiceKey.OFF) return
+        Log.i(TAG, "onVolumeKey direction=$direction pressing=$pressing otherDown=$otherDown")
+        // 熄屏 / 锁屏用单独选的键（默认音量上键；荣耀等手机熄屏时会吞掉音量下键的按下）
+        val key = settings.current.voiceKeyLocked
+        if (key == VoiceKey.OFF || settings.current.voiceKey == VoiceKey.OFF) return
         val mine = if (key == VoiceKey.VOLUME_UP) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
         when (direction) {
             AudioManager.ADJUST_SAME -> {
@@ -170,7 +185,11 @@ class ScreenOffVoiceKeys(
                 handler.postDelayed(startHold, LONG_PRESS_MS)
             }
             // 另一个音量键的按下：记一下，等它抬起时别当成「没有按下的抬起」
-            else -> otherDown = true
+            else -> {
+                otherDown = true
+                // 另一个音量键：接管期间系统不会再调音量，这里补上
+                audio?.adjustSuggestedStreamVolume(direction, AudioManager.USE_DEFAULT_STREAM_TYPE, AudioManager.FLAG_SHOW_UI)
+            }
         }
     }
 
@@ -203,6 +222,8 @@ class ScreenOffVoiceKeys(
     }
 
     private companion object {
+        const val TAG = "ShiyiKeys"
+
         /** 按住多久算长按（和亮屏时 [VoiceKeyHandler] 一致） */
         const val LONG_PRESS_MS = 350L
 

@@ -60,10 +60,23 @@ data class VoiceResult(
     val polishError: String? = null,
     /** 没经过大模型、但本地规则听出了「追加到上一条笔记」：[cleaned] 已经去掉了这句口令 */
     val appendToLast: Boolean = false,
+    /** 说的是「长录音」口令：不整理、不保存，丢掉这段，改去闪念贝壳自己的录音页开始长录音 */
+    val longRecord: Boolean = false,
 )
 
 object VoiceIntents {
     private val WEEKDAY = Locale.CHINA
+
+    /**
+     * 整句话就是「长录音」口令（「长录音」「开始长录音」「帮我开个长录音」）。
+     * 去掉标点空格后不超过 [LONG_RECORD_MAX_LEN] 个字才算：一条正常笔记里顺带提到「长录音」不会被当成口令。
+     */
+    fun isLongRecordCommand(raw: String): Boolean {
+        val s = raw.filter { it.isLetterOrDigit() }
+        return s.length <= LONG_RECORD_MAX_LEN && s.contains("长录音")
+    }
+
+    private const val LONG_RECORD_MAX_LEN = 10
 
     /** 系统提示：当前时间 + 未来三周日历（模型算星期几容易错，直接给表） + 输出格式 */
     fun systemPrompt(

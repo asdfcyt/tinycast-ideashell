@@ -172,6 +172,12 @@ fun QuickCaptureScreen(
             viewModel.text = if (viewModel.text.isBlank()) question else viewModel.text.trimEnd() + "\n" + question
         }
     }
+    // 语音里说了「长录音」：换成闪念贝壳自己的录音页；唤不起来就留在面板里
+    LaunchedEffect(viewModel.longRecordRequest) {
+        if (!viewModel.longRecordRequest) return@LaunchedEffect
+        viewModel.longRecordRequest = false
+        if (IdeashellBridge.startVoiceRecording(context)) onClose()
+    }
     // 语音里说了修改之前的待办：改完弹一条提示；全部改成功就收起面板
     LaunchedEffect(viewModel.editNotice) {
         val notice = viewModel.editNotice ?: return@LaunchedEffect

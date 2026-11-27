@@ -96,7 +96,7 @@ internal fun RecordSection(env: SettingsEnv) {
 
 // ───────────────────────── 语音输入 ─────────────────────────
 
-private enum class VoiceDialog { Engine, Key, Silence, Enroll, VoiceprintLevel }
+private enum class VoiceDialog { Engine, Key, LockedKey, Silence, Enroll, VoiceprintLevel }
 
 /** 首页「语音输入」那一行的状态摘要 */
 internal fun SettingsEnv.voiceSummary(localReady: Boolean): String = when {
@@ -160,8 +160,8 @@ internal fun VoiceSection(env: SettingsEnv) {
         SettingsSwitchItem(
             iconRes = R.drawable.ic_mic,
             title = "熄屏也能用",
-            summary = if (settings.voiceKeyScreenOff) "已开启 · 熄屏后按住${settings.voiceKey.label}说话，震动一下开始，松手自动保存；部分手机（如荣耀）熄屏时系统吃掉了按下，改为按一下开始、说完停顿自动保存（或再按一下结束）；通知栏常驻「熄屏守候中」，放音乐时无效"
-            else "关闭 · 熄屏、锁屏时也能用上面选的音量键说话（没有画面，靠震动提示，结果直接保存）",
+            summary = if (settings.voiceKeyScreenOff) "已开启 · 熄屏 / 锁屏（没解锁）时按住${settings.voiceKeyLocked.label}说话，震动一下开始，松手自动保存，并发一条通知；通知栏常驻「熄屏守候中」，放音乐时无效"
+            else "关闭 · 熄屏、锁屏时也能按住音量键说话（没有画面，靠震动提示，结果直接保存）；解锁后仍用上面选的键",
             checked = settings.voiceKeyScreenOff,
             onChange = { on ->
                 when {
@@ -181,6 +181,14 @@ internal fun VoiceSection(env: SettingsEnv) {
             },
         )
         if (settings.voiceKeyScreenOff) {
+            SettingsItem(
+                icon = Icons.Filled.PlayArrow,
+                title = "熄屏 / 锁屏时用的键",
+                summary = "${settings.voiceKeyLocked.label} · " +
+                    if (settings.voiceKeyLocked == VoiceKey.VOLUME_DOWN) "荣耀等手机熄屏时会吞掉音量下键的按下，只能「轻按开始」，建议用音量上键"
+                    else "解锁后仍然用上面选的键；熄屏时按住它说话",
+                onClick = { dialog = VoiceDialog.LockedKey },
+            )
             SettingsSwitchItem(
                 icon = Icons.Filled.Star,
                 title = "耳机键也能录音",
@@ -437,6 +445,15 @@ internal fun VoiceSection(env: SettingsEnv) {
                 container.settings.setVoiceKey(key)
                 if (key != VoiceKey.OFF && !env.excerptServiceOn) ExcerptService.openAccessibilitySettings(context)
             },
+            onDismiss = { dialog = null },
+        )
+
+        VoiceDialog.LockedKey -> ChoiceDialog(
+            title = "熄屏 / 锁屏时用的键",
+            options = listOf(VoiceKey.VOLUME_UP, VoiceKey.VOLUME_DOWN),
+            current = settings.voiceKeyLocked,
+            label = { it.label + if (it == VoiceKey.VOLUME_UP) "（推荐，荣耀熄屏也能按住说话）" else "" },
+            onSelect = { container.settings.setVoiceKeyLocked(it) },
             onDismiss = { dialog = null },
         )
 
