@@ -38,6 +38,11 @@
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 
+    <!-- 语音助手知道用户大致在哪（问天气 / 附近时不用反问）：设置 → 语音助手 → 位置 里授权；「始终允许」后熄屏 / 定时任务也能定位 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
     <!-- 语音助手控制手机：开 / 关勿扰、切铃声模式（要在系统里给拾忆打开「勿扰权限」，没打开时助手会自动跳到授权页）；
          调亮度（要「修改系统设置」权限，同样自动跳授权页）；熄屏接管音量键时核对是否已解锁 -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />

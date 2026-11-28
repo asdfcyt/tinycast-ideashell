@@ -24,7 +24,7 @@ import java.time.ZoneId
 
 /**
  * 语音助手除了「查」之外能「做」的事：记忆、助手任务（定时 / 条件）、技能（快捷指令）、读屏幕、记笔记、系统动作（闹钟 / 倒计时 / 拨号 / 导航 / 音乐）、
- * 智能家居（home_list / home_control，经 Home Assistant 控制米家等）、设备控制（勿扰 / 铃声 / 音量 / 亮度 / 手电筒 / 打开应用 / 系统设置页 / 返回回桌面截屏 / 控制中心开关）。
+ * 智能家居（home_list / home_control / home_status / home_mode / home_alerts，经 Home Assistant 控制米家等）、设备控制（勿扰 / 铃声 / 音量 / 亮度 / 手电筒 / 打开应用 / 系统设置页 / 返回回桌面截屏 / 控制中心开关）。
  * 每个工具返回一句给模型看的结果；出错也返回文字，不抛异常。
  */
 internal object AssistantTools {
@@ -198,6 +198,35 @@ internal object AssistantTools {
             required = listOf("action"),
         ),
         VoiceAgent.tool(
+            "get_location",
+            "获取用户此刻大致在哪（省市区 + 街道，不含经纬度）。用户问「我在哪」，或回答需要精确到街道的位置（附近、离我多远、从这里怎么走）时用；系统提示里已经有「用户大致位置」时，问天气 / 本地信息直接按那个城市处理，不必调它。失败会说明原因（没授权 / 定位没开 / 超时）。",
+        ),
+        VoiceAgent.tool(
+            "home_status",
+            "播报家里设备的当前状态：每类设备开了几个（开着的列名字）、离线几个，全家总览还带各房间温湿度。用来回答「灯都关了吗」「客厅开着什么」「家里温度多少」「空调现在开着吗」。可按房间（area）和类型（domain）收窄；都不填 = 全家总览。",
+            props = {
+                putJsonObject("area") { put("type", "string"); put("description", "房间名或设备名里的词，如「客厅」") }
+                putJsonObject("domain") { put("type", "string"); put("enum", enum("light", "switch", "climate", "cover", "fan", "media_player", "vacuum", "humidifier")) }
+            },
+        ),
+        VoiceAgent.tool(
+            "home_mode",
+            "家庭模式：away 离家 / home 回家 / sleep 睡觉。优先触发 Home Assistant 里名字带「离家 / 回家 / 睡觉」的场景或脚本；没有时离家、睡觉按默认关掉开着的灯（离家还关空调、风扇、加湿器、播放器），回家不擅自开设备。用户说「离家模式」「我出门了」「回家模式」「晚安」「睡觉了」时用。",
+            props = { putJsonObject("mode") { put("type", "string"); put("enum", enum("away", "home", "sleep")) } },
+            required = listOf("mode"),
+        ),
+        VoiceAgent.tool(
+            "home_alerts",
+            "检查家里设备有没有异常：电量低、温湿度超范围、设备离线；没有异常会说「一切正常」。阈值默认电量 ≤ 20%、温度 > 30 或 < 10 度、湿度 > 75% 或 < 25%，用户指定了数值就传。定时任务里用它做「有异常才提醒」。",
+            props = {
+                putJsonObject("battery_below") { put("type", "number") }
+                putJsonObject("temp_above") { put("type", "number") }
+                putJsonObject("temp_below") { put("type", "number") }
+                putJsonObject("humidity_above") { put("type", "number") }
+                putJsonObject("humidity_below") { put("type", "number") }
+            },
+        ),
+        VoiceAgent.tool(
             "create_note",
             "把一段整理好的文字存成笔记（kind=note）或写进今天的日记（kind=daily）。只在用户明确要「记成笔记 / 记下来 / 存起来」时用；content 是最终要存的完整内容。",
             props = {
@@ -279,8 +308,14 @@ internal object AssistantTools {
         "toggle_quick_setting" -> PhoneControl.toggleQuickSetting(args.arg("name").orEmpty())
         "home_list" -> container.homeAssistant.list(args.arg("keyword"), args.arg("domain"))
         "home_control" -> container.homeAssistant.control(args.arg("entity_id"), args.arg("domain"), args.arg("area"), args.arg("action").orEmpty(), args.arg("value"))
+        "get_location" -> container.place.describe()
+        "home_status" -> container.homeAssistant.status(args.arg("area"), args.arg("domain"))
+        "home_mode" -> container.homeAssistant.mode(args.arg("mode").orEmpty())
+        "home_alerts" -> container.homeAssistant.alerts(args.num("battery_below"), args.num("temp_above"), args.num("temp_below"), args.num("humidity_above"), args.num("humidity_below"))
         else -> "没有这个工具：$name"
     }
+
+    private fun JsonObject.num(key: String): Double? = (this[key] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
 
     private fun runSkill(container: AppContainer, name: String): String {
         val n = name.trim().trim('「', '」')

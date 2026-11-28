@@ -17,7 +17,7 @@ object VoiceSearch {
     const val MAX_LINES = 6
 
     /** 一条结果：笔记或待办，点开能跳到对应页面 */
-    class Hit(val isNote: Boolean, val id: String, val title: String, val sub: String)
+    class Hit(val isNote: Boolean, val id: String, val title: String, val sub: String, val url: String? = null)
 
     /** [text] 是几行能直接看 / 放通知里的文字；[hits] 是可以点开的条目；[keyword] 用来跳到拾忆的搜索页看全部 */
     class Result(val text: String, val hits: List<Hit>, val keyword: String, val isAnswer: Boolean = false)

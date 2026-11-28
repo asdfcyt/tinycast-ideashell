@@ -409,6 +409,8 @@ class VoiceCapsuleService : Service() {
         scope.launch(Dispatchers.Default) { runCatching { com.carpe.ideashell.data.assistant.ScreenContext.snapshotNow() } }
         // 智能家居：趁说话的时候把设备目录刷新好，说完直接用
         scope.launch(Dispatchers.IO) { runCatching { (application as IdeashellApp).container.homeAssistant.warm() } }
+        // 位置：同样趁说话的时候刷新（缓存 10 分钟内的不动）
+        scope.launch(Dispatchers.IO) { runCatching { (application as IdeashellApp).container.place.refresh() } }
         recStart = SystemClock.uptimeMillis()
         lastTimerSec = -1
         noise = 0f

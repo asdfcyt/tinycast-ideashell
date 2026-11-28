@@ -109,6 +109,88 @@ class LlmClient(
         return salvageDsml(message)
     }
 
+    /** 联网搜索的结果：[text] 是带事实的摘要；[sources] 是（标题, 链接），可能为空（接口不返回出处时） */
+    class WebSearchResult(val text: String, val sources: List<Pair<String, String>>)
+
+    /** 当前配置的大模型接口能不能联网搜索：DeepSeek 官方、阿里云百炼可以 */
+    val canSearch: Boolean
+        get() = searchHost(settings.current.llmBaseUrl) != null
+
+    private fun searchHost(baseUrl: String): String? {
+        val host = runCatching { java.net.URI(baseUrl.trim()).host }.getOrNull().orEmpty().lowercase()
+        return when {
+            host.endsWith("deepseek.com") -> "deepseek"
+            host.endsWith("aliyuncs.com") -> "aliyun"
+            else -> null
+        }
+    }
+
+    /**
+     * 联网搜索：不另外接搜索服务，直接用大模型服务自带的搜索——
+     * DeepSeek 官方接口声明 `deepseek_web_search` 工具（服务端搜索，调用本身不收费，只算模型 token，并返回引用），
+     * 阿里云百炼传 `enable_search`（按次另收费，不返回出处）。其他接口不支持。
+     */
+    suspend fun webSearch(query: String): WebSearchResult {
+        val key = credentials.llmKey
+        if (key.isNullOrBlank()) throw LlmException("还没有填写大模型 API Key")
+        val s = settings.current
+        val vendor = searchHost(s.llmBaseUrl)
+            ?: throw LlmException("当前大模型接口不支持联网搜索（设置里改用 DeepSeek 官方或阿里云百炼的接口即可）")
+        val url = s.llmBaseUrl.trimEnd('/') + "/chat/completions"
+        val system = "你是联网搜索助手：先搜索，再用中文作答。只写搜到的事实（数字、日期、来源站点名），最多 8 行、250 字，不要寒暄、不要 Markdown；搜不到就直说搜不到，不要编造。"
+        val payload = buildJsonObject {
+            if (vendor == "deepseek") {
+                put("model", "deepseek-flash") // 联网搜索只有 deepseek-flash 支持
+                put("thinking", buildJsonObject { put("type", "disabled") })
+                put("tools", buildJsonArray { add(buildJsonObject { put("type", "deepseek_web_search") }) })
+            } else {
+                put("model", s.llmModel)
+                put("enable_search", true)
+            }
+            put("stream", false)
+            put("messages", buildJsonArray {
+                add(buildJsonObject { put("role", "system"); put("content", system) })
+                add(buildJsonObject { put("role", "user"); put("content", query) })
+            })
+        }.toString()
+        val reply = post(url, key, payload, 50L)
+        if (reply.code !in 200..299) throw LlmException("联网搜索失败：" + describeHttpError(reply.code, reply.body))
+        val root = try {
+            Json.parseToJsonElement(reply.body).jsonObject
+        } catch (_: Exception) {
+            throw LlmException("联网搜索返回了无法解析的内容")
+        }
+        (root["error"] as? JsonObject)?.let { e ->
+            throw LlmException("联网搜索失败：" + ((e["message"] as? JsonPrimitive)?.contentOrNull ?: "原因不明").take(80))
+        }
+        val message = ((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("message") as? JsonObject
+            ?: throw LlmException("联网搜索没有返回内容")
+        val text = (message["content"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+        if (text.isEmpty()) throw LlmException("联网搜索没有返回内容")
+
+        // 出处：回答里的引用优先，其次是搜索步骤里的结果列表
+        val titles = LinkedHashMap<String, String>()
+        (message["server_tool_calls"] as? JsonArray)?.forEach { step ->
+            ((step as? JsonObject)?.get("calls") as? JsonArray)?.forEach { call ->
+                ((call as? JsonObject)?.get("sources") as? JsonArray)?.forEach { src ->
+                    val o = src as? JsonObject ?: return@forEach
+                    val u = (o["url"] as? JsonPrimitive)?.contentOrNull ?: return@forEach
+                    val name = (o["site_name"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+                        ?: (o["title"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+                    titles.putIfAbsent(u, (o["title"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() } ?: name)
+                }
+            }
+        }
+        val cited = LinkedHashMap<String, String>()
+        (message["annotations"] as? JsonArray)?.forEach { a ->
+            val c = (a as? JsonObject)?.get("url_citation") as? JsonObject ?: return@forEach
+            val u = (c["url"] as? JsonPrimitive)?.contentOrNull ?: return@forEach
+            cited.putIfAbsent(u, titles[u] ?: (c["title"] as? JsonPrimitive)?.contentOrNull ?: u)
+        }
+        val sources = (cited.ifEmpty { titles }).entries.take(5).map { it.value to it.key }
+        return WebSearchResult(text, sources)
+    }
+
     /**
      * DeepSeek 偶尔不按接口规范返回 tool_calls，而是把调用写成文字（`<｜DSML｜invoke name="…">…`）塞进 content。
      * 这里把它还原成正常的 tool_calls，并从文字里去掉，免得原样显示给用户。

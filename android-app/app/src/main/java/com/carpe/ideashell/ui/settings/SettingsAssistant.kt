@@ -65,17 +65,21 @@ internal fun AssistantSection(env: SettingsEnv) {
 
     var held by remember { mutableStateOf(isAssistantHeld(context)) }
     var contactsOn by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED) }
+    var placeLevel by remember { mutableStateOf(container.place.level()) }
     var dndOn by remember { mutableStateOf(DeviceControl.dndAccessGranted(context)) }
     var writeOn by remember { mutableStateOf(DeviceControl.writeSettingsGranted(context)) }
     LifecycleResumeEffect(Unit) {
         held = isAssistantHeld(context)
         contactsOn = context.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+        placeLevel = container.place.level()
         dndOn = DeviceControl.dndAccessGranted(context)
         writeOn = DeviceControl.writeSettingsGranted(context)
         onPauseOrDispose { }
     }
     val roleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { held = isAssistantHeld(context) }
     val contactsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { contactsOn = it }
+    val placeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { placeLevel = container.place.level() }
+    val placeAlwaysLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { placeLevel = container.place.level() }
     var addMemory by remember { mutableStateOf(false) }
     var addSkill by remember { mutableStateOf(false) }
     var speakDialog by remember { mutableStateOf<SpeakDialog?>(null) }
@@ -107,6 +111,23 @@ internal fun AssistantSection(env: SettingsEnv) {
             title = "通讯录",
             summary = if (contactsOn) "已允许" else "未允许",
             onClick = { if (!contactsOn) contactsLauncher.launch(Manifest.permission.READ_CONTACTS) },
+        )
+        RowDivider()
+        SettingsItem(
+            icon = Icons.Filled.Info,
+            title = "位置",
+            summary = when (placeLevel) { 0 -> "未允许"; 1 -> "仅使用时允许"; else -> "始终允许" },
+            onClick = {
+                when (placeLevel) {
+                    0 -> placeLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                    1 -> {
+                        // 熄屏说话 / 定时任务要「始终允许」：系统会跳到应用的位置权限页，选「始终允许」
+                        toast(context, "选「始终允许」")
+                        placeAlwaysLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                    }
+                    else -> toast(context, "已是始终允许")
+                }
+            },
         )
     }
 

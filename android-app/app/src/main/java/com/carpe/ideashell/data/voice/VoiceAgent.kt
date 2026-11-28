@@ -52,7 +52,7 @@ object VoiceAgent {
         if (!container.llm.configured) throw LlmException("还没有填写大模型 API Key")
         val hits = LinkedHashMap<String, VoiceSearch.Hit>()
         val messages = mutableListOf<JsonObject>()
-        messages += msg("system", systemPrompt(LocalDateTime.now(), container.assistantMemory.promptBlock(), container.assistantSkills.promptBlock(), scheduled, container.homeAssistant.promptBlock()))
+        messages += msg("system", systemPrompt(LocalDateTime.now(), container.assistantMemory.promptBlock(), container.assistantSkills.promptBlock(), scheduled, container.homeAssistant.promptBlock(), container.place.promptLine()))
         val tools = toolsFor(scheduled)
         messages += msg("user", if (context.isNullOrBlank()) question else "$context\n\n我现在问：$question")
 
@@ -84,7 +84,7 @@ object VoiceAgent {
                 }.awaitAll()
             }
             // 只是控制了家里的设备：工具返回的就是一句现成的结果，不必再让大模型复述一遍（省一次调用，开灯快一两秒）
-            if (calls.all { ((it["function"] as? JsonObject)?.get("name") as? JsonPrimitive)?.contentOrNull == "home_control" } &&
+            if (calls.all { ((it["function"] as? JsonObject)?.get("name") as? JsonPrimitive)?.contentOrNull in setOf("home_control", "home_mode") } &&
                 results.all { r -> r.second.lines().all { "：已" in it } }
             ) {
                 return Answer(results.joinToString("\n") { it.second }.trim(), hits.values.take(MAX_HITS))
@@ -127,7 +127,7 @@ object VoiceAgent {
         },
     )
 
-    private fun systemPrompt(now: LocalDateTime, memory: String?, skills: String?, scheduled: Boolean, home: String? = null): String {
+    private fun systemPrompt(now: LocalDateTime, memory: String?, skills: String?, scheduled: Boolean, home: String? = null, place: String? = null): String {
         val today = now.toLocalDate()
         val calendar = (-13..3).joinToString("；") { i ->
             val d = today.plusDays(i.toLong())
@@ -136,9 +136,10 @@ object VoiceAgent {
         }
         val memoryText = if (memory == null) "" else "\n\n你记得关于用户的这些事（用户让你记住的，回答和办事时可以参考）：\n$memory"
         val homeText = if (home == null) "" else "\n\n家里的智能设备（entity_id | 名称，名称前面是房间）：\n$home\n控制设备时直接调 home_control，不用先调 home_list（只有要查当前状态 / 读数，或这里找不到时才调 home_list）：指名某个设备用 entity_id；「全家所有的灯」「书房的灯」「所有空调」这类按类型 + 房间的批量要求，用 domain（+ area）一次完成，不要自己一个个列 id；同名设备分布在不同房间时按用户说的房间选；用户没说房间又有多个同名设备，才问他是哪一个。"
+        val placeText = if (place == null) "" else "\n\n用户现在大致在：$place。问天气、附近、本地新闻 / 价格、路线这类和地点有关的事，直接按这个地点处理（web_search 的 query 里写上城市 / 区），不要反问「你在哪」；要精确到街道、或你怀疑用户已经换了地方时才调 get_location；不要把这个位置主动说出来，除非用户问「我在哪」。"
         val skillsText = if (skills == null) "" else "\n\n用户存了这些快捷指令（一句话叫出名字就要照办）：$skills。用户说出其中一个的名字（或明显是在叫它）时，先调用 run_skill 取步骤，再依次办完，最后用一句话汇报。"
         return """
-你是用户的私人语音助手，用户用语音提了一个问题或请求。你通过工具查他的待办 / 笔记 / 专注数据，或替他办事（专注计时、记忆、定时任务、读屏幕、记笔记、闹钟 / 倒计时 / 拨号 / 导航 / 音乐、勿扰 / 音量 / 亮度 / 手电筒 / 打开应用 / 控制中心开关、快捷指令），再用中文回答。$memoryText$skillsText$homeText
+你是用户的私人语音助手，用户用语音提了一个问题或请求。你通过工具查他的待办 / 笔记 / 专注数据，或替他办事（专注计时、记忆、定时任务、读屏幕、记笔记、闹钟 / 倒计时 / 拨号 / 导航 / 音乐、勿扰 / 音量 / 亮度 / 手电筒 / 打开应用 / 控制中心开关、快捷指令），再用中文回答。$memoryText$skillsText$homeText$placeText
 
 现在是 $today ${weekday(today)} ${"%02d:%02d".format(now.hour, now.minute)}。日期对照：$calendar。「本周」= 本周一到今天；「上周」= 上一个周一到周日；「最近一周」= 今天往前 6 天到今天。
 
@@ -147,11 +148,12 @@ object VoiceAgent {
 - 需要什么查什么，能一次查完的并行调用；不要重复调用同样的工具。
 - 回答是给人在手机卡片 / 锁屏通知里看的（有时还会被念出来）：纯文字、不要 Markdown、不要客套，先说结论，最多 5 行、总共 150 字以内（针对屏幕内容的问题例外，见下）；列条目时用「· 」开头，最多列 5 条，多的说「等 N 项」。
 - 笔记只引用标题和摘要里有的信息；需要细节再用 read_note 读全文。
-- 能办的事：start_focus / focus_control（专注计时）、remember / forget（记忆）、create_task / list_tasks / task_control（定时或条件任务）、save_skill / run_skill / delete_skill（快捷指令）、read_screen、create_note、set_alarm / set_timer / dial / navigate / media_control、set_dnd / set_ringer / set_volume / set_brightness / flashlight / open_app / open_settings / phone_action / toggle_quick_setting（控制手机）、home_list / home_control（控制家里的米家等智能设备）。只有用户明确要求才调用，做完用一句话告诉他结果。
+- 能办的事：start_focus / focus_control（专注计时）、remember / forget（记忆）、create_task / list_tasks / task_control（定时或条件任务）、save_skill / run_skill / delete_skill（快捷指令）、read_screen、create_note、set_alarm / set_timer / dial / navigate / media_control、set_dnd / set_ringer / set_volume / set_brightness / flashlight / open_app / open_settings / phone_action / toggle_quick_setting（控制手机）、home_list / home_control / home_status / home_mode / home_alerts（家里的米家等智能设备）、web_search（联网搜索）、get_location（我在哪）。只有用户明确要求才调用，做完用一句话告诉他结果。
 - 控制家里的设备时：先 home_list 找到 entity_id（带房间 / 设备名关键词），再 home_control；「所有灯」这类批量要求用 domain（+ area）一次完成；结果如实转述（离线 / 没找到 / 连不上就直说），不要假装办成；门锁、报警、摄像头不能控制。
+- 家里的状态：「灯都关了吗」「客厅开着什么」「家里温度 / 湿度」「有没有设备离线」用 home_status（可带 area / domain）；「离家 / 出门模式」「回家模式」「睡觉 / 晚安模式」用 home_mode（先找 HA 里同名场景，没有就按默认关灯 / 空调等）；「设备电量低 / 温湿度异常 / 设备离线」的检查用 home_alerts。要「有异常就提醒我」：create_task（每天固定时间，prompt 写「调用 home_alerts 检查家里设备」，condition 写「home_alerts 报告有异常」），并告诉用户一个任务每天只检查一次。
 - 控制手机时：工具返回「还没有……权限」就把原因和去哪里授权如实告诉用户（已经替他打开了授权页）；WLAN / 蓝牙 / 飞行模式 / 移动数据 / NFC / 热点这类开关用 toggle_quick_setting，失败了再建议 open_settings；不要假装已经办成。
 - 用户让你把刚才做的 / 常做的一串事「存成快捷指令」时：用 save_skill，name 取用户说的口令（没说就按内容取个 2~4 字的名字），steps 根据用户的描述和最近对话写成按顺序的完整步骤。
-- 你没有天气、联网搜索、股价这类工具；条件或请求依赖它们时如实说做不到，不要假装能。
+- 时效性的外部信息（新闻、油价、天气、股价、比分、最新资料）和你拿不准的外部事实用 web_search 查，依据搜到的内容简短作答，可以顺带点一下出处；搜不到或失败就如实说，不要凭记忆编。用户自己的待办 / 笔记 / 屏幕内容不要联网搜。
 - 创建任务前想清楚：时间（几点、每天 / 哪几天 / 哪一天）、做什么、有没有条件；用户没说几点就问不了他，按最合理的默认（早上 8 点）并在回答里说明。
 - 用户说「这页 / 这段 / 这篇 / 屏幕上」时先 read_screen 再处理；要求「记成笔记」时再 create_note，content 写整理好的最终内容。
 - 针对屏幕内容的提问（总结 / 解释 / 翻译 / 判断对不对 / 顺带介绍里面提到的人物或概念）：你自己直接答，不要说做不到、也不要建议他去问别的 AI。先 read_screen，依据屏幕内容并结合你自己的知识作答；这类回答可以展开一些：最多 10 行、总共 320 字以内，先说结论。屏幕内容读不到时，把 read_screen 说的原因告诉用户，不要编造页面内容。
@@ -259,6 +261,14 @@ object VoiceAgent {
                 required = listOf("id"),
             ),
         )
+        add(
+            tool(
+                "web_search",
+                "联网搜索实时信息：新闻、油价、天气、股价、比分、最新产品 / 政策 / 资料，以及你不确定的外部事实。query 写成一个完整、具体的搜索问题（带上地点、日期等限定，如「杭州明天天气」「今天 92 号汽油价格 浙江」）。返回搜到的事实摘要和出处；用户自己的待办 / 笔记 / 屏幕内容不要用它。",
+                props = { putJsonObject("query") { put("type", "string") } },
+                required = listOf("query"),
+            ),
+        )
     }
 
     internal fun JsonObject.arg(key: String): String? =
@@ -278,6 +288,7 @@ object VoiceAgent {
                 "search_todos" -> searchTodos(container, args, hits)
                 "search_notes" -> searchNotes(container, args, hits)
                 "read_note" -> readNote(container, args)
+                "web_search" -> webSearch(container, args, hits)
                 "start_focus" -> startFocus(container, args, hits)
                 "focus_control" -> focusControl(container, args)
                 else -> "没有这个工具：$name"
@@ -324,7 +335,7 @@ object VoiceAgent {
     }
 
     private fun addHits(hits: MutableMap<String, VoiceSearch.Hit>, list: List<VoiceSearch.Hit>) {
-        synchronized(hits) { list.forEach { hits.putIfAbsent((if (it.isNote) "n:" else "t:") + it.id, it) } }
+        synchronized(hits) { list.forEach { hits.putIfAbsent(it.url?.let { u -> "u:$u" } ?: ((if (it.isNote) "n:" else "t:") + it.id), it) } }
     }
 
     private fun taskLine(t: com.carpe.ideashell.data.dida.DidaTask): String {
@@ -396,6 +407,15 @@ object VoiceAgent {
             }
             else -> "action 只能是 pause / resume / finish"
         }
+    }
+
+    private suspend fun webSearch(container: AppContainer, args: JsonObject, hits: MutableMap<String, VoiceSearch.Hit>): String {
+        val query = args.arg("query") ?: return "缺少 query"
+        val r = container.llm.webSearch(query)
+        addHits(hits, r.sources.map { (title, url) ->
+            VoiceSearch.Hit(false, "", title.ifBlank { url }, runCatching { java.net.URI(url).host }.getOrNull()?.removePrefix("www.").orEmpty(), url = url)
+        })
+        return r.text + if (r.sources.isEmpty()) "" else "\n（出处：" + r.sources.joinToString("、") { it.first.take(24) } + "）"
     }
 
     private suspend fun readNote(container: AppContainer, args: JsonObject): String {

@@ -146,6 +146,132 @@ class HomeAssistant(http: OkHttpClient, private val credentials: CredentialStore
         listOfNotNull(ok, problems.takeIf { it.isNotEmpty() }?.joinToString("\n")).joinToString("\n")
     }
 
+    // ───────────────────────── 状态播报 / 模式 / 异常检查 ─────────────────────────
+
+    /** 设备是不是「开着 / 在工作」 */
+    private fun active(e: Entity): Boolean = when (e.domain) {
+        "light", "switch", "fan", "humidifier", "input_boolean" -> e.state == "on"
+        "climate" -> e.state != "off" && e.state != "unavailable" && e.state != "unknown"
+        "cover" -> e.state == "open" || e.state == "opening"
+        "media_player" -> e.state == "playing" || e.state == "on"
+        "vacuum" -> e.state == "cleaning"
+        else -> false
+    }
+
+    private fun numeric(e: Entity): Double? = e.state.toDoubleOrNull()
+
+    private fun deviceClass(e: Entity): String? = (e.attrs["device_class"] as? JsonPrimitive)?.contentOrNull
+
+    /**
+     * 状态播报：「灯都关了吗」「客厅开着什么」「家里温度」。[area] 房间 / 名字关键词，[domain] 设备类型，都不给就是全家总览：
+     * 每类设备开了几个（开着的列名字）、离线几个，再带上各房间的温湿度读数。
+     */
+    suspend fun status(area: String?, domain: String?): String = guard {
+        val all = states(maxAgeMs = 5_000)
+        val tokens = tokensOf(area)
+        val d = domain?.trim()?.lowercase()?.takeIf { it.isNotEmpty() && it != "all" }
+        val devices = all.filter { it.domain in CONTROL && it.domain !in SINGLE_ONLY && (d == null || it.domain == d) && matches(it, tokens) }
+        val kinds = if (d != null) listOf(d) else STATUS_ORDER + if (tokens.isNotEmpty()) listOf("switch") else emptyList()
+        val lines = mutableListOf<String>()
+        for (k in kinds) {
+            val list = devices.filter { it.domain == k }
+            if (list.isEmpty()) continue
+            val on = list.filter(::active)
+            val offline = list.count { it.state == "unavailable" }
+            val label = LABELS[k] ?: k
+            lines += buildString {
+                append(label).append("：共 ").append(list.size).append(" 个，")
+                if (on.isEmpty()) {
+                    append(if (offline == list.size) "全部离线" else "都是关着 / 空闲的")
+                } else {
+                    append(if (k == "vacuum") "在清扫 " else if (k == "media_player") "在播放 / 开着 " else "开着 ").append(on.size).append(" 个（")
+                    append(on.take(10).joinToString("、") { it.name + if (k == "climate" || k == "cover" || k == "fan") "：" + describe(it) else "" })
+                    append(if (on.size > 10) "等）" else "）")
+                }
+                if (offline > 0 && offline != list.size) append("；离线 ").append(offline).append(" 个")
+            }
+        }
+        if (d == null) {
+            val readings = all.filter { it.domain == "sensor" && deviceClass(it) in setOf("temperature", "humidity") && numeric(it) != null && matches(it, tokens) }
+                .groupBy { it.area ?: it.rawName.substringBefore(' ') }
+            val parts = readings.entries.take(8).mapNotNull { (where, list) ->
+                val t = list.firstOrNull { deviceClass(it) == "temperature" }?.let { trim(numeric(it)!!) + "°C" }
+                val h = list.firstOrNull { deviceClass(it) == "humidity" }?.let { trim(numeric(it)!!) + "%" }
+                listOfNotNull(t, h).takeIf { it.isNotEmpty() }?.let { "$where ${it.joinToString(" / ")}" }
+            }
+            if (parts.isNotEmpty()) lines += "温湿度：" + parts.joinToString("；")
+        }
+        if (lines.isEmpty()) return@guard notFound(all, area, d)
+        lines.joinToString("\n")
+    }
+
+    /**
+     * 模式：away 离家 / home 回家 / sleep 睡觉。先在 HA 里找名字带对应词的场景 / 脚本，找到就触发（用户自己定义的最准）；
+     * 没有时离家和睡觉按默认关掉开着的灯等，回家不擅自开任何东西。
+     */
+    suspend fun mode(mode: String): String = guard {
+        val all = states(maxAgeMs = 5_000)
+        val (label, words) = when (mode.trim().lowercase()) {
+            "away" -> "离家模式" to listOf("离家", "出门", "外出", "离开", "away", "leave")
+            "home" -> "回家模式" to listOf("回家", "到家", "在家", "home", "arrive")
+            "sleep" -> "睡眠模式" to listOf("睡", "晚安", "night", "sleep")
+            else -> return@guard "模式只能是 away（离家）/ home（回家）/ sleep（睡觉）"
+        }
+        val scenes = all.filter { e ->
+            (e.domain == "scene" || e.domain == "script") && words.any { w -> e.name.lowercase().contains(w) || e.id.lowercase().contains(w) }
+        }.take(3)
+        if (scenes.isNotEmpty()) {
+            scenes.forEach { callService("/api/services/${it.domain}/turn_on", JsonObject(mapOf("entity_id" to JsonPrimitive(it.id)))) }
+            dirty = true
+            return@guard "$label：已触发 " + scenes.joinToString("、") { "「${it.rawName}」" }
+        }
+        if (mode.trim().lowercase() == "home") {
+            return@guard "$label：Home Assistant 里没有名字带「回家」的场景或脚本，我不会擅自替你开设备。可以在 HA 里建一个叫「回家」的场景，以后一句话就能触发；或者直接告诉我要开哪些。"
+        }
+        val domains = if (mode.trim().lowercase() == "away") listOf("light", "climate", "fan", "humidifier", "media_player") else listOf("light", "media_player")
+        val done = mutableListOf<String>()
+        for (dom in domains) {
+            val ids = all.filter { it.domain == dom && active(it) }.map { it.id }
+            if (ids.isEmpty()) continue
+            callService("/api/services/$dom/turn_off", JsonObject(mapOf("entity_id" to JsonArray(ids.map { JsonPrimitive(it) }))))
+            done += "${LABELS[dom] ?: dom} ${ids.size} 个"
+        }
+        dirty = true
+        val hint = "（HA 里没有名字带「${words.first()}」的场景，想自定义可以建一个）"
+        if (done.isEmpty()) "$label：没有开着的设备需要关。$hint" else "$label：已关闭 ${done.joinToString("、")}。$hint"
+    }
+
+    /**
+     * 异常检查：电量低的设备、温湿度超出范围、离线的设备。没有异常返回「一切正常」。
+     * 阈值可调，默认电量 ≤ 20%、温度 > 30°C 或 < 10°C、湿度 > 75% 或 < 25%。
+     */
+    suspend fun alerts(batteryBelow: Double?, tempAbove: Double?, tempBelow: Double?, humAbove: Double?, humBelow: Double?): String = guard {
+        val all = states(maxAgeMs = 0)
+        val bat = batteryBelow ?: 20.0
+        val hot = tempAbove ?: 30.0
+        val cold = tempBelow ?: 10.0
+        val wet = humAbove ?: 75.0
+        val dry = humBelow ?: 25.0
+        val out = mutableListOf<String>()
+        all.filter { it.domain == "sensor" && deviceClass(it) == "battery" }.forEach { e ->
+            val v = numeric(e) ?: return@forEach
+            if (v <= bat) out += "${e.name.removeSuffix(" 电量").removeSuffix("电量")} 电量 ${trim(v)}%"
+        }
+        all.filter { it.domain == "binary_sensor" && deviceClass(it) == "battery" && it.state == "on" }.forEach { out += "${it.name} 电量低" }
+        all.filter { it.domain == "sensor" && deviceClass(it) in setOf("temperature", "humidity") }.forEach { e ->
+            val v = numeric(e) ?: return@forEach
+            val where = e.area ?: e.name
+            if (deviceClass(e) == "temperature") {
+                if (v > hot) out += "$where 温度 ${trim(v)}°C 偏高" else if (v < cold) out += "$where 温度 ${trim(v)}°C 偏低"
+            } else {
+                if (v > wet) out += "$where 湿度 ${trim(v)}% 偏高" else if (v < dry) out += "$where 湿度 ${trim(v)}% 偏低"
+            }
+        }
+        val offline = all.filter { it.domain in CONTROL && it.domain !in SINGLE_ONLY && it.state == "unavailable" }
+        if (offline.isNotEmpty()) out += "离线 ${offline.size} 个：" + offline.take(6).joinToString("、") { it.name } + if (offline.size > 6) "等" else ""
+        if (out.isEmpty()) "一切正常：没有电量低、温湿度异常或离线的设备" else "发现 ${out.size} 项异常：\n" + out.take(12).joinToString("\n") { "· $it" }
+    }
+
     private fun verbOf(groups: Map<String, List<Entity>>, e: Entity, act: String, value: String?, fallback: String): String =
         serviceFor(e.domain, act, value)?.label ?: fallback
 
@@ -349,6 +475,8 @@ class HomeAssistant(http: OkHttpClient, private val credentials: CredentialStore
         val PROMPT_ORDER = listOf("light", "climate", "cover", "fan", "media_player", "vacuum", "humidifier", "scene", "script", "switch")
         /** 只能指名触发、不能「所有」批量的类型 */
         val SINGLE_ONLY = setOf("scene", "script", "button", "automation")
+        val STATUS_ORDER = listOf("light", "climate", "cover", "fan", "media_player", "vacuum", "humidifier")
+        val LABELS = mapOf("light" to "灯", "switch" to "开关", "climate" to "空调", "fan" to "风扇", "cover" to "窗帘", "media_player" to "播放器", "vacuum" to "扫地机", "humidifier" to "加湿器")
         val BLOCKED = setOf("lock", "alarm_control_panel", "camera", "siren", "garage_door")
     }
 }

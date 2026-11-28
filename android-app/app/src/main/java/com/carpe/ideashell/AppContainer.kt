@@ -126,6 +126,9 @@ class AppContainer(context: Context) {
 
     /** 助手技能（快捷指令）：高频多步任务存成一句话 */
     val homeAssistant = com.carpe.ideashell.data.assistant.HomeAssistant(http = http, credentials = credentials)
+
+    /** 用户大致在哪（系统定位 + 地址反查）：告诉助手，问天气 / 附近时不用反问 */
+    val place = com.carpe.ideashell.data.assistant.PlaceContext(context.applicationContext, http)
     val assistantSkills = com.carpe.ideashell.data.assistant.AssistantSkills(context)
 
     /** 语音助手任务（定时 / 条件）：有变化就重排闹钟 */

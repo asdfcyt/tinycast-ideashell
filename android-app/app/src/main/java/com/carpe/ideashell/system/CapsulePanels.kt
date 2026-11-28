@@ -498,75 +498,16 @@ internal fun VoiceCapsuleService.showResults(res: VoiceSearch.Result) {
         headlessDone(true, text, searchQuery = res.keyword.takeIf { res.hits.isNotEmpty() }, title = if (res.isAnswer) "语音回答" else "语音搜索")
         return
     }
-    if (res.hits.isEmpty()) {
-        // 回答越长留得越久（每个字约 0.12 秒，最少 12 秒、最多 50 秒）；点一下就收起
-        showMessage(res.text, error = false, durationMs = if (res.isAnswer) (8_000L + res.text.length * 120L).coerceIn(12_000L, 50_000L) else 3500L)
+    if (res.isAnswer && res.text.startsWith("没能回答")) {
+        showMessage(res.text, error = true, durationMs = 6000L)
         return
     }
-    stopTick()
-    dotAnimator?.cancel()
-    cancelCountdown()
-    exitEditMode()
-    shown = CapsuleShown.MESSAGE
-    val col = ensureColumn()
-    col.removeAllViews()
-    surface = null
-    handler.removeCallbacksAndMessages(null)
-    val card = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        background = capsuleBackground(22)
-        setPadding(dp(16), dp(10), dp(8), dp(8))
-        elevation = dp(8).toFloat()
+    if (res.hits.isEmpty() && !res.isAnswer) {
+        showMessage(res.text, error = false, durationMs = 3500L)
+        return
     }
-    val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-    head.addView(label(res.text, if (res.isAnswer) 15f else 13f, bold = !res.isAnswer).apply {
-        setTextColor(if (res.isAnswer) pal.text else pal.accentSoft)
-        maxWidth = dp(if (res.isAnswer) 250 else 220)
-    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-    head.addView(textButton("关闭") { dismissWithSlide() })
-    card.addView(head)
-    fun open(extra: String, value: String) {
-        startActivity(
-            Intent(this, com.carpe.ideashell.ui.MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                .putExtra(extra, value),
-        )
-        dismissWithSlide()
-    }
-    res.hits.take(VoiceSearch.MAX_LINES).forEach { hit ->
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(9), dp(8), dp(9))
-            pressable()
-            setOnClickListener {
-                if (hit.isNote) open(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_NOTE, hit.id)
-                else open(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_TASK, hit.id)
-            }
-        }
-        row.addView(label(if (hit.isNote) "笔记" else "待办", 11f, bold = true).apply {
-            setTextColor(pal.accentSoft)
-            setPadding(0, 0, dp(10), 0)
-        })
-        row.addView(label(hit.title, 15f).apply {
-            maxWidth = dp(190)
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
-        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        if (hit.sub.isNotBlank()) row.addView(label(hit.sub, 12f).apply { alpha = 0.6f; setPadding(dp(8), 0, 0, 0) })
-        card.addView(row)
-    }
-    if (res.keyword.isNotBlank() && res.hits.size > VoiceSearch.MAX_LINES) {
-        card.addView(textButton("查看全部 ${res.hits.size} 条") { open(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_SEARCH, res.keyword) }.apply {
-            setTextColor(pal.accentSoft); alpha = 1f
-            gravity = Gravity.START
-            setPadding(0, dp(9), dp(14), dp(9))
-        })
-    }
-    addSmall(card)
-    recenter()
-    // 结果要留给人看、点：停留一分钟，点「关闭」或点某条才收起
-    handler.postDelayed({ dismissWithSlide() }, 60_000L)
+    // 助手的回答 / 搜索结果：侧边卡片（见 CapsuleAnswerCard.kt）
+    showAnswerCard(res)
 }
 
 internal fun VoiceCapsuleService.showMessage(message: String, error: Boolean, durationMs: Long = if (error) 4000L else 2500L) {
