@@ -3,6 +3,7 @@ package com.carpe.ideashell.ui.settings
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
@@ -18,7 +19,7 @@ import com.carpe.ideashell.ui.components.InputSheet
 import com.carpe.ideashell.ui.components.ListGroup
 import com.carpe.ideashell.ui.components.RowDivider
 
-private enum class AccountDialog { Ocr, Llm }
+private enum class AccountDialog { Ocr, Llm, Home }
 
 /** 首页「账号与连接」那一行的状态摘要 */
 internal fun SettingsEnv.accountsSummary(): String {
@@ -49,6 +50,7 @@ internal fun AccountsSection(env: SettingsEnv) {
     val container = env.container
     val settings = env.settings
     var dialog by remember { mutableStateOf<AccountDialog?>(null) }
+    var homeOn by remember { mutableStateOf(container.homeAssistant.configured) }
 
     Group("记录与待办") {
         SettingsItem(
@@ -80,6 +82,15 @@ internal fun AccountsSection(env: SettingsEnv) {
         )
     }
 
+    Group("智能家居") {
+        SettingsItem(
+            icon = Icons.Filled.Home,
+            title = "Home Assistant",
+            summary = if (homeOn) "" else "未配置",
+            onClick = { dialog = AccountDialog.Home },
+        )
+    }
+
 
     when (dialog) {
         AccountDialog.Ocr -> OcrKeyDialog(
@@ -100,7 +111,61 @@ internal fun AccountsSection(env: SettingsEnv) {
             onDismiss = { dialog = null },
         )
 
+        AccountDialog.Home -> HomeAssistantDialog(
+            initialUrl = container.credentials.haUrl.orEmpty(),
+            initialToken = container.credentials.haToken.orEmpty(),
+            onConfirm = { url, token ->
+                container.credentials.haUrl = url
+                container.credentials.haToken = token
+                homeOn = container.homeAssistant.configured
+            },
+            onDismiss = { dialog = null },
+        )
+
         null -> Unit
+    }
+}
+
+/** Home Assistant：地址 + 长期访问令牌（HA 个人资料 → 安全 → 长期访问令牌 → 创建）。留空保存即清除 */
+@Composable
+private fun HomeAssistantDialog(
+    initialUrl: String,
+    initialToken: String,
+    onConfirm: (String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var url by remember { mutableStateOf(initialUrl) }
+    var token by remember { mutableStateOf(initialToken) }
+    InputSheet(
+        title = "Home Assistant",
+        hint = "用来控制米家等智能设备；两项留空保存即清除",
+        onDismiss = onDismiss,
+        onConfirm = {
+            onConfirm(url.trim(), token.trim())
+            onDismiss()
+        },
+    ) {
+        ListGroup {
+            AppTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = "地址",
+                placeholder = "http://192.168.1.10:8123",
+                autoFocus = true,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            )
+            RowDivider()
+            AppTextField(
+                value = token,
+                onValueChange = { token = it },
+                label = "长期访问令牌",
+                placeholder = "点这里输入",
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            )
+        }
     }
 }
 

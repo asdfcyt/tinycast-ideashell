@@ -59,6 +59,15 @@ class CredentialStore(private val store: SecureStore) {
             _llmConfigured.value = !value.isNullOrBlank()
         }
 
+    /** Home Assistant 地址（形如 http://192.168.1.10:8123）和长期访问令牌：用来控制米家等智能设备 */
+    var haUrl: String?
+        get() = read(KEY_HA_URL)
+        set(value) = write(KEY_HA_URL, value)
+
+    var haToken: String?
+        get() = read(KEY_HA_TOKEN)
+        set(value) = write(KEY_HA_TOKEN, value)
+
     var ideashellKey: String?
         get() = read(KEY_IDEASHELL)
         set(value) {
@@ -97,5 +106,7 @@ class CredentialStore(private val store: SecureStore) {
         const val KEY_TENCENT_ID = "tencent_ocr_secret_id"
         const val KEY_TENCENT_KEY = "tencent_ocr_secret_key"
         const val KEY_LLM = "voice_llm_api_key"
+        const val KEY_HA_URL = "home_assistant_url"
+        const val KEY_HA_TOKEN = "home_assistant_token"
     }
 }

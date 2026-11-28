@@ -7,7 +7,7 @@ import com.carpe.ideashell.system.ExcerptService
  * 来源按顺序：
  * ① 设为默认助手后，系统呼出助手时交过来的快照 / 开始说话那一刻抓的快照（[offer] / [snapshotNow]，90 秒内有效）；
  * ② 用无障碍服务现读当前窗口的文字（和摘录共用同一个无障碍开关）；
- * ③ 页面读不到文字（阅读类应用常把正文画在自绘控件里）：截屏后用文字识别（OCR）读出来。
+ * ③ 同时截屏做文字识别（OCR）：正文是图片 / 自绘控件时，无障碍读不到，靠这一路。
  * 截图只放在内存里，识别完就丢；银行 / 支付类应用、拾忆自己的界面都不读。
  */
 object ScreenContext {
@@ -16,9 +16,6 @@ object ScreenContext {
     const val MAX_CHARS = 6000
     private const val FRESH_MS = 90_000L
     private const val ASK_CHARS = 2400
-
-    /** 无障碍读到的文字少于这个数，就怀疑正文是图片 / 自绘内容（工具栏、标题之类的文字可能凑出几十个字），再截屏做文字识别比一比 */
-    private const val ENOUGH = 300
 
     @Volatile
     private var offered: Snapshot? = null
@@ -40,7 +37,7 @@ object ScreenContext {
 
     /**
      * 开始说话那一刻抓一份当前屏幕（后台线程调用）：说完再读的话，用户可能已经切走，或者点进了拾忆自己的确认卡片。
-     * 文字读得到就只存文字；读不到正文再补一张截图（识别要等真正用到时才做）。刚由系统助手入口交过来的快照（几秒内）不覆盖。
+     * 同时留一张截图（只放内存里；识别要等真正用到时才做）。刚由系统助手入口交过来的快照（几秒内）不覆盖。
      */
     suspend fun snapshotNow() {
         val o = offered
@@ -48,20 +45,19 @@ object ScreenContext {
         val svc = ExcerptService.instance ?: return
         val live = svc.readScreen()
         if (live != null) offered = live
-        if ((live?.text?.length ?: 0) < ENOUGH) {
-            val jpeg = svc.screenshotJpeg()
-            if (jpeg != null) shot = Shot(System.currentTimeMillis(), jpeg, live?.pkg.orEmpty())
-        }
+        val jpeg = svc.screenshotJpeg()
+        if (jpeg != null) shot = Shot(System.currentTimeMillis(), jpeg, live?.pkg.orEmpty())
     }
 
     /**
      * 读取当前屏幕；读不到返回 null（原因在 [lastFailure]）。
-     * [ocr]：把截图识别成文字（页面没有可读文字时才会调用）。
+     * 页面文字（无障碍）和截图文字识别（OCR）两路都取：图片里的字无障碍读不到，所以每次都截一张图识别，
+     * 识别出来的字明显比页面文字多（正文是图片 / 自绘内容）就用识别结果，否则用页面文字（更干净）。
+     * [ocr]：把截图识别成文字。
      */
     suspend fun read(ocr: suspend (ByteArray) -> String): Snapshot? {
         val now = System.currentTimeMillis()
         val cached = offered?.takeIf { now - it.at < FRESH_MS }
-        if (cached != null && cached.text.length >= ENOUGH) return cached
         val svc = ExcerptService.instance
         if (svc == null && cached == null) {
             lastFailure = "没有开启无障碍服务（设置 → 语音助手 → 系统权限 → 无障碍服务）"
@@ -69,28 +65,31 @@ object ScreenContext {
         }
         val live = svc?.readScreen()
         val best = listOfNotNull(cached, live).maxByOrNull { it.text.length }
-        if (best != null && best.text.length >= ENOUGH) return best
-        // 页面上读到的文字不多（甚至没有）：正文多半是图片 / 自绘内容。用开始说话时抓的截图（或现在截一张）做文字识别，谁的字多用谁
+        // 开始说话时抓的截图（说完再读，用户可能已经切走）优先；没有就现在截一张
         val img = shot?.takeIf { now - it.at < FRESH_MS }
         val jpeg = img?.jpeg ?: svc?.screenshotJpeg()
         shot = null
+        var ocrFailure = ""
         if (jpeg != null) {
             val text = try {
                 ocr(jpeg).trim()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                lastFailure = "截图识别失败：" + (e.message ?: e.javaClass.simpleName)
+                ocrFailure = "截图识别失败：" + (e.message ?: e.javaClass.simpleName)
                 ""
             }
-            if (text.length >= 8 && text.length > (best?.text?.length ?: 0) + 20) {
+            val have = best?.text?.length ?: 0
+            if (text.length >= 8 && (best == null || text.length > have * 13 / 10 + 20)) {
+                lastFailure = ""
                 val label = best?.label ?: "当前屏幕"
                 return Snapshot(System.currentTimeMillis(), best?.pkg ?: img?.pkg.orEmpty(), label, text.take(MAX_CHARS), best?.selection ?: live?.selection)
             }
-            if (best == null) lastFailure = "截图里没有识别出文字（页面可能是纯图片 / 空白）"
-        } else if (best == null) {
-            lastFailure = svc?.lastReadFailure?.takeIf { it.isNotBlank() } ?: "读不到当前页面"
+            if (best == null) ocrFailure = ocrFailure.ifBlank { "截图里没有识别出文字（页面可能是纯图片 / 空白）" }
         }
+        if (best == null) {
+            lastFailure = ocrFailure.ifBlank { svc?.lastReadFailure?.takeIf { it.isNotBlank() } ?: "读不到当前页面" }
+        } else lastFailure = ""
         return best
     }
 

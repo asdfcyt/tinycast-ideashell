@@ -773,10 +773,10 @@ class ExcerptService : AccessibilityService() {
      * 带上选中的文字。拾忆自己的界面、银行 / 支付类应用、密码框一律不读；读不到返回 null。
      */
     fun readScreen(): com.carpe.ideashell.data.assistant.ScreenContext.Snapshot? {
-        val root = rootInActiveWindow ?: run { lastReadFailure = "系统没有给出当前窗口"; return null }
+        val root = foregroundRoot() ?: run { if (lastReadFailure.isBlank()) lastReadFailure = "系统没有给出当前窗口"; return null }
         val pkg = root.packageName?.toString() ?: run { lastReadFailure = "读不到当前应用"; return null }
-        if (pkg == packageName) { lastReadFailure = "当前是拾忆自己的界面"; return null }
         if (isSensitive(pkg)) { lastReadFailure = "当前是银行 / 支付 / 系统设置类应用，不读取"; return null }
+        lastReadFailure = ""
         val max = com.carpe.ideashell.data.assistant.ScreenContext.MAX_CHARS
         val budget = Budget(2500, 900L)
         val out = StringBuilder()
@@ -817,15 +817,26 @@ class ExcerptService : AccessibilityService() {
     @Volatile
     var lastReadFailure: String = ""
 
+    /**
+     * 眼前这一页的根节点：优先用「当前活动窗口」；但助手的面板（拾忆自己的悬浮窗）有时会抢到焦点，
+     * 这时去窗口列表里找最上面的、不是拾忆自己的应用窗口。找不到返回 null（原因记在 [lastReadFailure]）。
+     */
+    private fun foregroundRoot(): AccessibilityNodeInfo? {
+        val active = rootInActiveWindow
+        if (active != null && active.packageName?.toString() != packageName) return active
+        val other = windows?.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            ?.sortedByDescending { it.layer }
+            ?.firstNotNullOfOrNull { w -> w.root?.takeIf { it.packageName != null && it.packageName.toString() != packageName } }
+        if (other != null) return other
+        lastReadFailure = if (active == null) "系统没有给出当前窗口" else "当前是拾忆自己的界面"
+        return null
+    }
+
     /** 当前页面在读取范围内吗：不是拾忆自己、不是敏感应用 */
     private fun currentPackageReadable(): String? {
-        val pkg = rootInActiveWindow?.packageName?.toString()
-        return when {
-            pkg == null -> { lastReadFailure = "系统没有给出当前窗口"; null }
-            pkg == packageName -> { lastReadFailure = "当前是拾忆自己的界面"; null }
-            isSensitive(pkg) -> { lastReadFailure = "当前是银行 / 支付 / 系统设置类应用，不读取"; null }
-            else -> pkg
-        }
+        val pkg = foregroundRoot()?.packageName?.toString() ?: return null
+        if (isSensitive(pkg)) { lastReadFailure = "当前是银行 / 支付 / 系统设置类应用，不读取"; return null }
+        return pkg
     }
 
     /**
@@ -863,6 +874,7 @@ class ExcerptService : AccessibilityService() {
                 }
             }
         } ?: run { if (lastReadFailure.isBlank()) lastReadFailure = "截屏超时"; return null }
+        if (bitmap == null) return null
         return kotlinx.coroutines.withContext(Dispatchers.Default) {
             val scale = 2000f / maxOf(bitmap.width, bitmap.height)
             val img = if (scale < 1f) android.graphics.Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap

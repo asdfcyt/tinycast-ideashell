@@ -24,7 +24,7 @@ import java.time.ZoneId
 
 /**
  * 语音助手除了「查」之外能「做」的事：记忆、助手任务（定时 / 条件）、技能（快捷指令）、读屏幕、记笔记、系统动作（闹钟 / 倒计时 / 拨号 / 导航 / 音乐）、
- * 设备控制（勿扰 / 铃声 / 音量 / 亮度 / 手电筒 / 打开应用 / 系统设置页 / 返回回桌面截屏 / 控制中心开关）。
+ * 智能家居（home_list / home_control，经 Home Assistant 控制米家等）、设备控制（勿扰 / 铃声 / 音量 / 亮度 / 手电筒 / 打开应用 / 系统设置页 / 返回回桌面截屏 / 控制中心开关）。
  * 每个工具返回一句给模型看的结果；出错也返回文字，不抛异常。
  */
 internal object AssistantTools {
@@ -178,6 +178,21 @@ internal object AssistantTools {
             required = listOf("name"),
         ),
         VoiceAgent.tool(
+            "home_list",
+            "列出家里的智能设备（米家等，经 Home Assistant）及当前状态：返回 entity_id | 名称 | 状态。控制设备前先用它找到 entity_id；可带关键词（房间名 / 设备名，如「客厅」「空调」）缩小范围，也能读温湿度这类传感器。",
+            props = { putJsonObject("keyword") { put("type", "string"); put("description", "名字或 id 里包含的词，多个词用空格隔开；不填列全部可控设备") } },
+        ),
+        VoiceAgent.tool(
+            "home_control",
+            "控制家里的智能设备（灯、开关、空调、窗帘、风扇、扫地机、音箱、场景……）。entity_id 来自 home_list，多个用逗号隔开（「关掉所有灯」= 把所有灯一起传）。action：on / off / toggle / open / close / stop；set 要给 value（灯亮度 0~100、空调温度、窗帘位置 0~100、风扇风速 0~100、音量 0~100）；mode 的 value 是空调模式（cool / heat / auto / dry / fan_only / off）；场景和脚本用 on 触发。不能控制门锁 / 报警 / 摄像头。",
+            props = {
+                putJsonObject("entity_id") { put("type", "string") }
+                putJsonObject("action") { put("type", "string"); put("enum", enum("on", "off", "toggle", "open", "close", "stop", "set", "mode")) }
+                putJsonObject("value") { put("type", "string") }
+            },
+            required = listOf("entity_id", "action"),
+        ),
+        VoiceAgent.tool(
             "create_note",
             "把一段整理好的文字存成笔记（kind=note）或写进今天的日记（kind=daily）。只在用户明确要「记成笔记 / 记下来 / 存起来」时用；content 是最终要存的完整内容。",
             props = {
@@ -257,6 +272,8 @@ internal object AssistantTools {
         "open_settings" -> DeviceControl.openSettings(container.appContext, args.arg("page").orEmpty())
         "phone_action" -> PhoneControl.globalAction(args.arg("action").orEmpty())
         "toggle_quick_setting" -> PhoneControl.toggleQuickSetting(args.arg("name").orEmpty())
+        "home_list" -> container.homeAssistant.list(args.arg("keyword"))
+        "home_control" -> container.homeAssistant.control(args.arg("entity_id").orEmpty(), args.arg("action").orEmpty(), args.arg("value"))
         else -> "没有这个工具：$name"
     }
 

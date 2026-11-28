@@ -395,10 +395,14 @@ class VoiceInputController(
         if (settings.current.voicePolish && llm.configured) {
             try {
                 val now = LocalDateTime.now()
-                val reply = llm.chatJson(
-                    VoiceIntents.systemPrompt(now, vocabulary = hot, todos = todoContext(), skills = skillNames()),
-                    VoiceIntents.userPrompt(raw, VoiceSession.contextBlock()),
-                )
+                val system = VoiceIntents.systemPrompt(now, vocabulary = hot, todos = todoContext(), skills = skillNames())
+                val user = VoiceIntents.userPrompt(raw, VoiceSession.contextBlock())
+                // 提示词里带了技能、示例、待办，比单纯整理慢：放宽到 14 秒，网络抖一下就再试一次
+                val reply = try {
+                    llm.chatJson(system, user, timeoutSec = 14)
+                } catch (e: LlmException) {
+                    if (e.message?.contains("超时") == true) llm.chatJson(system, user, timeoutSec = 14) else throw e
+                }
                 // 「半小时后」这类相对时间，本地再精确算一遍
                 intents = VoiceIntents.fixRelativeTime(raw, VoiceIntents.parse(reply), now)
                 if (intents.isEmpty()) {
@@ -407,6 +411,11 @@ class VoiceInputController(
                 }
             } catch (e: LlmException) {
                 polishError = (e.message ?: "AI 整理失败") + "，已使用原始转写"
+                // 分不出意图时，明显是在提问的话别当笔记存下来：交给助手回答（回答是只读的，答错也没副作用）
+                if (looksLikeQuestion(raw)) {
+                    intents = listOf(VoiceIntent(CaptureKind.DAILY, raw, null, null, null, emptyList(), 0, answer = true))
+                    polishError = (e.message ?: "AI 整理失败") + "，按提问处理"
+                }
             }
         }
         val note = listOfNotNull(heardNote, polishError).joinToString("；").ifBlank { null }
@@ -433,6 +442,12 @@ class VoiceInputController(
             if (appendText != null) VoiceResult(raw, SpeechCleaner.clean(appendText), intents, note, appendToLast = true)
             else VoiceResult(raw, cleaned, intents, note),
         )
+    }
+
+    private fun looksLikeQuestion(text: String): Boolean {
+        val t = text.trim()
+        return t.endsWith("?") || t.endsWith("？") || t.endsWith("吗") || t.endsWith("呢") ||
+            Regex("哪些|哪个|哪里|什么|怎么|怎样|为什么|多少|几个|是不是|有没有|能不能|可不可以").containsMatchIn(t)
     }
 
     /** 历史里显示的「整理成了什么」：待办：开会 / 日记：… / 问 AI：… */
