@@ -59,6 +59,30 @@ class ScreenOffVoiceKeys(
         onHoldStart()
     }
 
+    /**
+     * 亮屏后偶尔收不到「解锁」广播（指纹 / 面部解锁、不同 ROM 的差异），会话就一直占着音量键：
+     * 屏幕上一直挂着带投屏图标的远程音量面板，真正的音量又调不了。所以接管期间亮着屏时，每隔一会儿自己核对一次状态。
+     */
+    private val recheck = Runnable {
+        if (!active) return@Runnable
+        if (!shouldBeActive()) {
+            deactivate()
+        } else if (isInteractive()) {
+            scheduleRecheck()
+        }
+    }
+
+    private fun scheduleRecheck() {
+        handler.removeCallbacks(recheck)
+        handler.postDelayed(recheck, RECHECK_MS)
+    }
+
+    private val keyguardListener: Any? = if (android.os.Build.VERSION.SDK_INT >= 33) {
+        KeyguardManager.KeyguardLockedStateListener { locked -> handler.post { if (!locked && isInteractive()) deactivate() } }
+    } else {
+        null
+    }
+
     private val reactivate = Runnable {
         passingThrough = false
         if (shouldBeActive()) activate()
@@ -97,12 +121,24 @@ class ScreenOffVoiceKeys(
             },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            runCatching {
+                context.getSystemService(KeyguardManager::class.java)
+                    ?.addKeyguardLockedStateListener(ContextCompat.getMainExecutor(context), keyguardListener as KeyguardManager.KeyguardLockedStateListener)
+            }
+        }
         if (shouldBeActive()) activate()
     }
 
     fun stop() {
         handler.removeCallbacksAndMessages(null)
         runCatching { context.unregisterReceiver(screenReceiver) }
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            runCatching {
+                context.getSystemService(KeyguardManager::class.java)
+                    ?.removeKeyguardLockedStateListener(keyguardListener as KeyguardManager.KeyguardLockedStateListener)
+            }
+        }
         deactivate()
         session?.release()
         session = null
@@ -120,8 +156,11 @@ class ScreenOffVoiceKeys(
     private fun activate() {
         val s = session ?: return
         if (active) return
+        // 音量键功能关着：不要占着音量键（占着又什么都不做，音量就调不了了）
+        if (settings.current.voiceKey == VoiceKey.OFF) return
         Log.i(TAG, "activate (interactive=${isInteractive()} locked=${isLocked()})")
         active = true
+        if (isInteractive()) scheduleRecheck()
         s.setPlaybackState(
             PlaybackState.Builder()
                 .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE)
@@ -134,6 +173,7 @@ class ScreenOffVoiceKeys(
     /** 亮屏：关掉会话，按键回到无障碍服务；正按着的话直接结束这次录音 */
     private fun deactivate() {
         handler.removeCallbacks(startHold)
+        handler.removeCallbacks(recheck)
         val wasHolding = holding
         pressing = false
         holding = false
@@ -153,7 +193,12 @@ class ScreenOffVoiceKeys(
         Log.i(TAG, "onVolumeKey direction=$direction pressing=$pressing otherDown=$otherDown")
         // 熄屏 / 锁屏用单独选的键（默认音量上键；荣耀等手机熄屏时会吞掉音量下键的按下）
         val key = settings.current.voiceKeyLocked
-        if (key == VoiceKey.OFF || settings.current.voiceKey == VoiceKey.OFF) return
+        if (key == VoiceKey.OFF || settings.current.voiceKey == VoiceKey.OFF) {
+            // 功能关着却还占着音量键：至少把音量调了，并让出会话
+            if (direction != AudioManager.ADJUST_SAME) stepVolume(context, direction == AudioManager.ADJUST_RAISE)
+            deactivate()
+            return
+        }
         val mine = if (key == VoiceKey.VOLUME_UP) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
         when (direction) {
             AudioManager.ADJUST_SAME -> {
@@ -188,7 +233,7 @@ class ScreenOffVoiceKeys(
             else -> {
                 otherDown = true
                 // 另一个音量键：接管期间系统不会再调音量，这里补上
-                audio?.adjustSuggestedStreamVolume(direction, AudioManager.USE_DEFAULT_STREAM_TYPE, AudioManager.FLAG_SHOW_UI)
+                stepVolume(context, direction == AudioManager.ADJUST_RAISE)
             }
         }
     }
@@ -229,5 +274,8 @@ class ScreenOffVoiceKeys(
 
         /** 「只有抬起」的轻按去抖 */
         const val TAP_DEBOUNCE_MS = 500L
+
+        /** 接管期间亮着屏时，多久核对一次「是不是已经解锁了」 */
+        const val RECHECK_MS = 1500L
     }
 }

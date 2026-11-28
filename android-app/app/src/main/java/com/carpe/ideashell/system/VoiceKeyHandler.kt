@@ -68,11 +68,7 @@ class VoiceKeyHandler(private val service: AccessibilityService) {
     }
 
     /** 轻按：补上被吞掉的这一次音量调整 */
-    private fun adjustVolume(key: VoiceKey) {
-        val direction = if (key == VoiceKey.VOLUME_UP) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
-        service.getSystemService(AudioManager::class.java)
-            ?.adjustSuggestedStreamVolume(direction, AudioManager.USE_DEFAULT_STREAM_TYPE, AudioManager.FLAG_SHOW_UI)
-    }
+    private fun adjustVolume(key: VoiceKey) = stepVolume(service, key == VoiceKey.VOLUME_UP)
 
     private fun canStart(): Boolean {
         if (service.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -91,5 +87,31 @@ class VoiceKeyHandler(private val service: AccessibilityService) {
     private companion object {
         /** 按住多久算长按 */
         const val LONG_PRESS_MS = 350L
+    }
+}
+
+/**
+ * 代替硬件音量键调一格音量。
+ * 不用 adjustSuggestedStreamVolume：它只动「一档」，荣耀等手机的媒体音量有 160 档，一档几乎听不出来，
+ * 还会弹出音量面板却不变（看起来就是「调不了音量」）。这里自己挑流、按 1/8 的幅度调，和硬件按键的手感一致。
+ */
+internal fun stepVolume(context: android.content.Context, raise: Boolean) {
+    val am = context.getSystemService(AudioManager::class.java) ?: return
+    val stream = when (am.mode) {
+        AudioManager.MODE_IN_CALL, AudioManager.MODE_IN_COMMUNICATION -> AudioManager.STREAM_VOICE_CALL
+        // 没在放声音时手机默认调的是铃声，但荣耀的音量面板默认显示的是媒体；跟着面板走，用户看到什么调什么
+        else -> AudioManager.STREAM_MUSIC
+    }
+    val max = am.getStreamMaxVolume(stream).coerceAtLeast(1)
+    val step = (max / 8).coerceAtLeast(1)
+    val next = (am.getStreamVolume(stream) + if (raise) step else -step).coerceIn(0, max)
+    try {
+        am.setStreamVolume(stream, next, AudioManager.FLAG_SHOW_UI)
+    } catch (_: SecurityException) {
+        am.adjustSuggestedStreamVolume(
+            if (raise) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER,
+            AudioManager.USE_DEFAULT_STREAM_TYPE,
+            AudioManager.FLAG_SHOW_UI,
+        )
     }
 }

@@ -21,7 +21,7 @@
     <string name="tile_voice_label">语音记一条</string>
     <string name="tile_excerpt_label">摘录</string>
     <string name="excerpt_label">拾忆</string>
-    <string name="excerpt_description">拾忆只有这一个无障碍开关，用于三件事：①「摘录模式」下屏幕边缘的小胶囊，选中文字后点它就存进拾忆，只读取你选中的那段文字（微信、小红书等会替你点一下菜单里的「复制」）；②从拾忆转交问题到闪念贝壳 AI 后，自动点一下发送键，只在转交后的几秒内、且前台是闪念贝壳时动作；③在设置里选定音量键后，长按这个键录音、松手结束，只监听你选的那个音量键。除此之外从不后台读取屏幕内容。</string>
+    <string name="excerpt_description">拾忆只有这一个无障碍开关，用于三件事：①「摘录模式」下屏幕边缘的小胶囊，选中文字后点它就存进拾忆，只读取你选中的那段文字（微信、小红书等会替你点一下菜单里的「复制」）；②从拾忆转交问题到闪念贝壳 AI 后，自动点一下发送键，只在转交后的几秒内、且前台是闪念贝壳时动作；③在设置里选定音量键后，长按这个键录音、松手结束，只监听你选的那个音量键；④语音助手：你说「这页 / 这段」之类的话时，才读一次当前页面的文字（读不到再截一次屏做文字识别，截图只放在内存里、识别完就丢），银行、支付类应用和密码框不读。除此之外从不后台读取屏幕内容。</string>
     <string name="shortcut_excerpt_short">摘录模式</string>
     <string name="shortcut_excerpt_long">摘录模式（开启 / 关闭摘录胶囊）</string>
     <string name="widget_title">待办</string>

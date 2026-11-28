@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 语音输入：没有网络时直接改用本地识别，不等云端超时 -->
@@ -37,6 +38,13 @@
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 
+    <!-- 语音助手控制手机：开 / 关勿扰、切铃声模式（要在系统里给拾忆打开「勿扰权限」，没打开时助手会自动跳到授权页）；
+         调亮度（要「修改系统设置」权限，同样自动跳授权页）；熄屏接管音量键时核对是否已解锁 -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.SUBSCRIBE_TO_KEYGUARD_LOCKED_STATE" />
+
     <!-- 把系统日历里的事件读进待办页（只读，设置里开启「日历同步」时才会申请） -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
@@ -49,6 +57,10 @@
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- 语音回答：列出手机上装的语音合成引擎（荣耀自带的也在里面），让用户挑 -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
     </queries>
 

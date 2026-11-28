@@ -91,6 +91,16 @@ class VoiceRecorder {
         return true
     }
 
+    /** 目前已录下的字节数（边录边识别切段用） */
+    val sizeBytes: Int get() = synchronized(buffer) { buffer.size() }
+
+    /** 取已录内容里 [from, to) 这一段（to < 0 = 到目前为止） */
+    fun slice(from: Int, to: Int = -1): ByteArray = synchronized(buffer) {
+        val all = buffer.toByteArray()
+        val end = if (to < 0) all.size else minOf(to, all.size)
+        if (from >= end) ByteArray(0) else all.copyOfRange(from, end)
+    }
+
     /** 停止录音，返回 PCM；没在录返回空数组 */
     suspend fun stop(): ByteArray {
         val rec = record ?: return ByteArray(0)

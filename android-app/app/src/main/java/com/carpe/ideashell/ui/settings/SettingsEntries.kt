@@ -40,7 +40,7 @@ internal fun SettingsEnv.entriesSummary(): String =
 
 /**
  * 入口一览：把所有「怎么把东西记进拾忆」的入口放在一页，每个都带上现在能不能用。
- * 语音相关的开关只在「语音输入」里改，这里只显示状态并跳过去。
+ * 语音相关的开关只在「语音输入」里改。
  */
 @Composable
 internal fun EntriesSection(env: SettingsEnv) {
@@ -64,12 +64,6 @@ internal fun EntriesSection(env: SettingsEnv) {
             summary = "",
             onClick = { showWidgets = true },
         )
-        SettingsItem(
-            icon = Icons.Filled.Share,
-            title = "分享菜单与选中文字菜单",
-            summary = "",
-            onClick = null,
-        )
     }
 
     Group("摘录") {
@@ -92,7 +86,7 @@ internal fun EntriesSection(env: SettingsEnv) {
         )
     }
 
-    Group("依赖的权限（只显示状态）") {
+    Group("依赖的权限") {
         SettingsItem(
             icon = Icons.Filled.Lock,
             title = "无障碍服务",
@@ -109,17 +103,18 @@ internal fun EntriesSection(env: SettingsEnv) {
         }
         SettingsItem(
             iconRes = R.drawable.ic_tile_voice,
-            title = "语音悬浮胶囊",
-            summary = if (env.overlayOn) "" else "未开启",
-            onClick = { env.go(SEC_VOICE) },
-            trailing = { Chevron() },
-        )
-        SettingsItem(
-            icon = Icons.Filled.Info,
-            title = "音量键按住说话",
-            summary = if (settings.voiceKey == com.carpe.ideashell.data.settings.VoiceKey.OFF) "" else settings.voiceKey.label,
-            onClick = { env.go(SEC_VOICE) },
-            trailing = { Chevron() },
+            title = "显示在其他应用上层",
+            summary = if (env.overlayOn) "已允许 · 语音录音胶囊要用" else "未开启 · 语音录音胶囊要用",
+            onClick = {
+                if (!env.overlayOn) {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            android.net.Uri.parse("package:" + context.packageName),
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }
+            },
         )
     }
 

@@ -58,22 +58,16 @@ object SystemActions {
             if (context.checkSelfPermission(Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
                 return "要按名字找人需要通讯录权限（设置 → 语音助手 → 通讯录），或者直接说号码"
             }
-            val found = lookup(context, t) ?: return "通讯录里没找到「$t」"
-            number = found.second
-            shown = "${found.first} $number"
+            when (val r = Contacts.find(context, t)) {
+                is Contacts.Result.Found -> {
+                    number = r.number
+                    shown = "${r.name} ${r.number}"
+                }
+                is Contacts.Result.Failed -> return r.message
+            }
         }
         return launch(context, Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null)), "已打开拨号盘：$shown（按拨号键才会打出去）", "没能打开拨号盘")
     }
-
-    private fun lookup(context: Context, name: String): Pair<String, String>? = runCatching {
-        context.contentResolver.query(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME, ContactsContract.CommonDataKinds.Phone.NUMBER),
-            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
-            arrayOf("%$name%"),
-            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC",
-        )?.use { c -> if (c.moveToFirst()) c.getString(0) to c.getString(1) else null }
-    }.getOrNull()
 
     fun navigate(context: Context, destination: String): String {
         val d = destination.trim()

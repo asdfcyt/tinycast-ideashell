@@ -95,6 +95,14 @@ class AppContainer(context: Context) {
     /** 腾讯云文字识别：相机页拍照 / 选图后识别文字 */
     val ocr = TencentOcr(http = http, credentials = credentials)
 
+    /** 语音回答：把助手的回答念出来（系统语音 / 腾讯云语音合成） */
+    val speech = com.carpe.ideashell.data.tts.SpeechOut(
+        context = context.applicationContext,
+        settings = settings,
+        tencent = com.carpe.ideashell.data.tts.TencentTts(http = http, credentials = credentials),
+        scope = appScope,
+    )
+
     /** 腾讯云一句话识别：快记面板「按住说话」的转写 */
     val asr = com.carpe.ideashell.data.asr.TencentAsr(http = http, credentials = credentials)
 
@@ -115,6 +123,9 @@ class AppContainer(context: Context) {
 
     /** 语音助手记忆：用户让它记住的事实，只在本机 */
     val assistantMemory = com.carpe.ideashell.data.assistant.AssistantMemory(context)
+
+    /** 助手技能（快捷指令）：高频多步任务存成一句话 */
+    val assistantSkills = com.carpe.ideashell.data.assistant.AssistantSkills(context)
 
     /** 语音助手任务（定时 / 条件）：有变化就重排闹钟 */
     val assistantTasks = com.carpe.ideashell.data.assistant.AssistantTasks(context) {

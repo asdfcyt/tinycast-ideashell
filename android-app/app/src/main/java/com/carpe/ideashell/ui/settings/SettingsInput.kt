@@ -1,11 +1,7 @@
 package com.carpe.ideashell.ui.settings
 
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.widget.Toast
-import android.media.audiofx.AutomaticGainControl
-import android.media.audiofx.NoiseSuppressor
-import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -126,22 +122,6 @@ internal fun VoiceSection(env: SettingsEnv) {
             checked = settings.voiceEnabled,
             onChange = { container.settings.setVoiceEnabled(it) },
         )
-        // 「语音记一条」磁贴 / 快捷方式的悬浮胶囊要「显示在其他应用上层」权限
-        SettingsItem(
-            iconRes = R.drawable.ic_tile_voice,
-            title = "语音记一条 · 悬浮胶囊",
-            summary = if (env.overlayOn) "" else "未开启",
-            onClick = {
-                if (!env.overlayOn) {
-                    context.startActivity(
-                        Intent(
-                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + context.packageName),
-                        ),
-                    )
-                }
-            },
-        )
         SettingsItem(
             icon = Icons.Filled.PlayArrow,
             title = "音量键按住说话",
@@ -202,13 +182,6 @@ internal fun VoiceSection(env: SettingsEnv) {
     }
 
     Group("语音识别") {
-        SettingsItem(
-            icon = Icons.Filled.Search,
-            title = "腾讯云密钥",
-            summary = if (env.ocrConfigured) "" else "未配置",
-            onClick = { env.go(SEC_ACCOUNTS) },
-            trailing = { Chevron() },
-        )
         // 本地模型：不随应用安装，在这里下载 / 删除
         SettingsItem(
             icon = Icons.Filled.Info,
@@ -231,10 +204,6 @@ internal fun VoiceSection(env: SettingsEnv) {
                 }
             },
         )
-    }
-    if (localAsr is LocalAsrState.Downloading) LinearProgressIndicator(Modifier.fillMaxWidth())
-
-    Group("降噪") {
         SettingsSwitchItem(
             icon = Icons.Filled.Info,
             title = "系统降噪",
@@ -242,19 +211,9 @@ internal fun VoiceSection(env: SettingsEnv) {
             checked = settings.voiceSystemDenoise,
             onChange = { container.settings.setVoiceSystemDenoise(it) },
         )
-        val effectSupport = remember {
-            val ns = runCatching { NoiseSuppressor.isAvailable() }.getOrDefault(false)
-            val agc = runCatching { AutomaticGainControl.isAvailable() }.getOrDefault(false)
-            fun mark(ok: Boolean) = if (ok) "可用" else "不可用"
-            "降噪 ${mark(ns)} · 自动增益 ${mark(agc)}"
-        }
-        SettingsItem(
-            icon = Icons.Filled.Info,
-            title = "本机系统降噪支持情况",
-            summary = effectSupport,
-            onClick = null,
-        )
     }
+    if (localAsr is LocalAsrState.Downloading) LinearProgressIndicator(Modifier.fillMaxWidth())
+    if (!env.ocrConfigured) SettingsNote("云端识别需要在「账号与连接」里填入腾讯云密钥；也可以下载上面的本地模型。")
 
     Group("声纹 · 只识别我的声音") {
         SettingsSwitchItem(
@@ -317,20 +276,20 @@ internal fun VoiceSection(env: SettingsEnv) {
         }
     }
 
-    Group("整理与词库") {
+    Group("整理与保存") {
         SettingsSwitchItem(
             icon = Icons.Filled.Star,
             title = "AI 整理口语",
-            summary = "",
+            summary = if (env.llmConfigured) "" else "需要先在「账号与连接」配置大模型",
             checked = settings.voicePolish,
             onChange = { container.settings.setVoicePolish(it) },
         )
-        SettingsItem(
-            iconRes = R.drawable.ic_sparkle,
-            title = "大模型接口",
-            summary = if (env.llmConfigured) "" else "未配置",
-            onClick = { env.go(SEC_ACCOUNTS) },
-            trailing = { Chevron() },
+        SettingsSwitchItem(
+            icon = Icons.Filled.Send,
+            title = "松手直接保存",
+            summary = "",
+            checked = settings.voiceAutoSend,
+            onChange = { container.settings.setVoiceAutoSend(it) },
         )
         SettingsItem(
             icon = Icons.Filled.Create,
@@ -338,16 +297,6 @@ internal fun VoiceSection(env: SettingsEnv) {
             summary = "${lexicon.hotwords.size} 个热词 · ${lexicon.replacements.size} 条替换",
             onClick = { env.go(SEC_LEXICON) },
             trailing = { Chevron() },
-        )
-    }
-
-    Group("保存") {
-        SettingsSwitchItem(
-            icon = Icons.Filled.Send,
-            title = "松手直接保存",
-            summary = "",
-            checked = settings.voiceAutoSend,
-            onChange = { container.settings.setVoiceAutoSend(it) },
         )
         SettingsItem(
             icon = Icons.Filled.Refresh,
@@ -547,16 +496,9 @@ internal fun OcrSection(env: SettingsEnv) {
 
     Group(null) {
         SettingsItem(
-            icon = Icons.Filled.Search,
-            title = "腾讯云密钥",
-            summary = if (env.ocrConfigured) "" else "未配置",
-            onClick = { env.go(SEC_ACCOUNTS) },
-            trailing = { Chevron() },
-        )
-        SettingsItem(
             iconRes = R.drawable.ic_ocr,
             title = "识别文字",
-            summary = if (!env.ocrConfigured) "需要先填入腾讯云密钥" else "",
+            summary = if (!env.ocrConfigured) "需要先在「账号与连接」填入腾讯云密钥" else "",
             onClick = {
                 if (!env.ocrConfigured) env.go(SEC_ACCOUNTS) else container.settings.setOcrEnabled(!settings.ocrEnabled)
             },

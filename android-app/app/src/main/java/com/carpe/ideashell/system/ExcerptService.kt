@@ -773,9 +773,10 @@ class ExcerptService : AccessibilityService() {
      * 带上选中的文字。拾忆自己的界面、银行 / 支付类应用、密码框一律不读；读不到返回 null。
      */
     fun readScreen(): com.carpe.ideashell.data.assistant.ScreenContext.Snapshot? {
-        val root = rootInActiveWindow ?: return null
-        val pkg = root.packageName?.toString() ?: return null
-        if (pkg == packageName || isSensitive(pkg)) return null
+        val root = rootInActiveWindow ?: run { lastReadFailure = "系统没有给出当前窗口"; return null }
+        val pkg = root.packageName?.toString() ?: run { lastReadFailure = "读不到当前应用"; return null }
+        if (pkg == packageName) { lastReadFailure = "当前是拾忆自己的界面"; return null }
+        if (isSensitive(pkg)) { lastReadFailure = "当前是银行 / 支付 / 系统设置类应用，不读取"; return null }
         val max = com.carpe.ideashell.data.assistant.ScreenContext.MAX_CHARS
         val budget = Budget(2500, 900L)
         val out = StringBuilder()
@@ -802,7 +803,7 @@ class ExcerptService : AccessibilityService() {
             for (i in 0 until n.childCount) n.getChild(i)?.let { walk(it, depth + 1) }
         }
         walk(root, 0)
-        if (out.isBlank()) return null
+        if (out.isBlank()) { lastReadFailure = "这个页面没有可读取的文字（阅读类应用常把正文画在自绘控件里）"; return null }
         return com.carpe.ideashell.data.assistant.ScreenContext.Snapshot(
             at = System.currentTimeMillis(),
             pkg = pkg,
@@ -810,6 +811,65 @@ class ExcerptService : AccessibilityService() {
             text = out.toString().take(max),
             selection = selected,
         )
+    }
+
+    /** 上一次 [readScreen] / [screenshotJpeg] 读不到的原因（给助手和用户看） */
+    @Volatile
+    var lastReadFailure: String = ""
+
+    /** 当前页面在读取范围内吗：不是拾忆自己、不是敏感应用 */
+    private fun currentPackageReadable(): String? {
+        val pkg = rootInActiveWindow?.packageName?.toString()
+        return when {
+            pkg == null -> { lastReadFailure = "系统没有给出当前窗口"; null }
+            pkg == packageName -> { lastReadFailure = "当前是拾忆自己的界面"; null }
+            isSensitive(pkg) -> { lastReadFailure = "当前是银行 / 支付 / 系统设置类应用，不读取"; null }
+            else -> pkg
+        }
+    }
+
+    /**
+     * 截取当前屏幕，压成 JPEG（长边不超过 2000 像素）：页面文字读不到时交给文字识别。
+     * 需要 Android 11+ 且无障碍服务声明了截屏能力；银行 / 支付类应用、拾忆自己的界面不截。读不到返回 null。
+     */
+    suspend fun screenshotJpeg(): ByteArray? {
+        if (android.os.Build.VERSION.SDK_INT < 30) { lastReadFailure = "系统版本太低，不能截屏"; return null }
+        if (currentPackageReadable() == null) return null
+        val bitmap = kotlinx.coroutines.withTimeoutOrNull(3000) {
+            kotlinx.coroutines.suspendCancellableCoroutine<android.graphics.Bitmap?> { cont ->
+                try {
+                    takeScreenshot(
+                        android.view.Display.DEFAULT_DISPLAY,
+                        mainExecutor,
+                        object : TakeScreenshotCallback {
+                            override fun onSuccess(result: ScreenshotResult) {
+                                val soft = runCatching {
+                                    android.graphics.Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
+                                        ?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                                }.getOrNull()
+                                runCatching { result.hardwareBuffer.close() }
+                                if (cont.isActive) cont.resumeWith(Result.success(soft))
+                            }
+
+                            override fun onFailure(errorCode: Int) {
+                                lastReadFailure = "截屏失败（$errorCode）"
+                                if (cont.isActive) cont.resumeWith(Result.success(null))
+                            }
+                        },
+                    )
+                } catch (e: Exception) {
+                    lastReadFailure = "不能截屏：" + (e.message ?: e.javaClass.simpleName)
+                    if (cont.isActive) cont.resumeWith(Result.success(null))
+                }
+            }
+        } ?: run { if (lastReadFailure.isBlank()) lastReadFailure = "截屏超时"; return null }
+        return kotlinx.coroutines.withContext(Dispatchers.Default) {
+            val scale = 2000f / maxOf(bitmap.width, bitmap.height)
+            val img = if (scale < 1f) android.graphics.Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true) else bitmap
+            val out = java.io.ByteArrayOutputStream()
+            img.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, out)
+            out.toByteArray()
+        }
     }
 
     private fun hideAll() {

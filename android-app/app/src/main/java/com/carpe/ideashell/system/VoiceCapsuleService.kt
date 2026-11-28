@@ -1,75 +1,30 @@
 package com.carpe.ideashell.system
 
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
-import android.animation.LayoutTransition
 import android.animation.ValueAnimator
 import android.animation.ObjectAnimator
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
 import android.content.res.Configuration
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.PixelFormat
-import android.graphics.Rect
-import android.graphics.RectF
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.app.KeyguardManager
 import android.content.pm.PackageManager
-import android.media.AudioAttributes
-import android.widget.Toast
 import android.provider.Settings
-import android.text.InputType
-import android.text.TextUtils
-import android.util.TypedValue
 import android.view.Choreographer
-import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
-import android.view.WindowInsets
-import android.view.WindowInsetsAnimation
 import android.view.WindowManager
-import android.view.animation.DecelerateInterpolator
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.ScrollView
 import android.widget.TextView
-import androidx.core.app.NotificationCompat
-import androidx.core.app.ServiceCompat
 import com.carpe.ideashell.IdeashellApp
-import com.carpe.ideashell.R
-import com.carpe.ideashell.core.parse.CaptureKind
-import com.carpe.ideashell.core.voice.VoiceIntent
 import com.carpe.ideashell.data.settings.ThemeMode
 import com.carpe.ideashell.core.voice.TodoOp
 import com.carpe.ideashell.core.voice.VoiceResult
-import com.carpe.ideashell.data.dida.DidaTask
-import com.carpe.ideashell.data.dida.TodoEditor
-import com.carpe.ideashell.data.voice.VoiceAgent
 import com.carpe.ideashell.data.voice.VoiceSearch
-import com.carpe.ideashell.data.voice.VoiceSession
-import com.carpe.ideashell.ui.capture.voiceIntentBody
-import com.carpe.ideashell.ui.capture.voiceIntentSchedule
 import com.carpe.ideashell.ui.components.VoiceInputController
 import com.carpe.ideashell.ui.components.VoicePhase
 import kotlinx.coroutines.CoroutineScope
@@ -77,16 +32,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.time.LocalDate
-import java.time.LocalTime
-import kotlin.math.PI
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.exp
-import kotlin.math.sin
-import kotlin.math.min
-import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 /**
  * 「语音记一条」的悬浮录音胶囊（贴在屏幕右边缘）：
@@ -100,25 +45,35 @@ import kotlin.math.sqrt
  */
 class VoiceCapsuleService : Service() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val handler = Handler(Looper.getMainLooper())
-    private val wm by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
-    private val settings get() = (application as IdeashellApp).container.settings
+    internal val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    internal val handler = Handler(Looper.getMainLooper())
+
+    internal val wm by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
+
+    internal val settings get() = (application as IdeashellApp).container.settings
 
     /** 贴右边缘的透明竖列窗口：里面是主面板（录音 / 整理 / 确认），或保存后的几个小胶囊 */
-    private var host: FrameLayout? = null
-    private var column: LinearLayout? = null
-    private var params: WindowManager.LayoutParams? = null
-    private var surface: FrameLayout? = null
-    private var restingY = 0
+    internal var host: FrameLayout? = null
+
+    internal var column: LinearLayout? = null
+
+    internal var params: WindowManager.LayoutParams? = null
+
+    internal var surface: FrameLayout? = null
+
+    internal var restingY = 0
 
     /** 面板当前所在的 y（窗口顶边） */
-    private var panelY = 0
+    internal var panelY = 0
 
-    private var voice: VoiceInputController? = null
-    private var shown = Shown.NONE
-    private var stopping = false
-    private var holdMode = false
+    internal var voice: VoiceInputController? = null
+
+    internal var shown = CapsuleShown.NONE
+
+    internal var stopping = false
+
+    internal var holdMode = false
 
     /**
      * 守候模式（设置里的「熄屏也能用」）：服务常驻，录完回到待机而不是退出。
@@ -128,122 +83,104 @@ class VoiceCapsuleService : Service() {
         private set
 
     /** 没有画面的录音（熄屏 / 锁屏）：不画胶囊，用震动反馈，结果直接保存 */
-    private var headless = false
-    private var keys: ScreenOffVoiceKeys? = null
+    internal var headless = false
+
+    internal var keys: ScreenOffVoiceKeys? = null
 
     // 录音面板里要刷新的控件
-    private var timerText: TextView? = null
-    private var wave: WaveView? = null
-    private var dotAnimator: ObjectAnimator? = null
-    private var recStart = 0L
-    private var lastTimerSec = -1
+    internal var timerText: TextView? = null
+
+    internal var wave: WaveView? = null
+
+    /** 录音胶囊里「已听到」的一行字（边说边识别出来的前几段）和它当前显示的内容 */
+    internal var liveText: TextView? = null
+    internal var liveShown = ""
+
+    /** 「正在整理」胶囊里的文字：回答生成时边生成边显示 */
+    internal var processingText: TextView? = null
+    @Volatile
+    private var pendingPartial: String? = null
+    private val partialRunnable = Runnable { pendingPartial?.let { setProcessingText(it) } }
+
+    /** 任意线程调用：把回答的最新文字交给界面（每 0.1 秒最多刷新一次） */
+    internal fun postPartial(text: String) {
+        pendingPartial = text
+        if (!handler.hasCallbacks(partialRunnable)) handler.postDelayed(partialRunnable, 100)
+    }
+
+    internal var dotAnimator: ObjectAnimator? = null
+
+    internal var recStart = 0L
+
+    internal var lastTimerSec = -1
 
     // 说完停顿自动结束
-    private var noise = 0f
-    private var speechMs = 0L
-    private var lastVoiceMs = 0L
-    private var lastTickMs = 0L
+    internal var noise = 0f
 
-    // 确认卡片
-    private enum class Mode(val label: String) {
-        AUTO("自动"), TODO("待办"), DAILY("日记"), NOTE("笔记"), APPEND("追加"), ASK("问 AI"), EDIT("改待办"),
-    }
+    internal var speechMs = 0L
 
-    /** [task]：对已有待办的操作（[Mode.EDIT]，具体是改 / 完成 / 删除见 [VoiceIntent.op]）找到的那条滴答待办，没找到为 null；改待办时 [text] 是要追加到备注的说明 */
-    private class Draft(var mode: Mode, var text: String, val intent: VoiceIntent?, var task: DidaTask? = null) {
-        /** 整理出来的原文：保存时和用户手改后的文字比一比，学习近音错字 */
-        val original: String = text
-    }
+    internal var lastVoiceMs = 0L
 
-    private fun Draft.isValid(): Boolean = text.isNotBlank() || mode == Mode.EDIT
+    internal var lastTickMs = 0L
 
-    private fun Draft.op(): TodoOp = intent?.op ?: TodoOp.EDIT
+    internal val drafts = ArrayList<CapsuleDraft>()
 
-    private fun Draft.editOf() = TodoEditor.Edit(intent?.date, intent?.time, text, intent?.priority ?: 0)
-
-    /** 卡片 / 小胶囊上的类型标签：待办操作按具体动作显示（改待办 / 完成待办 / 删除待办） */
-    private fun draftLabel(draft: Draft, saved: Boolean = false): String =
-        if (draft.mode == Mode.EDIT) draft.op().label else modeLabel(draft.mode, saved)
-
-    /** 待办操作的一句话摘要：「开会」改到 14:40，备注加「带上办公电脑」 / 完成「开会」 / 删除「开会」 */
-    private fun editSummary(draft: Draft): String {
-        val task = draft.task
-            ?: return "没找到要" + (when (draft.op()) { TodoOp.COMPLETE -> "完成"; TodoOp.DELETE -> "删除"; else -> "修改" }) +
-                "的待办" + (draft.intent?.target?.let { "「$it」" } ?: "")
-        return when (draft.op()) {
-            TodoOp.COMPLETE -> "完成「${task.title.take(24)}」"
-            TodoOp.DELETE -> "删除「${task.title.take(24)}」（不可恢复）"
-            else -> (application as IdeashellApp).container.todoEditor.describe(task, draft.editOf())
-        }
-    }
-
-    private val drafts = ArrayList<Draft>()
-    private var editing = false
+    internal var editing = false
 
     /** 松手自动保存：小胶囊倒计时，结束时才真正保存 */
-    private var countdown: ValueAnimator? = null
+    internal var countdown: ValueAnimator? = null
 
     // 编辑文字时跟着输入法上推：只认输入法「最终」的高度，用自己的动画平滑过去，
     // 不去跟系统输入法动画的逐帧数值（有的系统输入法会先冲过头再回落，卡片就会跟着乱弹）
     /** 输入法顶边在屏幕上的位置；Int.MAX_VALUE = 输入法没出来 */
-    private var imeTop = Int.MAX_VALUE
+    internal var imeTop = Int.MAX_VALUE
 
     /** 点中的输入框：悬浮窗拿到焦点之后才能弹出输入法，焦点来得晚时要补一次 */
-    private var imeTarget: View? = null
+    internal var imeTarget: View? = null
 
     /** 悬浮窗实际在屏幕上的位置减去 params.y（窗口避开状态栏带来的偏移） */
-    private var winOffset = 0
-    private var shiftAnimator: ValueAnimator? = null
-    private var shiftTarget = 0f
+    internal var winOffset = 0
 
-    private enum class Shown { NONE, RECORDING, PROCESSING, CONFIRM, PENDING, MESSAGE }
+    internal var shiftAnimator: ValueAnimator? = null
 
-    private class Palette(dark: Boolean) {
-        val bg = if (dark) 0xF01C1C1E.toInt() else 0xF7FFFFFF.toInt()
-        val stroke = if (dark) 0x26FFFFFF else 0x1F000000
-        val text = if (dark) 0xFFFFFFFF.toInt() else 0xFF1C1C1E.toInt()
-        val accentSoft = if (dark) 0xFFFFB48A.toInt() else 0xFFC4561F.toInt()
-        val chipBg = if (dark) 0x33E8794A else 0x1FE8794A
-        val green = if (dark) 0xFF7BE0A0.toInt() else 0xFF1E9E57.toInt()
-        val error = if (dark) 0xFFFFB4B4.toInt() else 0xFFC62828.toInt()
-    }
+    internal var shiftTarget = 0f
 
-    private var pal = Palette(true)
+    internal var pal = CapsulePalette(true)
 
-    private fun resolvePalette(): Palette {
+    internal fun resolvePalette(): CapsulePalette {
         val dark = when (settings.current.themeMode) {
             ThemeMode.DARK -> true
             ThemeMode.LIGHT -> false
             ThemeMode.SYSTEM -> (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         }
-        return Palette(dark)
+        return CapsulePalette(dark)
     }
 
     /** 跟着屏幕刷新（vsync）驱动，比 Handler 定时更跟手，波形滚动不会一顿一顿 */
-    private val frameCallback: Choreographer.FrameCallback = Choreographer.FrameCallback { tick.run() }
+    internal val frameCallback: Choreographer.FrameCallback = Choreographer.FrameCallback { tick.run() }
 
     /** 没有画面时屏幕不出帧（vsync 停了），改用 Handler 定时驱动（说完停顿自动结束要靠它） */
-    private val headlessTick = Runnable { tick.run() }
+    internal val headlessTick = Runnable { tick.run() }
 
-    private fun scheduleTick() {
+    internal fun scheduleTick() {
         if (headless) handler.postDelayed(headlessTick, 50) else Choreographer.getInstance().postFrameCallback(frameCallback)
     }
 
-    private fun stopTick() {
+    internal fun stopTick() {
         Choreographer.getInstance().removeFrameCallback(frameCallback)
         handler.removeCallbacks(headlessTick)
     }
 
-    private val tick: Runnable = object : Runnable {
+    internal val tick: Runnable = object : Runnable {
         override fun run() {
             if (stopping) return
             val v = voice ?: return
             when (v.phase) {
                 VoicePhase.RECORDING, VoicePhase.LOCKED -> {
-                    if (!headless && shown != Shown.RECORDING) renderRecording()
+                    if (!headless && shown != CapsuleShown.RECORDING) renderRecording()
                     onRecordingTick(v)
                 }
-                VoicePhase.PROCESSING -> if (headless) shown = Shown.PROCESSING else if (shown != Shown.PROCESSING) renderProcessing()
+                VoicePhase.PROCESSING -> if (headless) shown = CapsuleShown.PROCESSING else if (shown != CapsuleShown.PROCESSING) renderProcessing()
                 VoicePhase.IDLE -> Unit
             }
             scheduleTick()
@@ -272,7 +209,7 @@ class VoiceCapsuleService : Service() {
                 startForegroundNow()
                 val id = intent.getStringExtra(EXTRA_REPLAY_ID)
                 val v = voice
-                val busy = v != null && v.phase != VoicePhase.IDLE || shown == Shown.CONFIRM || shown == Shown.PENDING
+                val busy = v != null && v.phase != VoicePhase.IDLE || shown == CapsuleShown.CONFIRM || shown == CapsuleShown.PENDING
                 if (id == null || busy) {
                     if (voice == null) stopSelfClean()
                 } else {
@@ -295,7 +232,7 @@ class VoiceCapsuleService : Service() {
                     // 已经在录：点磁贴 / 快捷方式再来一次就是「完成」；按住说话的重复触发忽略
                     recording -> if (!hold) v?.finish()
                     // 正在整理 / 等着确认：不重复开始
-                    v != null && (shown == Shown.PROCESSING || shown == Shown.CONFIRM || shown == Shown.PENDING) -> Unit
+                    v != null && (shown == CapsuleShown.PROCESSING || shown == CapsuleShown.CONFIRM || shown == CapsuleShown.PENDING) -> Unit
                     // 锁屏界面上按住音量键：和熄屏一样，震动提示 + 兜底的最长时间
                     noScreen -> if (hold) beginHeadlessHold() else toggleHeadless()
                     else -> begin(hold, headless = false)
@@ -316,9 +253,7 @@ class VoiceCapsuleService : Service() {
         }
     }
 
-    // ───────────────────────────── 守候模式：熄屏也能用 ─────────────────────────────
-
-    private fun armService() {
+    internal fun armService() {
         armed = true
         if (!startArmedForeground()) {
             armed = false
@@ -344,61 +279,30 @@ class VoiceCapsuleService : Service() {
         stopSelfClean()
     }
 
-    /** 待机时的常驻通知（点「关闭」就关掉熄屏守候）。启动失败（系统不允许在后台起麦克风服务）返回 false */
-    private fun startArmedForeground(refreshOnly: Boolean = false): Boolean {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL_ARMED, "熄屏守候", NotificationManager.IMPORTANCE_LOW))
-        val off = PendingIntent.getService(
-            this, 1, Intent(this, VoiceCapsuleService::class.java).setAction(ACTION_DISARM),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val key = settings.current.voiceKey
-        val lockedKey = settings.current.voiceKeyLocked
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ARMED)
-            .setSmallIcon(R.drawable.ic_stat_shiyi)
-            .setContentTitle("拾忆 · 熄屏守候中")
-            .setContentText(if (key == com.carpe.ideashell.data.settings.VoiceKey.OFF) "先在设置里选一个音量键" else "熄屏 / 锁屏后按住${lockedKey.label}说话，松手自动保存")
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .addAction(0, "关闭", off)
-            .build()
-        // 已经是前台服务了（录完回到待机）：只换通知，不重新走一遍 startForeground
-        if (refreshOnly) {
-            nm.notify(NOTIFICATION_ID, notification)
-            return true
-        }
-        return runCatching {
-            val type = if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
-        }.onFailure {
-            Toast.makeText(this, "没能启动熄屏守候：" + (it.message ?: ""), Toast.LENGTH_LONG).show()
-        }.isSuccess
-    }
-
-    private fun canRecordHeadless(): Boolean {
+    internal fun canRecordHeadless(): Boolean {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             vibrate(VIB_ERROR)
             return false
         }
         val v = voice
         // 上一条还在录 / 识别 / 等确认：不重复开始
-        return !(v != null && v.phase != VoicePhase.IDLE) && shown == Shown.NONE
+        return !(v != null && v.phase != VoicePhase.IDLE) && shown == CapsuleShown.NONE
     }
 
     /** 熄屏：音量键按够长按时间 → 震一下，开始录音 */
-    private fun beginHeadlessHold() {
+    internal fun beginHeadlessHold() {
         android.util.Log.i("ShiyiKeys", "beginHeadlessHold")
         if (!canRecordHeadless()) return
         if (startHeadless(hold = true)) vibrate(VIB_START)
     }
 
     /** 熄屏：音量键抬起 → 震一下，结束录音并处理 */
-    private fun endHeadlessHold() {
+    internal fun endHeadlessHold() {
         finishHeadless()
     }
 
     /** 耳机键：没在录就开始，在录就结束 */
-    private fun toggleHeadless() {
+    internal fun toggleHeadless() {
         android.util.Log.i("ShiyiKeys", "toggleHeadless headless=$headless")
         val v = voice
         if (headless && v != null && (v.phase == VoicePhase.RECORDING || v.phase == VoicePhase.LOCKED)) {
@@ -409,7 +313,7 @@ class VoiceCapsuleService : Service() {
         if (startHeadless(hold = false)) vibrate(VIB_START)
     }
 
-    private fun startHeadless(hold: Boolean): Boolean {
+    internal fun startHeadless(hold: Boolean): Boolean {
         begin(hold, headless = true)
         val v = voice
         val recording = v != null && (v.phase == VoicePhase.RECORDING || v.phase == VoicePhase.LOCKED)
@@ -418,9 +322,9 @@ class VoiceCapsuleService : Service() {
         return recording
     }
 
-    private val maxHeadless = Runnable { finishHeadless() }
+    internal val maxHeadless = Runnable { finishHeadless() }
 
-    private fun finishHeadless() {
+    internal fun finishHeadless() {
         handler.removeCallbacks(maxHeadless)
         val v = voice ?: return
         if (headless && (v.phase == VoicePhase.RECORDING || v.phase == VoicePhase.LOCKED)) {
@@ -430,75 +334,14 @@ class VoiceCapsuleService : Service() {
     }
 
     /** 没有画面的录音处理完了：震动告知结果，回到待机 */
-    private fun headlessDone(ok: Boolean, detail: String? = null, searchQuery: String? = null, title: String? = null) {
+    internal fun headlessDone(ok: Boolean, detail: String? = null, searchQuery: String? = null, title: String? = null) {
         android.util.Log.i("ShiyiKeys", "headlessDone ok=$ok detail=$detail")
         vibrate(if (ok) VIB_OK else VIB_ERROR)
         if (!detail.isNullOrBlank()) postHeadlessResult(ok, detail, searchQuery, title)
         stopSelfClean()
     }
 
-    /** 没有画面时的结果：发一条通知，解锁后（锁屏上也看得到）能知道记下了什么，点开进拾忆 */
-    private fun postHeadlessResult(ok: Boolean, detail: String, searchQuery: String? = null, title: String? = null) {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_RESULT, "锁屏录音结果", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                setSound(null, null) // 已经震过了，通知本身不再响
-                enableVibration(false)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            },
-        )
-        val open = PendingIntent.getActivity(
-            this, if (searchQuery.isNullOrBlank()) 2 else 3 + (searchQuery.hashCode() and 0xFFFF),
-            Intent(this, com.carpe.ideashell.ui.MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                .apply { if (!searchQuery.isNullOrBlank()) putExtra(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_SEARCH, searchQuery) },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val notification = NotificationCompat.Builder(this, CHANNEL_RESULT)
-            .setSmallIcon(R.drawable.ic_stat_shiyi)
-            .setContentTitle(title ?: if (ok) "锁屏录音已保存" else "锁屏录音没成功")
-            .setContentText(detail)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setAutoCancel(true)
-            .setContentIntent(open)
-            .build()
-        // 每次一个新 id：连续录几条不会互相覆盖
-        runCatching { nm.notify(RESULT_ID_BASE + (System.currentTimeMillis() % 10_000).toInt(), notification) }
-            .onFailure { android.util.Log.w("ShiyiKeys", "notify failed", it) }
-    }
-
-    private fun vibrate(pattern: LongArray) {
-        val vibrator = if (Build.VERSION.SDK_INT >= 31) getSystemService(VibratorManager::class.java)?.defaultVibrator
-        else getSystemService(Vibrator::class.java)
-        // 用「闹钟」用途：熄屏 / 后台 / 静音模式下也会震
-        @Suppress("DEPRECATION")
-        vibrator?.vibrate(
-            VibrationEffect.createWaveform(pattern, -1),
-            AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build(),
-        )
-    }
-
-    private fun startForegroundNow() {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "语音记一条", NotificationManager.IMPORTANCE_LOW))
-        val finish = PendingIntent.getService(
-            this, 0, Intent(this, VoiceCapsuleService::class.java).setAction(ACTION_FINISH),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_shiyi)
-            .setContentTitle("拾忆 · 语音记一条")
-            .setContentText("正在录音，说完点「完成」")
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .addAction(0, "完成", finish)
-            .build()
-        val type = if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
-        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
-    }
-
-    private fun ensureController(): VoiceInputController {
+    internal fun ensureController(): VoiceInputController {
         val container = (application as IdeashellApp).container
         return voice ?: VoiceInputController(
             scope = scope,
@@ -509,6 +352,7 @@ class VoiceCapsuleService : Service() {
             lexicon = container.lexicon,
             extraHotwords = { container.voiceContext.hotwords() },
             todoContext = { container.voiceContext.todoLines() },
+            skillNames = { container.assistantSkills.names() },
             history = container.voiceHistory,
             voicePrint = container.voicePrint,
             onError = { showMessage(it, error = true) },
@@ -517,7 +361,7 @@ class VoiceCapsuleService : Service() {
     }
 
     /** 语音历史里的「重新识别（[audio]）/ 重新整理」：显示「正在识别整理」，结果和平时一样走确认卡片 / 自动保存 */
-    private fun replay(id: String, audio: Boolean) {
+    internal fun replay(id: String, audio: Boolean) {
         if (!Settings.canDrawOverlays(this)) {
             stopSelfClean()
             return
@@ -545,12 +389,14 @@ class VoiceCapsuleService : Service() {
         }
     }
 
-    private fun begin(hold: Boolean, headless: Boolean = false) {
+    internal fun begin(hold: Boolean, headless: Boolean = false) {
         this.headless = headless
         if (!headless && !Settings.canDrawOverlays(this)) {
             stopSelfClean()
             return
         }
+        // 新一轮录音开始：别让上一段语音回答还在响（也免得被麦克风录进去）
+        (application as IdeashellApp).container.speech.stop()
         val controller = ensureController()
         holdMode = hold
         stopping = false
@@ -559,13 +405,15 @@ class VoiceCapsuleService : Service() {
         pal = resolvePalette()
         if (!headless) ensureColumn()
         if (!controller.start()) return // start() 已经通过 onError 说明了原因
+        // 趁用户还停在要问的那一页：先抓一份屏幕文字（后台线程；只在内存里，说到「这页」时才会带给 AI）
+        scope.launch(Dispatchers.Default) { runCatching { com.carpe.ideashell.data.assistant.ScreenContext.snapshotNow() } }
         recStart = SystemClock.uptimeMillis()
         lastTimerSec = -1
         noise = 0f
         speechMs = 0L
         lastVoiceMs = 0L
         lastTickMs = 0L
-        if (headless) shown = Shown.RECORDING else renderRecording()
+        if (headless) shown = CapsuleShown.RECORDING else renderRecording()
         stopTick()
         scheduleTick()
         if (hold && pendingRelease) {
@@ -575,9 +423,7 @@ class VoiceCapsuleService : Service() {
         }
     }
 
-    // ───────────────────────────── 录音中的刷新与自动结束 ─────────────────────────────
-
-    private fun onRecordingTick(v: VoiceInputController) {
+    internal fun onRecordingTick(v: VoiceInputController) {
         val elapsed = SystemClock.uptimeMillis() - recStart
         val sec = (elapsed / 1000).toInt()
         if (sec != lastTimerSec) {
@@ -587,6 +433,21 @@ class VoiceCapsuleService : Service() {
 
         // 声波：位置固定的一排竖条，每帧弹性地靠近各自的目标高度（见 [WaveView]）
         wave?.update(v.level, elapsed)
+
+        // 边说边识别：前几段识别完了，把「已听到」显示在波形下面
+        val live = v.partial
+        if (live != liveShown) {
+            liveShown = live
+            liveText?.let { tv ->
+                if (live.isBlank()) {
+                    tv.visibility = View.GONE
+                } else {
+                    tv.text = if (live.length > 36) "…" + live.takeLast(36) else live
+                    tv.visibility = View.VISIBLE
+                }
+                recenter()
+            }
+        }
 
         // 说完停顿自动结束：说话达到一小段后，安静超过设定时间就结束；一直没人说话就放弃
         if (holdMode || !settings.current.voiceAutoStop) return
@@ -612,9 +473,7 @@ class VoiceCapsuleService : Service() {
         }
     }
 
-    // ───────────────────────────── 结果：确认或直接保存 ─────────────────────────────
-
-    private fun onResult(result: VoiceResult) {
+    internal fun onResult(result: VoiceResult) {
         // 说了指令（长录音 / 新建笔记 / 打开 AI）：丢掉这段，直接去闪念贝壳执行
         val command = result.command
         if (command != null) {
@@ -643,6 +502,7 @@ class VoiceCapsuleService : Service() {
             for (s in searches) found += VoiceSearch.find((application as IdeashellApp).container, s)
             // 「我昨天做了哪些事」：让语音助手（大模型 + 查数据的工具）基于你自己的记录回答
             val answers = result.intents.filter { it.answer }
+            if (answers.isNotEmpty() && !headless) setProcessingText("正在思考…")
             for (a in answers) found += answerOf((application as IdeashellApp).container, a.content, result.raw)
             val queryText = found.joinToString("\n") { it.text }
             val rest = result.intents.filterNot { (it.edit && it.op == TodoOp.QUERY) || it.searchScope != null || it.answer }
@@ -659,7 +519,7 @@ class VoiceCapsuleService : Service() {
             val note = listOfNotNull(result.polishError, queryText.ifBlank { null }).joinToString("\n").ifBlank { null }
             // 没有画面（熄屏 / 锁屏）：没法确认，直接保存；删除待办不可恢复，这种情况下一律不执行
             if (headless) {
-                val safe = built.filterNot { it.mode == Mode.EDIT && it.op() == TodoOp.DELETE }
+                val safe = built.filterNot { it.mode == CapsuleMode.EDIT && it.op() == TodoOp.DELETE }
                 if (safe.isEmpty()) {
                     headlessDone(false)
                 } else {
@@ -670,185 +530,16 @@ class VoiceCapsuleService : Service() {
                 return@launch
             }
             // 删除待办不可恢复：即使开了「松手自动保存」也要弹出确认卡片，由用户点保存
-            val needsConfirm = drafts.any { it.mode == Mode.EDIT && it.op() == TodoOp.DELETE && it.task != null }
+            val needsConfirm = drafts.any { it.mode == CapsuleMode.EDIT && it.op() == TodoOp.DELETE && it.task != null }
             // 开了「松手自动保存」：不弹确认卡片，只显示小胶囊倒计时；点它才展开卡片修改
             if (settings.current.voiceAutoSend && !needsConfirm) renderPending(note) else renderConfirm(note)
         }
     }
 
-    /** 跑一次语音助手回答；失败也返回一条能显示的文字，不抛异常。回答放进「最近对话」，下一句追问能接上 */
-    private suspend fun answerOf(container: com.carpe.ideashell.AppContainer, question: String, raw: String): VoiceSearch.Result = try {
-        val a = VoiceAgent.answer(container, question, VoiceSession.format(VoiceSession.recent().filter { it.raw != raw }))
-        VoiceSession.attach(raw, "回答：" + a.text)
-        VoiceSearch.Result(a.text, a.hits, "", isAnswer = true)
-    } catch (e: kotlinx.coroutines.CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        VoiceSearch.Result("没能回答：" + (e.message ?: "未知错误"), emptyList(), "", isAnswer = true)
-    }
-
-    private suspend fun buildDrafts(result: VoiceResult): List<Draft> {
-        val editor = (application as IdeashellApp).container.todoEditor
-        if (result.intents.isEmpty()) {
-            return listOf(Draft(if (result.appendToLast) Mode.APPEND else Mode.AUTO, result.cleaned, null))
-        }
-        return result.intents.map { intent ->
-            if (intent.edit) return@map Draft(Mode.EDIT, intent.content, intent, editor.find(intent.target))
-            val mode = when {
-                intent.ask -> Mode.ASK
-                intent.append -> Mode.APPEND
-                else -> when (intent.type) {
-                    CaptureKind.TODO -> Mode.TODO
-                    CaptureKind.DAILY -> Mode.DAILY
-                    CaptureKind.NOTE -> Mode.NOTE
-                }
-            }
-            Draft(mode, intent.content, intent)
-        }
-    }
-
-    /** [undo] 不为空：保存后的小胶囊上带「撤销」（语音完成 / 修改待办时给一次反悔的机会） */
-    private class SavedItem(val tag: String, val text: String, val undo: (suspend () -> Result<String>)? = null)
-
-    /** [quiet]：自动保存倒计时结束后的保存，小胶囊原地变成 ✓ 很快收起，不再重复滑出 */
-    private suspend fun saveAll(list: List<Draft>, note: String?, quiet: Boolean = false) {
-        val app = application as IdeashellApp
-        val captures = app.container.captures
-        val saved = mutableListOf<SavedItem>()
-        val asks = mutableListOf<String>()
-        val failures = mutableListOf<String>()
-        // 在确认卡片里把同音错字改对了：记下来，下次识别 / 整理自动改对
-        val learned = list.filter { it.mode != Mode.EDIT && it.text != it.original }
-            .mapNotNull { app.container.lexicon.learnFromEdit(it.original, it.text) }
-            .map { "已记住「${it.first}→${it.second}」" }
-        list.filter { it.isValid() }.forEach { draft ->
-            val text = draft.text.trim()
-            if (draft.mode == Mode.EDIT) {
-                val task = draft.task
-                if (task == null) {
-                    failures += editSummary(draft)
-                } else {
-                    val editor = app.container.todoEditor
-                    val op = draft.op()
-                    val edit = draft.editOf()
-                    val result = when (op) {
-                        TodoOp.COMPLETE -> editor.complete(task)
-                        TodoOp.DELETE -> editor.delete(task)
-                        else -> editor.apply(task, edit)
-                    }
-                    // 完成 / 修改可以撤销；删除不可恢复，没有撤销
-                    val undo: (suspend () -> Result<String>)? = when (op) {
-                        TodoOp.COMPLETE -> ({ editor.undoComplete(task) })
-                        TodoOp.DELETE -> null
-                        else -> ({ editor.undoApply(task, edit) })
-                    }
-                    result
-                        .onSuccess { saved += SavedItem(op.label, it, undo) }
-                        .onFailure { failures += "${op.label}失败：" + (it.message ?: "未知错误") }
-                }
-                return@forEach
-            }
-            if (draft.mode == Mode.ASK) {
-                asks += text
-                return@forEach
-            }
-            val intent = draft.intent
-            val kind = when (draft.mode) {
-                Mode.TODO -> CaptureKind.TODO
-                Mode.DAILY -> CaptureKind.DAILY
-                Mode.NOTE, Mode.APPEND -> CaptureKind.NOTE
-                else -> null
-            }
-            val body = if (intent != null) voiceIntentBody(intent.copy(content = text)) else text
-            val isTodo = draft.mode == Mode.TODO && intent != null
-            val schedule = if (isTodo) voiceIntentSchedule(intent!!) else null
-            if (captures.submitText(body, kind, ORIGIN, schedule = schedule, appendToLast = draft.mode == Mode.APPEND) != null) {
-                val whenText = if (isTodo) scheduleText(intent!!.date, intent.time) else ""
-                saved += SavedItem(modeLabel(draft.mode, saved = true), (if (whenText.isNotEmpty()) "$whenText · " else "") + text)
-            }
-        }
-        if (asks.isNotEmpty()) {
-            // 和快速输入面板一致：交给闪念贝壳 AI（无障碍开着就自动点发送）；转交失败就记成一条笔记，不丢
-            val question = asks.joinToString("\n")
-            if (IdeashellBridge.askAi(this, question, preferAutoSend = true)) {
-                saved += SavedItem("问 AI", question)
-            } else if (captures.submitText(question, CaptureKind.NOTE, ORIGIN) != null) {
-                saved += SavedItem("笔记", question)
-            }
-        }
-        if (saved.isEmpty()) {
-            showMessage(failures.firstOrNull() ?: "没有可保存的内容", error = true)
-            return
-        }
-        val tail = (listOfNotNull(note) + failures + learned).joinToString("；").ifBlank { null }
-        showSaved(saved, tail, quiet && failures.isEmpty() && learned.isEmpty() && saved.none { it.undo != null })
-    }
-
-    private fun modeLabel(mode: Mode, saved: Boolean = false): String =
-        if (saved && mode == Mode.AUTO) "已保存" else mode.label
-
-    private fun scheduleText(date: LocalDate?, time: LocalTime?): String {
-        if (date == null) return ""
-        val today = LocalDate.now()
-        val day = when (date) {
-            today -> "今天"
-            today.plusDays(1) -> "明天"
-            today.plusDays(2) -> "后天"
-            else -> "${date.monthValue}月${date.dayOfMonth}日"
-        }
-        return if (time != null) day + " %02d:%02d".format(time.hour, time.minute) else day
-    }
-
-    // ───────────────────────────── 窗口 ─────────────────────────────
-
-    private fun newTransition() = LayoutTransition().apply {
-        enableTransitionType(LayoutTransition.CHANGING)
-        setDuration(260)
-        setInterpolator(LayoutTransition.CHANGING, DecelerateInterpolator(1.6f))
-    }
-
-    private fun ensureColumn(): LinearLayout {
-        column?.let { return it }
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.END
-            // 面板变宽 / 变高时平滑过渡，而不是一下子跳过去
-            layoutTransition = newTransition()
-        }
-        // 外面套一层 FrameLayout：平时窗口贴内容大小；编辑文字时窗口铺满全屏，列用 topMargin 留在原位，再跟着输入法上推
-        val h = FrameLayout(this)
-        h.addView(col, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END))
-        restingY = (resources.displayMetrics.heightPixels * 0.62f -
-            TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_MM, 5f, resources.displayMetrics)).toInt()
-        panelY = restingY
-        val p = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.END
-            y = restingY
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
-        }
-        wm.addView(h, p)
-        host = h
-        column = col
-        params = p
-        return col
-    }
-
-    private fun updateWindow() {
-        val h = host ?: return
-        val p = params ?: return
-        runCatching { wm.updateViewLayout(h, p) }
-    }
-
     /** 卡片高度变了（输入换行等）或窗口刚铺满：按最新高度重新算该推多高 */
-    private val columnLayoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> retargetShift(animate = false) }
+    internal val columnLayoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> retargetShift(animate = false) }
 
-    private val restoreWindow = Runnable {
+    internal val restoreWindow = Runnable {
         if (editing) return@Runnable
         val p = params ?: return@Runnable
         val h = host ?: return@Runnable
@@ -870,884 +561,12 @@ class VoiceCapsuleService : Service() {
         updateWindow()
     }
 
-    /**
-     * 面板（录音胶囊 / 小胶囊 / 确认卡片）都以同一条水平线为中心：内容换了、变高了，窗口随之上下对称地长，
-     * 所以小胶囊点开成卡片时是上下等距地原地张开，不会整体上跳或下沉。
-     */
-    private fun recenter() {
-        val h = host ?: return
-        val p = params ?: return
-        if (editing) return
-        // 刚退出编辑、窗口还铺满全屏（卡片还在随输入法落回去）：内容既然要换了，直接落定再居中
-        if (p.height != WindowManager.LayoutParams.WRAP_CONTENT) {
-            handler.removeCallbacks(restoreWindow)
-            restoreWindow.run()
-        }
-        val dm = resources.displayMetrics
-        h.measure(
-            View.MeasureSpec.makeMeasureSpec(dm.widthPixels, View.MeasureSpec.AT_MOST),
-            View.MeasureSpec.makeMeasureSpec(dm.heightPixels, View.MeasureSpec.AT_MOST),
-        )
-        val y = (restingY + dp(CENTER_OFFSET_DP) - h.measuredHeight / 2).coerceAtLeast(dp(24))
-        panelY = y
-        p.y = y
-        // 录音时窗口一次性开到最宽：波形变宽只是窗口里的视图在长，不用每帧都让系统重排整个悬浮窗，才顺滑
-        p.width = if (shown == Shown.RECORDING) dp(RECORD_WINDOW_DP).coerceAtMost(dm.widthPixels) else WindowManager.LayoutParams.WRAP_CONTENT
-        updateWindow()
-    }
-
-    private fun surfaceScreenRect(): Rect? {
-        val s = surface ?: return null
-        if (s.parent !== column || s.width == 0 || s.height == 0) return null
-        val loc = IntArray(2)
-        s.getLocationOnScreen(loc)
-        return Rect(loc[0], loc[1], loc[0] + s.width, loc[1] + s.height)
-    }
-
-    /** 从 [from]（旧小胶囊在屏幕上的位置）原地张开成当前面板：用裁剪框从小到大，上下左右同时展开 */
-    private fun expandFrom(from: Rect) {
-        val s = surface ?: return
-        val loc = IntArray(2)
-        ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 300
-            interpolator = DecelerateInterpolator(1.8f)
-            addUpdateListener { a ->
-                if (!s.isAttachedToWindow || s.width == 0 || s.height == 0) {
-                    s.clipBounds = Rect(0, 0, 0, 0) // 还没排好版：先不显示，免得闪一下完整卡片
-                    return@addUpdateListener
-                }
-                val t = a.animatedValue as Float
-                s.getLocationOnScreen(loc)
-                val fl = loc[0]
-                val ft = loc[1]
-                val fr = loc[0] + s.width
-                val fb = loc[1] + s.height
-                fun lerp(x: Int, y: Int) = x + ((y - x) * t).toInt()
-                s.clipBounds = Rect(
-                    lerp(from.left, fl) - fl,
-                    lerp(from.top, ft) - ft,
-                    lerp(from.right, fr) - fl,
-                    lerp(from.bottom, fb) - ft,
-                )
-            }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {
-                    s.clipBounds = null
-                    if (!stopping) column?.layoutTransition = newTransition()
-                }
-            })
-            start()
-        }
-    }
-
-    /**
-     * 点到文字框：悬浮窗拿焦点，再平滑地把卡片推到输入法正上方；点卡片外面的空白处收起输入法。
-     *
-     * 窗口的顶边和左右边这一刻都不动，只是往下加高（给输入法的高度信息和上移留出余地）——
-     * 窗口顶边一动，系统会在新画面画好之前先把旧画面摆在新位置，看起来就是卡片从屏幕上方「闪下来」。
-     * 之后「上推」是整个窗口的纵向位置平滑上移，窗口大小不再变化。
-     */
-    private fun enterEditMode() {
-        val p = params ?: return
-        val h = host ?: return
-        val col = column ?: return
-        if (editing) return
-        editing = true
-        handler.removeCallbacks(restoreWindow)
-        cancelShift()
-        imeTop = Int.MAX_VALUE
-        winOffset = IntArray(2).also { h.getLocationOnScreen(it) }[1] - p.y
-        p.flags = (p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()) or
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-        p.height = resources.displayMetrics.heightPixels
-        updateWindow()
-        h.setOnClickListener { exitEditMode() }
-        // 点到卡片之外（别的应用上）也收起输入法
-        h.setOnTouchListener { _, event ->
-            if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) exitEditMode()
-            false
-        }
-        h.addOnLayoutChangeListener(columnLayoutListener)
-        col.addOnLayoutChangeListener(columnLayoutListener)
-        // 系统在输入法动画开始时就把「最终」的输入法高度交给这里；动画中间的数值一概不理
-        h.setOnApplyWindowInsetsListener { _, insets ->
-            if (Build.VERSION.SDK_INT >= 30) updateImeTop(insets.getInsets(WindowInsets.Type.ime()).bottom)
-            insets
-        }
-        if (Build.VERSION.SDK_INT >= 30) {
-            h.setWindowInsetsAnimationCallback(object : WindowInsetsAnimation.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
-                override fun onProgress(insets: WindowInsets, runningAnimations: MutableList<WindowInsetsAnimation>): WindowInsets = insets
-
-                override fun onEnd(animation: WindowInsetsAnimation) {
-                    // 动画走完再核对一次最终高度（比如输入法换了高度）
-                    h.rootWindowInsets?.let { updateImeTop(it.getInsets(WindowInsets.Type.ime()).bottom) }
-                }
-            })
-        }
-        // 悬浮窗要等系统把焦点给它之后，输入法才能弹出来：点击那一刻窗口多半还没拿到焦点，焦点一到就补弹一次
-        if (!h.hasWindowFocus()) {
-            h.viewTreeObserver.addOnWindowFocusChangeListener(object : android.view.ViewTreeObserver.OnWindowFocusChangeListener {
-                override fun onWindowFocusChanged(hasFocus: Boolean) {
-                    if (!hasFocus) return
-                    if (h.viewTreeObserver.isAlive) h.viewTreeObserver.removeOnWindowFocusChangeListener(this)
-                    val v = imeTarget ?: return
-                    if (!editing) return
-                    v.requestFocus()
-                    (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(v, InputMethodManager.SHOW_IMPLICIT)
-                }
-            })
-        }
-        h.requestApplyInsets()
-    }
-
-    /** 输入法占的高度（相对窗口底边）换算成它的顶边在屏幕上的位置，再按新位置重算上推 */
-    private fun updateImeTop(insetBottom: Int) {
-        val h = host ?: return
-        if (!editing) return
-        val top = if (insetBottom <= 0) {
-            Int.MAX_VALUE
-        } else {
-            val loc = IntArray(2)
-            h.getLocationOnScreen(loc)
-            // 窗口往下伸出了屏幕：系统给的输入法高度是按「屏幕内可见部分」的底边算的，所以底边要取屏幕底
-            min(loc[1] + h.height, resources.displayMetrics.heightPixels) - insetBottom
-        }
-        if (top == imeTop) return
-        imeTop = top
-        retargetShift(animate = true)
-    }
-
-    /** 卡片该上推多少（负数 = 窗口比原位置往上移多少）：卡片底边停在输入法上方，同时顶边离屏幕顶部不少于 40dp */
-    private fun computeShift(): Float {
-        val col = column ?: return 0f
-        if (imeTop == Int.MAX_VALUE) return 0f
-        val avail = imeTop - dp(10)
-        // 窗口在屏幕上的实际位置比 params.y 低一个状态栏高度（winOffset），这里统一按屏幕坐标算
-        val panelTop = panelY + winOffset
-        val targetTop = min(panelTop, avail - col.height).coerceAtLeast(min(panelTop, dp(40)))
-        return (targetTop - panelTop).toFloat()
-    }
-
-    private fun currentShift(): Float = ((params?.y ?: panelY) - panelY).toFloat()
-
-    private fun setShift(v: Float) {
-        val p = params ?: return
-        p.y = panelY + v.roundToInt()
-        updateWindow()
-    }
-
-    /**
-     * 重新算上推高度。[animate]：输入法升起 / 落下这类大幅变化用一次平滑动画过去；
-     * 打字换行引起的小幅变化（卡片本身的高度变化已经有布局动画）直接跟上，不重启动画。
-     */
-    private fun retargetShift(animate: Boolean) {
-        if (column == null || !editing) return
-        val target = computeShift()
-        shiftTarget = target
-        if (shiftAnimator != null) return // 正在动：它每帧读最新的 shiftTarget
-        val diff = target - currentShift()
-        when {
-            kotlin.math.abs(diff) < 1f -> Unit
-            animate || kotlin.math.abs(diff) > dp(48) -> animateShift(target, 280L)
-            else -> setShift(target)
-        }
-    }
-
-    private fun animateShift(target: Float, durationMs: Long, onEnd: (() -> Unit)? = null) {
-        if (column == null) {
-            onEnd?.invoke()
-            return
-        }
-        cancelShift()
-        shiftTarget = target
-        val from = currentShift()
-        if (kotlin.math.abs(target - from) < 1f) {
-            setShift(target)
-            onEnd?.invoke()
-            return
-        }
-        shiftAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = durationMs
-            interpolator = DecelerateInterpolator(2f)
-            addUpdateListener { a ->
-                val t = a.animatedValue as Float
-                setShift(from + (shiftTarget - from) * t)
-            }
-            addListener(object : AnimatorListenerAdapter() {
-                private var cancelled = false
-                override fun onAnimationCancel(animation: Animator) {
-                    cancelled = true
-                }
-
-                override fun onAnimationEnd(animation: Animator) {
-                    if (cancelled) return
-                    shiftAnimator = null
-                    setShift(shiftTarget)
-                    onEnd?.invoke()
-                }
-            })
-            start()
-        }
-    }
-
-    private fun cancelShift() {
-        shiftAnimator?.cancel()
-        shiftAnimator = null
-    }
-
-    private fun exitEditMode() {
-        if (!editing) return
-        editing = false
-        imeTop = Int.MAX_VALUE
-        val col = column
-        // 收输入法的同时卡片平滑落回原位；落定后再把窗口缩回内容大小
-        col?.let { c ->
-            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(c.windowToken, 0)
-            c.findFocus()?.clearFocus()
-        }
-        host?.setOnClickListener(null)
-        host?.setOnTouchListener(null)
-        host?.isClickable = false
-        handler.removeCallbacks(restoreWindow)
-        animateShift(0f, 220L) { restoreWindow.run() }
-    }
-
-    // ───────────────────────────── 面板：录音 / 整理 / 确认 ─────────────────────────────
-
-    /** 主面板的外壳：贴右边缘，左边圆头、右边贴屏幕边 */
-    private fun ensureSurface(): FrameLayout {
-        surface?.let { if (it.parent === column) return it }
-        val col = ensureColumn()
-        col.removeAllViews()
-        val s = FrameLayout(this).apply {
-            background = capsuleBackground(26)
-            elevation = dp(8).toFloat()
-            isClickable = true // 吃掉点击，免得落到外层「点空白处收起输入法」
-        }
-        col.addView(s, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        surface = s
-        slideIn(s, 0L)
-        return s
-    }
-
-    /** 换面板内容：旧的淡出、新的淡入，外壳的宽高由 [LayoutTransition] 平滑过渡 */
-    private fun swap(content: View, onSwapped: (() -> Unit)? = null) {
-        val s = ensureSurface()
-        val old = s.getChildAt(0)
-        if (old == null) {
-            s.addView(content)
-            recenter()
-            onSwapped?.invoke()
-            return
-        }
-        for (i in 1 until s.childCount) s.getChildAt(i).animate().alpha(0f).setDuration(90).start()
-        old.animate().alpha(0f).setDuration(90).withEndAction {
-            s.removeAllViews()
-            content.alpha = 0f
-            s.addView(content)
-            content.animate().alpha(1f).setDuration(200).setStartDelay(60).start()
-            recenter()
-            onSwapped?.invoke()
-        }.start()
-    }
-
-    private fun renderRecording() {
-        shown = Shown.RECORDING
-        dotAnimator?.cancel()
-        column?.layoutTransition = newTransition()
-        // 进入录音面板的过渡做完后关掉布局动画：录音时波形区域每帧都在微微变宽，不能再套动画
-        handler.postDelayed({ if (shown == Shown.RECORDING) column?.layoutTransition = null }, 420)
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(18), dp(9), dp(12), dp(9))
-        }
-        val redDot = View(this).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(RED)
-            }
-        }
-        row.addView(redDot, LinearLayout.LayoutParams(dp(10), dp(10)).apply { marginEnd = dp(10) })
-        // 红点慢慢「呼吸」
-        dotAnimator = ObjectAnimator.ofFloat(redDot, View.ALPHA, 1f, 0.3f).apply {
-            duration = 700
-            repeatMode = ObjectAnimator.REVERSE
-            repeatCount = ObjectAnimator.INFINITE
-            start()
-        }
-        val timer = label("0:00", 18f, bold = true)
-        timer.typeface = Typeface.create(Typeface.DEFAULT_BOLD, Typeface.NORMAL)
-        row.addView(timer, LinearLayout.LayoutParams(dp(46), LinearLayout.LayoutParams.WRAP_CONTENT))
-        timerText = timer
-        val w = WaveView(this, pal.text)
-        row.addView(w, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(30)).apply {
-            marginStart = dp(4)
-            marginEnd = dp(12)
-        })
-        wave = w
-        row.addView(stopButton(), LinearLayout.LayoutParams(dp(38), dp(38)))
-        row.addView(
-            label("×", 22f).apply {
-                gravity = Gravity.CENTER
-                alpha = 0.65f
-                contentDescription = "取消"
-                pressable()
-                setOnClickListener {
-                    voice?.cancel()
-                    dismissWithSlide()
-                }
-            },
-            LinearLayout.LayoutParams(dp(38), dp(38)).apply { marginStart = dp(2) },
-        )
-        swap(row)
-    }
-
-    private fun renderProcessing() {
-        shown = Shown.PROCESSING
-        dotAnimator?.cancel()
-        column?.layoutTransition = newTransition()
-        wave = null
-        timerText = null
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(18), dp(11), dp(14), dp(11))
-        }
-        row.addView(
-            ProgressBar(this).apply {
-                isIndeterminate = true
-                indeterminateTintList = android.content.res.ColorStateList.valueOf(ACCENT)
-            },
-            LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(10) },
-        )
-        row.addView(label("正在识别整理…", 15f), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            marginEnd = dp(14)
-        })
-        row.addView(
-            label("放弃", 14f).apply {
-                alpha = 0.65f
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                pressable()
-                setOnClickListener {
-                    voice?.cancel()
-                    dismissWithSlide()
-                }
-            },
-        )
-        swap(row)
-    }
-
-    /** 确认卡片：整理后的文字可直接改，类型可点着切换，底部 放弃 / 重新说 / 保存 */
-    private fun renderConfirm(note: String?) {
-        // 从「正在整理」或倒计时小胶囊点开：记下它现在在屏幕上的位置，等卡片排好版后从这里原地张开
-        val from = if (shown == Shown.PENDING || shown == Shown.PROCESSING) surfaceScreenRect() else null
-        val fromPending = shown == Shown.PENDING
-        shown = Shown.CONFIRM
-        dotAnimator?.cancel()
-        cancelCountdown()
-        val keep = surface
-        if (fromPending) {
-            keep?.apply {
-                setOnClickListener(null)
-                setOnTouchListener(null)
-                isClickable = true // 变成卡片后吃掉点击，不再触发「展开」
-                scaleX = 1f
-                scaleY = 1f
-            }
-            // 其余的小胶囊淡出，卡片排好版时再移除
-            column?.let { col ->
-                (0 until col.childCount).map { col.getChildAt(it) }.filter { it !== keep }
-                    .forEach { it.animate().alpha(0f).setDuration(90).start() }
-            }
-        }
-        // 张开用裁剪框动画，期间不再套布局过渡
-        column?.layoutTransition = if (from != null) null else newTransition()
-        wave = null
-        timerText = null
-        stopTick()
-        val maxWidth = minOf(dp(330), resources.displayMetrics.widthPixels - dp(20))
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(14), dp(14), dp(10))
-            minimumWidth = maxWidth
-        }
-        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        head.addView(label("确认记录", 13f, bold = true).apply { alpha = 0.6f })
-        if (!note.isNullOrBlank()) {
-            head.addView(
-                label(note, 11f).apply {
-                    alpha = 0.45f
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                    setPadding(dp(8), 0, 0, 0)
-                },
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
-            )
-        }
-        card.addView(head)
-
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        fun rebuildRows() {
-            list.removeAllViews()
-            drafts.forEachIndexed { index, draft -> list.addView(draftRow(draft, index) { rebuildRows() }) }
-        }
-        rebuildRows()
-        val scroll = ScrollView(this).apply {
-            isVerticalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            addView(list)
-        }
-        card.addView(
-            scroll,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) },
-        )
-
-        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL or Gravity.END }
-        buttons.addView(textButton("放弃") { exitEditMode(); dismissWithSlide() })
-        buttons.addView(textButton("重新说") {
-            exitEditMode()
-            drafts.clear()
-            begin(false)
-        })
-        buttons.addView(
-            label("保存", 15f, bold = true).apply {
-                setTextColor(ON_ACCENT)
-                gravity = Gravity.CENTER
-                background = GradientDrawable().apply {
-                    setColor(ACCENT)
-                    cornerRadius = dp(20).toFloat()
-                }
-                setPadding(dp(22), dp(9), dp(22), dp(9))
-                pressable()
-                setOnClickListener {
-                    exitEditMode()
-                    val snapshot = drafts.toList()
-                    scope.launch { saveAll(snapshot, note) }
-                }
-            },
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6) },
-        )
-        card.addView(
-            buttons,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) },
-        )
-        swap(card) {
-            column?.let { col ->
-                (0 until col.childCount).map { col.getChildAt(it) }.filter { it !== surface }.forEach { col.removeView(it) }
-            }
-            recenter()
-            if (from != null) expandFrom(from) else column?.layoutTransition = newTransition()
-        }
-    }
-
-    /** 确认卡片里的一件事：类型小标签 + 可编辑的文字 + 待办的日期 + 删除 */
-    private fun draftRow(draft: Draft, index: Int, onChanged: () -> Unit): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(6), 0, dp(6))
-        }
-        val chip = label(draftLabel(draft), 12f, bold = true).apply {
-            setTextColor(pal.accentSoft)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                setColor(pal.chipBg)
-                cornerRadius = dp(12).toFloat()
-            }
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-            pressable()
-            setOnClickListener {
-                if (draft.mode == Mode.EDIT) return@setOnClickListener // 改待办的类型不能换
-                draft.mode = nextMode(draft.mode, draft.intent != null)
-                text = draftLabel(draft)
-                onChanged()
-            }
-        }
-        row.addView(chip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(2)
-            marginEnd = dp(10)
-        })
-        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val edit = EditText(this).apply {
-            setText(draft.text)
-            setTextColor(pal.text)
-            setHintTextColor((pal.text and 0x00FFFFFF) or 0x66000000)
-            hint = if (draft.mode == Mode.EDIT) "补充到待办备注（可留空）" else "说的内容"
-            // 完成 / 删除待办没有可补充的文字，不显示输入框
-            if (draft.mode == Mode.EDIT && draft.op() != TodoOp.EDIT) visibility = View.GONE
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            background = null
-            setPadding(0, dp(2), 0, dp(2))
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            imeOptions = EditorInfo.IME_ACTION_DONE
-            setHorizontallyScrolling(false)
-            maxLines = 5
-            setOnTouchListener { v, event ->
-                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-                    imeTarget = v
-                    enterEditMode()
-                    v.post {
-                        v.requestFocus()
-                        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(v, InputMethodManager.SHOW_IMPLICIT)
-                    }
-                }
-                false
-            }
-            setOnEditorActionListener { _, actionId, _ ->
-                if (actionId == EditorInfo.IME_ACTION_DONE) {
-                    exitEditMode()
-                    true
-                } else {
-                    false
-                }
-            }
-            addTextChangedListener(object : android.text.TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
-                override fun afterTextChanged(s: android.text.Editable?) {
-                    draft.text = s?.toString().orEmpty()
-                }
-            })
-        }
-        if (draft.mode == Mode.EDIT) {
-            // 先说清楚改的是哪一条、改成什么；找不到就用红字提醒
-            body.addView(
-                label(editSummary(draft), 15f, bold = true).apply {
-                    if (draft.task == null || draft.op() == TodoOp.DELETE) setTextColor(pal.error)
-                },
-                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
-            )
-        }
-        body.addView(edit, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        val intent = draft.intent
-        if (draft.mode == Mode.TODO && intent != null) {
-            val whenText = scheduleText(intent.date, intent.time) + (intent.repeat?.let { " · $it" } ?: "")
-            if (whenText.isNotBlank()) body.addView(label(whenText, 12f).apply { setTextColor(pal.accentSoft) })
-        }
-        row.addView(body, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        if (drafts.size > 1) {
-            row.addView(
-                label("×", 20f).apply {
-                    gravity = Gravity.CENTER
-                    alpha = 0.55f
-                    contentDescription = "去掉这一项"
-                    pressable()
-                    setOnClickListener {
-                        drafts.removeAt(index)
-                        onChanged()
-                    }
-                },
-                LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginStart = dp(4) },
-            )
-        }
-        return row
-    }
-
-    private fun nextMode(mode: Mode, hasIntent: Boolean): Mode {
-        val order = if (hasIntent) listOf(Mode.TODO, Mode.DAILY, Mode.NOTE, Mode.APPEND, Mode.ASK)
-        else listOf(Mode.AUTO, Mode.TODO, Mode.DAILY, Mode.NOTE, Mode.APPEND, Mode.ASK)
-        val i = order.indexOf(mode)
-        return order[(i + 1) % order.size]
-    }
-
-    /** 松手自动保存：不弹确认卡片，每条一个小胶囊 + 倒计时细线；点任意一个展开确认卡片，倒计时走完才真正保存 */
-    private fun renderPending(note: String?) {
-        shown = Shown.PENDING
-        stopTick()
-        dotAnimator?.cancel()
-        wave = null
-        timerText = null
-        val col = ensureColumn()
-        col.layoutTransition = newTransition()
-        col.removeAllViews()
-        surface = null
-        val lines = ArrayList<View>()
-        drafts.filter { it.isValid() }.forEachIndexed { index, draft ->
-            val intent = draft.intent
-            val whenText = if (draft.mode == Mode.TODO && intent != null) scheduleText(intent.date, intent.time) else ""
-            val box = FrameLayout(this).apply {
-                background = capsuleBackground(26)
-                elevation = dp(8).toFloat()
-                isClickable = true
-                pressable()
-                setOnClickListener { renderConfirm(note) }
-            }
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(16), dp(9), dp(14), dp(13))
-            }
-            row.addView(label(draftLabel(draft, saved = true).let { if (draft.mode == Mode.AUTO) "记录" else it }, 12f, bold = true).apply {
-                setTextColor(pal.accentSoft)
-                setPadding(0, 0, dp(8), 0)
-            })
-            row.addView(
-                label(
-                    if (draft.mode == Mode.EDIT) editSummary(draft)
-                    else (if (whenText.isNotEmpty()) "$whenText · " else "") + draft.text.trim().take(60),
-                    15f,
-                ).apply {
-                    maxWidth = dp(230)
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                },
-            )
-            box.addView(row, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT))
-            val line = View(this).apply {
-                setBackgroundColor(ACCENT)
-                alpha = 0.75f
-                pivotX = 0f
-            }
-            box.addView(line, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(2), Gravity.BOTTOM).apply {
-                marginStart = dp(16)
-                marginEnd = dp(14)
-                bottomMargin = dp(6)
-            })
-            lines += line
-            addSmall(box, index * 120L)
-            // 第一条小胶囊同时是「主面板」：点开时它原地长成确认卡片
-            if (index == 0) surface = box
-        }
-        if (!note.isNullOrBlank()) {
-            val box = smallPill()
-            box.addView(label(note, 12f).apply { maxWidth = dp(260); alpha = 0.8f })
-            addSmall(box, lines.size * 120L)
-        }
-        recenter()
-        val snapshot = drafts.toList()
-        countdown = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = PENDING_MS
-            interpolator = android.view.animation.LinearInterpolator()
-            addUpdateListener { a ->
-                val f = a.animatedValue as Float
-                lines.forEach { it.scaleX = 1f - f }
-            }
-            addListener(object : AnimatorListenerAdapter() {
-                private var cancelled = false
-                override fun onAnimationCancel(animation: Animator) {
-                    cancelled = true
-                }
-
-                override fun onAnimationEnd(animation: Animator) {
-                    if (!cancelled && !stopping) scope.launch { saveAll(snapshot, note, quiet = true) }
-                }
-            })
-            startDelay = 300
-            start()
-        }
-    }
-
-    private fun cancelCountdown() {
+    internal fun cancelCountdown() {
         countdown?.cancel()
         countdown = null
     }
 
-    /** 保存成功：每条记录一个小胶囊，依次从右侧滑出；整理出几条就是几个 */
-    private fun showSaved(items: List<SavedItem>, note: String?, quiet: Boolean = false) {
-        if (stopping) return
-        if (headless) {
-            val text = items.joinToString("\n") { "${it.tag}：${it.text}" }.take(400)
-            headlessDone(true, if (note.isNullOrBlank()) text else "$text\n$note")
-            return
-        }
-        stopTick()
-        dotAnimator?.cancel()
-        cancelCountdown()
-        shown = Shown.MESSAGE
-        val col = ensureColumn()
-        col.removeAllViews()
-        surface = null
-        items.forEachIndexed { index, item ->
-            val box = smallPill()
-            box.addView(label("✓", 15f, bold = true).apply { setTextColor(pal.green) }, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { marginEnd = dp(8) })
-            box.addView(label(item.tag, 12f, bold = true).apply {
-                setTextColor(pal.accentSoft)
-                setPadding(0, 0, dp(8), 0)
-            })
-            box.addView(
-                label(item.text.take(60), 15f).apply {
-                    maxWidth = dp(220)
-                    maxLines = 2
-                    ellipsize = TextUtils.TruncateAt.END
-                },
-            )
-            val undo = item.undo
-            if (undo != null) {
-                box.addView(
-                    textButton("撤销") {
-                        // 点过一次就不再响应；旧的「自动收起」计时作废，由结果提示自己收起
-                        handler.removeCallbacksAndMessages(null)
-                        scope.launch {
-                            val r = undo()
-                            showMessage(r.fold(onSuccess = { it }, onFailure = { "撤销失败：" + (it.message ?: "未知错误") }), error = r.isFailure)
-                        }
-                    }.apply { setTextColor(pal.accentSoft); alpha = 1f },
-                )
-            }
-            addSmall(box, if (quiet) 0L else index * 140L, animate = !quiet)
-        }
-        if (!note.isNullOrBlank() && !quiet) {
-            val box = smallPill()
-            box.addView(label(note, 12f).apply { maxWidth = dp(260); alpha = 0.8f })
-            addSmall(box, items.size * 140L)
-        }
-        recenter()
-        col.setOnClickListener { dismissWithSlide() }
-        // 带「撤销」的多停留一会儿，给用户反悔的时间
-        val hasUndo = items.any { it.undo != null }
-        handler.postDelayed({ dismissWithSlide() }, if (hasUndo) 7000L else if (quiet) 1100L else 2800L + items.size * 400L)
-    }
-
-    /** 搜索 / 查询结果：不自动消失的卡片，每条可点（笔记 → 拾忆里的笔记页，待办 → 待办页），最后一行去搜索页看全部 */
-    private fun showResults(res: VoiceSearch.Result) {
-        if (stopping) return
-        if (headless) {
-            // 没有画面：结果放进通知（点开进搜索页）
-            val lines = res.hits.take(VoiceSearch.MAX_LINES).joinToString("\n") { "· ${it.title}" }
-            val text = if (lines.isBlank()) res.text else res.text + "\n" + lines
-            headlessDone(true, text, searchQuery = res.keyword.takeIf { res.hits.isNotEmpty() }, title = if (res.isAnswer) "语音回答" else "语音搜索")
-            return
-        }
-        if (res.hits.isEmpty()) {
-            showMessage(res.text, error = false, durationMs = if (res.isAnswer) 12_000L else 3500L)
-            return
-        }
-        stopTick()
-        dotAnimator?.cancel()
-        cancelCountdown()
-        exitEditMode()
-        shown = Shown.MESSAGE
-        val col = ensureColumn()
-        col.removeAllViews()
-        surface = null
-        handler.removeCallbacksAndMessages(null)
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = capsuleBackground(22)
-            setPadding(dp(16), dp(10), dp(8), dp(8))
-            elevation = dp(8).toFloat()
-        }
-        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        head.addView(label(res.text, if (res.isAnswer) 15f else 13f, bold = !res.isAnswer).apply {
-            setTextColor(if (res.isAnswer) pal.text else pal.accentSoft)
-            maxWidth = dp(if (res.isAnswer) 250 else 220)
-        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        head.addView(textButton("关闭") { dismissWithSlide() })
-        card.addView(head)
-        fun open(extra: String, value: String) {
-            startActivity(
-                Intent(this, com.carpe.ideashell.ui.MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    .putExtra(extra, value),
-            )
-            dismissWithSlide()
-        }
-        res.hits.take(VoiceSearch.MAX_LINES).forEach { hit ->
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(9), dp(8), dp(9))
-                pressable()
-                setOnClickListener {
-                    if (hit.isNote) open(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_NOTE, hit.id)
-                    else open(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_TASK, hit.id)
-                }
-            }
-            row.addView(label(if (hit.isNote) "笔记" else "待办", 11f, bold = true).apply {
-                setTextColor(pal.accentSoft)
-                setPadding(0, 0, dp(10), 0)
-            })
-            row.addView(label(hit.title, 15f).apply {
-                maxWidth = dp(190)
-                maxLines = 2
-                ellipsize = TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            if (hit.sub.isNotBlank()) row.addView(label(hit.sub, 12f).apply { alpha = 0.6f; setPadding(dp(8), 0, 0, 0) })
-            card.addView(row)
-        }
-        if (res.keyword.isNotBlank() && res.hits.size > VoiceSearch.MAX_LINES) {
-            card.addView(textButton("查看全部 ${res.hits.size} 条") { open(com.carpe.ideashell.ui.MainActivity.EXTRA_OPEN_SEARCH, res.keyword) }.apply {
-                setTextColor(pal.accentSoft); alpha = 1f
-                gravity = Gravity.START
-                setPadding(0, dp(9), dp(14), dp(9))
-            })
-        }
-        addSmall(card)
-        recenter()
-        // 结果要留给人看、点：停留一分钟，点「关闭」或点某条才收起
-        handler.postDelayed({ dismissWithSlide() }, 60_000L)
-    }
-
-    private fun showMessage(message: String, error: Boolean, durationMs: Long = if (error) 4000L else 2500L) {
-        if (stopping) return
-        if (headless) {
-            // 没听到声音：这类手机熄屏 / 锁屏时系统吃掉了「按下」，要先轻按、震动后再说话，提示里带上用法
-            val hint = if (error && message.contains("没有听到声音")) "没有听到声音：先轻按一下音量键，震动后再说话（不要按着说）" else message
-            headlessDone(!error, hint)
-            return
-        }
-        stopTick()
-        dotAnimator?.cancel()
-        cancelCountdown()
-        exitEditMode()
-        shown = Shown.MESSAGE
-        val col = ensureColumn()
-        col.removeAllViews()
-        surface = null
-        val box = smallPill()
-        box.addView(label(message, 15f).apply {
-            maxWidth = dp(260)
-            if (error) setTextColor(pal.error)
-        })
-        addSmall(box)
-        recenter()
-        col.setOnClickListener { dismissWithSlide() }
-        handler.postDelayed({ dismissWithSlide() }, durationMs)
-    }
-
-    private fun smallPill(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        background = capsuleBackground(22)
-        setPadding(dp(16), dp(9), dp(14), dp(9))
-        elevation = dp(8).toFloat()
-    }
-
-    private fun addSmall(view: View, delayMs: Long = 0L, animate: Boolean = true) {
-        val col = ensureColumn()
-        col.addView(view, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            if (col.childCount > 0) topMargin = dp(8)
-        })
-        if (animate) slideIn(view, delayMs)
-    }
-
-    private fun slideIn(view: View, delayMs: Long) {
-        view.translationX = dp(360).toFloat()
-        view.animate().translationX(0f).setStartDelay(delayMs).setDuration(300)
-            .setInterpolator(DecelerateInterpolator(1.8f)).start()
-    }
-
-    /** 整列向右滑出屏幕，再收尾 */
-    private fun dismissWithSlide() {
-        val col = column
-        if (col == null || stopping) {
-            stopSelfClean()
-            return
-        }
-        exitEditMode()
-        stopping = true
-        handler.removeCallbacksAndMessages(null)
-        dotAnimator?.cancel()
-        col.layoutTransition = null
-        col.animate().translationX(col.width.toFloat() + dp(20)).setDuration(220)
-            .setInterpolator(android.view.animation.AccelerateInterpolator())
-            .withEndAction { stopSelfClean() }.start()
-    }
-
-    private fun stopSelfClean() {
+    internal fun stopSelfClean() {
         stopping = true
         cancelShift()
         stopTick()
@@ -1767,10 +586,10 @@ class VoiceCapsuleService : Service() {
     }
 
     /** 守候模式下一条记录结束：不退出服务，清掉这一轮的状态，通知改回「守候中」 */
-    private fun resetToIdle() {
+    internal fun resetToIdle() {
         voice?.let { if (it.phase != VoicePhase.IDLE) it.cancel() }
         drafts.clear()
-        shown = Shown.NONE
+        shown = CapsuleShown.NONE
         holdMode = false
         headless = false
         editing = false
@@ -1798,173 +617,13 @@ class VoiceCapsuleService : Service() {
         super.onDestroy()
     }
 
-    // ───────────────────────────── 小工具 ─────────────────────────────
-
-    private fun capsuleBackground(radiusDp: Int): GradientDrawable {
-        val r = dp(radiusDp).toFloat()
-        return GradientDrawable().apply {
-            setColor(pal.bg)
-            setStroke(dp(1), pal.stroke)
-            // 左边圆头，右边贴屏幕边缘
-            cornerRadii = floatArrayOf(r, r, 0f, 0f, 0f, 0f, r, r)
-        }
-    }
-
-    private fun label(value: String, sp: Float, bold: Boolean = false) = TextView(this).apply {
-        text = value
-        setTextColor(pal.text)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
-        if (bold) typeface = Typeface.DEFAULT_BOLD
-    }
-
-    private fun textButton(value: String, onClick: () -> Unit) = label(value, 15f).apply {
-        alpha = 0.75f
-        gravity = Gravity.CENTER
-        setPadding(dp(14), dp(9), dp(14), dp(9))
-        pressable()
-        setOnClickListener { onClick() }
-    }
-
-    /** 录音面板上的停止键：红色圆里一个白色圆角方块 */
-    private fun stopButton(): View = FrameLayout(this).apply {
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(RED)
-        }
-        contentDescription = "完成"
-        addView(Square(this@VoiceCapsuleService), FrameLayout.LayoutParams(dp(12), dp(12), Gravity.CENTER))
-        pressable()
-        setOnClickListener { voice?.finish() }
-    }
-
-    /** 按下时轻轻缩小一点，松手弹回（点击回调不受影响） */
-    @android.annotation.SuppressLint("ClickableViewAccessibility")
-    private fun View.pressable() {
-        setOnTouchListener { v, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80).start()
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
-            }
-            false
-        }
-    }
-
-    private class Square(context: Context) : View(context) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        override fun onDraw(canvas: Canvas) {
-            canvas.drawRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), width * 0.22f, height * 0.22f, paint)
-        }
-    }
-
-    /**
-     * 声波：一排竖条，靠右（停止键一侧）对齐，随录音时间慢慢向左变长，约 [GROW_MS] 后固定。
-     * 竖条位置固定、只有高度在动：音量先做「起得快、落得慢」的平滑，每根有自己的起伏相位、中间的更高，
-     * 每一帧按真实帧间隔让高度指数式靠近目标；变长时左边新出现的竖条是渐显的。
-     * 宽度只是视图在窗口里长大（窗口是预先开到最宽的），不触发系统重排悬浮窗。
-     */
-    private class WaveView(context: Context, color: Int) : View(context) {
-        private val density = resources.displayMetrics.density
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = color
-            strokeCap = Paint.Cap.ROUND
-            strokeWidth = 2.6f * density
-        }
-        private val slot = 5.2f * density
-        private val minW = 26f * density
-        private val maxW = WAVE_MAX_DP * density
-        private val maxBars = (maxW / slot).toInt() + 2
-        private val heights = FloatArray(maxBars)
-        private val phases = FloatArray(maxBars) { i -> ((i * 37) % 11) * 0.57f }
-        private var desiredW = minW
-        private var live = 0f
-        private var clock = 0f
-        private var lastNow = 0L
-
-        fun update(level: Float, elapsedMs: Long) {
-            val now = SystemClock.uptimeMillis()
-            val dt = (if (lastNow == 0L) 16L else (now - lastNow).coerceIn(1L, 50L)) / 1000f
-            lastNow = now
-
-            // 变长：正弦缓出，开头快一点、接近上限时慢慢收住
-            val f = (elapsedMs.toFloat() / GROW_MS).coerceIn(0f, 1f)
-            val w = minW + (maxW - minW) * sin(f * (PI / 2)).toFloat()
-            if (abs(w - desiredW) >= 0.5f) {
-                desiredW = w
-                requestLayout()
-            }
-
-            val tau = if (level > live) 0.05f else 0.28f
-            live += (level.coerceIn(0f, 1f) - live) * (1f - exp(-dt / tau))
-            val amp = sqrt(live)
-            clock += dt
-            val follow = 1f - exp(-dt / 0.07f)
-            val half = (desiredW / 2).coerceAtLeast(1f)
-            for (i in 0 until maxBars) {
-                val x = desiredW - slot / 2 - i * slot
-                val centerWeight = 0.55f + 0.45f * cos(((x - half) / half).coerceIn(-1f, 1f) * (PI / 2)).toFloat()
-                val wobble = 0.5f + 0.5f * sin(clock * 6f + i * 0.75f + phases[i])
-                val target = amp * centerWeight * (0.3f + 0.7f * wobble)
-                heights[i] += (target - heights[i]) * follow
-            }
-            invalidate()
-        }
-
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            setMeasuredDimension(desiredW.toInt(), MeasureSpec.getSize(heightMeasureSpec).takeIf { it > 0 } ?: (30 * density).toInt())
-        }
-
-        override fun onDraw(canvas: Canvas) {
-            val minH = 3.5f * density
-            val w = width.toFloat()
-            for (i in 0 until maxBars) {
-                val x = w - slot / 2 - i * slot
-                if (x < slot / 4) break
-                val h = (minH + (height - minH) * heights[i].coerceIn(0f, 1f)).coerceAtMost(height.toFloat())
-                // 左边缘新长出来的竖条渐显
-                paint.alpha = (255 * (x / (slot * 2.5f)).coerceIn(0f, 1f)).toInt()
-                canvas.drawLine(x, (height - h) / 2, x, (height + h) / 2, paint)
-            }
-        }
-    }
-
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density + 0.5f).toInt()
-
     companion object {
-        private const val CHANNEL = "voice_capsule"
-        private const val CHANNEL_ARMED = "voice_capsule_armed"
-        private const val CHANNEL_RESULT = "voice_headless_result"
-        private const val RESULT_ID_BASE = 20_000
-        private const val NOTIFICATION_ID = 7301
 
         /** 熄屏录音的最长时间：松手事件万一丢了，到点自动结束 */
         private const val HEADLESS_MAX_MS = 60_000L
 
-        // 震动节奏（关屏时没有画面，靠它知道到哪一步了）
-        private val VIB_START = longArrayOf(0, 35)
-        private val VIB_STOP = longArrayOf(0, 25)
-        private val VIB_OK = longArrayOf(0, 30, 80, 30)
-        private val VIB_ERROR = longArrayOf(0, 260)
-        private const val ORIGIN = "voice"
-
-        /** 面板共同的水平中心线，离 [restingY]（录音胶囊顶边）的距离：录音胶囊高 56dp，所以是 28 */
-        private const val CENTER_OFFSET_DP = 28
-
-        /** 录音时悬浮窗的固定宽度：录音面板里除波形外约 190dp，加上波形最宽的 [WAVE_MAX_DP] */
-        private const val WAVE_MAX_DP = 132
-        private const val RECORD_WINDOW_DP = 190 + WAVE_MAX_DP + 6
-
-        /** 波形从最窄长到最宽用的时间，之后宽度固定 */
-        private const val GROW_MS = 8000L
-
-        /** 松手自动保存：小胶囊倒计时多久后保存 */
-        private const val PENDING_MS = 3000L
-
         /** 一直没人说话就放弃的时间 */
         private const val NO_SPEECH_MS = 6000L
-
-        private const val RED = 0xFFFF4D4F.toInt()
-        private const val ACCENT = 0xFFE8794A.toInt()
-        private const val ON_ACCENT = 0xFF24150C.toInt()
 
         const val ACTION_FINISH = "com.carpe.ideashell.action.VOICE_CAPSULE_FINISH"
         const val ACTION_CANCEL = "com.carpe.ideashell.action.VOICE_CAPSULE_CANCEL"

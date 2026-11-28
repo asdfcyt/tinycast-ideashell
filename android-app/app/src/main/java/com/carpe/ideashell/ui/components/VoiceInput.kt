@@ -88,6 +88,10 @@ import com.carpe.ideashell.system.VoiceRecorder
 import com.carpe.ideashell.ui.theme.Brand
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -123,6 +127,7 @@ class VoiceInputController(
     private val extraHotwords: () -> List<String>,
     /** 用户目前未完成的待办（「任务名｜日期 时间」）：给大模型判断「改 / 完成 / 删除哪一条」，也帮它修正人名项目名 */
     private val todoContext: () -> List<String> = { emptyList() },
+    private val skillNames: () -> List<String> = { emptyList() },
     /** 语音历史（设置里开着才留底）：每次录音存原始录音，之后补上原话和整理结果；null 不留底 */
     private val history: VoiceHistory? = null,
     /** 本机声纹：设置里开着且已录入你的声音，识别前先比对，不像你就不识别；null 不比对 */
@@ -138,6 +143,10 @@ class VoiceInputController(
     var phase by mutableStateOf(VoicePhase.IDLE)
         private set
     var level by mutableFloatStateOf(0f)
+        private set
+
+    /** 边说边识别：已经识别完的前几段文字（说完一小段停顿后就送去识别，不用等全部说完）；还没有为空 */
+    var partial by mutableStateOf("")
         private set
     var elapsedMs by mutableLongStateOf(0L)
         private set
@@ -194,13 +203,66 @@ class VoiceInputController(
         elapsedMs = 0
         cancelHint = false
         phase = VoicePhase.RECORDING
+        resetSegments(cancelJobs = true)
+        // 录音的同时把到识别服务 / 大模型的连接建好，说完直接复用
+        scope.launch(Dispatchers.IO) { runCatching { asr.prewarm(); llm.prewarm() } }
         ticker = scope.launch {
+            var lastTick = SystemClock.elapsedRealtime()
             while (phase == VoicePhase.RECORDING || phase == VoicePhase.LOCKED) {
-                elapsedMs = SystemClock.elapsedRealtime() - startedAt
+                val now = SystemClock.elapsedRealtime()
+                elapsedMs = now - startedAt
+                if (segmentsEnabled() && cutter.feed(level, now - lastTick)) cutSegment()
+                lastTick = now
                 delay(100)
             }
         }
         return true
+    }
+
+    // ───────────────────────── 边说边识别 ─────────────────────────
+
+    /** 一小段说完（停顿够久）的判断：见 [SegmentCutter] */
+    private val cutter = SegmentCutter()
+    private val segJobs = ArrayList<Deferred<Result<String>>>()
+    private var segCut = 0
+
+    /** 只在用云端识别时切段（本地模型跑在手机上，录音时再占 CPU 会拖慢录音） */
+    private fun segmentsEnabled(): Boolean = engine != VoiceEngine.LOCAL && asr.configured
+
+    private fun resetSegments(cancelJobs: Boolean) {
+        if (cancelJobs) segJobs.forEach { it.cancel() }
+        segJobs.clear()
+        segCut = 0
+        cutter.reset()
+        partial = ""
+    }
+
+    /** 把从上次切点到现在的这一段录音立刻送去识别（在后台跑），继续录下一段 */
+    private fun cutSegment() {
+        val end = recorder.sizeBytes and 1.inv()
+        if (end - segCut < 32 * 600) return
+        val pcm = recorder.slice(segCut, end)
+        segCut = end
+        cutter.reset(keepNoise = true)
+        val hot = lexicon.hotwordsFor(extraHotwords())
+        val job = scope.async(Dispatchers.IO) { runCatching { asr.recognize(pcm, hot) } }
+        segJobs += job
+        scope.launch {
+            job.await()
+            refreshPartial()
+        }
+    }
+
+    /** 前面连续识别完成的几段拼起来，给界面当「已听到」 */
+    private fun refreshPartial() {
+        val texts = ArrayList<String>()
+        for (j in segJobs) {
+            if (!j.isCompleted) break
+            val r = runCatching { j.getCompleted() }.getOrNull() ?: break
+            val t = r.getOrNull() ?: break
+            texts += t
+        }
+        if (phase == VoicePhase.RECORDING || phase == VoicePhase.LOCKED) partial = joinSegments(texts.map { lexicon.apply(it) })
     }
 
     /** 下拖锁定：松手后继续录，点「完成」才结束 */
@@ -218,9 +280,13 @@ class VoiceInputController(
         cancelHint = false
         level = 0f
         ticker?.cancel()
+        // 已经切出去的段落交给 process 收尾（只剩最后一小段要等识别）
+        val pre = segJobs.toList()
+        val cut = segCut
+        segJobs.clear()
         processing = scope.launch {
             val pcm = recorder.stop()
-            process(pcm)
+            process(pcm, preSegments = pre, preCut = cut)
         }
     }
 
@@ -230,6 +296,7 @@ class VoiceInputController(
             VoicePhase.RECORDING, VoicePhase.LOCKED -> {
                 ticker?.cancel()
                 recorder.cancel()
+                resetSegments(cancelJobs = true)
             }
             VoicePhase.PROCESSING -> processing?.cancel()
             VoicePhase.IDLE -> Unit
@@ -244,6 +311,7 @@ class VoiceInputController(
         if (phase == VoicePhase.RECORDING || phase == VoicePhase.LOCKED) recorder.cancel()
         ticker?.cancel()
         processing?.cancel()
+        resetSegments(cancelJobs = true)
         phase = VoicePhase.IDLE
     }
 
@@ -261,7 +329,12 @@ class VoiceInputController(
         processing = scope.launch { guarded { deliver(raw, null, historyId) } }
     }
 
-    private suspend fun process(pcm: ByteArray, replayId: String? = null) = guarded {
+    private suspend fun process(
+        pcm: ByteArray,
+        replayId: String? = null,
+        preSegments: List<Deferred<Result<String>>> = emptyList(),
+        preCut: Int = 0,
+    ) = guarded {
         val durationMs = pcm.size / 32L // 16kHz × 16 位 = 每毫秒 32 字节
         if (durationMs < MIN_MS) {
             onError("说话时间太短，按住说完再松手")
@@ -269,25 +342,31 @@ class VoiceInputController(
         }
         // 先把录音留底：识别失败了也还能重试
         val historyId = replayId ?: if (settings.current.voiceHistory) history?.begin(pcm, durationMs) else null
-        // 声纹：不像你的声音就不识别。从历史里「重新识别」（replayId 不为空）不拦，等于强制识别
-        if (replayId == null && settings.current.voiceprintEnabled && voicePrint != null) {
-            val check = voicePrint.check(pcm, settings.current.voiceprintLevel)
-            if (check != null && !check.passed) {
-                if (historyId != null) history?.update(historyId, error = "声纹不匹配（${check.text}）· 点「重新识别」可强制识别")
-                onError(
-                    "不像是你的声音（${check.text}），已忽略" +
-                        if (historyId != null) "；录音在语音历史里，可强制重新识别" else "",
-                )
-                return@guarded
-            }
-        }
         val hot = lexicon.hotwordsFor(extraHotwords())
-        val heard = try {
-            recognize(pcm, hot)
-        } catch (e: AsrException) {
-            if (historyId != null) history?.update(historyId, error = "识别失败：" + (e.message ?: "未知错误"))
-            throw e
-        }
+        // 声纹比对和识别同时进行（不像你的声音时丢掉识别结果）。从历史里「重新识别」（replayId 不为空）不拦，等于强制识别
+        val heard = coroutineScope {
+            val recog = async {
+                try {
+                    recognizeSegmented(pcm, hot, preSegments, preCut)
+                } catch (e: AsrException) {
+                    if (historyId != null) history?.update(historyId, error = "识别失败：" + (e.message ?: "未知错误"))
+                    throw e
+                }
+            }
+            if (replayId == null && settings.current.voiceprintEnabled && voicePrint != null) {
+                val check = voicePrint.check(pcm, settings.current.voiceprintLevel)
+                if (check != null && !check.passed) {
+                    recog.cancel()
+                    if (historyId != null) history?.update(historyId, error = "声纹不匹配（${check.text}）· 点「重新识别」可强制识别")
+                    onError(
+                        "不像是你的声音（${check.text}），已忽略" +
+                            if (historyId != null) "；录音在语音历史里，可强制重新识别" else "",
+                    )
+                    return@coroutineScope null
+                }
+            }
+            recog.await()
+        } ?: return@guarded
         val raw = lexicon.apply(heard.text)
         if (raw.isBlank()) {
             if (historyId != null) history?.update(historyId, error = "没有听清")
@@ -317,7 +396,7 @@ class VoiceInputController(
             try {
                 val now = LocalDateTime.now()
                 val reply = llm.chatJson(
-                    VoiceIntents.systemPrompt(now, vocabulary = hot, todos = todoContext()),
+                    VoiceIntents.systemPrompt(now, vocabulary = hot, todos = todoContext(), skills = skillNames()),
                     VoiceIntents.userPrompt(raw, VoiceSession.contextBlock()),
                 )
                 // 「半小时后」这类相对时间，本地再精确算一遍
@@ -424,8 +503,100 @@ class VoiceInputController(
         }
     }
 
+    /**
+     * 有切好的段落时：前面几段早就在识别了，这里只补识别最后一小段再拼起来；
+     * 任何一段失败（或拼出来是空的）就整段重新识别一遍（走原来的流程，含本地兜底）。
+     */
+    private suspend fun recognizeSegmented(pcm: ByteArray, hot: List<String>, pre: List<Deferred<Result<String>>>, cut: Int): Heard {
+        if (pre.isEmpty()) return recognize(pcm, hot)
+        val parts = ArrayList<String>()
+        for (j in pre) {
+            val r = j.await()
+            val text = r.getOrNull()
+            if (text == null) {
+                val e = r.exceptionOrNull()
+                if (e is CancellationException) throw e
+                return recognize(pcm, hot)
+            }
+            parts += text
+        }
+        if (tailHasSpeech(pcm, cut)) {
+            try {
+                parts += asr.recognize(pcm.copyOfRange(cut.coerceAtMost(pcm.size), pcm.size), hot)
+            } catch (e: AsrException) {
+                return recognize(pcm, hot)
+            }
+        }
+        val text = joinSegments(parts)
+        return if (text.isBlank()) recognize(pcm, hot) else Heard(text)
+    }
+
+    /** 最后一小段里有没有人声（0.1 秒一窗的音量，够大才算）：没有就不用再识别了 */
+    private fun tailHasSpeech(pcm: ByteArray, from: Int): Boolean {
+        val start = from.coerceAtMost(pcm.size) and 1.inv()
+        if ((pcm.size - start) / 32 < TAIL_MIN_MS) return false
+        val window = 3200 // 0.1 秒 = 1600 个采样点 = 3200 字节
+        var i = start
+        while (i + window <= pcm.size) {
+            var sum = 0.0
+            var k = i
+            while (k < i + window) {
+                val v = ((pcm[k + 1].toInt() shl 8) or (pcm[k].toInt() and 0xFF)).toShort().toInt()
+                sum += v.toDouble() * v
+                k += 2
+            }
+            if (kotlin.math.sqrt(sum / (window / 2)) > 450.0) return true
+            i += window
+        }
+        return false
+    }
+
+    private fun joinSegments(parts: List<String>): String {
+        val sb = StringBuilder()
+        for (raw in parts) {
+            val t = raw.trim()
+            if (t.isEmpty()) continue
+            if (sb.isNotEmpty() && sb.last() !in "，。！？、；：,.!?;:") sb.append('，')
+            sb.append(t)
+        }
+        return sb.toString()
+    }
+
     private companion object {
         const val MIN_MS = 600L
+        const val TAIL_MIN_MS = 400L
+    }
+}
+
+/**
+ * 边录边切段：用音量判断「说了一小段、停顿了」就该切一刀。
+ * 已经说了 ≥ 0.8 秒、随后安静 ≥ 0.6 秒、这段总长 ≥ 2.5 秒才切；一段超过 40 秒不管停没停都切（一句话识别限 60 秒）。
+ */
+internal class SegmentCutter {
+    private var noise = 0f
+    private var speechMs = 0L
+    private var silentMs = 0L
+    private var segMs = 0L
+
+    fun reset(keepNoise: Boolean = false) {
+        if (!keepNoise) noise = 0f
+        speechMs = 0L
+        silentMs = 0L
+        segMs = 0L
+    }
+
+    /** 喂一帧（[level] 0..1，[dtMs] 距上一帧的毫秒）；返回 true = 这里该切一刀 */
+    fun feed(level: Float, dtMs: Long): Boolean {
+        segMs += dtMs
+        val threshold = maxOf(0.06f, noise * 2.5f + 0.03f)
+        if (level > threshold) {
+            speechMs += dtMs
+            silentMs = 0L
+        } else {
+            silentMs += dtMs
+            noise = if (noise == 0f) level else noise * 0.9f + level * 0.1f
+        }
+        return (speechMs >= 800 && silentMs >= 600 && segMs >= 2500) || segMs >= 40_000
     }
 }
 

@@ -4,9 +4,11 @@ import com.carpe.ideashell.AppContainer
 import com.carpe.ideashell.core.parse.CaptureKind
 import com.carpe.ideashell.data.assistant.AssistantRunner
 import com.carpe.ideashell.data.assistant.AssistantTask
+import com.carpe.ideashell.data.assistant.DeviceControl
 import com.carpe.ideashell.data.assistant.ScreenContext
 import com.carpe.ideashell.data.assistant.SystemActions
 import com.carpe.ideashell.data.assistant.TaskTime
+import com.carpe.ideashell.system.PhoneControl
 import com.carpe.ideashell.system.AssistantScheduler
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -21,12 +23,16 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 
 /**
- * 语音助手除了「查」之外能「做」的事：记忆、助手任务（定时 / 条件）、读屏幕、记笔记、系统动作（闹钟 / 倒计时 / 拨号 / 导航 / 音乐）。
+ * 语音助手除了「查」之外能「做」的事：记忆、助手任务（定时 / 条件）、技能（快捷指令）、读屏幕、记笔记、系统动作（闹钟 / 倒计时 / 拨号 / 导航 / 音乐）、
+ * 设备控制（勿扰 / 铃声 / 音量 / 亮度 / 手电筒 / 打开应用 / 系统设置页 / 返回回桌面截屏 / 控制中心开关）。
  * 每个工具返回一句给模型看的结果；出错也返回文字，不抛异常。
  */
 internal object AssistantTools {
     /** 定时任务里不能用的：要有人在场（读屏幕 / 打开别的应用），或会让任务自己改任务 */
-    val NOT_FOR_SCHEDULED = setOf("read_screen", "dial", "navigate", "create_task", "task_control", "set_timer")
+    val NOT_FOR_SCHEDULED = setOf(
+        "read_screen", "dial", "navigate", "create_task", "task_control", "set_timer",
+        "open_app", "open_settings", "phone_action", "toggle_quick_setting", "save_skill", "delete_skill",
+    )
 
     private fun JsonObject.arg(key: String): String? =
         (this[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", true) }
@@ -73,7 +79,104 @@ internal object AssistantTools {
             },
             required = listOf("id", "action"),
         ),
-        VoiceAgent.tool("read_screen", "读取用户此刻正在看的屏幕上的文字（和选中的文字）。用户说「这页 / 这段 / 这篇 / 屏幕上 / 这个」时先用它。读不到会说明原因。"),
+        VoiceAgent.tool(
+            "read_screen",
+            "读取用户此刻正在看的屏幕内容（文字和选中的文字；页面是图片 / 自绘内容读不到文字时，会自动截屏做文字识别）。用户说「这页 / 这段 / 这篇 / 屏幕上 / 这个」时先用它。读不到会说明原因。",
+        ),
+        VoiceAgent.tool(
+            "save_skill",
+            "把用户反复要做的一串事存成一句话快捷指令（技能）。用户说「把这个存成快捷指令」「以后我说『下班』就帮我……」「记成一个技能」时用。name 是以后一句话叫出它的名字（2~8 个字，如「下班」「睡前」「开会模式」）；steps 写成脱离上下文也能照做的完整步骤，按顺序一步一行（可以用你有的任何能力：勿扰、音量、亮度、闹钟、打开应用、查待办……），日期用相对说法。不含密码 / 验证码。同名会覆盖。",
+            props = {
+                putJsonObject("name") { put("type", "string") }
+                putJsonObject("steps") { put("type", "string") }
+            },
+            required = listOf("name", "steps"),
+        ),
+        VoiceAgent.tool(
+            "run_skill",
+            "取出一个快捷指令的步骤。用户一句话叫出了已有的快捷指令（见系统提示里的快捷指令名）时先调用它，拿到步骤后你依次办完，最后用一句话汇报做了什么。",
+            props = { putJsonObject("name") { put("type", "string") } },
+            required = listOf("name"),
+        ),
+        VoiceAgent.tool(
+            "delete_skill",
+            "删除一个快捷指令（用户说「删掉 / 取消 X 快捷指令」时用）。",
+            props = { putJsonObject("name") { put("type", "string") } },
+            required = listOf("name"),
+        ),
+        VoiceAgent.tool(
+            "set_dnd",
+            "开 / 关勿扰模式。mode：off 关闭 / priority 只响重要提醒（默认用它）/ alarms 只响闹钟 / silence 完全静音。minutes 可选：开启后多少分钟自动关闭（「勿扰一小时」= 60）。没有权限时会自动打开授权页并告诉用户。",
+            props = {
+                putJsonObject("mode") { put("type", "string"); put("enum", enum("off", "priority", "alarms", "silence")) }
+                putJsonObject("minutes") { put("type", "integer") }
+            },
+            required = listOf("mode"),
+        ),
+        VoiceAgent.tool(
+            "set_ringer",
+            "切换铃声模式：normal 响铃 / vibrate 震动 / silent 静音。",
+            props = { putJsonObject("mode") { put("type", "string"); put("enum", enum("normal", "vibrate", "silent")) } },
+            required = listOf("mode"),
+        ),
+        VoiceAgent.tool(
+            "set_volume",
+            "调音量。stream：media 媒体（默认）/ ring 铃声 / alarm 闹钟 / call 通话；action：set（要给 percent 0~100）/ up / down / mute。",
+            props = {
+                putJsonObject("stream") { put("type", "string"); put("enum", enum("media", "ring", "alarm", "call")) }
+                putJsonObject("action") { put("type", "string"); put("enum", enum("set", "up", "down", "mute")) }
+                putJsonObject("percent") { put("type", "integer") }
+            },
+            required = listOf("action"),
+        ),
+        VoiceAgent.tool(
+            "set_brightness",
+            "调屏幕亮度：percent 1~100；或 auto = true 改回自动亮度。",
+            props = {
+                putJsonObject("percent") { put("type", "integer") }
+                putJsonObject("auto") { put("type", "boolean") }
+            },
+        ),
+        VoiceAgent.tool(
+            "flashlight",
+            "开 / 关手电筒。",
+            props = { putJsonObject("on") { put("type", "boolean") } },
+            required = listOf("on"),
+        ),
+        VoiceAgent.tool(
+            "open_app",
+            "按名字打开手机上的应用（微信、支付宝、相机、设置……）。",
+            props = { putJsonObject("name") { put("type", "string") } },
+            required = listOf("name"),
+        ),
+        VoiceAgent.tool(
+            "open_settings",
+            "打开系统设置的某一页（要用户自己动手切换时，如连 WLAN / 蓝牙 / 定位）。",
+            props = {
+                putJsonObject("page") {
+                    put("type", "string")
+                    put("enum", enum("wifi", "bluetooth", "nfc", "hotspot", "airplane", "display", "sound", "battery", "location", "apps", "accessibility", "date", "storage", "notifications"))
+                }
+            },
+            required = listOf("page"),
+        ),
+        VoiceAgent.tool(
+            "phone_action",
+            "做一个系统手势：back 返回 / home 回桌面 / recents 最近任务 / notifications 拉下通知栏 / quick_settings 拉下控制中心 / lock_screen 锁屏 / screenshot 截屏 / power_menu 电源菜单。需要无障碍服务。",
+            props = {
+                putJsonObject("action") {
+                    put("type", "string")
+                    put("enum", enum("back", "home", "recents", "notifications", "quick_settings", "lock_screen", "screenshot", "power_menu"))
+                }
+            },
+            required = listOf("action"),
+        ),
+        VoiceAgent.tool(
+            "toggle_quick_setting",
+            "点一下控制中心里的开关来切换它（WLAN、蓝牙、飞行模式、移动数据、NFC、自动旋转、热点……；手电筒 / 勿扰 / 亮度 / 音量请用专门的工具）。name 写磁贴上的名字，如「蓝牙」「WLAN」。会返回点完之后的状态；找不到会如实说。需要无障碍服务。",
+            props = { putJsonObject("name") { put("type", "string") } },
+            required = listOf("name"),
+        ),
         VoiceAgent.tool(
             "create_note",
             "把一段整理好的文字存成笔记（kind=note）或写进今天的日记（kind=daily）。只在用户明确要「记成笔记 / 记下来 / 存起来」时用；content 是最终要存的完整内容。",
@@ -134,14 +237,37 @@ internal object AssistantTools {
         "create_task" -> createTask(container, args)
         "list_tasks" -> listTasks(container)
         "task_control" -> taskControl(container, args)
-        "read_screen" -> readScreen()
+        "read_screen" -> readScreen(container)
         "create_note" -> createNote(container, args)
         "set_alarm" -> SystemActions.setAlarm(container.appContext, args.int("hour") ?: -1, args.int("minute") ?: 0, args.arg("label"), args.ints("days"))
         "set_timer" -> SystemActions.setTimer(container.appContext, args.int("seconds") ?: 0, args.arg("label"))
         "dial" -> SystemActions.dial(container.appContext, args.arg("target").orEmpty())
         "navigate" -> SystemActions.navigate(container.appContext, args.arg("destination").orEmpty())
         "media_control" -> SystemActions.media(container.appContext, args.arg("action").orEmpty())
+        "save_skill" -> container.assistantSkills.save(args.arg("name").orEmpty(), args.arg("steps").orEmpty())
+            .fold({ "已存成快捷指令「${it.name}」。以后直接说「${it.name}」就会按这些步骤办。可以在 设置 → 语音助手 → 快捷指令 里查看 / 删除。" }, { it.message ?: "没存成" })
+        "run_skill" -> runSkill(container, args.arg("name").orEmpty())
+        "delete_skill" -> container.assistantSkills.removeByName(args.arg("name").orEmpty())?.let { "已删除快捷指令「${it.name}」" } ?: "没有这个快捷指令"
+        "set_dnd" -> DeviceControl.setDnd(container.appContext, args.arg("mode").orEmpty(), args.int("minutes"))
+        "set_ringer" -> DeviceControl.setRinger(container.appContext, args.arg("mode").orEmpty())
+        "set_volume" -> DeviceControl.setVolume(container.appContext, args.arg("stream") ?: "media", args.arg("action").orEmpty(), args.int("percent"))
+        "set_brightness" -> DeviceControl.setBrightness(container.appContext, args.int("percent"), (args["auto"] as? JsonPrimitive)?.contentOrNull == "true")
+        "flashlight" -> DeviceControl.flashlight(container.appContext, (args["on"] as? JsonPrimitive)?.contentOrNull != "false")
+        "open_app" -> DeviceControl.openApp(container.appContext, args.arg("name").orEmpty())
+        "open_settings" -> DeviceControl.openSettings(container.appContext, args.arg("page").orEmpty())
+        "phone_action" -> PhoneControl.globalAction(args.arg("action").orEmpty())
+        "toggle_quick_setting" -> PhoneControl.toggleQuickSetting(args.arg("name").orEmpty())
         else -> "没有这个工具：$name"
+    }
+
+    private fun runSkill(container: AppContainer, name: String): String {
+        val n = name.trim().trim('「', '」')
+        val list = container.assistantSkills.state.value
+        val skill = list.firstOrNull { it.name.equals(n, ignoreCase = true) }
+            ?: list.firstOrNull { n.isNotEmpty() && (it.name.contains(n, ignoreCase = true) || n.contains(it.name, ignoreCase = true)) }
+            ?: return "没有叫「$n」的快捷指令" + if (list.isEmpty()) "" else "；现有：" + list.joinToString("、") { it.name }
+        container.assistantSkills.recordUse(skill.name)
+        return "快捷指令「${skill.name}」的步骤（请依次办完，办不了的步骤如实说，最后用一句话汇报）：\n${skill.steps}"
     }
 
     private fun createTask(container: AppContainer, args: JsonObject): String {
@@ -193,9 +319,9 @@ internal object AssistantTools {
         }.also { AssistantScheduler.reschedule(container.appContext) }
     }
 
-    private fun readScreen(): String {
-        val s = ScreenContext.read()
-            ?: return "读不到屏幕：需要开启无障碍服务（设置 → 语音助手），或者当前是拾忆自己的界面 / 敏感应用"
+    private suspend fun readScreen(container: AppContainer): String {
+        val s = ScreenContext.read { jpeg -> container.ocr.recognize(jpeg).joinToString("\n") { it.text } }
+            ?: return "读不到屏幕：" + ScreenContext.lastFailure.ifBlank { "原因不明" }
         return buildString {
             append("应用：${s.label}\n")
             if (!s.selection.isNullOrBlank()) append("选中的文字：${s.selection}\n")

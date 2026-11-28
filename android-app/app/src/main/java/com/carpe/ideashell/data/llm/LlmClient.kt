@@ -3,6 +3,8 @@ package com.carpe.ideashell.data.llm
 import com.carpe.ideashell.data.secure.CredentialStore
 import com.carpe.ideashell.data.settings.SettingsStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
@@ -45,6 +47,11 @@ class LlmClient(
 
     val configured: Boolean
         get() = !credentials.llmKey.isNullOrBlank()
+
+    /** 提前建好到大模型服务的连接（后台线程调用） */
+    fun prewarm() {
+        if (configured) com.carpe.ideashell.data.net.Prewarm.warm(client, settings.current.llmBaseUrl.trimEnd('/') + "/")
+    }
 
     /** 发一轮「系统提示 + 用户内容」，返回模型回复的文字；要求回复是 JSON 对象 */
     suspend fun chatJson(system: String, user: String, timeoutSec: Long? = null): String {
@@ -99,6 +106,107 @@ class LlmClient(
         }
         return ((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("message") as? JsonObject
             ?: throw LlmException("大模型没有返回内容")
+    }
+
+    /**
+     * 流式版 [chatWithTools]：一边收一边把「到目前为止的回答文字」交给 [onContent]（在后台线程回调），
+     * 收完拼成和 [chatWithTools] 一样的 message（含 tool_calls）返回，调用方的循环不用改。
+     * 第一个字大约在 1 秒内就出来，不用等整段生成完。
+     */
+    suspend fun chatStream(messages: JsonArray, tools: JsonArray, timeoutSec: Long = 40, onContent: (String) -> Unit): JsonObject {
+        val key = credentials.llmKey
+        if (key.isNullOrBlank()) throw LlmException("还没有填写大模型 API Key")
+        val s = settings.current
+        val url = s.llmBaseUrl.trimEnd('/') + "/chat/completions"
+        val payload = buildJsonObject {
+            put("model", s.llmModel)
+            put("temperature", 0.2)
+            put("stream", true)
+            put("messages", messages)
+            if (tools.isNotEmpty()) {
+                put("tools", tools)
+                put("tool_choice", "auto")
+            }
+        }.toString()
+        val request = try {
+            Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $key")
+                .header("Accept", "text/event-stream")
+                .post(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+        } catch (_: IllegalArgumentException) {
+            throw LlmException("大模型接口地址不正确，请检查设置")
+        }
+        val c = client.newBuilder().readTimeout(20, TimeUnit.SECONDS).callTimeout(timeoutSec, TimeUnit.SECONDS).build()
+        return withContext(Dispatchers.IO) {
+            val call = c.newCall(request)
+            val handle = coroutineContext[kotlinx.coroutines.Job]?.invokeOnCompletion { if (it != null) call.cancel() }
+            try {
+                call.execute().use { resp ->
+                    if (resp.code !in 200..299) {
+                        val body = resp.body?.string().orEmpty()
+                        if (resp.code == 400 && tools.isNotEmpty()) throw LlmException("当前大模型不支持工具调用（400）" + body.take(80).let { if (it.isBlank()) "" else "：$it" })
+                        throw LlmException(describeHttpError(resp.code, body))
+                    }
+                    val source = resp.body?.source() ?: throw LlmException("大模型没有返回内容")
+                    val content = StringBuilder()
+                    val calls = java.util.TreeMap<Int, StreamCall>()
+                    while (true) {
+                        val line = source.readUtf8Line() ?: break
+                        if (!line.startsWith("data:")) continue
+                        val data = line.removePrefix("data:").trim()
+                        if (data == "[DONE]") break
+                        val delta = runCatching {
+                            ((Json.parseToJsonElement(data).jsonObject["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("delta") as? JsonObject
+                        }.getOrNull() ?: continue
+                        (delta["content"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }?.let {
+                            content.append(it)
+                            onContent(content.toString())
+                        }
+                        (delta["tool_calls"] as? JsonArray)?.forEach { el ->
+                            val tc = el as? JsonObject ?: return@forEach
+                            val index = (tc["index"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0
+                            val acc = calls.getOrPut(index) { StreamCall() }
+                            (tc["id"] as? JsonPrimitive)?.contentOrNull?.let { acc.id = it }
+                            (tc["function"] as? JsonObject)?.let { fn ->
+                                (fn["name"] as? JsonPrimitive)?.contentOrNull?.let { acc.name += it }
+                                (fn["arguments"] as? JsonPrimitive)?.contentOrNull?.let { acc.args.append(it) }
+                            }
+                        }
+                    }
+                    buildJsonObject {
+                        put("role", "assistant")
+                        put("content", content.toString())
+                        if (calls.isNotEmpty()) {
+                            put("tool_calls", buildJsonArray {
+                                calls.values.forEachIndexed { i, tc ->
+                                    add(buildJsonObject {
+                                        put("id", tc.id.ifBlank { "call_$i" })
+                                        put("type", "function")
+                                        put("function", buildJsonObject {
+                                            put("name", tc.name)
+                                            put("arguments", tc.args.toString().ifBlank { "{}" })
+                                        })
+                                    })
+                                }
+                            })
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                coroutineContext.ensureActive()
+                throw LlmException("网络不可用或大模型响应超时")
+            } finally {
+                handle?.dispose()
+            }
+        }
+    }
+
+    private class StreamCall {
+        var id: String = ""
+        var name: String = ""
+        val args = StringBuilder()
     }
 
     private suspend fun send(url: String, key: String, model: String, system: String, user: String, jsonMode: Boolean, timeoutSec: Long?): LlmReply {

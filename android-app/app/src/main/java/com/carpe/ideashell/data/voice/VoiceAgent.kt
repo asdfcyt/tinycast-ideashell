@@ -39,17 +39,31 @@ object VoiceAgent {
     class Answer(val text: String, val hits: List<VoiceSearch.Hit>)
 
     /** [scheduled]：助手任务到点自动运行（没人在场）：不给读屏幕 / 打开别的应用 / 改任务的工具 */
-    suspend fun answer(container: AppContainer, question: String, context: String? = null, scheduled: Boolean = false): Answer {
+    /**
+     * [onPartial]：不为空时用流式请求，回答文字边生成边交给它（已去掉 Markdown 标记；在后台线程回调）。
+     */
+    suspend fun answer(
+        container: AppContainer,
+        question: String,
+        context: String? = null,
+        scheduled: Boolean = false,
+        onPartial: ((String) -> Unit)? = null,
+    ): Answer {
         if (!container.llm.configured) throw LlmException("还没有填写大模型 API Key")
         val hits = LinkedHashMap<String, VoiceSearch.Hit>()
         val messages = mutableListOf<JsonObject>()
-        messages += msg("system", systemPrompt(LocalDateTime.now(), container.assistantMemory.promptBlock(), scheduled))
+        messages += msg("system", systemPrompt(LocalDateTime.now(), container.assistantMemory.promptBlock(), container.assistantSkills.promptBlock(), scheduled))
         val tools = toolsFor(scheduled)
         messages += msg("user", if (context.isNullOrBlank()) question else "$context\n\n我现在问：$question")
 
         for (round in 1..MAX_ROUNDS + 1) {
             val last = round > MAX_ROUNDS
-            val reply = container.llm.chatWithTools(JsonArray(messages), if (last) JsonArray(emptyList()) else tools)
+            val toolsNow = if (last) JsonArray(emptyList()) else tools
+            val reply = if (onPartial != null) {
+                container.llm.chatStream(JsonArray(messages), toolsNow) { onPartial(clean(it)) }
+            } else {
+                container.llm.chatWithTools(JsonArray(messages), toolsNow)
+            }
             val calls = (reply["tool_calls"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
             val content = (reply["content"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
             if (calls.isEmpty() || last) {
@@ -106,7 +120,7 @@ object VoiceAgent {
         },
     )
 
-    private fun systemPrompt(now: LocalDateTime, memory: String?, scheduled: Boolean): String {
+    private fun systemPrompt(now: LocalDateTime, memory: String?, skills: String?, scheduled: Boolean): String {
         val today = now.toLocalDate()
         val calendar = (-13..3).joinToString("；") { i ->
             val d = today.plusDays(i.toLong())
@@ -114,20 +128,24 @@ object VoiceAgent {
             "$d ${weekday(d)}" + if (tag.isEmpty()) "" else "（$tag）"
         }
         val memoryText = if (memory == null) "" else "\n\n你记得关于用户的这些事（用户让你记住的，回答和办事时可以参考）：\n$memory"
+        val skillsText = if (skills == null) "" else "\n\n用户存了这些快捷指令（一句话叫出名字就要照办）：$skills。用户说出其中一个的名字（或明显是在叫它）时，先调用 run_skill 取步骤，再依次办完，最后用一句话汇报。"
         return """
-你是用户的私人语音助手，用户用语音提了一个问题或请求。你通过工具查他的待办 / 笔记 / 专注数据，或替他办事（专注计时、记忆、定时任务、读屏幕、记笔记、闹钟 / 倒计时 / 拨号 / 导航 / 音乐），再用中文回答。$memoryText
+你是用户的私人语音助手，用户用语音提了一个问题或请求。你通过工具查他的待办 / 笔记 / 专注数据，或替他办事（专注计时、记忆、定时任务、读屏幕、记笔记、闹钟 / 倒计时 / 拨号 / 导航 / 音乐、勿扰 / 音量 / 亮度 / 手电筒 / 打开应用 / 控制中心开关、快捷指令），再用中文回答。$memoryText$skillsText
 
 现在是 $today ${weekday(today)} ${"%02d:%02d".format(now.hour, now.minute)}。日期对照：$calendar。「本周」= 本周一到今天；「上周」= 上一个周一到周日；「最近一周」= 今天往前 6 天到今天。
 
 规则：
 - 只根据工具返回的内容回答，查不到就如实说「没查到」，绝对不要编造；数量、时长要和工具结果一致。
 - 需要什么查什么，能一次查完的并行调用；不要重复调用同样的工具。
-- 回答是给人在手机卡片 / 锁屏通知里看的：纯文字、不要 Markdown、不要客套，先说结论，最多 5 行、总共 150 字以内；列条目时用「· 」开头，最多列 5 条，多的说「等 N 项」。
+- 回答是给人在手机卡片 / 锁屏通知里看的（有时还会被念出来）：纯文字、不要 Markdown、不要客套，先说结论，最多 5 行、总共 150 字以内（针对屏幕内容的问题例外，见下）；列条目时用「· 」开头，最多列 5 条，多的说「等 N 项」。
 - 笔记只引用标题和摘要里有的信息；需要细节再用 read_note 读全文。
-- 能办的事：start_focus / focus_control（专注计时）、remember / forget（记忆）、create_task / list_tasks / task_control（定时或条件任务）、read_screen、create_note、set_alarm / set_timer / dial / navigate / media_control。只有用户明确要求才调用，做完用一句话告诉他结果。
+- 能办的事：start_focus / focus_control（专注计时）、remember / forget（记忆）、create_task / list_tasks / task_control（定时或条件任务）、save_skill / run_skill / delete_skill（快捷指令）、read_screen、create_note、set_alarm / set_timer / dial / navigate / media_control、set_dnd / set_ringer / set_volume / set_brightness / flashlight / open_app / open_settings / phone_action / toggle_quick_setting（控制手机）。只有用户明确要求才调用，做完用一句话告诉他结果。
+- 控制手机时：工具返回「还没有……权限」就把原因和去哪里授权如实告诉用户（已经替他打开了授权页）；WLAN / 蓝牙 / 飞行模式 / 移动数据 / NFC / 热点这类开关用 toggle_quick_setting，失败了再建议 open_settings；不要假装已经办成。
+- 用户让你把刚才做的 / 常做的一串事「存成快捷指令」时：用 save_skill，name 取用户说的口令（没说就按内容取个 2~4 字的名字），steps 根据用户的描述和最近对话写成按顺序的完整步骤。
 - 你没有天气、联网搜索、股价这类工具；条件或请求依赖它们时如实说做不到，不要假装能。
 - 创建任务前想清楚：时间（几点、每天 / 哪几天 / 哪一天）、做什么、有没有条件；用户没说几点就问不了他，按最合理的默认（早上 8 点）并在回答里说明。
 - 用户说「这页 / 这段 / 这篇 / 屏幕上」时先 read_screen 再处理；要求「记成笔记」时再 create_note，content 写整理好的最终内容。
+- 针对屏幕内容的提问（总结 / 解释 / 翻译 / 判断对不对 / 顺带介绍里面提到的人物或概念）：你自己直接答，不要说做不到、也不要建议他去问别的 AI。先 read_screen，依据屏幕内容并结合你自己的知识作答；这类回答可以展开一些：最多 10 行、总共 320 字以内，先说结论。屏幕内容读不到时，把 read_screen 说的原因告诉用户，不要编造页面内容。
 - 「今天的第一个任务」= list_todos(today) 里**计划日期是今天**的未完成待办中时间最靠前的一条（没有时间的排在有时间的后面；已逾期的不算今天）；「接下来要做的」同理。要对某个任务开始专注，先 list_todos 找到它，再用它的 id 调 start_focus。
 - 你不能新建 / 修改 / 删除待办，也不能改 / 删已有笔记；用户要待办时，告诉他直接说「提醒我……」「把……改到……」即可。
         """.trimIndent()

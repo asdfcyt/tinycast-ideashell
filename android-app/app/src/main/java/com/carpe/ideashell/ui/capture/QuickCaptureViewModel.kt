@@ -162,6 +162,7 @@ class QuickCaptureViewModel(private val container: AppContainer) : ViewModel() {
         lexicon = container.lexicon,
         extraHotwords = { container.voiceContext.hotwords() },
         todoContext = { container.voiceContext.todoLines() },
+        skillNames = { container.assistantSkills.names() },
         history = container.voiceHistory,
         voicePrint = container.voicePrint,
         onError = { error = it },

@@ -22,6 +22,12 @@ enum class VoiceEngine(val label: String, val summary: String) {
     LOCAL("本地模型（SenseVoice）", "只用手机上的模型识别，不联网、录音不出手机；需要先下载模型"),
 }
 
+/** 语音回答用哪个声音：手机系统自带的语音引擎（荣耀自带的也在里面），或腾讯云语音合成（更拟人，要联网和密钥） */
+enum class SpeakEngine(val label: String, val summary: String) {
+    SYSTEM("系统语音", "不联网"),
+    TENCENT("腾讯云（更拟人）", "需联网"),
+}
+
 enum class ThemeMode(val label: String) {
     SYSTEM("跟随系统"),
     LIGHT("浅色"),
@@ -100,6 +106,15 @@ data class AppSettings(
     val voiceHeadsetKey: Boolean = false,
     /** 语音识别引擎：云端 / 本地 SenseVoice / 自动（云端优先，失败时用本地） */
     val voiceEngine: VoiceEngine = VoiceEngine.AUTO,
+    /** 助手回答完后念出来 */
+    val speakReply: Boolean = false,
+    val speakEngine: SpeakEngine = SpeakEngine.SYSTEM,
+    /** 系统语音引擎的包名；空 = 系统默认的那个 */
+    val speakSystemEngine: String = "",
+    /** 腾讯云音色编号（VoiceType） */
+    val speakTencentVoice: Int = 101006,
+    /** 语速 -2（慢）… 2（快），0 正常 */
+    val speakSpeed: Int = 0,
     /** 大模型接口（OpenAI 兼容）：地址和模型名；Key 在 CredentialStore 里 */
     val llmBaseUrl: String = DEFAULT_LLM_BASE_URL,
     val llmModel: String = DEFAULT_LLM_MODEL,
@@ -226,6 +241,16 @@ class SettingsStore(context: Context) {
 
     fun setVoiceEngine(engine: VoiceEngine) = update { it.copy(voiceEngine = engine) }
 
+    fun setSpeakReply(enabled: Boolean) = update { it.copy(speakReply = enabled) }
+
+    fun setSpeakEngine(engine: SpeakEngine) = update { it.copy(speakEngine = engine) }
+
+    fun setSpeakSystemEngine(pkg: String) = update { it.copy(speakSystemEngine = pkg) }
+
+    fun setSpeakTencentVoice(id: Int) = update { it.copy(speakTencentVoice = id) }
+
+    fun setSpeakSpeed(speed: Int) = update { it.copy(speakSpeed = speed.coerceIn(-2, 2)) }
+
     fun setCalendarSync(enabled: Boolean) = update { it.copy(calendarSync = enabled) }
 
     fun setCalendarTasks(enabled: Boolean) = update { it.copy(calendarTasks = enabled) }
@@ -272,6 +297,11 @@ class SettingsStore(context: Context) {
             .putBoolean(KEY_VOICE_AUTO_SEND, next.voiceAutoSend)
             .putBoolean(KEY_VOICE_HISTORY, next.voiceHistory)
             .putString(KEY_VOICE_ENGINE, next.voiceEngine.name)
+            .putBoolean(KEY_SPEAK_REPLY, next.speakReply)
+            .putString(KEY_SPEAK_ENGINE, next.speakEngine.name)
+            .putString(KEY_SPEAK_SYSTEM_ENGINE, next.speakSystemEngine)
+            .putInt(KEY_SPEAK_TENCENT_VOICE, next.speakTencentVoice)
+            .putInt(KEY_SPEAK_SPEED, next.speakSpeed)
             .putBoolean(KEY_VOICE_AUTO_STOP, next.voiceAutoStop)
             .putBoolean(KEY_VOICE_SYSTEM_DENOISE, next.voiceSystemDenoise)
             .putBoolean(KEY_VOICEPRINT, next.voiceprintEnabled)
@@ -333,6 +363,12 @@ class SettingsStore(context: Context) {
         voiceHeadsetKey = prefs.getBoolean(KEY_VOICE_HEADSET_KEY, false),
         voiceEngine = runCatching { VoiceEngine.valueOf(prefs.getString(KEY_VOICE_ENGINE, null).orEmpty()) }
             .getOrDefault(VoiceEngine.AUTO),
+        speakReply = prefs.getBoolean(KEY_SPEAK_REPLY, false),
+        speakEngine = runCatching { SpeakEngine.valueOf(prefs.getString(KEY_SPEAK_ENGINE, null).orEmpty()) }
+            .getOrDefault(SpeakEngine.SYSTEM),
+        speakSystemEngine = prefs.getString(KEY_SPEAK_SYSTEM_ENGINE, "").orEmpty(),
+        speakTencentVoice = prefs.getInt(KEY_SPEAK_TENCENT_VOICE, 101006),
+        speakSpeed = prefs.getInt(KEY_SPEAK_SPEED, 0).coerceIn(-2, 2),
         llmBaseUrl = prefs.getString(KEY_LLM_BASE_URL, null)?.ifBlank { null } ?: AppSettings.DEFAULT_LLM_BASE_URL,
         llmModel = prefs.getString(KEY_LLM_MODEL, null)?.ifBlank { null } ?: AppSettings.DEFAULT_LLM_MODEL,
         calendarSync = prefs.getBoolean(KEY_CALENDAR_SYNC, false),
@@ -439,6 +475,11 @@ class SettingsStore(context: Context) {
         const val KEY_VOICE_AUTO_SEND = "voice_auto_send"
         const val KEY_VOICE_HISTORY = "voice_history"
         const val KEY_VOICE_ENGINE = "voice_engine"
+        const val KEY_SPEAK_REPLY = "speak_reply"
+        const val KEY_SPEAK_ENGINE = "speak_engine"
+        const val KEY_SPEAK_SYSTEM_ENGINE = "speak_system_engine"
+        const val KEY_SPEAK_TENCENT_VOICE = "speak_tencent_voice"
+        const val KEY_SPEAK_SPEED = "speak_speed"
         const val KEY_VOICE_AUTO_STOP = "voice_auto_stop"
         const val KEY_VOICE_SYSTEM_DENOISE = "voice_system_denoise"
         const val KEY_VOICEPRINT = "voiceprint_enabled"

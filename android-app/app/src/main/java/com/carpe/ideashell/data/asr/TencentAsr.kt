@@ -29,6 +29,11 @@ class TencentAsr(
     private val http: OkHttpClient,
     private val credentials: CredentialStore,
 ) {
+    /** 提前建好到识别服务的连接（后台线程调用） */
+    fun prewarm() {
+        if (configured) com.carpe.ideashell.data.net.Prewarm.warm(http, "https://$HOST/")
+    }
+
     /** 密钥是否已填（语音输入能不能用的前提） */
     val configured: Boolean
         get() = !credentials.tencentSecretId.isNullOrBlank() && !credentials.tencentSecretKey.isNullOrBlank()

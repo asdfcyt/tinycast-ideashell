@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -138,7 +139,7 @@ fun SettingsScreen(onOpenConnection: () -> Unit, onOpenRevisit: () -> Unit) {
                     SEC_VOICE_HISTORY -> VoiceHistoryPage()
                     SEC_ASSISTANT -> AssistantSection(env)
                     SEC_OCR -> OcrSection(env)
-                    SEC_AI -> AiSection(env)
+                    SEC_TASKS -> TasksSection(env)
                     SEC_REVISIT -> RevisitSection(env)
                     SEC_TODO -> TodoFocusSection(env)
                     SEC_QUICK -> EntriesSection(env)
@@ -158,6 +159,7 @@ private fun SettingsHome(env: SettingsEnv) {
     val settings = env.settings
     val localAsr by container.localAsr.state.collectAsStateWithLifecycle()
     val revisitToday by container.revisit.today.collectAsStateWithLifecycle()
+    val tasks by container.assistantTasks.state.collectAsStateWithLifecycle()
     val cloudBackupAt = remember { container.backup.lastCloudBackupAt() }
     var showTheme by remember { mutableStateOf(false) }
 
@@ -189,7 +191,7 @@ private fun SettingsHome(env: SettingsEnv) {
         SettingsItem(
             iconRes = R.drawable.ic_sparkle,
             title = "语音助手",
-            summary = "",
+            summary = env.assistantSummary(),
             onClick = { env.go(SEC_ASSISTANT) },
             trailing = { Chevron() },
         )
@@ -209,22 +211,19 @@ private fun SettingsHome(env: SettingsEnv) {
         )
     }
 
-    Group("AI") {
-        SettingsItem(
-            iconRes = R.drawable.ic_sparkle,
-            title = "AI 与大模型",
-            summary = env.aiSummary(),
-            onClick = { env.go(SEC_AI) },
-            trailing = { Chevron() },
-        )
-    }
-
     Group("功能") {
         SettingsItem(
             iconRes = R.drawable.ic_revisit,
             title = "重温",
             summary = env.revisitSummary(revisitToday),
             onClick = { env.go(SEC_REVISIT) },
+            trailing = { Chevron() },
+        )
+        SettingsItem(
+            icon = Icons.Filled.Notifications,
+            title = "定时任务",
+            summary = tasksSummary(tasks),
+            onClick = { env.go(SEC_TASKS) },
             trailing = { Chevron() },
         )
         SettingsItem(
