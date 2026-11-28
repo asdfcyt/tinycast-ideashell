@@ -179,18 +179,23 @@ internal object AssistantTools {
         ),
         VoiceAgent.tool(
             "home_list",
-            "列出家里的智能设备（米家等，经 Home Assistant）及当前状态：返回 entity_id | 名称 | 状态。控制设备前先用它找到 entity_id；可带关键词（房间名 / 设备名，如「客厅」「空调」）缩小范围，也能读温湿度这类传感器。",
-            props = { putJsonObject("keyword") { put("type", "string"); put("description", "名字或 id 里包含的词，多个词用空格隔开；不填列全部可控设备") } },
+            "列出家里的智能设备（米家等，经 Home Assistant）及当前状态：entity_id | 名称（前面是房间）| 状态。系统提示里已经有设备目录时，控制设备不用先调它；要查当前状态 / 温湿度读数，或目录里找不到时才用。可按类型（domain）和关键词（房间名 / 设备名）筛选。",
+            props = {
+                putJsonObject("domain") { put("type", "string"); put("description", "设备类型：light 灯 / switch 开关插座 / climate 空调 / cover 窗帘 / fan 风扇 / media_player 音箱电视 / vacuum 扫地机 / humidifier 加湿器 / sensor 传感器（读温湿度）") }
+                putJsonObject("keyword") { put("type", "string"); put("description", "房间名或设备名里包含的词，多个词用空格隔开") }
+            },
         ),
         VoiceAgent.tool(
             "home_control",
-            "控制家里的智能设备（灯、开关、空调、窗帘、风扇、扫地机、音箱、场景……）。entity_id 来自 home_list，多个用逗号隔开（「关掉所有灯」= 把所有灯一起传）。action：on / off / toggle / open / close / stop；set 要给 value（灯亮度 0~100、空调温度、窗帘位置 0~100、风扇风速 0~100、音量 0~100）；mode 的 value 是空调模式（cool / heat / auto / dry / fan_only / off）；场景和脚本用 on 触发。不能控制门锁 / 报警 / 摄像头。",
+            "控制家里的智能设备（灯、开关、空调、窗帘、风扇、扫地机、音箱、场景……）。选目标三种方式：① entity_id（精确设备，多个用逗号隔开）；② domain（类型）+ 可选 area（房间）——「关闭全家所有的灯」= domain=light、action=off、不给 area；「书房的灯都打开」= domain=light、area=书房；③ 只给 area（房间 / 名字关键词，不限类型）。同类型一次发出，批量要用 ②，不要自己一个个列。action：on / off / toggle / open / close / stop；set 要给 value（灯亮度 0~100、空调温度、窗帘位置 0~100、风扇风速 0~100、音量 0~100）；mode 的 value 是空调模式（cool / heat / auto / dry / fan_only / off）；场景和脚本用 entity_id + on 触发。不能控制门锁 / 报警 / 摄像头。",
             props = {
                 putJsonObject("entity_id") { put("type", "string") }
+                putJsonObject("domain") { put("type", "string"); put("enum", enum("light", "switch", "climate", "cover", "fan", "media_player", "vacuum", "humidifier")) }
+                putJsonObject("area") { put("type", "string"); put("description", "房间名或设备名里的词，如「书房」「卧室」") }
                 putJsonObject("action") { put("type", "string"); put("enum", enum("on", "off", "toggle", "open", "close", "stop", "set", "mode")) }
                 putJsonObject("value") { put("type", "string") }
             },
-            required = listOf("entity_id", "action"),
+            required = listOf("action"),
         ),
         VoiceAgent.tool(
             "create_note",
@@ -272,8 +277,8 @@ internal object AssistantTools {
         "open_settings" -> DeviceControl.openSettings(container.appContext, args.arg("page").orEmpty())
         "phone_action" -> PhoneControl.globalAction(args.arg("action").orEmpty())
         "toggle_quick_setting" -> PhoneControl.toggleQuickSetting(args.arg("name").orEmpty())
-        "home_list" -> container.homeAssistant.list(args.arg("keyword"))
-        "home_control" -> container.homeAssistant.control(args.arg("entity_id").orEmpty(), args.arg("action").orEmpty(), args.arg("value"))
+        "home_list" -> container.homeAssistant.list(args.arg("keyword"), args.arg("domain"))
+        "home_control" -> container.homeAssistant.control(args.arg("entity_id"), args.arg("domain"), args.arg("area"), args.arg("action").orEmpty(), args.arg("value"))
         else -> "没有这个工具：$name"
     }
 

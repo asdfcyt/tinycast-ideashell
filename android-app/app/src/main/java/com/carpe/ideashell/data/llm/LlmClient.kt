@@ -104,8 +104,46 @@ class LlmClient(
         } catch (_: Exception) {
             throw LlmException("大模型返回了无法解析的内容")
         }
-        return ((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("message") as? JsonObject
+        val message = ((root["choices"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("message") as? JsonObject
             ?: throw LlmException("大模型没有返回内容")
+        return salvageDsml(message)
+    }
+
+    /**
+     * DeepSeek 偶尔不按接口规范返回 tool_calls，而是把调用写成文字（`<｜DSML｜invoke name="…">…`）塞进 content。
+     * 这里把它还原成正常的 tool_calls，并从文字里去掉，免得原样显示给用户。
+     */
+    private fun salvageDsml(message: JsonObject): JsonObject {
+        if ((message["tool_calls"] as? JsonArray)?.isNotEmpty() == true) return message
+        val content = (message["content"] as? JsonPrimitive)?.contentOrNull ?: return message
+        if (!content.contains("DSML")) return message
+        val invokes = Regex("""invoke\s+name\s*=\s*"([^"]+)"\s*>(.*?)</[^>]*?invoke\s*>""", RegexOption.DOT_MATCHES_ALL).findAll(content).toList()
+        val cut = Regex("""<\s*[|｜]""").find(content)?.range?.first ?: content.length
+        val visible = content.substring(0, cut).trim()
+        if (invokes.isEmpty()) return buildJsonObject { put("role", "assistant"); put("content", visible) }
+        val params = Regex("""parameter\s+name\s*=\s*"([^"]+)"([^>]*)>(.*?)</[^>]*?parameter\s*>""", RegexOption.DOT_MATCHES_ALL)
+        return buildJsonObject {
+            put("role", "assistant")
+            put("content", visible)
+            put("tool_calls", buildJsonArray {
+                invokes.forEachIndexed { i, m ->
+                    add(buildJsonObject {
+                        put("id", "call_dsml_$i")
+                        put("type", "function")
+                        put("function", buildJsonObject {
+                            put("name", m.groupValues[1])
+                            put("arguments", buildJsonObject {
+                                params.findAll(m.groupValues[2]).forEach { p ->
+                                    val raw = p.groupValues[3].trim()
+                                    val isString = !p.groupValues[2].contains("string=\"false\"")
+                                    put(p.groupValues[1], if (isString) JsonPrimitive(raw) else runCatching { Json.parseToJsonElement(raw) }.getOrDefault(JsonPrimitive(raw)))
+                                }
+                            }.toString())
+                        })
+                    })
+                }
+            })
+        }
     }
 
     /**
@@ -175,7 +213,7 @@ class LlmClient(
                             }
                         }
                     }
-                    buildJsonObject {
+                    salvageDsml(buildJsonObject {
                         put("role", "assistant")
                         put("content", content.toString())
                         if (calls.isNotEmpty()) {
@@ -192,7 +230,7 @@ class LlmClient(
                                 }
                             })
                         }
-                    }
+                    })
                 }
             } catch (e: IOException) {
                 coroutineContext.ensureActive()

@@ -52,7 +52,7 @@ object VoiceAgent {
         if (!container.llm.configured) throw LlmException("还没有填写大模型 API Key")
         val hits = LinkedHashMap<String, VoiceSearch.Hit>()
         val messages = mutableListOf<JsonObject>()
-        messages += msg("system", systemPrompt(LocalDateTime.now(), container.assistantMemory.promptBlock(), container.assistantSkills.promptBlock(), scheduled))
+        messages += msg("system", systemPrompt(LocalDateTime.now(), container.assistantMemory.promptBlock(), container.assistantSkills.promptBlock(), scheduled, container.homeAssistant.promptBlock()))
         val tools = toolsFor(scheduled)
         messages += msg("user", if (context.isNullOrBlank()) question else "$context\n\n我现在问：$question")
 
@@ -83,6 +83,12 @@ object VoiceAgent {
                     }
                 }.awaitAll()
             }
+            // 只是控制了家里的设备：工具返回的就是一句现成的结果，不必再让大模型复述一遍（省一次调用，开灯快一两秒）
+            if (calls.all { ((it["function"] as? JsonObject)?.get("name") as? JsonPrimitive)?.contentOrNull == "home_control" } &&
+                results.all { r -> r.second.lines().all { "：已" in it } }
+            ) {
+                return Answer(results.joinToString("\n") { it.second }.trim(), hits.values.take(MAX_HITS))
+            }
             for ((id, out) in results) {
                 messages += buildJsonObject {
                     put("role", "tool")
@@ -101,6 +107,7 @@ object VoiceAgent {
 
     /** 回复是给人看的纯文字：去掉模型偶尔带上的 Markdown 标记 */
     private fun clean(text: String): String = text
+        .let { t -> Regex("""<\s*[|｜]""").find(t)?.let { t.substring(0, it.range.first) } ?: t } // 流式过程中漏出来的工具调用标记（DSML）不显示
         .replace(Regex("\\*\\*|__|`"), "")
         .replace(Regex("(?m)^#{1,6}\\s*"), "")
         .replace(Regex("(?m)^\\s*[-*]\\s+"), "· ")
@@ -120,7 +127,7 @@ object VoiceAgent {
         },
     )
 
-    private fun systemPrompt(now: LocalDateTime, memory: String?, skills: String?, scheduled: Boolean): String {
+    private fun systemPrompt(now: LocalDateTime, memory: String?, skills: String?, scheduled: Boolean, home: String? = null): String {
         val today = now.toLocalDate()
         val calendar = (-13..3).joinToString("；") { i ->
             val d = today.plusDays(i.toLong())
@@ -128,9 +135,10 @@ object VoiceAgent {
             "$d ${weekday(d)}" + if (tag.isEmpty()) "" else "（$tag）"
         }
         val memoryText = if (memory == null) "" else "\n\n你记得关于用户的这些事（用户让你记住的，回答和办事时可以参考）：\n$memory"
+        val homeText = if (home == null) "" else "\n\n家里的智能设备（entity_id | 名称，名称前面是房间）：\n$home\n控制设备时直接调 home_control，不用先调 home_list（只有要查当前状态 / 读数，或这里找不到时才调 home_list）：指名某个设备用 entity_id；「全家所有的灯」「书房的灯」「所有空调」这类按类型 + 房间的批量要求，用 domain（+ area）一次完成，不要自己一个个列 id；同名设备分布在不同房间时按用户说的房间选；用户没说房间又有多个同名设备，才问他是哪一个。"
         val skillsText = if (skills == null) "" else "\n\n用户存了这些快捷指令（一句话叫出名字就要照办）：$skills。用户说出其中一个的名字（或明显是在叫它）时，先调用 run_skill 取步骤，再依次办完，最后用一句话汇报。"
         return """
-你是用户的私人语音助手，用户用语音提了一个问题或请求。你通过工具查他的待办 / 笔记 / 专注数据，或替他办事（专注计时、记忆、定时任务、读屏幕、记笔记、闹钟 / 倒计时 / 拨号 / 导航 / 音乐、勿扰 / 音量 / 亮度 / 手电筒 / 打开应用 / 控制中心开关、快捷指令），再用中文回答。$memoryText$skillsText
+你是用户的私人语音助手，用户用语音提了一个问题或请求。你通过工具查他的待办 / 笔记 / 专注数据，或替他办事（专注计时、记忆、定时任务、读屏幕、记笔记、闹钟 / 倒计时 / 拨号 / 导航 / 音乐、勿扰 / 音量 / 亮度 / 手电筒 / 打开应用 / 控制中心开关、快捷指令），再用中文回答。$memoryText$skillsText$homeText
 
 现在是 $today ${weekday(today)} ${"%02d:%02d".format(now.hour, now.minute)}。日期对照：$calendar。「本周」= 本周一到今天；「上周」= 上一个周一到周日；「最近一周」= 今天往前 6 天到今天。
 
@@ -140,7 +148,7 @@ object VoiceAgent {
 - 回答是给人在手机卡片 / 锁屏通知里看的（有时还会被念出来）：纯文字、不要 Markdown、不要客套，先说结论，最多 5 行、总共 150 字以内（针对屏幕内容的问题例外，见下）；列条目时用「· 」开头，最多列 5 条，多的说「等 N 项」。
 - 笔记只引用标题和摘要里有的信息；需要细节再用 read_note 读全文。
 - 能办的事：start_focus / focus_control（专注计时）、remember / forget（记忆）、create_task / list_tasks / task_control（定时或条件任务）、save_skill / run_skill / delete_skill（快捷指令）、read_screen、create_note、set_alarm / set_timer / dial / navigate / media_control、set_dnd / set_ringer / set_volume / set_brightness / flashlight / open_app / open_settings / phone_action / toggle_quick_setting（控制手机）、home_list / home_control（控制家里的米家等智能设备）。只有用户明确要求才调用，做完用一句话告诉他结果。
-- 控制家里的设备时：先 home_list 找到 entity_id（带房间 / 设备名关键词），再 home_control；「所有灯」这类批量要求把匹配的 id 一次传完；结果如实转述（离线 / 没找到 / 连不上就直说），不要假装办成；门锁、报警、摄像头不能控制。
+- 控制家里的设备时：先 home_list 找到 entity_id（带房间 / 设备名关键词），再 home_control；「所有灯」这类批量要求用 domain（+ area）一次完成；结果如实转述（离线 / 没找到 / 连不上就直说），不要假装办成；门锁、报警、摄像头不能控制。
 - 控制手机时：工具返回「还没有……权限」就把原因和去哪里授权如实告诉用户（已经替他打开了授权页）；WLAN / 蓝牙 / 飞行模式 / 移动数据 / NFC / 热点这类开关用 toggle_quick_setting，失败了再建议 open_settings；不要假装已经办成。
 - 用户让你把刚才做的 / 常做的一串事「存成快捷指令」时：用 save_skill，name 取用户说的口令（没说就按内容取个 2~4 字的名字），steps 根据用户的描述和最近对话写成按顺序的完整步骤。
 - 你没有天气、联网搜索、股价这类工具；条件或请求依赖它们时如实说做不到，不要假装能。

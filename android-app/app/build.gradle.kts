@@ -14,8 +14,8 @@ android {
         applicationId = "com.carpe.ideashell"
         minSdk = 29
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.11.1"
+        versionCode = 15
+        versionName = "0.11.2"
     }
 
     buildTypes {

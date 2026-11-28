@@ -148,6 +148,8 @@ object IntentSeeds {
         c("把客厅的灯打开", "answer"),
         c("空调调到二十六度", "answer"),
         c("关掉卧室所有的灯", "answer"),
+        c("关闭全家所有的灯", "answer"),
+        c("把书房的吸顶灯打开", "answer"),
         c("打开微信", "answer"),
         c("回到桌面", "answer"),
         c("每周五提醒我交周报", "todo"),

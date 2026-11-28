@@ -407,6 +407,8 @@ class VoiceCapsuleService : Service() {
         if (!controller.start()) return // start() 已经通过 onError 说明了原因
         // 趁用户还停在要问的那一页：先抓一份屏幕文字（后台线程；只在内存里，说到「这页」时才会带给 AI）
         scope.launch(Dispatchers.Default) { runCatching { com.carpe.ideashell.data.assistant.ScreenContext.snapshotNow() } }
+        // 智能家居：趁说话的时候把设备目录刷新好，说完直接用
+        scope.launch(Dispatchers.IO) { runCatching { (application as IdeashellApp).container.homeAssistant.warm() } }
         recStart = SystemClock.uptimeMillis()
         lastTimerSec = -1
         noise = 0f
